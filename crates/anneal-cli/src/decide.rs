@@ -223,7 +223,17 @@ fn load_thresholds(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Thresholds, DecideError> {
-    let path = flag.map(|path| cwd.join(path)).or_else(|| {
+    read_thresholds(thresholds_path(flag, cwd, lookup).as_deref())
+}
+
+/// The thresholds file to read: `--thresholds` (relative to `cwd`), else the plugin root's
+/// file; `None` means the copy built in.
+pub(crate) fn thresholds_path(
+    flag: Option<&Path>,
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
+    flag.map(|path| cwd.join(path)).or_else(|| {
         lookup("CLAUDE_PLUGIN_ROOT")
             .filter(|root| !root.is_empty())
             .map(|root| {
@@ -231,16 +241,23 @@ fn load_thresholds(
                     .iter()
                     .fold(PathBuf::from(root), |p, c| p.join(c))
             })
-    });
+    })
+}
+
+/// Reads the thresholds file at `path`, which must exist and be a regular file, or the copy
+/// built in for `None`.
+pub(crate) fn read_thresholds(path: Option<&Path>) -> Result<Thresholds, DecideError> {
     let Some(path) = path else {
         return Thresholds::built_in().map_err(|source| DecideError::Thresholds {
             from: "built in".to_owned(),
             source,
         });
     };
-    let Some(bytes) = baseline::read_state_bytes(&path).map_err(DecideError::ThresholdsFile)?
-    else {
-        return Err(DecideError::ThresholdsMissing { path });
+    let Some(bytes) = baseline::read_state_bytes(path).map_err(DecideError::ThresholdsFile)? else {
+        return Err(DecideError::ThresholdsMissing {
+            // The error owns the path it names.
+            path: path.to_path_buf(),
+        });
     };
     Thresholds::parse(&bytes).map_err(|source| DecideError::Thresholds {
         from: path.display().to_string(),

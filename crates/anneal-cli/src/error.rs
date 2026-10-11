@@ -9,6 +9,7 @@ use std::io;
 use anneal_ledger::{StoreError, TimestampError};
 
 use crate::baseline::BaselineError;
+use crate::calibrate::CalibrateError;
 use crate::command::CommandName;
 use crate::dag::DagError;
 use crate::decide::DecideError;
@@ -82,6 +83,9 @@ pub enum CliError {
     /// `anneal decide` could not ask, or record, its question.
     #[error("decide")]
     Decide(#[from] DecideError),
+    /// `anneal calibrate` could not read the log or thresholds, or write its proposals.
+    #[error("calibrate")]
+    Calibrate(#[from] CalibrateError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -108,6 +112,7 @@ impl CliError {
             Self::Repro(error) => error.code(),
             Self::FloorGuard(error) => error.code(),
             Self::Decide(error) => error.code(),
+            Self::Calibrate(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

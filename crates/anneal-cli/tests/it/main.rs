@@ -1,5 +1,6 @@
 //! Integration tests for the `anneal` binary, compiled as one test binary (TST-02).
 
+mod calibrate;
 mod cli;
 mod dag;
 mod decide;

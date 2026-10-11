@@ -121,6 +121,12 @@ impl DecisionLog {
         }
     }
 
+    /// The log's directory, `<anneal home>/decisions`.
+    #[must_use]
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// The live log file.
     #[must_use]
     pub fn path(&self) -> PathBuf {
@@ -158,6 +164,15 @@ impl DecisionLog {
             .map_err(|source| io_error("opening", &path, source))?;
         file.write_all(&line)
             .map_err(|source| io_error("appending to", &path, source))
+    }
+
+    /// Every file the log can have, oldest first: `decisions.4.jsonl` down to
+    /// `decisions.1.jsonl`, then the live file. Some may not exist.
+    pub fn files(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        (1..=ROTATED_FILES)
+            .rev()
+            .map(|generation| self.rotated(generation))
+            .chain(std::iter::once(self.path()))
     }
 
     /// The `generation`th rotated file: `decisions.<generation>.jsonl`.
