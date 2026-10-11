@@ -102,6 +102,28 @@ pub const PLAN_STALE: Code = Code::new(4, "stale: inputs changed since approval"
 /// `mode build|diagnose|off`: the mode was recorded (a dirty tree is recorded too, with a
 /// finding).
 pub const MODE_RECORDED: Code = Code::new(0, "mode recorded");
+/// `repro record|leftovers`: record appended `repro_red` (the command exited non-zero);
+/// leftovers found no `[DEBUG-<id>]` tag.
+pub const REPRO_OK: Code = Code::new(
+    0,
+    "record: red, and `repro_red` recorded; leftovers: no `[DEBUG-<id>]` tag left",
+);
+/// `repro leftovers`: a `[DEBUG-<id>]` tag is left in a file git knows of.
+pub const REPRO_LEFTOVERS: Code = Code::new(1, "leftovers: a `[DEBUG-<id>]` tag is left");
+/// `repro record`: the command could not be started; nothing is recorded.
+pub const REPRO_NOT_STARTED: Code = Code::new(
+    2,
+    "record: the command could not be started; nothing recorded",
+);
+/// `repro record`: the command exited 0, so it reproduces nothing; nothing is recorded.
+pub const REPRO_NOT_RED: Code =
+    Code::new(3, "record: not red, the command exited 0; nothing recorded");
+/// `repro record`: the command ran past its timeout and was killed; a hang is not a
+/// reproduction, so nothing is recorded.
+pub const REPRO_TIMED_OUT: Code = Code::new(
+    4,
+    "record: timed out, killed; a hang is not a reproduction, nothing recorded",
+);
 /// `lint`: no error findings (warnings and review items are listed but do not fail).
 pub const LINT_CLEAN: Code = Code::new(0, "no errors");
 /// `lint`: at least one error finding.
@@ -181,6 +203,18 @@ impl CommandCodes {
                 &[PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE],
             ),
             CommandName::Mode => ("", &[MODE_RECORDED]),
+            // No scope: it would widen the help's title column; each meaning names its
+            // subcommand instead.
+            CommandName::Repro => (
+                "",
+                &[
+                    REPRO_OK,
+                    REPRO_LEFTOVERS,
+                    REPRO_NOT_STARTED,
+                    REPRO_NOT_RED,
+                    REPRO_TIMED_OUT,
+                ],
+            ),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
             CommandName::Dag => ("check|frontier", &[OK, DAG_CYCLE, DAG_DANGLING]),
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),

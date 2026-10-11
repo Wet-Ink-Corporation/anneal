@@ -18,6 +18,7 @@ use crate::grill::GrillError;
 use crate::lint::skills::LintError;
 use crate::mode::ModeError;
 use crate::paths::PathError;
+use crate::repro::ReproError;
 use crate::task::TaskError;
 
 /// Why `anneal` could not produce a result.
@@ -71,6 +72,9 @@ pub enum CliError {
     /// `anneal mode` could not read its worktree, plan or design tree.
     #[error(transparent)]
     Mode(#[from] ModeError),
+    /// `anneal repro` could not find its worktree, run its command or scan for leftovers.
+    #[error(transparent)]
+    Repro(#[from] ReproError),
     /// `anneal floor-guard` could not check the diff.
     #[error(transparent)]
     FloorGuard(#[from] FloorError),
@@ -97,6 +101,7 @@ impl CliError {
             Self::Grill(error) => error.code(),
             Self::Task(error) => error.code(),
             Self::Mode(error) => error.code(),
+            Self::Repro(error) => error.code(),
             Self::FloorGuard(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }

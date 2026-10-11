@@ -326,8 +326,8 @@ fn record(
     Ok(events)
 }
 
-/// The command's words as UTF-8, as the ledger records them.
-fn utf8_command(command: &[OsString]) -> Result<Vec<&str>, CliError> {
+/// The command's words as UTF-8, as the ledger records them (`repro record` shares it).
+pub(crate) fn utf8_command(command: &[OsString]) -> Result<Vec<&str>, CliError> {
     command
         .iter()
         .map(|word| {

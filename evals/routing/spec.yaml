@@ -20,3 +20,6 @@ near_misses:
     - build a dependency graph of tasks for the approved spec
     - get the plan approved for the export spec
     - break the finished spec into ordered tasks
+  diagnose:
+    - the spec check crashes on an empty file, find the root cause
+    - the acceptance test fails unexpectedly, reproduce it red

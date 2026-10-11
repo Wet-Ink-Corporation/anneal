@@ -19,3 +19,6 @@ near_misses:
     - grill me on the new idea
     - ask me questions in rounds with recommended answers
     - question me until I confirm the requirements
+  diagnose:
+    - the tests broke after the last task, find the root cause
+    - a task's test fails unexpectedly, reproduce it before fixing

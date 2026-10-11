@@ -10,7 +10,8 @@
 //!
 //! - build mode (`build`): the plan's spec passes `lint spec`, the design tree is confirmed at
 //!   its current hash, the tree was clean at entry and the plan is approved and current;
-//! - diagnose mode: a `repro_red` was recorded after the mode was entered.
+//! - diagnose mode: a `repro_red` tagged with the worktree's key (`anneal repro record`) was
+//!   recorded after the mode was entered.
 //!
 //! A denial is Claude Code's deny decision whose reason is one `ERROR` line naming the missing
 //! precondition and the command that satisfies it, plus a `gate_blocked` event. Input it cannot
@@ -27,7 +28,8 @@ use std::path::{Path, PathBuf};
 
 use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{
-    EventEnvelope, EventKind, Filter, LedgerEvent, Store, StoreError, Timestamp, TimestampError,
+    EventEnvelope, EventKind, Filter, LedgerEvent, LedgerTag, Store, StoreError, TagKey, Timestamp,
+    TimestampError,
 };
 use serde::Deserialize;
 
@@ -358,7 +360,7 @@ fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> 
     match &entered.mode {
         Active::Build(build) => build::check(store, Path::new(&root), build, &relative),
         Active::IncompleteBuild => incomplete(&relative),
-        Active::Diagnose => diagnose(store, entered.position, &relative),
+        Active::Diagnose => diagnose(store, &root, entered.position, &relative),
     }
 }
 
@@ -393,23 +395,32 @@ fn incomplete(relative: &str) -> Option<Denial> {
     })
 }
 
-/// The denial for a source edit in diagnose mode entered at ledger position `since`, unless a
-/// `repro_red` was recorded after it.
-fn diagnose(store: &Store, since: u64, relative: &str) -> Option<Denial> {
+/// The denial for a source edit in the worktree whose top-level directory is `root`, in
+/// diagnose mode entered at ledger position `since`, unless a `repro_red` tagged with that
+/// worktree's key was recorded after it.
+fn diagnose(store: &Store, root: &str, since: u64, relative: &str) -> Option<Denial> {
     if scope::classify(relative, &[]) != PathKind::Source {
         return None;
     }
+    let missing = || {
+        Denial::new(
+            Check::Repro,
+            "diagnose mode: no red reproduction is recorded in this worktree since diagnose \
+             mode started; write a test that fails, then run `anneal repro record -- <test \
+             command>`",
+        )
+    };
+    // `anneal repro record` refuses a worktree the ledger cannot tag, so none has a repro.
+    let Ok(worktree) = LedgerTag::new(TagKey::Worktree, &scope::worktree_key(root)) else {
+        return Some(missing());
+    };
     let repros = Filter {
         types: vec![EventKind::ReproRed],
-        tags: Vec::new(),
+        tags: vec![worktree],
     };
     match store.tail(&repros, 1) {
         Ok(latest) if latest.iter().any(|repro| repro.position > since) => None,
-        Ok(_) => Some(Denial::new(
-            Check::Repro,
-            "diagnose mode: no red reproduction is recorded since diagnose mode started; write \
-             a test that fails, then run `anneal repro record -- <test command>`",
-        )),
+        Ok(_) => Some(missing()),
         Err(error) => Some(unjudged("the ledger cannot be read", &error)),
     }
 }
