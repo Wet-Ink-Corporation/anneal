@@ -9,9 +9,22 @@ publish.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "anneal_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "anneal"
 path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
