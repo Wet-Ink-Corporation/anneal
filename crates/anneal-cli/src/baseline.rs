@@ -2,8 +2,9 @@
 
 use std::collections::BTreeSet;
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,8 +25,16 @@ pub struct Baseline {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SnapshotFile {
-    version: u32,
+    /// Declared so `deny_unknown_fields` accepts it; [`VersionProbe`] has already checked it.
+    #[serde(rename = "version")]
+    _version: u32,
     keys: BTreeSet<String>,
+}
+
+/// Just the version, read without rejecting unknown fields.
+#[derive(Debug, Deserialize)]
+struct VersionProbe {
+    version: u32,
 }
 
 /// The same shape as [`SnapshotFile`], borrowing the keys for writing.
@@ -103,43 +112,12 @@ impl Baseline {
     /// [`BaselineError`] when the file cannot be read, is too large, or is not a version-1
     /// snapshot.
     pub fn load(path: &Path) -> Result<Option<Self>, BaselineError> {
-        let io_error = |source| BaselineError::Io {
-            op: "reading",
-            path: path.to_path_buf(),
-            source,
-        };
-        let file = match File::open(path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(io_error(error)),
-        };
-        let mut bytes = Vec::new();
-        file.take(MAX_SNAPSHOT_BYTES.saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(io_error)?;
-        if !u64::try_from(bytes.len()).is_ok_and(|len| len <= MAX_SNAPSHOT_BYTES) {
-            return Err(BaselineError::TooLarge {
-                path: path.to_path_buf(),
-            });
-        }
-        let snapshot: SnapshotFile =
-            serde_json::from_slice(&bytes).map_err(|source| BaselineError::Format {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if snapshot.version != FORMAT_VERSION {
-            return Err(BaselineError::Version {
-                path: path.to_path_buf(),
-                found: snapshot.version,
-            });
-        }
-        Ok(Some(Self {
-            keys: snapshot.keys,
-        }))
+        load_capped(path, MAX_SNAPSHOT_BYTES)
     }
 
-    /// Saves the snapshot to `path`, creating its parent directory. Writes a sibling temporary
-    /// file and renames it over `path`, so a reader never sees a half-written snapshot.
+    /// Saves the snapshot to `path`, creating its parent directory. Writes and syncs a sibling
+    /// temporary file unique to this writer, then renames it over `path`, so a reader never
+    /// sees a half-written snapshot; a failed save removes its temporary file.
     ///
     /// # Errors
     /// [`BaselineError::Io`] when the directory or file cannot be written.
@@ -158,17 +136,189 @@ impl Baseline {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        let mut temporary = path.as_os_str().to_owned();
-        temporary.push(".tmp");
-        fs::write(&temporary, &json).map_err(io_error)?;
-        fs::rename(&temporary, path).map_err(io_error)
+        write_atomically(path, &json).map_err(io_error)
+    }
+}
+
+/// [`Baseline::load`] with the size limit as a parameter, so tests can exercise it cheaply.
+fn load_capped(path: &Path, cap: u64) -> Result<Option<Baseline>, BaselineError> {
+    let io_error = |source| BaselineError::Io {
+        op: "reading",
+        path: path.to_path_buf(),
+        source,
+    };
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_error(error)),
+    };
+    let mut bytes = Vec::new();
+    file.take(cap.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_error)?;
+    if !u64::try_from(bytes.len()).is_ok_and(|len| len <= cap) {
+        return Err(BaselineError::TooLarge {
+            path: path.to_path_buf(),
+        });
+    }
+    parse(path, &bytes).map(Some)
+}
+
+/// Reads the version leniently first, so a snapshot from a newer build is reported as a
+/// [`BaselineError::Version`] even when its other fields changed shape.
+fn parse(path: &Path, bytes: &[u8]) -> Result<Baseline, BaselineError> {
+    let format_error = |source| BaselineError::Format {
+        path: path.to_path_buf(),
+        source,
+    };
+    let probe: VersionProbe = serde_json::from_slice(bytes).map_err(format_error)?;
+    if probe.version != FORMAT_VERSION {
+        return Err(BaselineError::Version {
+            path: path.to_path_buf(),
+            found: probe.version,
+        });
+    }
+    let snapshot: SnapshotFile = serde_json::from_slice(bytes).map_err(format_error)?;
+    Ok(Baseline {
+        keys: snapshot.keys,
+    })
+}
+
+/// Distinguishes concurrent writers' temporary files within one process.
+static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
+
+/// Writes `bytes` to a temporary file unique to this writer (`<path>.<pid>.<n>.tmp`), syncs it,
+/// and renames it over `path`, so readers see the old file or the new one, never a mix. On
+/// failure the temporary file is removed.
+fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // Relaxed: the counter only has to hand out distinct numbers; it orders no other memory.
+    let n = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(format!(".{}.{n}.tmp", std::process::id()));
+    let temporary = PathBuf::from(temporary);
+    let written = File::create(&temporary)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&temporary, path));
+    match written {
+        Ok(()) => Ok(()),
+        Err(error) => match fs::remove_file(&temporary) {
+            Ok(()) => Err(error),
+            Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
+            Err(cleanup) => Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}; removing {} also failed: {cleanup}",
+                    temporary.display()
+                ),
+            )),
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Baseline, BaselineError};
+    use super::{Baseline, BaselineError, load_capped};
     use crate::envelope::Finding;
+
+    const SNAPSHOT: &str = r#"{"version": 1, "keys": ["a"]}"#;
+
+    #[test]
+    fn a_snapshot_over_the_cap_is_too_large() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("baseline.json");
+        std::fs::write(&path, SNAPSHOT).expect("write");
+        let cap = u64::try_from(SNAPSHOT.len()).expect("small") - 1;
+
+        let error = load_capped(&path, cap).expect_err("one byte over the cap");
+
+        assert!(
+            matches!(error, BaselineError::TooLarge { .. }),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_exactly_at_the_cap_loads() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("baseline.json");
+        std::fs::write(&path, SNAPSHOT).expect("write");
+        let cap = u64::try_from(SNAPSHOT.len()).expect("small");
+
+        let loaded = load_capped(&path, cap).expect("at the cap is allowed");
+
+        assert_eq!(
+            loaded,
+            Some(Baseline::from_findings(&[finding("a")])),
+            "the snapshot loads in full"
+        );
+    }
+
+    #[test]
+    fn a_newer_version_with_a_changed_shape_is_a_version_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("baseline.json");
+        std::fs::write(&path, r#"{"version": 2, "entries": [{"key": "a"}]}"#).expect("write");
+
+        let error = Baseline::load(&path).expect_err("version 2 is unknown");
+
+        assert!(
+            matches!(error, BaselineError::Version { found: 2, .. }),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn saving_leaves_no_temporary_files() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("baseline.json");
+
+        Baseline::from_findings(&[finding("a")])
+            .save(&path)
+            .expect("first save");
+        Baseline::from_findings(&[finding("b")])
+            .save(&path)
+            .expect("overwrite");
+
+        let names = file_names(dir.path());
+        assert_eq!(names, ["baseline.json"], "only the snapshot remains");
+    }
+
+    #[test]
+    fn a_failed_save_removes_its_temporary_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        // A non-empty directory where the snapshot should go makes the rename fail.
+        let path = dir.path().join("baseline.json");
+        std::fs::create_dir(&path).expect("mkdir");
+        std::fs::write(path.join("occupant"), "x").expect("write");
+
+        let error = Baseline::from_findings(&[finding("a")])
+            .save(&path)
+            .expect_err("cannot rename over a directory");
+
+        assert!(
+            matches!(error, BaselineError::Io { op: "writing", .. }),
+            "got {error:?}"
+        );
+        assert_eq!(file_names(dir.path()), ["baseline.json"], "no temp left");
+    }
+
+    fn file_names(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read dir")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
 
     fn finding(key: &str) -> Finding {
         Finding::new(key, format!("message for {key}"))

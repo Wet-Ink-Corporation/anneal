@@ -1,10 +1,10 @@
 //! Where anneal keeps state: the git common dir (ledger home) and `~/.anneal` (decision log).
 
 use std::ffi::OsString;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::thread;
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 /// How long a `git` call may take before it is killed (H-13).
@@ -83,10 +83,74 @@ fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathE
         .stderr(Stdio::piped())
         .spawn()
         .map_err(PathError::Git)?;
+    wait_with_deadline(&mut child, timeout)
+}
+
+/// Waits for `child`, draining its piped stdout and stderr on named scoped threads so a chatty
+/// child cannot block on a full pipe. Each stream keeps at most [`MAX_CAPTURE_BYTES`]; the rest
+/// is read and dropped. Past `timeout` the child is killed and reaped, and the error is
+/// [`PathError::GitTimeout`]. Every reader thread is joined before this returns.
+fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<Output, PathError> {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    thread::scope(|scope| {
+        let out_reader = match spawn_reader(scope, "git-stdout", stdout) {
+            Ok(handle) => handle,
+            Err(error) => return Err(kill_after(child, error)),
+        };
+        let err_reader = match spawn_reader(scope, "git-stderr", stderr) {
+            Ok(handle) => handle,
+            Err(error) => return Err(kill_after(child, error)),
+        };
+        let status = wait_or_kill(child, timeout)?;
+        Ok(Output {
+            status,
+            stdout: join_reader(out_reader)?,
+            stderr: join_reader(err_reader)?,
+        })
+    })
+}
+
+/// Most bytes kept from each of a child's output streams (H-13).
+const MAX_CAPTURE_BYTES: u64 = 1024 * 1024;
+
+type Reader<'scope> = ScopedJoinHandle<'scope, io::Result<Vec<u8>>>;
+
+fn spawn_reader<'scope, R: Read + Send + 'scope>(
+    scope: &'scope Scope<'scope, '_>,
+    name: &str,
+    pipe: Option<R>,
+) -> io::Result<Reader<'scope>> {
+    thread::Builder::new()
+        .name(name.to_owned())
+        .spawn_scoped(scope, move || {
+            let mut kept = Vec::new();
+            if let Some(mut pipe) = pipe {
+                pipe.by_ref()
+                    .take(MAX_CAPTURE_BYTES)
+                    .read_to_end(&mut kept)?;
+                io::copy(&mut pipe, &mut io::sink())?;
+            }
+            Ok(kept)
+        })
+}
+
+fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, PathError> {
+    reader
+        .join()
+        .map_err(|_panicked| PathError::Git(io::Error::other("an output reader thread panicked")))?
+        .map_err(PathError::Git)
+}
+
+/// Polls `child` until it exits; past `timeout` kills and reaps it.
+fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, PathError> {
     let started = Instant::now();
     loop {
-        if child.try_wait().map_err(PathError::Git)?.is_some() {
-            return child.wait_with_output().map_err(PathError::Git);
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            // Kill it: the reader threads would otherwise wait on its pipes forever.
+            Err(error) => return Err(kill_after(child, error)),
         }
         if started.elapsed() >= timeout {
             child.kill().map_err(PathError::Git)?;
@@ -94,6 +158,18 @@ fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathE
             return Err(PathError::GitTimeout { timeout });
         }
         thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Kills and reaps `child` after a setup failure, so no reader waits on a live pipe. A failure
+/// to kill is reported alongside the original error rather than dropped.
+fn kill_after(child: &mut Child, error: io::Error) -> PathError {
+    match child.kill().and_then(|()| child.wait().map(drop)) {
+        Ok(()) => PathError::Git(error),
+        Err(kill_error) => PathError::Git(io::Error::new(
+            error.kind(),
+            format!("{error}; killing git also failed: {kill_error}"),
+        )),
     }
 }
 
@@ -134,10 +210,62 @@ pub fn anneal_home_from(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Pat
 
 #[cfg(test)]
 mod tests {
-    use super::{PathError, anneal_home_from};
+    use super::{PathError, anneal_home_from, wait_with_deadline};
     use std::collections::HashMap;
     use std::ffi::OsString;
+    use std::io::Write;
     use std::path::PathBuf;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    /// `git hash-object --stdin`: needs no repository and waits until stdin closes.
+    fn hash_object() -> Child {
+        Command::new("git")
+            .args(["hash-object", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("git runs")
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns git")]
+    fn a_child_past_its_deadline_is_killed_and_reaped() {
+        // The test keeps the child's stdin open, so git never finishes on its own.
+        let mut child = hash_object();
+
+        let result = wait_with_deadline(&mut child, Duration::from_millis(50));
+
+        assert!(
+            matches!(
+                result,
+                Err(PathError::GitTimeout { timeout }) if timeout == Duration::from_millis(50)
+            ),
+            "got {result:?}"
+        );
+        assert!(
+            child.try_wait().expect("status is available").is_some(),
+            "the killed child was reaped"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns git")]
+    fn a_child_that_finishes_in_time_returns_its_output() {
+        let mut child = hash_object();
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        stdin.write_all(b"hello\n").expect("write to git");
+        drop(stdin);
+
+        let output = wait_with_deadline(&mut child, Duration::from_secs(30)).expect("finishes");
+
+        assert!(output.status.success(), "git succeeded: {output:?}");
+        assert_eq!(
+            output.stdout, b"ce013625030ba8dba906f756967f9e9ca394464a\n",
+            "the blob id of \"hello\\n\""
+        );
+    }
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let map: HashMap<String, OsString> = pairs

@@ -19,9 +19,10 @@ pub struct Code {
 }
 
 impl Code {
-    /// Declares a code. Only the constants in this module should call it.
+    /// Declares a code. Private: every code is a constant in this module, so the table and the
+    /// generated docs are the only place codes come from.
     #[must_use]
-    pub const fn new(value: u8, meaning: &'static str) -> Self {
+    const fn new(value: u8, meaning: &'static str) -> Self {
         Self { value, meaning }
     }
 

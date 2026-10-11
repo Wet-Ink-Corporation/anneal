@@ -40,7 +40,7 @@ pub struct Envelope<'a, D> {
     #[serde(skip)]
     code: Code,
     ok: bool,
-    command: &'a str,
+    command: String,
     data: D,
     findings: &'a [Finding],
     proves: &'static str,
@@ -48,13 +48,17 @@ pub struct Envelope<'a, D> {
 }
 
 impl<'a, D: Serialize> Envelope<'a, D> {
-    /// An envelope with no findings for `command` (the full path as typed, e.g.
-    /// `"dag check"`) that will exit with `code`. `name` supplies the command's proves /
-    /// does-not-prove statements. `data` should serialise to a JSON object; use
-    /// `serde_json::Map::new()` for `{}`.
+    /// An envelope with no findings for `name` and its `subcommand`, if any, that will exit
+    /// with `code`. The `command` field is built from both (`"dag check"`), and the proves /
+    /// does-not-prove statements come from `name`, so they cannot disagree. `data` should
+    /// serialise to a JSON object; use `serde_json::Map::new()` for `{}`.
     #[must_use]
-    pub fn new(name: CommandName, command: &'a str, code: Code, data: D) -> Self {
+    pub fn new(name: CommandName, subcommand: Option<&str>, code: Code, data: D) -> Self {
         let claim = name.claim();
+        let command = match subcommand {
+            Some(sub) => format!("{name} {sub}"),
+            None => name.as_str().to_owned(),
+        };
         Self {
             code,
             ok: code.is_success(),
@@ -103,7 +107,7 @@ mod tests {
         let findings = [Finding::new("dag/cycle:a-b", "a depends on b depends on a")];
         let envelope = Envelope::new(
             CommandName::Dag,
-            "dag check",
+            Some("check"),
             DAG_CYCLE,
             json!({"tasks": 2}),
         )
@@ -128,10 +132,20 @@ mod tests {
 
     #[test]
     fn ok_is_true_only_for_exit_code_zero() {
-        let green = Envelope::new(CommandName::Lint, "lint", OK, json!({}));
-        let red = Envelope::new(CommandName::Dag, "dag check", DAG_CYCLE, json!({}));
+        let green = Envelope::new(CommandName::Lint, None, OK, json!({}));
+        let red = Envelope::new(CommandName::Dag, Some("check"), DAG_CYCLE, json!({}));
 
         assert_eq!(emitted(&green).1["ok"], json!(true), "0 is ok");
         assert_eq!(emitted(&red).1["ok"], json!(false), "1 is not ok");
+    }
+
+    #[test]
+    fn command_is_the_name_alone_without_a_subcommand() {
+        let envelope = Envelope::new(CommandName::FloorGuard, None, OK, json!({}));
+        assert_eq!(
+            emitted(&envelope).1["command"],
+            json!("floor-guard"),
+            "the name as typed"
+        );
     }
 }
