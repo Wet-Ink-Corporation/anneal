@@ -23,6 +23,7 @@ use crate::grill::{self, GrillArgs};
 use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
+use crate::mode::{self, ModeArgs};
 use crate::plan::{self, PlanArgs};
 use crate::task::{self, TaskArgs};
 
@@ -59,6 +60,9 @@ pub enum Command {
     /// Approve a plan, or check that it is approved and current
     #[command(after_help = command_help(CommandName::Plan))]
     Plan(PlanArgs),
+    /// Enter build or diagnose mode, whose preconditions gate source edits, or leave it
+    #[command(after_help = command_help(CommandName::Mode))]
+    Mode(ModeArgs),
     /// Lint skills, specs, plans and briefs
     #[command(after_help = command_help(CommandName::Lint))]
     Lint(LintArgs),
@@ -99,7 +103,7 @@ pub enum Command {
     #[command(after_help = command_help(CommandName::Statusline))]
     Statusline(Stub),
     /// Run a plugin hook (hooks.json calls these; they fail open unless passed --fail-closed,
-    /// and the guard always fails closed)
+    /// and the guard and preconditions hooks always fail closed)
     #[command(after_help = command_help(CommandName::Hook))]
     Hook(HookArgs),
 }
@@ -133,6 +137,7 @@ impl Command {
             Self::Grill(_) => CommandName::Grill,
             Self::Task(_) => CommandName::Task,
             Self::Plan(_) => CommandName::Plan,
+            Self::Mode(_) => CommandName::Mode,
             Self::Lint(_) => CommandName::Lint,
             Self::Dag(_) => CommandName::Dag,
             Self::FloorGuard(_) => CommandName::FloorGuard,
@@ -160,6 +165,7 @@ impl Command {
             | Self::Grill(_)
             | Self::Task(_)
             | Self::Plan(_)
+            | Self::Mode(_)
             | Self::Lint(_)
             | Self::Dag(_)
             | Self::FloorGuard(_)
@@ -249,6 +255,10 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         Command::Plan(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             plan::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
+        Command::Mode(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            mode::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Task(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;

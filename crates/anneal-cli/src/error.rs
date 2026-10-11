@@ -16,6 +16,7 @@ use crate::exit_codes::{self, Code};
 use crate::floor_guard::FloorError;
 use crate::grill::GrillError;
 use crate::lint::skills::LintError;
+use crate::mode::ModeError;
 use crate::paths::PathError;
 use crate::task::TaskError;
 
@@ -67,6 +68,9 @@ pub enum CliError {
     /// `anneal task done` could not run its test command.
     #[error(transparent)]
     Task(#[from] TaskError),
+    /// `anneal mode` could not read its worktree, plan or design tree.
+    #[error(transparent)]
+    Mode(#[from] ModeError),
     /// `anneal floor-guard` could not check the diff.
     #[error(transparent)]
     FloorGuard(#[from] FloorError),
@@ -92,6 +96,7 @@ impl CliError {
             Self::Eval(error) => error.code(),
             Self::Grill(error) => error.code(),
             Self::Task(error) => error.code(),
+            Self::Mode(error) => error.code(),
             Self::FloorGuard(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }

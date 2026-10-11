@@ -58,7 +58,7 @@ Every event is one JSON object: the event's `type` and payload, flattened beside
 | *payload* | | The type's fields (below) |
 | `actor` | string | Who wrote it: `cli`, `hook`, `agent` or `human:<name>` |
 | `session_id` | string or null | The writing agent session |
-| `worktree` | string or null | The directory name of the writer's git worktree |
+| `worktree` | string or null | The writer's git worktree; `anneal mode` writes its top-level directory as `git rev-parse --show-toplevel` prints it |
 | `branch` | string or null | The checked-out branch |
 | `head` | string or null | The commit at `HEAD` |
 | `ts` | string | When it was written, RFC 3339 (anneal writes UTC seconds: `2026-10-11T09:30:00Z`) |
@@ -80,7 +80,7 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 | Tag | Carried by |
 |---|---|
 | `session:<session_id>` | every event with a `session_id` |
-| `worktree:<worktree>` | every event with a `worktree` |
+| `worktree:<worktree>` | every event with a `worktree` (`mode_set` is selected by it) |
 | `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red` |
 | `plan:<plan>` | `plan_approved`, `grill_confirmed` |
 | `pr:<number>` | `verdict_set`, `round_started` |
@@ -88,11 +88,12 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 3)
+## Event registry (version 4)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
-version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `docs/task.md`).
+version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `docs/task.md`);
+version 4 added `mode_set` (#23, `docs/preconditions.md`).
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -105,6 +106,7 @@ version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `do
 | `round_started` | `pr` number, `round` number (from 1) | `pr:` |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
+| `mode_set` | `mode` `build`/`diagnose`/`off`, `clean` boolean (no change, untracked files included, at entry), `plan?` string and `tree?` string (build: paths relative to the worktree root, `/`-separated); the latest one for a worktree is its mode, see [preconditions.md](preconditions.md) | `worktree:` (from the envelope) |
 
 ## Commands
 

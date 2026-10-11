@@ -3,12 +3,14 @@
 //!
 //! Hooks fail open: a hook's own failures are reported in its output (or as an `ERROR` line on
 //! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2. The
-//! exception is a guard (`hook guard`, or any hook passed `--fail-closed`), which fails closed: it
-//! denies what it cannot judge, and exits 2 when its decision cannot be written.
+//! exception is a guard (`hook guard`, `hook preconditions`, or any hook passed `--fail-closed`),
+//! which fails closed: it denies what it cannot judge, and exits 2 when its decision cannot be
+//! written.
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
 pub(crate) mod guard;
+pub(crate) mod preconditions;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -16,6 +18,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
+use serde::Serialize;
 
 /// Arguments of `anneal hook`.
 #[derive(Debug, Args)]
@@ -44,11 +47,14 @@ pub enum HookName {
     Bootstrap,
     /// `PreToolUse` (Bash): deny commands on the denylist; fails closed
     Guard,
+    /// `PreToolUse` (Edit|Write): in an anneal mode, deny source edits until its preconditions
+    /// hold; fails closed
+    Preconditions,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 2] = [Self::Bootstrap, Self::Guard];
+    pub const ALL: [Self; 3] = [Self::Bootstrap, Self::Guard, Self::Preconditions];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
     #[must_use]
@@ -56,6 +62,7 @@ impl HookName {
         match self {
             Self::Bootstrap => "bootstrap",
             Self::Guard => "guard",
+            Self::Preconditions => "preconditions",
         }
     }
 
@@ -64,7 +71,7 @@ impl HookName {
     pub const fn is_guard(self) -> bool {
         match self {
             Self::Bootstrap => false,
-            Self::Guard => true,
+            Self::Guard | Self::Preconditions => true,
         }
     }
 }
@@ -96,7 +103,70 @@ where
     match args.hook {
         HookName::Bootstrap => bootstrap::run(env, out),
         HookName::Guard => guard::run(env, out),
+        HookName::Preconditions => preconditions::run(env, out),
     }
+}
+
+/// Why a hook's stdin could not be read.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StdinError {
+    /// stdin could not be read.
+    #[error("reading stdin")]
+    Read(#[source] io::Error),
+    /// stdin held more than the hook's cap.
+    #[error("the input is larger than {max} bytes")]
+    TooLarge {
+        /// The cap, in bytes.
+        max: u64,
+    },
+}
+
+/// Reads all of `stdin`, refusing more than `max` bytes (H-13): it reads one byte past the cap,
+/// so a larger input is an error, never silently truncated.
+pub(crate) fn read_stdin<R: Read>(stdin: R, max: u64) -> Result<Vec<u8>, StdinError> {
+    let mut bytes = Vec::new();
+    stdin
+        .take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(StdinError::Read)?;
+    if u64::try_from(bytes.len()).is_ok_and(|len| len <= max) {
+        Ok(bytes)
+    } else {
+        Err(StdinError::TooLarge { max })
+    }
+}
+
+/// `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...}}`.
+#[derive(Debug, Serialize)]
+struct DenyOutput<'a> {
+    #[serde(rename = "hookSpecificOutput")]
+    specific: PreToolUseOutput<'a>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreToolUseOutput<'a> {
+    hook_event_name: &'static str,
+    permission_decision: &'static str,
+    permission_decision_reason: &'a str,
+}
+
+/// Writes Claude Code's `PreToolUse` deny decision, with `line` (an `ERROR <reason>` line) as
+/// its reason, any line break folded into a space, then a newline.
+///
+/// # Errors
+/// Returns the I/O error when `out` cannot be written.
+pub(crate) fn write_deny<W: Write>(mut out: W, line: &str) -> io::Result<()> {
+    let line = line.replace(['\r', '\n'], " ");
+    let output = DenyOutput {
+        specific: PreToolUseOutput {
+            hook_event_name: "PreToolUse",
+            permission_decision: "deny",
+            permission_decision_reason: &line,
+        },
+    };
+    serde_json::to_writer(&mut out, &output)?;
+    writeln!(out)
 }
 
 /// The one-line reason for `error`: its message followed by each source, joined by `": "`,

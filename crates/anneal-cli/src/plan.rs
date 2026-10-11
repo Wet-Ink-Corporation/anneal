@@ -9,6 +9,8 @@
 
 mod check;
 
+pub(crate) use check::Status;
+
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -142,6 +144,25 @@ fn normalised(text: &str, separator: char) -> String {
         kept.push(segment);
     }
     kept.join("/")
+}
+
+/// Whether the plan recorded under `id` is approved at `bytes`, its current content: what
+/// `plan check` reports, for a caller that already holds the plan and the ledger (the
+/// preconditions hook, which reads the plan by its worktree-relative id).
+///
+/// # Errors
+/// [`CliError::Usage`] when `id` cannot be a ledger tag, [`CliError::Ledger`] when the ledger
+/// cannot be read.
+pub(crate) fn approval_of(store: &Store, id: &str, bytes: &[u8]) -> Result<Status, CliError> {
+    let tag = LedgerTag::new(TagKey::Plan, id).map_err(|error| CliError::Usage {
+        reason: format!("the plan path is recorded as a ledger tag: {error}"),
+    })?;
+    let approvals = Filter {
+        types: vec![EventKind::PlanApproved],
+        tags: vec![tag],
+    };
+    let previous = latest(store, &approvals)?;
+    Ok(check::status_of(&sha256(bytes), previous.as_ref()))
 }
 
 /// The latest event in `store` among `approvals` (the approvals of one plan).

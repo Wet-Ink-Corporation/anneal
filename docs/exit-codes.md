@@ -70,6 +70,14 @@ A green result proves the task's tests ran green. It does **not** prove that the
 
 A green result proves the plan is approved and current with its inputs. It does **not** prove that the plan is correct or complete.
 
+## `anneal mode`
+
+| Code | Meaning |
+|---|---|
+| 0 | mode recorded |
+
+A green result proves the mode was recorded for this worktree, with whether its tree was clean. It does **not** prove that the mode's preconditions hold: the preconditions hook checks them at each edit.
+
 ## `anneal lint`
 
 | Code | Meaning |

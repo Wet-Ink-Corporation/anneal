@@ -18,6 +18,7 @@ mod lint_spec;
 mod lint_terms;
 mod paths;
 mod plan;
+mod preconditions;
 mod repo_gates;
 #[cfg(test)]
 mod support;

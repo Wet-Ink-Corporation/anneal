@@ -99,6 +99,9 @@ pub const PLAN_APPROVED: Code = Code::new(0, "approved and current");
 pub const PLAN_NOT_APPROVED: Code = Code::new(3, "not approved");
 /// `plan approve|check`: the plan was approved but its inputs changed since.
 pub const PLAN_STALE: Code = Code::new(4, "stale: inputs changed since approval");
+/// `mode build|diagnose|off`: the mode was recorded (a dirty tree is recorded too, with a
+/// finding).
+pub const MODE_RECORDED: Code = Code::new(0, "mode recorded");
 /// `lint`: no error findings (warnings and review items are listed but do not fail).
 pub const LINT_CLEAN: Code = Code::new(0, "no errors");
 /// `lint`: at least one error finding.
@@ -177,6 +180,7 @@ impl CommandCodes {
                 "approve|check",
                 &[PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE],
             ),
+            CommandName::Mode => ("", &[MODE_RECORDED]),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
             CommandName::Dag => ("check|frontier", &[OK, DAG_CYCLE, DAG_DANGLING]),
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),

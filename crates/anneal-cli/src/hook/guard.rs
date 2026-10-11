@@ -19,9 +19,9 @@ use std::time::Duration;
 
 use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, StoreError, Timestamp, TimestampError};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::hook::{HookEnv, reason};
+use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_deny};
 use crate::paths::{self, PathError};
 use denylist::{Context, Verdict};
 
@@ -32,11 +32,13 @@ pub(crate) const MAX_INPUT_BYTES: u64 = 1024 * 1024;
 /// How long git may take to find the ledger (`anneal ledger` allows 10 s). With
 /// [`BUSY_TIMEOUT`] this keeps recording a denial well inside the hook's 5 s `timeout`, after
 /// which Claude Code blocks the call without the guard's reason; see `docs/guard.md`.
-const GIT_TIMEOUT: Duration = Duration::from_secs(1);
+/// The preconditions hook, under the same 5 s budget, shares it.
+pub(crate) const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How long each ledger statement waits for another process's lock (the default is 10 s). A
 /// locked ledger fails the first statement that meets the lock, so it costs about this once.
-const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
+/// The preconditions hook shares it.
+pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// The `point` of the guard's `gate_blocked` events, before the rule's id.
 const POINT_PREFIX: &str = "guard.";
@@ -145,12 +147,9 @@ struct ToolInput {
 /// Why the hook input could not be used.
 #[derive(Debug, thiserror::Error)]
 enum InputError {
-    /// stdin could not be read.
-    #[error("reading stdin")]
-    Read(#[source] io::Error),
-    /// stdin held more than [`MAX_INPUT_BYTES`].
-    #[error("the input is larger than {MAX_INPUT_BYTES} bytes")]
-    TooLarge,
+    /// stdin could not be read, or held more than [`MAX_INPUT_BYTES`].
+    #[error(transparent)]
+    Stdin(#[from] StdinError),
     /// stdin was not a JSON object of the expected shape.
     #[error("the input is not PreToolUse JSON")]
     Json(#[source] serde_json::Error),
@@ -170,21 +169,6 @@ enum RecordError {
     Clock(#[source] TimestampError),
     #[error("appending gate_blocked")]
     Append(#[source] StoreError),
-}
-
-/// `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...}}`.
-#[derive(Debug, Serialize)]
-struct Output<'a> {
-    #[serde(rename = "hookSpecificOutput")]
-    specific: PreToolUseOutput<'a>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PreToolUseOutput<'a> {
-    hook_event_name: &'static str,
-    permission_decision: &'static str,
-    permission_decision_reason: &'a str,
 }
 
 /// Runs the guard: reads the input from `env.stdin`, decides, and on a denial records it in
@@ -211,14 +195,7 @@ where
 
 /// Reads and parses at most [`MAX_INPUT_BYTES`] of `stdin`.
 fn read_input<R: Read>(stdin: R) -> Result<Input, InputError> {
-    let mut bytes = Vec::new();
-    stdin
-        .take(MAX_INPUT_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(InputError::Read)?;
-    if !u64::try_from(bytes.len()).is_ok_and(|len| len <= MAX_INPUT_BYTES) {
-        return Err(InputError::TooLarge);
-    }
+    let bytes = read_stdin(stdin, MAX_INPUT_BYTES)?;
     serde_json::from_slice(&bytes).map_err(InputError::Json)
 }
 
@@ -280,7 +257,7 @@ fn record(
 /// Writes the deny decision for `denial` to `out`; its reason is one `ERROR` line, which notes
 /// `unrecorded` when the ledger could not take the event.
 fn write_denial<W: Write>(
-    mut out: W,
+    out: W,
     denial: &Denial,
     unrecorded: Option<&RecordError>,
 ) -> io::Result<()> {
@@ -293,16 +270,7 @@ fn write_denial<W: Write>(
             reason(error)
         ),
     };
-    let line = line.replace(['\r', '\n'], " ");
-    let output = Output {
-        specific: PreToolUseOutput {
-            hook_event_name: "PreToolUse",
-            permission_decision: "deny",
-            permission_decision_reason: &line,
-        },
-    };
-    serde_json::to_writer(&mut out, &output)?;
-    writeln!(out)
+    write_deny(out, &line)
 }
 
 #[cfg(test)]
