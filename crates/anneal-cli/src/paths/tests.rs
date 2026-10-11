@@ -1,6 +1,6 @@
 use super::{
-    PathError, StoreSource, anneal_home_from, git_failure, ledger_store, read_capped,
-    wait_with_deadline,
+    PathError, StoreSource, anneal_home_from, git_failure, ledger_store, ledger_store_within,
+    read_capped, wait_with_deadline,
 };
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -212,6 +212,20 @@ fn outside_git_an_empty_anneal_store_falls_through_to_the_folder() {
         "<folder>/.anneal"
     );
     assert_eq!(found.source, StoreSource::Folder, "outside git");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git in a subprocess")]
+fn the_callers_git_timeout_bounds_store_resolution() {
+    let dir = tempfile::tempdir().expect("temp dir");
+
+    // The deadline is checked before git's exit is polled, so a zero timeout always expires.
+    let result = ledger_store_within(None, env(&[]), dir.path(), Duration::ZERO);
+
+    assert!(
+        matches!(&result, Err(PathError::GitTimeout { timeout }) if timeout.is_zero()),
+        "the caller's timeout, not GIT_TIMEOUT: {result:?}"
+    );
 }
 
 #[test]

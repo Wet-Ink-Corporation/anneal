@@ -80,7 +80,12 @@ pub enum PathError {
 /// for another reason; [`PathError::Git`] or [`PathError::GitTimeout`] when git cannot run;
 /// [`PathError::NonUtf8Output`] for a path that is not UTF-8.
 pub fn git_common_dir(cwd: &Path) -> Result<PathBuf, PathError> {
-    let output = run_git(cwd, &["rev-parse", "--git-common-dir"], GIT_TIMEOUT)?;
+    git_common_dir_within(cwd, GIT_TIMEOUT)
+}
+
+/// [`git_common_dir`] with git killed after `timeout`.
+fn git_common_dir_within(cwd: &Path, timeout: Duration) -> Result<PathBuf, PathError> {
+    let output = run_git(cwd, &["rev-parse", "--git-common-dir"], timeout)?;
     if !output.status.success() {
         return Err(git_failure(cwd, &output.stderr));
     }
@@ -185,20 +190,22 @@ fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, PathError> {
         .map_err(PathError::Git)
 }
 
-/// Polls `child` until it exits; past `timeout` kills and reaps it.
+/// Polls `child` until it exits; past `timeout` kills and reaps it. The deadline is checked
+/// before each poll, so an exit first seen after the deadline is a timeout, and a zero
+/// timeout always is.
 fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, PathError> {
     let started = Instant::now();
     loop {
+        if started.elapsed() >= timeout {
+            child.kill().map_err(PathError::Git)?;
+            child.wait().map_err(PathError::Git)?;
+            return Err(PathError::GitTimeout { timeout });
+        }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
             // Kill it: the reader threads would otherwise wait on its pipes forever.
             Err(error) => return Err(kill_after(child, error)),
-        }
-        if started.elapsed() >= timeout {
-            child.kill().map_err(PathError::Git)?;
-            child.wait().map_err(PathError::Git)?;
-            return Err(PathError::GitTimeout { timeout });
         }
         thread::sleep(POLL_INTERVAL);
     }
@@ -257,6 +264,20 @@ pub fn ledger_store(
     lookup: impl Fn(&str) -> Option<OsString>,
     cwd: &Path,
 ) -> Result<StoreLocation, PathError> {
+    ledger_store_within(flag, lookup, cwd, GIT_TIMEOUT)
+}
+
+/// [`ledger_store`], with git given `git_timeout` instead of [`GIT_TIMEOUT`]: for callers with a
+/// deadline, such as a hook.
+///
+/// # Errors
+/// As [`ledger_store`]; [`PathError::GitTimeout`] carries `git_timeout`.
+pub fn ledger_store_within(
+    flag: Option<&Path>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    cwd: &Path,
+    git_timeout: Duration,
+) -> Result<StoreLocation, PathError> {
     let located = |path: PathBuf, source| StoreLocation { path, source };
     if let Some(path) = flag {
         return Ok(located(cwd.join(path), StoreSource::Flag));
@@ -264,7 +285,7 @@ pub fn ledger_store(
     if let Some(path) = lookup(ANNEAL_STORE_VAR).filter(|value| !value.is_empty()) {
         return Ok(located(cwd.join(path), StoreSource::Env));
     }
-    match git_common_dir(cwd) {
+    match git_common_dir_within(cwd, git_timeout) {
         Ok(common) => Ok(located(
             common.join("anneal").join(LEDGER_FILE),
             StoreSource::GitCommonDir,

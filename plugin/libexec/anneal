@@ -7,7 +7,8 @@
 #
 # Hook calls are `anneal hook <name> [--fail-closed] ...`. With no binary anywhere a hook exits 0
 # (fail open), except one marked --fail-closed (a guard), which prints one ERROR line and exits 2,
-# the code Claude Code reads as "block".
+# the code Claude Code reads as "block". `hook bootstrap` (SessionStart) also prints the install
+# hint as SessionStart output, so the session starts and says why anneal is off.
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ext=""
 case "$(uname -s 2>/dev/null)-$(uname -m 2>/dev/null)" in
@@ -47,6 +48,12 @@ if [ "${1:-}" = "hook" ]; then
       exit 2
     fi
   done
+  if [ "${2:-}" = "bootstrap" ]; then
+    # Fixed text with no quotes or backslashes, so it is valid JSON as written (anneal.cmd prints
+    # the same, naming the .ps1 build script).
+    hint="anneal is not installed: no anneal binary in the plugin's libexec and none on PATH, so anneal's hooks and gates are off this session. Install a release, or build one with scripts/build-plugin-bins.sh or cargo install --path crates/anneal-cli."
+    printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$hint" "$hint"
+  fi
   exit 0
 fi
 echo "anneal: $why" >&2

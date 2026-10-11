@@ -36,6 +36,7 @@ mod schema;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use happenstance_core::{
     AppendCondition, AppendError, Event, InvalidEventType, InvalidQuery, Query, QueryItem,
@@ -310,18 +311,29 @@ impl Store {
     /// newer build ([`OpenError::NewerSchema`]), it is in WAL ([`OpenError::JournalMode`]), or
     /// it is a database with tables that is not a ledger ([`OpenError::NotALedger`]).
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        Self::open_with_busy_timeout(path, schema::BUSY_TIMEOUT)
+    }
+
+    /// [`Store::open`], with every statement waiting at most `busy_timeout` (instead of the
+    /// default 10 s) for another process's lock. For callers with a deadline, such as a hook:
+    /// a ledger locked longer than that fails with [`StoreError::Open`] (or, after opening,
+    /// the read or append error) rather than waiting.
+    ///
+    /// # Errors
+    /// As [`Store::open`].
+    pub fn open_with_busy_timeout(path: &Path, busy_timeout: Duration) -> Result<Self, StoreError> {
         refuse_inside_runtime()?;
-        Self::try_open(path).map_err(|source| StoreError::Open {
+        Self::try_open(path, busy_timeout).map_err(|source| StoreError::Open {
             path: path.to_path_buf(),
             source,
         })
     }
 
-    fn try_open(path: &Path) -> Result<Self, OpenError> {
+    fn try_open(path: &Path, busy_timeout: Duration) -> Result<Self, OpenError> {
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(OpenError::CreateDir)?;
         }
-        let inner = schema::open(path)?;
+        let inner = schema::open(path, busy_timeout)?;
         let runtime = Driver::new()?;
         Ok(Self { inner, runtime })
     }

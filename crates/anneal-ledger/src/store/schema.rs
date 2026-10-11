@@ -19,9 +19,10 @@ pub(crate) const JOURNAL_MODE: &str = "truncate";
 /// 1. happenstance 0.3.2's event store schema, under a TRUNCATE journal.
 pub(crate) const LEDGER_SCHEMA: i64 = 1;
 
-/// How long a connection waits for another process's lock before reporting busy. Appends hold
-/// the write lock for one small insert, so this is only reached by a stuck writer.
-const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a connection waits for another process's lock before reporting busy, per
+/// statement, unless the caller asks for less. Appends hold the write lock for one small
+/// insert, so this is only reached by a stuck writer.
+pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What a file holds before the ledger changes anything in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,8 +41,9 @@ enum Contents {
 /// the connection only reads, so a file that is refused (newer schema, WAL, not a ledger) is
 /// left exactly as it was. The schema version and WAL are first read from the file header,
 /// before SQLite opens the file at all. A new file gets its schema and stamp in one
-/// `BEGIN IMMEDIATE`.
-pub(super) fn open(path: &Path) -> Result<SqliteEventStore, OpenError> {
+/// `BEGIN IMMEDIATE`. Every statement on the connection, including happenstance's later reads
+/// and writes, waits at most `busy_timeout` for another process's lock.
+pub(super) fn open(path: &Path, busy_timeout: Duration) -> Result<SqliteEventStore, OpenError> {
     if let Some(header) = read_header(path)? {
         refuse_newer(header.user_version)?;
         if header.wal {
@@ -50,7 +52,7 @@ pub(super) fn open(path: &Path) -> Result<SqliteEventStore, OpenError> {
             });
         }
     }
-    let conn = connect(path)?;
+    let conn = connect_waiting(path, busy_timeout)?;
     let contents = inspect(&conn)?;
     use_truncate(&conn)?;
     if contents == Contents::Empty {
@@ -118,10 +120,18 @@ fn read_header(path: &Path) -> Result<Option<Header>, OpenError> {
     }
 }
 
-/// A connection to `path` with a busy timeout. Opening it changes nothing in the file.
+/// A connection to `path` with the default [`BUSY_TIMEOUT`]. Opening it changes nothing in the
+/// file.
+#[cfg(test)]
 pub(crate) fn connect(path: &Path) -> Result<Connection, OpenError> {
+    connect_waiting(path, BUSY_TIMEOUT)
+}
+
+/// A connection to `path` whose statements wait at most `busy_timeout` for another process's
+/// lock. Opening it changes nothing in the file.
+fn connect_waiting(path: &Path, busy_timeout: Duration) -> Result<Connection, OpenError> {
     let conn = Connection::open(path)?;
-    conn.busy_timeout(BUSY_TIMEOUT)?;
+    conn.busy_timeout(busy_timeout)?;
     Ok(conn)
 }
 

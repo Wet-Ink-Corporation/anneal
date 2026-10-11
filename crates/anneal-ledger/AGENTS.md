@@ -21,7 +21,8 @@ The domain modules do no I/O; `store` is the only module that touches the file s
   time.
 
 ## Public surface
-Re-exported from `lib.rs`: `Store` (`open`, `append`, `append_if`, `query`, `tail`), `Filter`,
+Re-exported from `lib.rs`: `Store` (`open`, `open_with_busy_timeout`, `append`, `append_if`,
+`query`, `tail`), `Filter`,
 `Condition`, `Appended`, `Recorded`, `EventEnvelope`, `Timestamp`, `LedgerEvent` and its payload
 structs (in `event`), `EventKind`, `REGISTRY_VERSION`, `LedgerTag`, `TagKey`, and the errors
 `StoreError`, `OpenError`, `SchemaError`, `TagError`, `TimestampError`, `UnknownEventKind`.
@@ -54,6 +55,9 @@ Internal to the workspace (`publish = false`); the wire format (docs/ledger.md) 
 - Concurrent appends serialise without loss or corruption
   (`twenty_concurrent_appenders_write_twenty_events_without_corruption`).
 - A conditioned append is first-writer-wins (`a_second_approval_of_the_same_plan_conflicts`).
+- Every statement on a store's connection waits at most its busy timeout for another
+  process's lock: 10 s by default, or the caller's with `Store::open_with_busy_timeout`
+  (`a_short_busy_timeout_gives_up_on_a_locked_ledger_quickly`).
 
 ## Errors
 `SchemaError` (an event does not match the registry), `TagError`, `TimestampError`,
@@ -82,3 +86,4 @@ directories. Run with `cargo test -p anneal-ledger`.
 | 2026-10-11 | No WAL-to-TRUNCATE conversion or orphan-WAL handling (weigh-in has them for its 0.1.x ledgers): anneal has no older ledgers; a WAL file is refused with `OpenError::JournalMode`, read before anything is changed | ARC | weigh-in wi-0940cf (refuse WAL); enforced in review round 1 (#54) |
 | 2026-10-11 | Only an empty database is given the ledger schema; a database with other tables is refused (`OpenError::NotALedger`), and the CLI reports it like any store that cannot be opened (exit 70) | ARC | review round 1 (#54) |
 | 2026-10-11 | `Store` stays synchronous (its own current-thread runtime); calls inside a tokio runtime context return `StoreError::InsideRuntime`; dropped inside one, its runtime is shut down with `shutdown_background` (it only `block_on`s, so nothing is lost) | H-03, ERR-13 | review rounds 1 and 2 (#54) |
+| 2026-10-11 | Add `Store::open_with_busy_timeout` (additive) so a caller with a deadline, the SessionStart hook, bounds every statement's wait for a lock; `Store::open` keeps the 10 s default | H-13 | #13 review round 1 (two-way; additive to an internal crate) |

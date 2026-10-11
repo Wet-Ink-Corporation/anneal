@@ -1,7 +1,74 @@
-//! Output for hooks: silent on success, exactly one grep-able `ERROR <reason>` line on failure.
+//! `anneal hook <name>`, the commands `plugin/hooks/hooks.json` runs, and the output helpers
+//! hooks share: silent on success, exactly one grep-able `ERROR <reason>` line on failure.
+//!
+//! Hooks fail open: a hook's own failures are reported in its output (or as an `ERROR` line on
+//! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2.
+//! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
+
+pub(crate) mod bootstrap;
 
 use std::error::Error;
-use std::io::{self, Write};
+use std::ffi::OsString;
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
+
+use clap::{Args, Subcommand};
+
+/// Arguments of `anneal hook`.
+#[derive(Debug, Args)]
+pub struct HookArgs {
+    /// The hook to run.
+    #[command(subcommand)]
+    pub hook: HookName,
+}
+
+/// The hooks, by their id in `hooks.metadata.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
+pub enum HookName {
+    /// `SessionStart`: inject the bootstrap index, and the live state when it changed
+    Bootstrap,
+}
+
+impl HookName {
+    /// Every hook.
+    pub const ALL: [Self; 1] = [Self::Bootstrap];
+
+    /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bootstrap => "bootstrap",
+        }
+    }
+}
+
+/// What a hook reads from its process, read at the edge (`cli`) and passed in so tests can
+/// supply their own.
+pub(crate) struct HookEnv<R, D, L> {
+    /// The hook input (Claude Code writes one JSON object).
+    pub(crate) stdin: R,
+    /// Reads the working directory, called only when the input names none.
+    pub(crate) current_dir: D,
+    /// Reads one environment variable.
+    pub(crate) lookup: L,
+}
+
+/// Runs `anneal hook <name>` with what it reads from `env`, and writes the hook's output to
+/// `out`. Pass `&mut out` to keep the writer.
+///
+/// # Errors
+/// Only the I/O error from writing `out`; every other failure is reported in the output.
+pub(crate) fn run<R, D, L, W>(args: &HookArgs, env: HookEnv<R, D, L>, out: W) -> io::Result<()>
+where
+    R: Read,
+    D: FnOnce() -> io::Result<PathBuf>,
+    L: Fn(&str) -> Option<OsString>,
+    W: Write,
+{
+    match args.hook {
+        HookName::Bootstrap => bootstrap::run(env, out),
+    }
+}
 
 /// The one-line reason for `error`: its message followed by each source, joined by `": "`,
 /// with any line break folded into a space so the result is a single line.

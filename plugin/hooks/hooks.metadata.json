@@ -1,4 +1,16 @@
 {
+  "$schema": "./hooks.metadata.schema.json",
   "version": 1,
-  "hooks": []
+  "hooks": [
+    {
+      "id": "bootstrap",
+      "event": "SessionStart",
+      "matcher": "startup|clear|compact|resume",
+      "fingerprint": "sha256:856794ce16dcf8fd",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (bootstrap), Feature catalog #1, skill rules 4, 15, 19 and 21; story #13"
+    }
+  ]
 }

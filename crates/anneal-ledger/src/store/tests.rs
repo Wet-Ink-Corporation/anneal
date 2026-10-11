@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::PoisonError;
+use std::time::{Duration, Instant};
 
 use happenstance_core::Event;
 use happenstance_sqlite::rusqlite::Connection;
@@ -555,4 +556,32 @@ fn twenty_concurrent_appenders_write_twenty_events_without_corruption() {
         "20 events"
     );
     assert_eq!(integrity, "ok", "no corruption");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn a_short_busy_timeout_gives_up_on_a_locked_ledger_quickly() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    drop(Store::open(&path).expect("opens"));
+    let holder = connect(&path).expect("connects");
+    holder
+        .execute_batch("BEGIN EXCLUSIVE")
+        .expect("takes the exclusive lock");
+
+    // The behavior is a time bound, so this one test reads the clock. The default busy timeout
+    // is 10 s per statement; the bound below is far under it and far over 50 ms.
+    let started = Instant::now();
+    let result = Store::open_with_busy_timeout(&path, Duration::from_millis(50));
+    let waited = started.elapsed();
+
+    assert!(
+        matches!(result, Err(StoreError::Open { .. })),
+        "a locked ledger cannot be opened: {result:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "gave up within the short timeout, not the default: {waited:?}"
+    );
+    holder.execute_batch("ROLLBACK").expect("releases the lock");
 }

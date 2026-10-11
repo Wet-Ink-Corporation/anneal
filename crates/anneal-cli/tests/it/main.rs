@@ -2,6 +2,8 @@
 
 mod cli;
 mod eval_routing;
+mod hook_bootstrap;
+mod hooks_manifest;
 mod ledger;
 mod lint_skills;
 mod lint_skills_inputs;
