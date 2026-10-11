@@ -19,7 +19,8 @@ A plan is markdown. Fenced code blocks and HTML comments are not read, as for sp
 
 - **Header**: the lines before the first `##` section hold one `Spec:` line naming the spec:
   a markdown link (`- Spec: [export](../specs/export.md)`), a path in backticks or a plain path.
-  The path is read relative to the plan's directory, as a markdown link is.
+  A relative path is read relative to the plan's directory, as a markdown link is; an
+  absolute one as written.
 - **Sections**: `## Goal`, `## Tasks` and `## Review focus`, each once (titles in any letter
   case); Goal and Review focus hold text. Other sections, such as `## Architecture`, are free.
 - **Tasks**: each level-3 heading under `## Tasks` is a task, `### <id>: <title>` or
@@ -63,6 +64,10 @@ structure only, never the plan's merit.
   (`lint/plan/<rule>:<file>:<line>[:<subject>]`, stable across runs), `rule`, `file`, `line`,
   `message`, `fix` and, where one line can hold several findings, `subject` (a section, a
   field or a blocker id).
+- At most 1,000 findings are listed, the first in line order; `data.omitted` counts the rest
+  and is present only when some were dropped. A plan within the 1 MiB cap can hold about
+  100,000 task headings, and a finding for each would make an envelope of about 100 MB. The
+  run still exits 1, and `plan approve` lists the same findings and `data.omitted`.
 - A blocker outside the plan belongs in the tracker: `anneal dag check` checks the ticket
   graph (see the `plan` skill's `references/slice.md`).
 
@@ -77,12 +82,16 @@ Run only on the human's explicit approval of the plan they were shown. It refuse
 
 Otherwise it appends `plan_approved {plan, hash}` to the ledger (`docs/ledger.md`) and exits
 0. `plan` is the plan id: the path as given, separated by `/` on every platform, with `.` and empty
-components dropped, so `./docs/plans/x.md` and `docs/plans/x.md` are one plan (`..` is kept, and the path is not made absolute: approve and
-check a plan from the same directory, normally the repository root). `hash` is `sha256:` and
+components dropped, so `./docs/plans/x.md` and `docs/plans/x.md` are one plan (`..` is
+kept, leading separators are kept as written, so an absolute path stays absolute and a UNC
+path keeps its `//`, and the path is not made absolute: approve and check a plan from the
+same directory, normally the repository root). `hash` is `sha256:` and
 the 64 lowercase hex digits of the SHA-256 of the plan's bytes. When the latest approval of the
 plan already has that hash, nothing is appended and `data.appended` is `false`. The append is
-conditioned on no other approval of the plan landing since the one it read, so of two racing
-approvals one is refused (exit 3, a `conflict` finding).
+conditioned on no other approval of the plan landing since the one it read. When one did, it
+is read back: with the same hash the plan is already approved (exit 0, `data.appended`
+`false`); with another hash the approval is refused (exit 3, a `plan/approve/conflict:<plan>`
+finding).
 
 ## `anneal plan check`
 
@@ -95,6 +104,7 @@ Compares the hash of the plan's bytes with the latest `plan_approved` for its id
 | 4 | stale: the plan changed since its latest approval | `stale` |
 
 `data` also holds `plan`, `hash`, `approved` (`{hash, position, ts}` of the latest approval,
-or `null`), `store` and `source`. `check` never creates a ledger: with none, the plan is not
-approved. It does not re-read the spec; a spec edited after approval is the reviewer's to
+or `null`), `store` and `source`. `check` never creates a ledger: when the ledger path does
+not exist, the plan is not approved; any other ledger it cannot open (a directory, an
+unreadable file) fails with exit 70 rather than reading as not approved. It does not re-read the spec; a spec edited after approval is the reviewer's to
 catch.

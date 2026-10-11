@@ -257,6 +257,110 @@ fn the_plan_id_drops_current_directory_components() -> TestResult {
     Ok(())
 }
 
+/// Asserts `output` is a usage error: exit 2, nothing on stdout, one `ERROR` line naming
+/// `names`.
+fn assert_usage_error(output: &Output, what: &str, names: &str) -> TestResult {
+    let stderr = std::str::from_utf8(&output.stderr)?;
+    assert_eq!(output.status.code(), Some(2), "{what}: usage: {stderr}");
+    assert!(output.stdout.is_empty(), "{what}: nothing on stdout");
+    assert_eq!(stderr.lines().count(), 1, "{what}: one line: {stderr}");
+    assert!(
+        stderr.starts_with("ERROR ") && stderr.contains(names),
+        "{what}: an ERROR line naming {names}: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_session_the_ledger_refuses_is_a_usage_error_and_opens_no_ledger() -> TestResult {
+    let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+    // A control character: the ledger refuses it in a tag.
+    let session = "session\u{7}";
+
+    let (output, _) = anneal(
+        work.path(),
+        &[
+            "plan",
+            "approve",
+            PLAN,
+            "--session",
+            session,
+            "--store",
+            STORE,
+        ],
+    )?;
+
+    assert_usage_error(&output, "session", "--session")?;
+    assert!(!work.path().join(STORE).exists(), "no ledger opened");
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_plan_path_that_is_not_utf8_is_a_usage_error_and_opens_no_ledger() -> TestResult {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+    let odd = OsStr::from_bytes(b"docs/plans/odd-\xff.md");
+    fs::write(work.path().join(odd), CLEAN_PLAN)?;
+    for action in ["approve", "check"] {
+        let output = anneal_in(work.path())
+            .args(["plan", action])
+            .arg(odd)
+            .args(["--store", STORE])
+            .output()?;
+
+        assert_usage_error(&output, action, "UTF-8")?;
+        assert!(!work.path().join(STORE).exists(), "{action}: no ledger");
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_fails_when_the_ledger_path_is_a_directory() -> TestResult {
+    let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+    fs::create_dir(work.path().join(STORE))?;
+
+    let (output, envelope) = plan(work.path(), "check", PLAN)?;
+
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!(
+        output.status.code(),
+        Some(70),
+        "not read as unapproved: {envelope} {stderr}"
+    );
+    assert!(output.stdout.is_empty(), "no envelope");
+    assert_eq!(stderr.lines().count(), 1, "one line: {stderr}");
+    assert!(stderr.starts_with("ERROR "), "an ERROR line: {stderr}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_refusal_lists_the_capped_findings_and_counts_the_rest() -> TestResult {
+    let repeats = "### T1: again\n\n".repeat(1_500);
+    let work = workspace(
+        AGREED_SPEC,
+        &CLEAN_PLAN.replace("## Review focus", &format!("{repeats}## Review focus")),
+    )?;
+
+    let (refused, envelope) = plan(work.path(), "approve", PLAN)?;
+
+    assert_eq!(refused.status.code(), Some(3), "not approved");
+    assert_eq!(keys(&envelope).len(), 1_000, "capped");
+    assert_eq!(
+        envelope.pointer("/data/omitted"),
+        Some(&Value::from(500)),
+        "the rest counted"
+    );
+    assert!(!work.path().join(STORE).exists(), "no ledger opened");
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_plan_is_a_usage_error() -> TestResult {

@@ -99,6 +99,40 @@ fn a_clean_plan_with_its_spec_exits_0_with_the_plan_as_read() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_plan_near_the_read_cap_full_of_repeats_reports_a_bounded_envelope() -> TestResult {
+    let work = workspace(true)?;
+    let repeat = "### T1: again\n\n";
+    let count = (1024 * 1024 - PLAN.len()) / repeat.len();
+    let repeats = repeat.repeat(count);
+    let plan = PLAN.replace("## Review focus", &format!("{repeats}## Review focus"));
+    fs::write(work.path().join("docs/plans/big.md"), plan)?;
+
+    let (output, envelope) = lint_plan(work.path(), "docs/plans/big.md")?;
+
+    assert_eq!(output.status.code(), Some(1), "findings");
+    let listed = |pointer: &str| {
+        envelope
+            .pointer(pointer)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+    };
+    assert_eq!(listed("/findings"), Some(1_000), "capped");
+    assert_eq!(listed("/data/findings"), Some(1_000), "capped in data too");
+    assert_eq!(
+        envelope.pointer("/data/omitted"),
+        Some(&Value::from(count - 1_000)),
+        "the rest counted"
+    );
+    assert!(
+        output.stdout.len() < 2 * 1024 * 1024,
+        "the envelope stays small: {} bytes",
+        output.stdout.len()
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_plan_whose_spec_is_missing_exits_1_with_a_spec_finding() -> TestResult {
     let work = workspace(false)?;
 

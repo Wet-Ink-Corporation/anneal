@@ -1,4 +1,6 @@
-use super::{Plan, Report, Rule, Task, check};
+use std::borrow::Cow;
+
+use super::{MAX_FINDINGS, Plan, Report, Rule, Task, check, slashed, spec_path};
 use crate::lint::spec::Source;
 
 /// A plan with every rule satisfied.
@@ -289,5 +291,111 @@ fn finding_keys_name_the_rule_file_line_and_subject() {
         keys,
         vec!["lint/plan/blockers:plan.md:33:T9".to_owned()],
         "stable key"
+    );
+}
+
+#[test]
+fn findings_stop_at_the_cap_and_the_rest_are_counted() {
+    let repeats: String = (0..5_000).map(|_| "### T1: again\n\n").collect();
+    let text = CLEAN.replace("## Review focus", &format!("{repeats}## Review focus"));
+
+    let report = check(plan(&text));
+
+    assert_eq!(report.findings.len(), MAX_FINDINGS, "capped");
+    assert_eq!(report.omitted, 5_000 - MAX_FINDINGS, "the rest counted");
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|finding| finding.rule == Rule::Tasks),
+        "all repeated ids"
+    );
+    assert_eq!(
+        report.findings.first().map(|finding| finding.line),
+        Some(35),
+        "the first ones in line order are kept: the first repeat replaces `## Review focus`"
+    );
+    assert_eq!(report.plan.tasks.len(), 2, "each id read once");
+}
+
+#[test]
+fn thousands_of_chained_tasks_check_clean() {
+    let tasks: Vec<String> = (1..=5_000)
+        .map(|n| {
+            let blocked = if n == 1 {
+                "none".to_owned()
+            } else {
+                format!("T{}", n - 1)
+            };
+            format!(
+                "### T{n}: step\n\n- Files: `src/{n}.rs`\n- Test: `cargo test t{n}`\n- Blocked by: \
+                 {blocked}\n\n"
+            )
+        })
+        .collect();
+    let text = format!(
+        "# Plan\n\n- Spec: [s](s.md)\n\n## Goal\n\nGo.\n\n## Tasks\n\n{}## Review focus\n\n- \
+         Order.\n",
+        tasks.concat()
+    );
+
+    let report = check(plan(&text));
+
+    assert_eq!(found(&report), Vec::new(), "clean");
+    assert_eq!(report.omitted, 0, "nothing omitted");
+    assert_eq!(report.plan.tasks.len(), 5_000, "every task read");
+}
+
+#[test]
+fn a_relative_spec_joins_the_plan_directory_with_forward_slashes() {
+    assert_eq!(
+        spec_path("docs/plans/p.md", "../specs/s.md", '/'),
+        "docs/plans/../specs/s.md",
+        "unix"
+    );
+    assert_eq!(
+        spec_path(r"docs\plans\p.md", "../specs/s.md", '\\'),
+        "docs/plans/../specs/s.md",
+        "Windows separators become `/`"
+    );
+    assert_eq!(spec_path("p.md", "s.md", '/'), "s.md", "no directory");
+    assert_eq!(spec_path("/p.md", "s.md", '/'), "/s.md", "the root");
+}
+
+#[test]
+fn an_absolute_spec_is_used_as_written() {
+    assert_eq!(
+        spec_path("docs/p.md", "/srv/specs/s.md", '/'),
+        "/srv/specs/s.md",
+        "unix absolute"
+    );
+    assert_eq!(
+        spec_path(r"docs\p.md", r"C:\specs\s.md", '\\'),
+        r"C:\specs\s.md",
+        "a Windows drive"
+    );
+    assert_eq!(
+        spec_path(r"docs\p.md", r"\specs\s.md", '\\'),
+        r"\specs\s.md",
+        "a Windows rooted path"
+    );
+    assert_eq!(
+        spec_path("docs/p.md", "C:/specs/s.md", '/'),
+        "docs/C:/specs/s.md",
+        "a drive means nothing on unix"
+    );
+}
+
+#[test]
+fn slashed_replaces_only_a_foreign_separator() {
+    assert_eq!(slashed(r"a\b\c.md", '\\'), "a/b/c.md", "Windows");
+    assert_eq!(
+        slashed(r"a\b.md", '/'),
+        r"a\b.md",
+        "a backslash is a name on unix"
+    );
+    assert!(
+        matches!(slashed("a/b.md", '\\'), Cow::Borrowed(_)),
+        "nothing to replace"
     );
 }

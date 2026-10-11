@@ -9,7 +9,6 @@
 
 mod check;
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -21,13 +20,13 @@ use anneal_ledger::{
 };
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::command::CommandName;
+use crate::content_hash::sha256;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::lint::plan::{self as plan_lint, PlanFinding};
+use crate::lint::plan::{self as plan_lint, PlanFinding, slashed};
 use crate::lint::{read_whole, read_whole_bytes, spec};
 use crate::paths::{self, StoreSource};
 
@@ -86,19 +85,21 @@ pub(crate) fn run<O: Write>(
     }
 }
 
-/// A plan read for approval or a check: its id, bytes and hash.
+/// A plan read for approval or a check: its id, bytes and hash, and the filter that selects
+/// its approvals in the ledger.
 #[derive(Debug)]
-struct Read {
+struct PlanBytes {
     id: String,
     bytes: Vec<u8>,
     hash: String,
+    approvals: Filter,
 }
 
 /// Reads the plan at `file`, as `lint plan` does (relative to the process's working
 /// directory): a missing file, a directory or one over the read cap is a usage error, and so
 /// is a path that is not UTF-8 or that the ledger refuses as a tag value. Checked before any
 /// ledger is opened.
-fn read(file: &Path) -> Result<(Read, Filter), CliError> {
+fn read(file: &Path) -> Result<PlanBytes, CliError> {
     let id = plan_id(file).ok_or_else(|| CliError::Usage {
         reason: "the plan path must be UTF-8: it is recorded as the plan id".to_owned(),
     })?;
@@ -111,36 +112,36 @@ fn read(file: &Path) -> Result<(Read, Filter), CliError> {
     };
     let bytes = read_whole_bytes(file).map_err(CliError::Plan)?;
     let hash = sha256(&bytes);
-    Ok((Read { id, bytes, hash }, approvals))
+    Ok(PlanBytes {
+        id,
+        bytes,
+        hash,
+        approvals,
+    })
 }
 
-/// The plan's id: its path as given, separated by `/` on every platform, without `.` or empty
-/// components, so `./p.md`, `p.md` and (on Windows) `.\p.md` are one plan. `None` when the
-/// path is not UTF-8.
+/// The plan's id: its path as given, separated by `/` on every platform, without `.`
+/// components or repeated separators, so `./p.md`, `p.md` and (on Windows) `.\p.md` are one
+/// plan. Leading separators are kept as written: `/abs/p.md` stays absolute and a UNC path
+/// (`\\server\share\p.md`) keeps its `//`. `None` when the path is not UTF-8.
 fn plan_id(file: &Path) -> Option<String> {
-    let text = file.to_str()?;
-    let slashed = if MAIN_SEPARATOR == '/' {
-        Cow::Borrowed(text)
-    } else {
-        Cow::Owned(text.replace(MAIN_SEPARATOR, "/"))
-    };
-    let kept: Vec<&str> = slashed
-        .split('/')
-        .enumerate()
-        // A leading empty segment is the root of an absolute path; keep it.
-        .filter(|(at, segment)| *segment != "." && (*at == 0 || !segment.is_empty()))
-        .map(|(_, segment)| segment)
-        .collect();
-    Some(kept.join("/"))
+    Some(normalised(file.to_str()?, MAIN_SEPARATOR))
 }
 
-/// `sha256:` and the 64 hex digits of the SHA-256 of `bytes`.
-fn sha256(bytes: &[u8]) -> String {
-    let hex = Sha256::digest(bytes)
-        .into_iter()
-        .flat_map(|byte| [byte >> 4, byte & 0x0f])
-        .filter_map(|nibble| char::from_digit(u32::from(nibble), 16));
-    "sha256:".chars().chain(hex).collect()
+/// The plan id for the path `text` on a platform whose separator is `separator`.
+fn normalised(text: &str, separator: char) -> String {
+    let slashed = slashed(text, separator);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut inside = false;
+    for segment in slashed.split('/') {
+        // Empty segments before the first name are the root (`/`) or a UNC prefix (`//`).
+        if segment == "." || (inside && segment.is_empty()) {
+            continue;
+        }
+        inside |= !segment.is_empty();
+        kept.push(segment);
+    }
+    kept.join("/")
 }
 
 /// The latest event in `store` among `approvals` (the approvals of one plan).
@@ -149,9 +150,9 @@ fn latest(store: &Store, approvals: &Filter) -> Result<Option<Recorded>, CliErro
 }
 
 /// The hash an approval records; `None` for any other event.
-const fn approved_hash(recorded: &Recorded) -> Option<&String> {
+fn approved_hash(recorded: &Recorded) -> Option<&str> {
     match &recorded.event.event {
-        LedgerEvent::PlanApproved(PlanApproved { hash, .. }) => Some(hash),
+        LedgerEvent::PlanApproved(PlanApproved { hash, .. }) => Some(hash.as_str()),
         _ => None,
     }
 }
@@ -162,6 +163,9 @@ struct Refused<'a> {
     hash: &'a str,
     spec: Option<&'a Path>,
     needs_clarification: Option<usize>,
+    /// Lint findings dropped at `lint plan`'s cap; present only when some were.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omitted: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -183,7 +187,7 @@ fn approve<O: Write>(
     lookup: impl Fn(&str) -> Option<OsString>,
     out: &mut O,
 ) -> Result<Code, CliError> {
-    let (plan, approvals) = read(&args.file)?;
+    let plan = read(&args.file)?;
     // Built first, so a session id the ledger refuses is a usage error before any ledger opens.
     let event = approval(&plan, args.session.as_deref())?;
     let outcome = plan_lint::examine(&args.file, &plan.bytes);
@@ -193,20 +197,11 @@ fn approve<O: Write>(
     }
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
     let store = Store::open(&location.path)?;
-    let (appended, position) = match record(&store, &event, approvals, &plan.hash)? {
+    let previous = latest(&store, &plan.approvals)?;
+    let (appended, position) = match record(&store, &event, &plan, previous.as_ref())? {
         Recording::Already(position) => (false, position),
         Recording::Appended(position) => (true, position),
-        Recording::Conflict => {
-            let refusal = Refusal {
-                needs_clarification: None,
-                findings: vec![Finding::new(
-                    format!("plan/approve/conflict:{}", plan.id),
-                    "another approval of this plan was recorded at the same time. fix: run \
-                     `anneal plan check`, then approve again if it is not current.",
-                )],
-            };
-            return refuse(&plan, spec_path, &refusal, out);
-        }
+        Recording::Conflict => return refuse(&plan, spec_path, &conflict(&plan), out),
     };
     let data = Approved {
         plan: &plan.id,
@@ -228,22 +223,26 @@ fn approve<O: Write>(
     )
 }
 
-/// Why an approval is refused: its findings, and the spec's marker count when that is why.
+/// Why an approval is refused: its findings, the spec's marker count when that is why, and
+/// how many lint findings were dropped at the cap, if any.
 #[derive(Debug)]
 struct Refusal {
     needs_clarification: Option<usize>,
     findings: Vec<Finding>,
+    omitted: Option<usize>,
 }
 
 /// The refusal for a plan with lint findings, or whose spec has markers; `None` when it may
 /// be approved.
 fn refusal(outcome: &plan_lint::Outcome) -> Result<Option<Refusal>, CliError> {
-    let findings = &outcome.report.findings;
+    let report = &outcome.report;
+    let findings = &report.findings;
     let Some(spec_path) = outcome.spec.as_deref().filter(|_| findings.is_empty()) else {
         // A plan without a spec link has a lint finding, so this lists at least one.
         return Ok(Some(Refusal {
             needs_clarification: None,
             findings: findings.iter().map(PlanFinding::to_envelope).collect(),
+            omitted: (report.omitted > 0).then_some(report.omitted),
         }));
     };
     let spec_text = read_whole(spec_path).map_err(CliError::Plan)?;
@@ -262,12 +261,26 @@ fn refusal(outcome: &plan_lint::Outcome) -> Result<Option<Refusal>, CliError> {
     Ok(Some(Refusal {
         needs_clarification: Some(open),
         findings: vec![finding],
+        omitted: None,
     }))
+}
+
+/// The refusal when another approval of the plan landed between reading and appending.
+fn conflict(plan: &PlanBytes) -> Refusal {
+    Refusal {
+        needs_clarification: None,
+        findings: vec![Finding::new(
+            format!("plan/approve/conflict:{}", plan.id),
+            "another approval of this plan was recorded at the same time. fix: run `anneal plan \
+             check`, then approve again if it is not current.",
+        )],
+        omitted: None,
+    }
 }
 
 /// Writes the refusal envelope: exit 3, not approved.
 fn refuse<O: Write>(
-    plan: &Read,
+    plan: &PlanBytes,
     spec: Option<&Path>,
     refusal: &Refusal,
     out: &mut O,
@@ -277,6 +290,7 @@ fn refuse<O: Write>(
         hash: &plan.hash,
         spec,
         needs_clarification: refusal.needs_clarification,
+        omitted: refusal.omitted,
     };
     let envelope = Envelope::new(
         CommandName::Plan,
@@ -288,7 +302,7 @@ fn refuse<O: Write>(
 }
 
 /// The `plan_approved` event for `plan`, with the session it names.
-fn approval(plan: &Read, session: Option<&str>) -> Result<EventEnvelope, CliError> {
+fn approval(plan: &PlanBytes, session: Option<&str>) -> Result<EventEnvelope, CliError> {
     let event = LedgerEvent::PlanApproved(PlanApproved {
         // The event owns what it records; `plan` is still reported afterwards.
         plan: plan.id.clone(),
@@ -311,30 +325,38 @@ enum Recording {
     Already(u64),
     /// Appended at this position.
     Appended(u64),
-    /// Another approval of the plan landed after the one read; nothing was appended.
+    /// Another approval of the plan, with another hash, landed after `previous`; nothing was
+    /// appended.
     Conflict,
 }
 
-/// Appends `event` unless the latest of `approvals` already has `hash`, and only if no other
-/// approval lands after the one read.
+/// Appends `event`, the approval of `plan`, unless `previous` (the latest approval of `plan`
+/// the caller read) already has its hash, and only if no approval lands after `previous`.
+/// When one did, it is read back: one with the same hash means the plan is already approved,
+/// any other is a conflict.
 fn record(
     store: &Store,
     event: &EventEnvelope,
-    approvals: Filter,
-    hash: &str,
+    plan: &PlanBytes,
+    previous: Option<&Recorded>,
 ) -> Result<Recording, CliError> {
-    let previous = latest(store, &approvals)?;
-    if let Some(recorded) = &previous
-        && approved_hash(recorded).is_some_and(|approved| approved == hash)
-    {
-        return Ok(Recording::Already(recorded.position));
+    let already = |recorded: &Recorded| {
+        (approved_hash(recorded) == Some(plan.hash.as_str()))
+            .then_some(Recording::Already(recorded.position))
+    };
+    if let Some(done) = previous.and_then(already) {
+        return Ok(done);
     }
     let after = previous.map_or(0, |recorded| recorded.position);
-    let condition = Condition::none_matching(approvals).after(after);
-    Ok(match store.append_if(event, &condition)? {
-        Appended::At(position) => Recording::Appended(position),
-        Appended::Conflict => Recording::Conflict,
-    })
+    // The condition owns its filter; `plan` keeps the filter to read the winner back.
+    let condition = Condition::none_matching(plan.approvals.clone()).after(after);
+    match store.append_if(event, &condition)? {
+        Appended::At(position) => Ok(Recording::Appended(position)),
+        Appended::Conflict => Ok(latest(store, &plan.approvals)?
+            .as_ref()
+            .and_then(already)
+            .unwrap_or(Recording::Conflict)),
+    }
 }
 
 fn emit<O: Write, D: Serialize>(envelope: &Envelope<'_, D>, out: &mut O) -> Result<Code, CliError> {
@@ -342,45 +364,4 @@ fn emit<O: Write, D: Serialize>(envelope: &Envelope<'_, D>, out: &mut O) -> Resu
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use super::{plan_id, sha256};
-
-    #[test]
-    fn the_hash_is_sha256_in_lowercase_hex() {
-        assert_eq!(
-            sha256(b"abc"),
-            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-            "the FIPS 180-2 test vector"
-        );
-    }
-
-    #[test]
-    fn the_plan_id_drops_only_current_directory_components() {
-        assert_eq!(
-            plan_id(Path::new("./a/./b.md")).as_deref(),
-            Some("a/b.md"),
-            "dots"
-        );
-        assert_eq!(
-            plan_id(Path::new("a/../b.md")).as_deref(),
-            Some("a/../b.md"),
-            "parents kept"
-        );
-    }
-
-    #[test]
-    fn the_plan_id_keeps_the_root_and_drops_empty_components() {
-        assert_eq!(
-            plan_id(Path::new("/abs/./p.md")).as_deref(),
-            Some("/abs/p.md"),
-            "absolute"
-        );
-        assert_eq!(
-            plan_id(Path::new("a//b.md")).as_deref(),
-            Some("a/b.md"),
-            "doubled separator"
-        );
-    }
-}
+mod tests;

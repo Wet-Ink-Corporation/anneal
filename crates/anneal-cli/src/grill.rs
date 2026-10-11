@@ -19,9 +19,9 @@ use anneal_ledger::event::GrillConfirmed;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, TagError, Timestamp};
 use clap::{Args, Subcommand};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::command::CommandName;
+use crate::content_hash::sha256;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
@@ -297,16 +297,6 @@ fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
     let mut bytes = Vec::new();
     file.take(limit).read_to_end(&mut bytes).map_err(failed)?;
     Ok(bytes)
-}
-
-/// `sha256:` and the 64 hex digits of the SHA-256 of `bytes`.
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .flat_map(|byte| [byte >> 4, byte & 0x0f])
-        .filter_map(|nibble| char::from_digit(u32::from(nibble), 16));
-    "sha256:".chars().chain(hex).collect()
 }
 
 #[derive(Debug, Serialize)]

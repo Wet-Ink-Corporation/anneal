@@ -141,6 +141,8 @@ pub(super) fn tasks(file: &str, section: Option<&Section<'_>>) -> (Vec<Read>, Ve
         ));
     }
     let mut read: Vec<Read> = Vec::new();
+    // The ids read so far, so a repeat is found in log time rather than by a scan.
+    let mut ids: BTreeSet<&str> = BTreeSet::new();
     for (position, start) in starts.iter().enumerate() {
         let end = starts
             .get(position.saturating_add(1))
@@ -162,7 +164,7 @@ pub(super) fn tasks(file: &str, section: Option<&Section<'_>>) -> (Vec<Read>, Ve
             ));
             continue;
         };
-        if read.iter().any(|earlier| earlier.task.id == id) {
+        if !ids.insert(id) {
             findings.push(Rule::Tasks.at(file, head.number).finding(
                 format!("task id `{id}` is used again; only the first is read"),
                 "give each task its own id.",

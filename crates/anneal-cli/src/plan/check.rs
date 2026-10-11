@@ -1,7 +1,8 @@
 //! `anneal plan check`: the plan's hash against its latest approval.
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
 use anneal_ledger::Store;
@@ -60,13 +61,14 @@ pub(super) fn check<O: Write>(
     lookup: impl Fn(&str) -> Option<OsString>,
     out: &mut O,
 ) -> Result<Code, CliError> {
-    let (plan, approvals) = read(&args.file)?;
+    let plan = read(&args.file)?;
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
-    // A ledger that does not exist holds no approval; opening it would create it.
-    let previous = if location.path.is_file() {
-        latest(&Store::open(&location.path)?, &approvals)?
-    } else {
-        None
+    // A ledger that does not exist holds no approval; opening it would create it. Anything
+    // else (a directory, an unreadable file) is opened, so its failure is reported (70)
+    // rather than read as "not approved".
+    let previous = match fs::metadata(&location.path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Ok(_) | Err(_) => latest(&Store::open(&location.path)?, &plan.approvals)?,
     };
     let approved = previous.as_ref().and_then(|recorded| {
         approved_hash(recorded).map(|hash| ApprovalData {

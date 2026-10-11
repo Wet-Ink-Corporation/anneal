@@ -28,6 +28,7 @@ pub mod adr;
 pub mod baseline;
 pub mod cli;
 pub mod command;
+mod content_hash;
 pub mod dag;
 pub mod envelope;
 pub mod error;

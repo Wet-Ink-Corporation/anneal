@@ -13,9 +13,10 @@
 mod parse;
 mod rules;
 
+use std::borrow::Cow;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use clap::Args;
 use serde::Serialize;
@@ -188,8 +189,25 @@ pub struct Report {
     pub plan: Plan,
     /// The `Spec:` line's number, or 0 when there is none.
     pub spec_line: usize,
-    /// Every finding, sorted by line, rule and subject.
+    /// The first [`MAX_FINDINGS`] findings, sorted by line, rule and subject.
     pub findings: Vec<PlanFinding>,
+    /// How many findings past [`MAX_FINDINGS`] were dropped.
+    pub omitted: usize,
+}
+
+/// The most findings a report keeps.
+///
+/// A plan within the read cap can hold about 100,000 one-line task headings, and a finding
+/// for each would make an envelope of about 100 MB. The rest are counted in
+/// [`Report::omitted`]; any finding still fails the plan.
+pub const MAX_FINDINGS: usize = 1_000;
+
+/// Sorts `findings` and keeps the first [`MAX_FINDINGS`], adding the rest to `omitted`.
+fn bound(findings: &mut Vec<PlanFinding>, omitted: &mut usize) {
+    sort(findings);
+    let over = findings.len().saturating_sub(MAX_FINDINGS);
+    findings.truncate(MAX_FINDINGS);
+    *omitted = omitted.saturating_add(over);
 }
 
 /// Checks the text of `plan`. Never fails: every problem is a finding. Whether the spec exists
@@ -208,7 +226,8 @@ pub fn check(plan: Source<'_>) -> Report {
     let (tasks, task_findings) = rules::tasks(plan.file, rules::find(&sections, rules::TASKS));
     findings.extend(task_findings);
     findings.extend(rules::blockers(plan.file, &tasks));
-    sort(&mut findings);
+    let mut omitted = 0;
+    bound(&mut findings, &mut omitted);
     Report {
         plan: Plan {
             spec: spec.map(|(target, _)| target.to_owned()),
@@ -216,6 +235,7 @@ pub fn check(plan: Source<'_>) -> Report {
         },
         spec_line: spec.map_or(0, |(_, line)| line),
         findings,
+        omitted,
     }
 }
 
@@ -228,7 +248,8 @@ fn sort(findings: &mut [PlanFinding]) {
 pub struct Outcome {
     /// The plan, as named.
     pub file: String,
-    /// The spec's path: the `Spec:` target joined to the plan's directory.
+    /// The spec's path: the `Spec:` target joined to the plan's directory, or as written when
+    /// it is absolute.
     pub spec: Option<PathBuf>,
     /// What the checks found, including a missing spec file.
     pub report: Report,
@@ -254,14 +275,11 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
         file: &file,
         text: &text,
     });
-    // Joined with `/` rather than `Path::join`, so the path shown (and keyed) is the same on
-    // every platform; Windows opens `/`-separated paths too.
-    let spec = report.plan.spec.as_deref().map(|target| {
-        match path.parent().map(Path::display).map(|dir| dir.to_string()) {
-            Some(dir) if !dir.is_empty() => PathBuf::from(format!("{dir}/{target}")),
-            _ => PathBuf::from(target),
-        }
-    });
+    let spec = report
+        .plan
+        .spec
+        .as_deref()
+        .map(|target| PathBuf::from(spec_path(&file, target, MAIN_SEPARATOR)));
     if let Some(resolved) = spec.as_deref().filter(|resolved| !resolved.is_file()) {
         report
             .findings
@@ -270,9 +288,35 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
                 "link the spec relative to this plan's directory, as a markdown link is read.",
                 None,
             ));
-        sort(&mut report.findings);
+        bound(&mut report.findings, &mut report.omitted);
     }
     Outcome { file, spec, report }
+}
+
+/// The path of the spec a plan at `plan` links as `target`, where `separator` is the
+/// platform's path separator: an absolute `target` as is, otherwise `target` joined to the
+/// plan's directory. Joined, and the directory's separators replaced, with `/` rather than
+/// `Path::join`, so the path shown (and keyed) is the same on every platform; Windows opens
+/// `/`-separated paths too.
+fn spec_path(plan: &str, target: &str, separator: char) -> String {
+    let drive = separator == '\\'
+        && matches!(target.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
+    if drive || target.starts_with(['/', separator]) {
+        return target.to_owned();
+    }
+    match slashed(plan, separator).rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{target}"),
+        None => target.to_owned(),
+    }
+}
+
+/// `text` with each `separator` replaced by `/`, borrowed when there is none to replace.
+pub(crate) fn slashed(text: &str, separator: char) -> Cow<'_, str> {
+    if separator == '/' || !text.contains(separator) {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(text.replace(separator, "/"))
+    }
 }
 
 /// The envelope's `data` for `lint plan`.
@@ -283,6 +327,9 @@ struct Data<'a> {
     tasks: usize,
     plan: &'a Plan,
     findings: Vec<Detail<'a>>,
+    /// How many findings were dropped at [`MAX_FINDINGS`]; present only when some were.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omitted: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -316,6 +363,7 @@ pub(crate) fn report<O: Write>(outcome: &Outcome, out: &mut O) -> Result<Code, C
                 finding,
             })
             .collect(),
+        omitted: (report.omitted > 0).then_some(report.omitted),
     };
     let findings: Vec<Finding> = report
         .findings
