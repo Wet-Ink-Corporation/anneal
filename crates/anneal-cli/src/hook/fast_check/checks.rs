@@ -5,6 +5,15 @@
 //! lint ...`), so each has one deadline however many git calls it makes. `check:fast` writes
 //! to a fresh temporary file rather than a pipe: a process it leaves behind cannot hold the
 //! hook open, and only the end of its output is read.
+//!
+//! Limits: on a timeout only the child itself is killed; a process it started (a `git` call
+//! under `anneal floor-guard`, anything `check:fast` starts) can outlive it, as for `task
+//! done`, since std has no portable process-group kill. On Windows a child's handles are
+//! inherited by the processes it starts: a killed `anneal floor-guard` can leave a `git` call
+//! holding its output pipe, so joining the readers waits until git exits (bounded by
+//! floor-guard's own 60 s per call, past the hook's timeout, after which Claude Code drops the
+//! output). A process `check:fast` leaves behind keeps the log file open there, so removing it
+//! fails and is noted, and the file stays in the temporary directory.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -14,8 +23,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 
+use crate::error_chain::reason;
 use crate::exit_codes;
-use crate::hook::reason;
 use crate::process::{self, WaitError};
 
 /// The least time worth starting a process with.

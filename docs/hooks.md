@@ -159,6 +159,15 @@ failures (the ledger, git, a check that cannot start) are notes too: the hook ne
 them. `check_fast` writes to a fresh temporary file rather than a pipe, so a process it leaves
 running cannot hold the hook open past its timeout; the file is removed afterwards.
 
-Limit: on Windows a child's handles are inherited by the processes it starts, so a killed
-`anneal floor-guard` can leave a `git` call holding its output pipe until git finishes; git is
-bounded by floor-guard's own timeouts.
+Limits:
+
+- On a timeout only the child itself is killed. A process it started (a `git` call under a
+  killed `anneal floor-guard`, anything `check_fast` starts) can outlive it and keep running;
+  std has no portable process-group kill (as for `anneal task done`, `docs/task.md`).
+- On Windows a child's handles are inherited by the processes it starts. A killed
+  `anneal floor-guard` can leave a `git` call holding its output pipe, and the hook waits for
+  that git to exit (floor-guard allows 60 s per git call), so it can run past its 15 s timeout;
+  Claude Code then drops its output and carries on (it fails open). A process `check_fast`
+  leaves running keeps the log file open, so removing it fails: that is a note, and the file
+  stays in the temporary directory. On unix the log is removed and the hook returns as soon as
+  `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).

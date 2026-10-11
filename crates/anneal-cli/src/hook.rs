@@ -181,19 +181,7 @@ pub(crate) fn write_deny<W: Write>(mut out: W, line: &str) -> io::Result<()> {
     writeln!(out)
 }
 
-/// The one-line reason for `error`: its message followed by each source, joined by `": "`,
-/// with any line break folded into a space so the result is a single line.
-#[must_use]
-pub fn reason(error: &dyn Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text.replace(['\r', '\n'], " ")
-}
+pub use crate::error_chain::reason;
 
 /// Writes `ERROR <reason>` and a newline to `err`, as one line.
 ///

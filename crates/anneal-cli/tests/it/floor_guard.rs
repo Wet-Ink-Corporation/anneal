@@ -330,6 +330,67 @@ fn a_deleted_ratchet_file_removes_every_ratchet() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_ratchet_file_renamed_away_removes_every_ratchet() -> TestResult {
+    let dir = repo(&[(RATCHETS, &ratchets(10.0, 80.0))])?;
+    git(dir.path(), &["mv", RATCHETS, ".anneal/old.json"]);
+
+    let envelope = envelope(&floor_guard(dir.path(), &[])?, 1)?;
+
+    assert_eq!(
+        findings(&envelope),
+        vec![
+            (json!("ratchet_loosened"), json!(RATCHETS), Value::Null),
+            (json!("ratchet_loosened"), json!(RATCHETS), Value::Null),
+        ],
+        "a rename is read from its old path: one finding per base ratchet: {envelope}"
+    );
+    Ok(())
+}
+
+/// Asserts `envelope` (exit 0) has no finding and lists the ratchet file in `data.skipped`
+/// with `reason`.
+fn assert_ratchets_skipped(envelope: &Value, reason: &str) {
+    assert_eq!(findings(envelope), Vec::new(), "{envelope}");
+    assert_eq!(
+        envelope.pointer("/data/skipped"),
+        Some(&json!([{"file": RATCHETS, "reason": reason}])),
+        "the base copy is listed, not dropped: {envelope}"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn an_invalid_base_ratchet_file_is_skipped_not_judged() -> TestResult {
+    let dir = repo(&[(RATCHETS, "{\"version\": 1, \"ratchets\": [\n")])?;
+    write(dir.path(), &[(RATCHETS, &ratchets(10.0, 80.0))])?;
+
+    let envelope = envelope(&floor_guard(dir.path(), &[])?, 0)?;
+
+    assert_ratchets_skipped(
+        &envelope,
+        "not a valid ratchet file at the merge base: no ratchet to compare",
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_base_ratchet_file_over_1_mib_is_skipped_not_judged() -> TestResult {
+    let padded = format!("{}{}", ratchets(10.0, 80.0), " ".repeat(1024 * 1024));
+    let dir = repo(&[(RATCHETS, &padded)])?;
+    write(dir.path(), &[(RATCHETS, &ratchets(10.0, 80.0))])?;
+
+    let envelope = envelope(&floor_guard(dir.path(), &[])?, 0)?;
+
+    assert_ratchets_skipped(
+        &envelope,
+        "over 1 MiB at the merge base: no ratchet to compare",
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_new_ratchet_file_is_not_judged() -> TestResult {
     let dir = repo(&[("src/lib.rs", "fn a() {}\n")])?;
     write(dir.path(), &[(RATCHETS, &ratchets(10.0, 80.0))])?;

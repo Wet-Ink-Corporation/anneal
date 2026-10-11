@@ -282,7 +282,7 @@ pub(crate) fn findings(base: &Ratchets, now: Now<'_>) -> Vec<FloorFinding> {
             None,
             format!(
                 "the ratchet file is no longer valid ({}), so its floors cannot be read",
-                crate::hook::reason(&error)
+                crate::error_chain::reason(&error)
             ),
         )],
     }

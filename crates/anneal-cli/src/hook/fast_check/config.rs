@@ -7,7 +7,7 @@
 //! `check_fast` is an argv array, run without a shell. Other keys belong to other readers and
 //! are ignored here.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -32,6 +32,9 @@ pub(crate) enum ConfigError {
     /// The file exists but cannot be read.
     #[error("{CONFIG_PATH} cannot be read")]
     Read(#[source] io::Error),
+    /// The path is not a regular file (a directory, a symlink, a FIFO): never opened.
+    #[error("{CONFIG_PATH} is not a regular file")]
+    NotAFile,
     /// The file is over [`MAX_CONFIG_BYTES`].
     #[error("{CONFIG_PATH} is larger than {MAX_CONFIG_BYTES} bytes")]
     TooLarge,
@@ -61,11 +64,15 @@ pub(crate) fn check_fast(text: &str) -> Result<Option<Vec<String>>, ConfigError>
 /// # Errors
 /// The [`ConfigError`] when the file cannot be read or is not valid.
 pub(crate) fn read(root: &Path) -> Result<Option<Vec<String>>, ConfigError> {
-    let file = match File::open(root.join(CONFIG_PATH)) {
-        Ok(file) => file,
+    let path = root.join(CONFIG_PATH);
+    // Checked before opening: a FIFO would block the hook, and a directory opens on unix only.
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Err(ConfigError::NotAFile),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(ConfigError::Read(error)),
-    };
+    }
+    let file = File::open(&path).map_err(ConfigError::Read)?;
     let mut bytes = Vec::new();
     file.take(MAX_CONFIG_BYTES.saturating_add(1))
         .read_to_end(&mut bytes)

@@ -271,6 +271,37 @@ fn a_failing_check_fast_is_a_note_with_its_exit_and_output() -> TestResult {
     Ok(())
 }
 
+/// A `check:fast` that starts a process which keeps its output open for a minute does not
+/// hold the hook: the hook returns once `check:fast` itself exits. The bound (30 s) is half
+/// the background process's life, so only a hook that waits for it fails.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs sh, git and the binary")]
+fn a_process_check_fast_leaves_behind_does_not_hold_the_hook() -> TestResult {
+    let repo = Repo::new()?;
+    repo.enter_mode()?;
+    let scratch = tempfile::tempdir()?;
+    let pid_file = scratch.path().join("background.pid");
+    let script = format!("sleep 60 & echo $! > '{}'", pid_file.display());
+    repo.check_fast(&["sh", "-c", &script])?;
+    let started = std::time::Instant::now();
+
+    let output = repo.batch(&[("Edit", "src/lib.rs")])?;
+
+    let elapsed = started.elapsed();
+    let pid = std::fs::read_to_string(&pid_file)?;
+    let killed = std::process::Command::new("kill")
+        .arg(pid.trim())
+        .status()?;
+    assert_silent(&output);
+    assert!(
+        elapsed < std::time::Duration::from_secs(30),
+        "the hook returned after {elapsed:?}, waiting on the background process"
+    );
+    assert!(killed.success(), "the background process was still running");
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_check_fast_that_cannot_start_is_a_note() -> TestResult {

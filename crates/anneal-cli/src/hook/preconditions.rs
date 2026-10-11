@@ -22,7 +22,6 @@ mod build;
 
 use std::error::Error;
 use std::ffi::OsString;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -33,8 +32,10 @@ use anneal_ledger::{
 };
 use serde::Deserialize;
 
+use crate::error_chain::reason;
+use crate::existing_ledger::{self, LedgerError};
 use crate::hook::guard::{BUSY_TIMEOUT, GIT_TIMEOUT, MAX_INPUT_BYTES};
-use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_deny};
+use crate::hook::{HookEnv, StdinError, read_stdin, write_deny};
 use crate::mode::scope::{self, PathKind};
 use crate::mode::{self, Active};
 use crate::paths::{self, PathError};
@@ -142,17 +143,6 @@ enum InputError {
     /// stdin was not a JSON object of the expected shape.
     #[error("the input is not PreToolUse JSON")]
     Json(#[source] serde_json::Error),
-}
-
-/// Why the ledger could not be opened. The fast-check hook shares it.
-#[derive(Debug, thiserror::Error)]
-pub(super) enum LedgerError {
-    #[error("reading the working directory")]
-    CurrentDir(#[source] io::Error),
-    #[error("finding the ledger")]
-    Locate(#[source] PathError),
-    #[error("opening the ledger")]
-    Open(#[source] StoreError),
 }
 
 /// Why a denial could not be recorded in the ledger.
@@ -364,24 +354,13 @@ fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> 
     }
 }
 
-/// The ledger seen from `cwd` when its file exists; `None` when it does not (opening it would
-/// create it). The fast-check hook shares it.
-pub(super) fn open_existing(
+/// The ledger seen from `cwd` when its file exists, within the hook's limits; `None` when it
+/// does not (opening it would create it, and no ledger means no mode).
+fn open_existing(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Option<Store>, LedgerError> {
-    let location =
-        paths::ledger_store_within(None, lookup, cwd, GIT_TIMEOUT).map_err(LedgerError::Locate)?;
-    // Only a missing file means no ledger; anything else (a directory, an unreadable file) is
-    // opened, so its failure is reported rather than read as "no mode".
-    if let Err(error) = fs::metadata(&location.path)
-        && error.kind() == io::ErrorKind::NotFound
-    {
-        return Ok(None);
-    }
-    Store::open_with_busy_timeout(&location.path, BUSY_TIMEOUT)
-        .map(Some)
-        .map_err(LedgerError::Open)
+    existing_ledger::open_existing(cwd, lookup, GIT_TIMEOUT, BUSY_TIMEOUT)
 }
 
 /// The denial for a source edit in a build mode recorded without a plan or design tree.

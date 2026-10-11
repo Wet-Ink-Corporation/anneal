@@ -79,6 +79,10 @@ The `fast-check` hook runs floor-guard after every batch of edits and blocks on 
 
 ## Limits
 
+- Files marked `git update-index --skip-worktree` or `--assume-unchanged` are invisible to it:
+  git reports them unchanged, so a lowered floor in such a file (the ratchet file included) is
+  not seen locally. Those flags are local to one clone; CI's fresh checkout has none, so the
+  CI run of floor-guard still sees the change once it is committed.
 - It reads text, not syntax: a pattern inside a string literal or a comment counts, so code
   that names the patterns (a linter, or this command's own tests) is reported.
 - Paths are read with `core.quotePath=false`, and the TAB git appends to a `---`/`+++` path with a space is dropped; the diff is `-U0` with `a/` and `b/` prefixes,

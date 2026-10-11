@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::batch::{Batch, Input, porcelain};
 use super::checks::grant;
-use super::config::{ConfigError, check_fast};
+use super::config::{ConfigError, check_fast, read};
 
 fn input(json: &str) -> Input {
     serde_json::from_str(json).expect("the fixture is PostToolBatch-shaped JSON")
@@ -162,6 +162,44 @@ fn a_markdown_file_under_specs_or_plans_gets_that_lint() {
         "not under a directory"
     );
     assert_eq!(super::lint_target("docs/spec/x.md"), None, "plural only");
+}
+
+#[test]
+fn scratch_and_tool_state_directories_are_never_linted_as_specs_or_plans() {
+    for file in [
+        ".temper/plans/24-build.md",
+        ".anneal/specs/draft.md",
+        ".TEMPER/plans/x.md",
+    ] {
+        assert_eq!(
+            super::lint_target(file),
+            None,
+            "{file}: a tool's own plans are not anneal plans"
+        );
+    }
+    assert_eq!(
+        super::lint_target("docs/.temper/plans/x.md"),
+        Some("plan"),
+        "only the worktree root's .temper/ is tool state"
+    );
+}
+
+#[test]
+fn a_config_path_that_is_not_a_regular_file_is_a_config_error() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+    std::fs::create_dir_all(root.path().join(".anneal/config.json")).expect("a directory there");
+
+    assert!(
+        matches!(read(root.path()), Err(ConfigError::NotAFile)),
+        "a directory is never opened as the config"
+    );
+}
+
+#[test]
+fn a_missing_config_sets_no_check_fast() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+
+    assert!(matches!(read(root.path()), Ok(None)));
 }
 
 #[test]

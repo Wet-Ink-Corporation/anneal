@@ -30,9 +30,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::hook::guard::GIT_TIMEOUT;
-use crate::hook::preconditions::open_existing;
-use crate::hook::{HookEnv, StdinError, read_stdin, reason};
+use crate::error_chain::reason;
+use crate::existing_ledger::open_existing;
+use crate::hook::guard::{BUSY_TIMEOUT, GIT_TIMEOUT};
+use crate::hook::{HookEnv, StdinError, read_stdin};
 use crate::mode;
 use crate::paths::{self, PathError};
 use batch::{Batch, Input, MAX_FILES};
@@ -174,7 +175,7 @@ fn in_mode(
         Err(PathError::NotARepository { .. }) => return Ok(None),
         Err(error) => return Err(unknown("the worktree cannot be found", &error)),
     };
-    let store = match open_existing(Path::new(&root), lookup) {
+    let store = match open_existing(Path::new(&root), lookup, GIT_TIMEOUT, BUSY_TIMEOUT) {
         Ok(Some(store)) => store,
         Ok(None) => return Ok(None),
         Err(error) => return Err(unknown("the ledger cannot be read", &error)),
@@ -305,10 +306,19 @@ fn run_checks(root: &Path, files: &[String], budget: Budget, report: &mut Report
     }
 }
 
-/// `spec` or `plan` for a `.md` file whose nearest `specs` or `plans` directory names it.
+/// Directories at the worktree root that hold tools' own state (temper's plans, anneal's
+/// config): never anneal specs or plans.
+const TOOL_STATE_DIRS: [&str; 2] = [".temper", ".anneal"];
+
+/// `spec` or `plan` for a `.md` file whose nearest `specs` or `plans` directory names it,
+/// outside [`TOOL_STATE_DIRS`].
 fn lint_target(file: &str) -> Option<&'static str> {
     let (dirs, name) = file.rsplit_once('/')?;
     if !name.to_ascii_lowercase().ends_with(".md") {
+        return None;
+    }
+    let top = dirs.split('/').next().unwrap_or(dirs).to_ascii_lowercase();
+    if TOOL_STATE_DIRS.contains(&top.as_str()) {
         return None;
     }
     dirs.rsplit('/').find_map(|dir| match dir {
