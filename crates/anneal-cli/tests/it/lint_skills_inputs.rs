@@ -98,6 +98,7 @@ fn a_path_of_the_wrong_kind_is_a_usage_error() -> TestResult {
 
 /// Lints `skills` without a cache, then twice with one at `cache`; returns the three outcomes'
 /// findings.
+#[cfg(unix)]
 fn fresh_and_cached(skills: &Path, cache: &Path) -> Result<[Vec<LintFinding>; 3], Box<dyn Error>> {
     let uncached_args = args(vec![skills.to_path_buf()]);
     let cached_args = SkillsArgs {
