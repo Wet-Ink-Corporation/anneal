@@ -67,7 +67,7 @@ fn a_usage_error_writes_exactly_one_error_line() -> TestResult {
 
 #[test]
 fn a_stub_command_exits_64_with_one_error_line() -> TestResult {
-    let output = anneal().args(["task", "done", "--all"]).output()?;
+    let output = anneal().args(["watch", "pr", "--all"]).output()?;
 
     assert_eq!(
         output.status.code(),
@@ -77,7 +77,7 @@ fn a_stub_command_exits_64_with_one_error_line() -> TestResult {
     assert!(output.stdout.is_empty(), "no envelope for an error");
     assert_eq!(
         String::from_utf8(output.stderr)?,
-        "ERROR anneal task is not implemented yet\n",
+        "ERROR anneal watch is not implemented yet\n",
         "one ERROR line"
     );
     Ok(())

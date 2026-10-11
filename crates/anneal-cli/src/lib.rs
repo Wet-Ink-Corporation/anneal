@@ -17,6 +17,8 @@
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
 //! - [`grill`]: `anneal grill frontier|confirm` over the `grill` skill's design tree.
+//! - [`task`]: `anneal task done`, recording `task_done` only after a green test command.
+//! - [`floor_guard`]: `anneal floor-guard`, refusing a diff that lowers a quality floor.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
 //! - [`ledger`]: `anneal ledger append|query|tail|journal` over the `anneal-ledger` store.
 //! - [`paths`]: the ledger store (normally in the git common dir) and the anneal home
@@ -34,6 +36,7 @@ pub mod envelope;
 pub mod error;
 pub mod eval;
 pub mod exit_codes;
+pub mod floor_guard;
 pub mod grill;
 pub mod hook;
 pub mod ledger;
@@ -42,3 +45,4 @@ pub mod paths;
 pub mod plan;
 mod process;
 pub mod rulings;
+pub mod task;

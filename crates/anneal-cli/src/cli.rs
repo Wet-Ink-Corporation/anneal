@@ -18,11 +18,13 @@ use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
+use crate::floor_guard::{self, FloorGuardArgs};
 use crate::grill::{self, GrillArgs};
 use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
 use crate::plan::{self, PlanArgs};
+use crate::task::{self, TaskArgs};
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -53,7 +55,7 @@ pub enum Command {
     Grill(GrillArgs),
     /// Mark a task done once its tests are green
     #[command(after_help = command_help(CommandName::Task))]
-    Task(Stub),
+    Task(TaskArgs),
     /// Approve a plan, or check that it is approved and current
     #[command(after_help = command_help(CommandName::Plan))]
     Plan(PlanArgs),
@@ -65,7 +67,7 @@ pub enum Command {
     Dag(DagArgs),
     /// Refuse changes that lower a quality floor
     #[command(name = "floor-guard", after_help = command_help(CommandName::FloorGuard))]
-    FloorGuard(Stub),
+    FloorGuard(FloorGuardArgs),
     /// Set or validate a review verdict
     #[command(after_help = command_help(CommandName::Verdict))]
     Verdict(Stub),
@@ -115,7 +117,7 @@ enum OnFailure {
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
-/// the future syntax (`anneal task done ...`) gets 64, not a usage error.
+/// the future syntax (`anneal watch pr ...`) gets 64, not a usage error.
 #[derive(Debug, Args)]
 pub struct Stub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -248,10 +250,18 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             plan::run(args, &cwd, |var| std::env::var_os(var), out)
         }
+        Command::Task(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            task::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Lint(args) => lint::run(args, out),
         Command::Dag(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             dag::run(args, &cwd, out)
+        }
+        Command::FloorGuard(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            floor_guard::run(args, &cwd, out)
         }
         Command::Eval(args) => eval::run(args, out),
         Command::Hook(args) => {
@@ -264,9 +274,7 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
                 .map(|()| exit_codes::HOOK_DONE)
                 .map_err(CliError::Output)
         }
-        Command::Task(_)
-        | Command::FloorGuard(_)
-        | Command::Verdict(_)
+        Command::Verdict(_)
         | Command::Watch(_)
         | Command::Ship(_)
         | Command::Rollout(_)

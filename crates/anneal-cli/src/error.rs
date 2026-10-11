@@ -13,9 +13,11 @@ use crate::command::CommandName;
 use crate::dag::DagError;
 use crate::eval::routing::RoutingError;
 use crate::exit_codes::{self, Code};
+use crate::floor_guard::FloorError;
 use crate::grill::GrillError;
 use crate::lint::skills::LintError;
 use crate::paths::PathError;
+use crate::task::TaskError;
 
 /// Why `anneal` could not produce a result.
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +64,12 @@ pub enum CliError {
     /// `anneal grill` could not read its design tree.
     #[error(transparent)]
     Grill(#[from] GrillError),
+    /// `anneal task done` could not run its test command.
+    #[error(transparent)]
+    Task(#[from] TaskError),
+    /// `anneal floor-guard` could not check the diff.
+    #[error(transparent)]
+    FloorGuard(#[from] FloorError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -83,6 +91,8 @@ impl CliError {
             Self::Lint(error) | Self::Plan(error) => error.code(),
             Self::Eval(error) => error.code(),
             Self::Grill(error) => error.code(),
+            Self::Task(error) => error.code(),
+            Self::FloorGuard(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

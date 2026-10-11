@@ -56,6 +56,7 @@ A green result proves the design tree is valid; for confirm, no question is open
 |---|---|
 | 0 | tests green |
 | 1 | test red |
+| 2 | the test command could not be started |
 
 A green result proves the task's tests ran green. It does **not** prove that the tests cover the task's acceptance criteria.
 

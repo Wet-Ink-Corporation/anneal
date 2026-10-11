@@ -89,8 +89,10 @@ pub const GRILL_INVALID: Code = Code::new(1, "invalid design tree");
 pub const GRILL_OPEN: Code = Code::new(3, "confirm: a question is still open");
 /// `task done`: the task's tests are green.
 pub const TASK_GREEN: Code = Code::new(0, "tests green");
-/// `task done`: a test is red.
+/// `task done`: a test is red (or ran past its timeout); only the red `test_run` is recorded.
 pub const TASK_TEST_RED: Code = Code::new(1, "test red");
+/// `task done`: the test command could not be started; nothing is recorded.
+pub const TASK_NOT_STARTED: Code = Code::new(2, "the test command could not be started");
 /// `plan approve|check`: the plan is approved and current.
 pub const PLAN_APPROVED: Code = Code::new(0, "approved and current");
 /// `plan approve|check`: the plan is not approved.
@@ -170,7 +172,7 @@ impl CommandCodes {
         let (scope, codes): (&'static str, &'static [Code]) = match command {
             CommandName::Ledger => ("", &[OK, LEDGER_SCHEMA_ERROR]),
             CommandName::Grill => ("", &[OK, GRILL_INVALID, GRILL_OPEN]),
-            CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED]),
+            CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED, TASK_NOT_STARTED]),
             CommandName::Plan => (
                 "approve|check",
                 &[PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE],
