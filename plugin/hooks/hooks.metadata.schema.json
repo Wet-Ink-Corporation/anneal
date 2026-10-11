@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Wet-Ink-Corporation/anneal/blob/main/plugin/hooks/hooks.metadata.schema.json",
+  "title": "anneal hooks metadata",
+  "description": "Sidecar to hooks.json: one row per hook entry, so scaffolding can be re-tested and removed as models improve. Checked by crates/anneal-cli/tests/it/hooks_manifest.rs, which also keeps this schema and its serde DTO in agreement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "hooks"],
+  "properties": {
+    "$schema": { "const": "./hooks.metadata.schema.json" },
+    "version": { "const": 1, "description": "Format version of this file." },
+    "hooks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/hook" }
+    }
+  },
+  "$defs": {
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "event",
+        "matcher",
+        "fingerprint",
+        "on_failure",
+        "role",
+        "model_generation",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Stable id: the hooks.json entry runs `anneal hook <id>`. Skills may name it as a MUST's enforcer."
+        },
+        "event": {
+          "enum": [
+            "SessionStart",
+            "SessionEnd",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PermissionRequest",
+            "Stop",
+            "SubagentStop",
+            "PreCompact",
+            "PostCompact",
+            "Notification",
+            "TaskCompleted"
+          ],
+          "description": "The Claude Code event the entry is declared under."
+        },
+        "matcher": {
+          "type": "string",
+          "description": "The entry's matcher, exactly; empty when it has none."
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{16}$",
+          "description": "sha256: and the first 16 hex digits of SHA-256 over `<event>\\n<matcher>\\n<the hook object as compact JSON, keys sorted>`. Changes whenever the entry does, so the row is re-read."
+        },
+        "on_failure": {
+          "enum": ["continue", "block"],
+          "description": "The entry's onFailure: continue (fail open) or block (a guard fails closed)."
+        },
+        "role": {
+          "enum": ["scaffolding", "guard"],
+          "description": "scaffolding helps a model generation and is re-tested, then removed, as models improve; guard enforces a gate."
+        },
+        "model_generation": {
+          "type": "string",
+          "pattern": "^claude-[0-9]+(\\.[0-9]+)?$",
+          "description": "The Claude model generation the hook was added for."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the hook is specified: blueprint section and story."
+        }
+      }
+    }
+  }
+}

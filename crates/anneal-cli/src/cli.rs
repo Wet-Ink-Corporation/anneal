@@ -17,7 +17,7 @@ use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
-use crate::hook;
+use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
 
@@ -90,6 +90,18 @@ pub enum Command {
     /// Render the Claude Code status line
     #[command(after_help = command_help(CommandName::Statusline))]
     Statusline(Stub),
+    /// Run a plugin hook (hooks.json calls these; they fail open)
+    #[command(after_help = command_help(CommandName::Hook))]
+    Hook(HookArgs),
+}
+
+/// What a failure after parsing does to the exit code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnFailure {
+    /// The error's own code (64, 70, 74, ...).
+    Exit,
+    /// Still exit 0: a hook fails open. The error is still written as one `ERROR` line.
+    FailOpen,
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
@@ -121,6 +133,31 @@ impl Command {
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
             Self::Statusline(_) => CommandName::Statusline,
+            Self::Hook(_) => CommandName::Hook,
+        }
+    }
+
+    /// Hooks fail open; every other command exits with its error's code. Exhaustive, so a new
+    /// command has to choose.
+    const fn on_failure(&self) -> OnFailure {
+        match self {
+            Self::Hook(_) => OnFailure::FailOpen,
+            Self::Ledger(_)
+            | Self::Task(_)
+            | Self::Plan(_)
+            | Self::Lint(_)
+            | Self::Dag(_)
+            | Self::FloorGuard(_)
+            | Self::Verdict(_)
+            | Self::Watch(_)
+            | Self::Ship(_)
+            | Self::Rollout(_)
+            | Self::Perf(_)
+            | Self::Brief(_)
+            | Self::Decide(_)
+            | Self::Calibrate(_)
+            | Self::Eval(_)
+            | Self::Statusline(_) => OnFailure::Exit,
         }
     }
 }
@@ -129,7 +166,8 @@ impl Command {
 /// errors to `err`, and returns the exit code. `out` is flushed before returning.
 ///
 /// On success `err` stays empty; on failure it gets exactly one `ERROR <reason>` line and the
-/// code is the error's documented code, never 0.
+/// code is the error's documented code, never 0. The one exception is `anneal hook`, which
+/// fails open: after the `ERROR` line it still exits 0 (only its usage errors exit 2).
 pub fn run<I, T, O, E>(args: I, mut out: O, mut err: E) -> Code
 where
     I: IntoIterator<Item = T>,
@@ -137,36 +175,41 @@ where
     O: Write,
     E: Write,
 {
-    let result = execute(args, &mut out)
-        .and_then(|code| out.flush().map(|()| code).map_err(CliError::Output));
-    match result {
-        Ok(code) => code,
-        Err(error) => match hook::write_error(&mut err, &error) {
-            Ok(()) => error.code(),
-            // stderr is closed too: the exit code is the only report left.
-            Err(_unreportable) => exit_codes::OUTPUT,
-        },
+    let (result, on_failure) = execute(args, &mut out);
+    let result = result.and_then(|code| out.flush().map(|()| code).map_err(CliError::Output));
+    let error = match result {
+        Ok(code) => return code,
+        Err(error) => error,
+    };
+    let reported = hook::write_error(&mut err, &error);
+    match (on_failure, reported) {
+        // A hook fails open whether or not stderr took the line.
+        (OnFailure::FailOpen, _) => exit_codes::HOOK_DONE,
+        (OnFailure::Exit, Ok(())) => error.code(),
+        // stderr is closed too: the exit code is the only report left.
+        (OnFailure::Exit, Err(_unreportable)) => exit_codes::OUTPUT,
     }
 }
 
-fn execute<I, T, O>(args: I, out: &mut O) -> Result<Code, CliError>
+/// Parses `args` and runs the command, returning its result and what a failure of it does to
+/// the exit code. A usage error always exits with its code.
+fn execute<I, T, O>(args: I, out: &mut O) -> (Result<Code, CliError>, OnFailure)
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
     O: Write,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
-    let cli = match Cli::try_parse_from(&args) {
-        Ok(cli) => cli,
-        Err(error) => return clap_outcome(&error, args.last(), out),
-    };
-    match cli.command {
-        None => {
+    match Cli::try_parse_from(&args) {
+        Err(error) => (clap_outcome(&error, args.last(), out), OnFailure::Exit),
+        Ok(Cli { command: None }) => {
             let help = Cli::command().render_help();
-            write!(out, "{help}").map_err(CliError::Output)?;
-            Ok(exit_codes::OK)
+            let written = write!(out, "{help}").map_err(CliError::Output);
+            (written.map(|()| exit_codes::OK), OnFailure::Exit)
         }
-        Some(command) => dispatch(&command, out),
+        Ok(Cli {
+            command: Some(command),
+        }) => (dispatch(&command, out), command.on_failure()),
     }
 }
 
@@ -183,6 +226,16 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         }
         Command::Lint(args) => lint::run(args, out),
         Command::Eval(args) => eval::run(args, out),
+        Command::Hook(args) => {
+            let env = HookEnv {
+                stdin: std::io::stdin().lock(),
+                current_dir: std::env::current_dir,
+                lookup: |var: &str| std::env::var_os(var),
+            };
+            hook::run(args, env, out)
+                .map(|()| exit_codes::HOOK_DONE)
+                .map_err(CliError::Output)
+        }
         Command::Task(_)
         | Command::Plan(_)
         | Command::Dag(_)

@@ -2,8 +2,9 @@
 # Smoke test for plugin/libexec/anneal. Takes the path of a built anneal binary.
 #  1. A build in libexec/<target>/ runs with nothing on PATH.
 #  2. With no build, the launcher falls back to an anneal on PATH.
-#  3. With neither, a hook exits 0 (fail open), a --fail-closed hook exits 2 with one ERROR line,
-#     and a plain call exits 127.
+#  3. With neither, a hook exits 0 (fail open), `hook bootstrap` also prints the install hint as
+#     SessionStart output, a --fail-closed hook exits 2 with one ERROR line, and a plain call
+#     exits 127.
 #  4. There is no bin/ directory anywhere in the plugin.
 set -eu
 built=${1:?usage: test-launcher.sh <path to a built anneal binary>}
@@ -42,7 +43,14 @@ cp "$built" "$onpath/anneal"
 PATH="$onpath:$empty" "$sh_bin" "$launcher" --version | grep -q '^anneal ' || fail "PATH fallback"
 
 # 3. Neither: hooks fail open, guards fail closed, plain calls exit 127.
-PATH="$empty" "$sh_bin" "$launcher" hook bootstrap </dev/null || fail "a hook with no binary must exit 0"
+PATH="$empty" "$sh_bin" "$launcher" hook bootstrap </dev/null >"$work/hint" || fail "a hook with no binary must exit 0"
+grep -q '"hookEventName":"SessionStart","additionalContext":"anneal is not installed' "$work/hint" \
+  || fail "hook bootstrap with no binary must print the install hint as SessionStart context"
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c 'import json, sys; json.load(sys.stdin)' <"$work/hint" || fail "the hint is not valid JSON"
+fi
+PATH="$empty" "$sh_bin" "$launcher" hook other </dev/null >"$work/other" || fail "a hook with no binary must exit 0"
+[ ! -s "$work/other" ] || fail "other hooks with no binary must stay silent"
 set +e
 PATH="$empty" "$sh_bin" "$launcher" hook guard --fail-closed </dev/null 2>"$work/err"
 code=$?

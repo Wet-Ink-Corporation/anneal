@@ -1,3 +1,18 @@
 {
-  "hooks": {}
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "bootstrap"],
+            "timeout": 15,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ]
+  }
 }

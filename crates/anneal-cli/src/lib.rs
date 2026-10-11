@@ -9,7 +9,8 @@
 //! - [`exit_codes`]: the exit-code table, rendered into `--help` and `docs/exit-codes.md`.
 //! - [`error`]: errors that stop a command, each with a global exit code.
 //! - [`envelope`]: the JSON envelope on stdout and its findings.
-//! - [`hook`]: silent-on-success, one-`ERROR`-line-on-failure output for hooks.
+//! - [`hook`]: `anneal hook <name>`, the fail-open commands `hooks.json` runs (the
+//!   `SessionStart` bootstrap), and the one-`ERROR`-line output hooks share.
 //! - [`lint`]: `anneal lint skills` and the lint finding model.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.

@@ -12,8 +12,11 @@ mis-invoked guard fails closed. A usage error writes nothing on stdout, while a 
 non-zero code always comes with a JSON envelope on stdout, which tells the two apart. Every
 error writes exactly one `ERROR <reason>` line on stderr.
 
-There is no `anneal hook` command yet (#13). Until it exists, `hooks.json` must not call one: the
-usage error would exit 2 and block the session.
+`anneal hook <name>`, the commands `plugin/hooks/hooks.json` runs, is the one exception to "only
+success exits 0": hooks fail open. A hook notes its failures in its output (or, when stdout cannot
+be written, in one `ERROR` line on stderr) and still exits 0. Its usage errors still exit 2, which
+Claude Code reads as "block" on events that can block, so a test runs every `hooks.json` entry's
+arguments through the binary.
 
 ## All commands
 
@@ -176,3 +179,11 @@ A green result proves skill routing accuracy is at or above its bound on the eva
 | 0 | ok |
 
 A green result proves the status line was rendered. It does **not** prove that the state it shows is current.
+
+## `anneal hook bootstrap`
+
+| Code | Meaning |
+|---|---|
+| 0 | ran, or failed open with the failure noted |
+
+A green result proves the hook ran; anything it could not do is noted in its output. It does **not** prove that the hook succeeded: hooks fail open, so they exit 0 on failure too.

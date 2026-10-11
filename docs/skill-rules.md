@@ -7,7 +7,7 @@ Nothing is passed silently. A test fails when a checker id is missing from this 
 
 ```sh
 anneal lint skills plugin/skills                       # what CI runs
-anneal lint skills plugin/skills --index index.md      # also check the bootstrap index (rule 4)
+anneal lint skills plugin/skills --index docs/bootstrap-index.md   # also check the bootstrap index (rule 4)
 anneal lint skills plugin/skills --cache .anneal/lint-skills.json   # skip unchanged skills
 ```
 
@@ -21,8 +21,9 @@ anneal lint skills plugin/skills --cache .anneal/lint-skills.json   # skip uncha
 - `--hooks FILE` is the `hooks.metadata.json` whose hook ids count as enforcers (rule 10). It
   defaults to `<first PATH>/../hooks/hooks.metadata.json` when that file exists. Only
   `hooks[].id` is read. If the file does not parse, that is an `enforcer` error.
-- `--index FILE` is the session-start bootstrap index (rule 4). Without it, the index rule is
-  listed as a review item.
+- `--index FILE` is the session-start bootstrap index (rule 4); the shipped one is generated into
+  `docs/bootstrap-index.md` (see `docs/hooks.md`). Without it, the index rule is listed as a
+  review item.
 - `--cache FILE` is the content-hash snapshot (below).
 
 ## Severity and exit codes
