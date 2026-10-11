@@ -87,17 +87,17 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 1)
+## Event registry (version 2)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
-registry version) or add types.
+registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16).
 
 | Type | Payload | Subject tag |
 |---|---|---|
 | `test_run` | `task?` string, `command` string, `outcome` `green`/`red` | `task:` |
 | `task_done` | `task` string | `task:` |
 | `plan_approved` | `plan` string (path from the repository root), `hash` string (of the approved content) | `plan:` |
-| `grill_confirmed` | `plan` string | `plan:` |
+| `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
 | `repro_red` | `task` string, `test` string (the failing reproduction) | `task:` |
 | `verdict_set` | `pr` number, `verdict` `approved`/`changes_requested`/`noise_only` | `pr:` |
 | `round_started` | `pr` number, `round` number (from 1) | `pr:` |

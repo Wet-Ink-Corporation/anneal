@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 1;
+pub const REGISTRY_VERSION: u32 = 2;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -162,7 +162,7 @@ impl LedgerEvent {
                 Some(Cow::Borrowed(task))
             }
             Self::PlanApproved(PlanApproved { plan, .. })
-            | Self::GrillConfirmed(GrillConfirmed { plan }) => Some(Cow::Borrowed(plan)),
+            | Self::GrillConfirmed(GrillConfirmed { plan, .. }) => Some(Cow::Borrowed(plan)),
             Self::VerdictSet(VerdictSet { pr, .. })
             | Self::RoundStarted(RoundStarted { pr, .. }) => Some(Cow::Owned(pr.to_string())),
             Self::GateBlocked(GateBlocked { point, .. })
@@ -212,8 +212,14 @@ pub struct PlanApproved {
 /// `grill_confirmed`: the human confirmed a plan's grilling. Subject tag `plan:`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrillConfirmed {
-    /// The plan id.
+    /// The plan id: for `anneal grill confirm`, the design tree's path as given.
     pub plan: String,
+    /// The hash of the design tree that was confirmed, `sha256:<64 hex digits>` (registry v2).
+    #[serde(default)]
+    pub hash: Option<String>,
+    /// The human's confirmation, word for word (registry v2).
+    #[serde(default)]
+    pub quote: Option<String>,
 }
 
 /// `repro_red`: a reproduction test was seen failing before its fix. Subject tag `task:`.
@@ -275,7 +281,52 @@ pub struct StopBlocked {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventKind, UnknownEventKind};
+    use super::{EventKind, GrillConfirmed, LedgerEvent, UnknownEventKind};
+    use serde_json::json;
+
+    #[test]
+    fn grill_confirmed_carries_the_tree_hash_and_the_humans_words() {
+        let value = json!({
+            "type": "grill_confirmed",
+            "plan": "design-tree.json",
+            "hash": "sha256:00ff",
+            "quote": "yes, that is what I want",
+        });
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::GrillConfirmed(GrillConfirmed {
+                plan: "design-tree.json".to_owned(),
+                hash: Some("sha256:00ff".to_owned()),
+                quote: Some("yes, that is what I want".to_owned()),
+            }),
+            "hash and quote are read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+    }
+
+    #[test]
+    fn a_grill_confirmed_written_before_hash_and_quote_still_reads() {
+        let event: LedgerEvent =
+            serde_json::from_value(json!({"type": "grill_confirmed", "plan": "p.md"}))
+                .expect("registry v1 shape");
+
+        assert_eq!(
+            event,
+            LedgerEvent::GrillConfirmed(GrillConfirmed {
+                plan: "p.md".to_owned(),
+                hash: None,
+                quote: None,
+            }),
+            "the added fields default to none"
+        );
+    }
 
     #[test]
     fn every_kind_parses_from_its_stored_name() {

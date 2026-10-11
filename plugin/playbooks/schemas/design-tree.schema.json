@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Wet-Ink-Corporation/anneal/blob/main/plugin/playbooks/schemas/design-tree.schema.json",
+  "title": "anneal design tree",
+  "description": "The questions a grilling asks, kept by the grill skill. `anneal grill frontier --tree <file>` lists the open questions whose dependencies are all answered; `anneal grill confirm` records the human's confirmation of the tree's hash. Checked by crates/anneal-cli/tests/it/design_tree_schema.rs, which keeps this schema and the serde DTO in agreement. Beyond the schema, anneal rejects a depends_on cycle, a dependency naming no node and two nodes with one id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "goal", "turns", "nodes"],
+  "properties": {
+    "version": { "type": "integer", "const": 1, "description": "Format version of this file." },
+    "goal": {
+      "type": "string",
+      "pattern": "\\S",
+      "description": "What is being grilled, in one line."
+    },
+    "turns": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/turn" },
+      "description": "One entry per round of questions, oldest first. The restate gate fires when the latest confidence is 0.8 or more, or after 3 turns in a row that did not beat the best confidence before them."
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/node" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confidence"],
+      "properties": {
+        "confidence": {
+          "$ref": "#/$defs/probability",
+          "type": "number",
+          "description": "Confidence in the shared understanding after the round, from 0 to 1."
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "question", "depends_on", "status", "answer", "is_decision", "confidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id", "type": "string", "description": "Unique within the tree." },
+        "question": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The question, as it would be asked."
+        },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" },
+          "description": "The ids of the questions whose answers this one needs first. At most 64."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "answered", "deferred"],
+          "description": "open: not settled; answered: the answer is agreed; deferred: set aside, with the answer as the assumption."
+        },
+        "answer": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "While open, the recommended answer a plain \"yes\" accepts; once answered, the agreed answer; while deferred, the assumption carried."
+        },
+        "is_decision": {
+          "$ref": "#/$defs/probability",
+          "type": "number",
+          "description": "The probability, from 0 to 1, that only the human can settle this (a decision) rather than the model looking it up (a fact). At 0.5 or more the question is asked, with its recommended answer; below, it is looked up. Clef D7 (#32) writes its estimate here."
+        },
+        "confidence": {
+          "$ref": "#/$defs/probability",
+          "type": "number",
+          "description": "The model's confidence in the answer, from 0 to 1."
+        }
+      }
+    }
+  }
+}

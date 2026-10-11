@@ -13,6 +13,7 @@ use crate::command::CommandName;
 use crate::dag::DagError;
 use crate::eval::routing::RoutingError;
 use crate::exit_codes::{self, Code};
+use crate::grill::GrillError;
 use crate::lint::skills::LintError;
 use crate::paths::PathError;
 
@@ -55,6 +56,9 @@ pub enum CliError {
     /// `anneal dag` could not read the tickets or build their graph.
     #[error("dag")]
     Dag(#[from] DagError),
+    /// `anneal grill` could not read its design tree.
+    #[error(transparent)]
+    Grill(#[from] GrillError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -75,6 +79,7 @@ impl CliError {
             | Self::Dag(_) => exit_codes::INTERNAL,
             Self::Lint(error) => error.code(),
             Self::Eval(error) => error.code(),
+            Self::Grill(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

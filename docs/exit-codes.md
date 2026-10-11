@@ -40,6 +40,16 @@ written it exits 2 with one `ERROR` line on stderr, so Claude Code blocks the to
 
 A green result proves the ledger events read or written match the event schema. It does **not** prove that the events are true, or that the work they record was done well.
 
+## `anneal grill`
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | invalid design tree |
+| 3 | confirm: a question is still open |
+
+A green result proves the design tree is valid; for confirm, no question is open and the human's quoted confirmation of the tree's hash was recorded. It does **not** prove that the right questions were asked, that the answers are right, or that the quoted words came from the human.
+
 ## `anneal task done`
 
 | Code | Meaning |

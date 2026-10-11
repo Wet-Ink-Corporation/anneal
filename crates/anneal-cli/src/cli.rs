@@ -18,6 +18,7 @@ use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
+use crate::grill::{self, GrillArgs};
 use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
@@ -46,6 +47,9 @@ pub enum Command {
     /// Append to, query and tail the event ledger
     #[command(after_help = command_help(CommandName::Ledger))]
     Ledger(LedgerArgs),
+    /// List a design tree's open frontier, or record the human's confirmation of it
+    #[command(after_help = command_help(CommandName::Grill))]
+    Grill(GrillArgs),
     /// Mark a task done once its tests are green
     #[command(after_help = command_help(CommandName::Task))]
     Task(Stub),
@@ -123,6 +127,7 @@ impl Command {
     pub const fn name(&self) -> CommandName {
         match self {
             Self::Ledger(_) => CommandName::Ledger,
+            Self::Grill(_) => CommandName::Grill,
             Self::Task(_) => CommandName::Task,
             Self::Plan(_) => CommandName::Plan,
             Self::Lint(_) => CommandName::Lint,
@@ -149,6 +154,7 @@ impl Command {
             Self::Hook(args) if args.fails_closed() => OnFailure::FailClosed,
             Self::Hook(_) => OnFailure::FailOpen,
             Self::Ledger(_)
+            | Self::Grill(_)
             | Self::Task(_)
             | Self::Plan(_)
             | Self::Lint(_)
@@ -232,6 +238,10 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         Command::Ledger(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             ledger::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
+        Command::Grill(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            grill::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Lint(args) => lint::run(args, out),
         Command::Dag(args) => {

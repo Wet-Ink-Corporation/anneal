@@ -7,6 +7,8 @@
 pub enum CommandName {
     /// `anneal ledger`
     Ledger,
+    /// `anneal grill`: the design tree behind the `grill` skill
+    Grill,
     /// `anneal task`
     Task,
     /// `anneal plan`
@@ -52,8 +54,9 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Ledger,
+        Self::Grill,
         Self::Task,
         Self::Plan,
         Self::Lint,
@@ -77,6 +80,7 @@ impl CommandName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ledger => "ledger",
+            Self::Grill => "grill",
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Lint => "lint",
@@ -108,6 +112,10 @@ impl CommandName {
     const fn proves(self) -> &'static str {
         match self {
             Self::Ledger => "the ledger events read or written match the event schema",
+            Self::Grill => {
+                "the design tree is valid; for confirm, no question is open and the human's \
+                 quoted confirmation of the tree's hash was recorded"
+            }
             Self::Task => "the task's tests ran green",
             Self::Plan => "the plan is approved and current with its inputs",
             Self::Lint => "the checked files have no error under anneal's lint rules",
@@ -130,6 +138,10 @@ impl CommandName {
     const fn does_not_prove(self) -> &'static str {
         match self {
             Self::Ledger => "that the events are true, or that the work they record was done well",
+            Self::Grill => {
+                "that the right questions were asked, that the answers are right, or that the \
+                 quoted words came from the human"
+            }
             Self::Task => "that the tests cover the task's acceptance criteria",
             Self::Plan => "that the plan is correct or complete",
             Self::Lint => {
