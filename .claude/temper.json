@@ -1,0 +1,31 @@
+{
+  "skillGate": true,
+  "review": "required",
+  "askOnNewDependency": true,
+  "gate": {
+    "allFeatures": true,
+    "doc": true,
+    "scan": true,
+    "stepTimeoutSec": 900
+  },
+  "scanner": {
+    "exempt": []
+  },
+  "preapprovedDependencies": [
+    "thiserror",
+    "anyhow",
+    "serde",
+    "serde_json",
+    "tracing",
+    "tracing-subscriber",
+    "proptest",
+    "insta",
+    "trybuild",
+    "divan",
+    "criterion",
+    "tempfile"
+  ],
+  "manifests": {
+    "ownLints": []
+  }
+}

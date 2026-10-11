@@ -1,0 +1,17 @@
+[package]
+name = "anneal-cli"
+description = "The anneal CLI: deterministic checks behind the anneal Claude Code plugin's hooks and skills."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "anneal"
+path = "src/main.rs"
+
+[lints]
+workspace = true

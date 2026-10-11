@@ -1,0 +1,72 @@
+name: ci
+# Cross-platform checks and the plugin as shipped. rust.yml runs temper's full gate on Linux;
+# this workflow adds macOS and Windows, the launcher smoke test and the plugin manifests.
+# The release workflow calls it before it builds anything.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: toolchain (pinned by rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - name: launcher smoke test (sh)
+        if: runner.os != 'Windows'
+        run: sh scripts/test-launcher.sh target/debug/anneal
+      - name: launcher smoke test (cmd)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          mkdir plugin\libexec\x86_64-pc-windows-msvc
+          copy target\debug\anneal.exe plugin\libexec\x86_64-pc-windows-msvc\anneal.exe
+          call plugin\libexec\anneal.cmd --help | findstr /b "anneal:" || exit /b 1
+          rmdir /s /q plugin\libexec\x86_64-pc-windows-msvc
+          call plugin\libexec\anneal.cmd hook bootstrap || exit /b 1
+          call plugin\libexec\anneal.cmd hook guard --fail-closed 2>guard.err
+          if not "%ERRORLEVEL%"=="2" exit /b 1
+          findstr /b "ERROR " guard.err || exit /b 1
+          call plugin\libexec\anneal.cmd --help 2>nul
+          if not "%ERRORLEVEL%"=="127" exit /b 1
+          rem The step's result is the last errorlevel, which is the expected 127 here.
+          exit /b 0
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: versions and changelog
+        run: scripts/check-versions.sh
+      - name: no bin/ in the plugin
+        run: test -z "$(find plugin -type d -name bin)"
+      - name: claude plugin validate --strict
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate --strict .
+          claude plugin validate --strict plugin
