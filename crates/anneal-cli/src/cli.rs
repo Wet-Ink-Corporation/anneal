@@ -1,8 +1,8 @@
 //! The command tree and the entry point that turns arguments into an exit code.
 //!
 //! Every command starts as a [`Stub`] that exits 64 (not implemented). To build one out,
-//! replace its `Stub` with a real `clap::Args` type (for example one holding a
-//! `#[command(subcommand)]` enum for `ledger append|query|tail`), keep its `after_help`, and
+//! replace its `Stub` with a real `clap::Args` type (as `ledger` does with
+//! [`LedgerArgs`]), keep its `after_help`, and
 //! give it its own arm in the private `dispatch` function that writes an
 //! [`Envelope`](crate::envelope::Envelope) and returns the code `emit` hands back.
 
@@ -17,6 +17,7 @@ use crate::error::CliError;
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
 use crate::hook;
+use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
 
 /// The flags clap answers by printing instead of running a command.
@@ -42,7 +43,7 @@ pub struct Cli {
 pub enum Command {
     /// Append to, query and tail the event ledger
     #[command(after_help = command_help(CommandName::Ledger))]
-    Ledger(Stub),
+    Ledger(LedgerArgs),
     /// Mark a task done once its tests are green
     #[command(after_help = command_help(CommandName::Task))]
     Task(Stub),
@@ -171,9 +172,9 @@ where
 /// Runs one command. Each real command gets its own arm; stubs share the last one.
 fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> {
     match command {
+        Command::Ledger(args) => ledger::run(args, out),
         Command::Lint(args) => lint::run(args, out),
-        Command::Ledger(_)
-        | Command::Task(_)
+        Command::Task(_)
         | Command::Plan(_)
         | Command::Dag(_)
         | Command::FloorGuard(_)

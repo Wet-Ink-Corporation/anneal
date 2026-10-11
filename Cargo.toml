@@ -22,12 +22,20 @@ authors = ["Ryan Britton <ryan.britton@wet-ink.net>"]
 # API you use, default features off plus the baseline set. Members write
 #   thiserror = { workspace = true }
 # and may only add `features`.
+anneal-ledger = { path = "crates/anneal-ledger" }
 clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context"] }
+# Pinned with weigh-in (dependabot ignores happenstance-*): the ledger copies 0.3.2's schema, so
+# moving happenstance is a ledger schema migration (H-16).
+happenstance-core = { version = "0.3.2", default-features = false, features = ["std", "serde"] }
+happenstance-sqlite = { version = "0.3.2", default-features = false, features = ["event-store"] }
 serde = { version = "1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "1.0.152", default-features = false, features = ["std"] }
 sha2 = { version = "0.10.9", default-features = false }
 tempfile = { version = "3.27.0", default-features = false }
 thiserror = { version = "2.0.21", default-features = false, features = ["std"] }
+time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
+# A current-thread runtime drives happenstance's async API from synchronous code.
+tokio = { version = "1.53.2", default-features = false, features = ["rt"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"                                  # H-01

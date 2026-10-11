@@ -6,7 +6,8 @@ anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks.
 
 | Crate | Layer | Purpose | Depends on |
 |---|---|---|---|
-| `crates/anneal-cli` | binary (+ internal lib) | the `anneal` command: argument parsing, JSON output, exit codes | clap, serde, serde_json, thiserror |
+| `crates/anneal-ledger` | adapter (+ its event domain) | the event ledger: registry, envelope, happenstance SQLite store under TRUNCATE | happenstance-core, happenstance-sqlite, tokio, time, tempfile, serde, serde_json, thiserror |
+| `crates/anneal-cli` | binary (+ internal lib) | the `anneal` command: argument parsing, JSON output, exit codes | anneal-ledger, clap, serde, serde_json, thiserror |
 
 Dependencies point inward: domain, then application, then adapters, then binaries (ARC-02). Each crate's `AGENTS.md` is its charter (ARC-08).
 
@@ -45,6 +46,7 @@ Process: explore, frame, plan (`.temper/plans/`), red, green, refactor, self-rev
 |---|---|---|---|
 | 2026-10-11 | Ship the CLI as prebuilt binaries in `plugin/libexec/<target>/` behind a launcher, not on PATH and no `plugin/bin/` | ARC | Ryan (#9) |
 | 2026-10-11 | Toolchain and MSRV pinned to 1.98.1, matching weigh-in | MOD-01 | Ryan (#9) |
+| 2026-10-11 | Split the ledger into `crates/anneal-ledger` (dependency profile, reuse by hooks and commands); happenstance 0.3.2, tokio, time added as weigh-in has them; dependabot ignores `happenstance-*` | ARC-07, H-16 | story #11 |
 
 ## Plugin rules
 

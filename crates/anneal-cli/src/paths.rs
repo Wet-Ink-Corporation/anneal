@@ -1,4 +1,5 @@
-//! Where anneal keeps state: the git common dir (ledger home) and `~/.anneal` (decision log).
+//! Where anneal keeps state: the ledger store (normally in the git common dir) and
+//! `~/.anneal` (decision log).
 
 use std::ffi::OsString;
 use std::io::{self, Read};
@@ -6,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 /// How long a `git` call may take before it is killed (H-13).
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -15,6 +18,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// The environment variable that overrides the anneal home directory.
 pub const ANNEAL_HOME_VAR: &str = "ANNEAL_HOME";
+
+/// The environment variable that overrides the ledger store's file.
+pub const ANNEAL_STORE_VAR: &str = "ANNEAL_STORE";
+
+/// The ledger file's name inside its directory.
+const LEDGER_FILE: &str = "ledger.sqlite3";
 
 /// Why a path could not be resolved.
 #[derive(Debug, thiserror::Error)]
@@ -180,6 +189,65 @@ fn kill_after(child: &mut Child, error: io::Error) -> PathError {
             error.kind(),
             format!("{error}; killing git also failed: {kill_error}"),
         )),
+    }
+}
+
+/// Where the ledger store was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreSource {
+    /// `--store <file>`.
+    Flag,
+    /// `$ANNEAL_STORE`.
+    Env,
+    /// `<git-common-dir>/anneal/ledger.sqlite3`.
+    GitCommonDir,
+    /// `<folder>/.anneal/ledger.sqlite3`, outside git.
+    Folder,
+}
+
+/// The ledger store's file and how it was chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoreLocation {
+    /// The ledger file.
+    pub path: PathBuf,
+    /// Which step of the resolution order chose it.
+    pub source: StoreSource,
+}
+
+/// The ledger store for a command run in `cwd`, in this order:
+///
+/// 1. `flag` (`--store <file>`), relative to `cwd`;
+/// 2. `$ANNEAL_STORE` (read through `lookup`; empty counts as unset), relative to `cwd`;
+/// 3. the anneal config file, once there is one (there is none yet, so this step is skipped);
+/// 4. `<git-common-dir>/anneal/ledger.sqlite3`, the same file from every worktree;
+/// 5. `<cwd>/.anneal/ledger.sqlite3` outside git.
+///
+/// # Errors
+/// [`PathError::Git`], [`PathError::GitTimeout`] or [`PathError::NonUtf8Output`] when git
+/// cannot answer. Not being in a repository is step 5, not an error.
+pub fn ledger_store(
+    flag: Option<&Path>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    cwd: &Path,
+) -> Result<StoreLocation, PathError> {
+    let located = |path: PathBuf, source| StoreLocation { path, source };
+    if let Some(path) = flag {
+        return Ok(located(cwd.join(path), StoreSource::Flag));
+    }
+    if let Some(path) = lookup(ANNEAL_STORE_VAR).filter(|value| !value.is_empty()) {
+        return Ok(located(cwd.join(path), StoreSource::Env));
+    }
+    match git_common_dir(cwd) {
+        Ok(common) => Ok(located(
+            common.join("anneal").join(LEDGER_FILE),
+            StoreSource::GitCommonDir,
+        )),
+        Err(PathError::NotARepository { .. }) => Ok(located(
+            cwd.join(".anneal").join(LEDGER_FILE),
+            StoreSource::Folder,
+        )),
+        Err(other) => Err(other),
     }
 }
 

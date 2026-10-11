@@ -1,4 +1,4 @@
-//! Shared helpers: scratch git repositories and fixture copies.
+//! Shared helpers: scratch git repositories, fixture copies and an isolated `anneal` command.
 
 use std::io;
 use std::path::Path;
@@ -31,6 +31,19 @@ fn git(dir: &Path, args: &[&str]) {
         "git {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// `anneal` run in `cwd`, isolated from the caller's repository and ledger overrides.
+pub(crate) fn anneal_in(cwd: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
+    command
+        .current_dir(cwd)
+        .env_remove("ANNEAL_STORE")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    command
 }
 
 /// A repository at `<root>/main` with one commit, and a linked worktree of it at
