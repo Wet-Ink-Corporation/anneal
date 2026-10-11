@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the release binaries the plugin launcher looks for, into plugin/libexec/<target>/.
-# Linux (static, musl) and Windows (mingw) cross-build from Linux; on Windows run
+# With no argument it builds for this machine (the host triple). `linux` cross-builds static
+# x86_64 musl and `windows` cross-builds x86_64 mingw, both from Linux; on Windows run
 #   scripts\build-plugin-bins.ps1
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -22,9 +23,10 @@ build() {
   fi
   echo "built plugin/libexec/$target"
 }
-case "${1:-all}" in
+case "${1:-host}" in
+  host) build "$(rustc -vV | sed -n 's/^host: //p')" ;;
   linux|all) build x86_64-unknown-linux-musl CC_x86_64_unknown_linux_musl=musl-gcc ;;
 esac
-case "${1:-all}" in
+case "${1:-host}" in
   windows|all) build x86_64-pc-windows-gnu CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc ;;
 esac

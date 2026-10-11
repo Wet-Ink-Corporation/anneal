@@ -45,6 +45,10 @@ jobs:
           mkdir plugin\libexec\x86_64-pc-windows-msvc
           copy target\debug\anneal.exe plugin\libexec\x86_64-pc-windows-msvc\anneal.exe
           call plugin\libexec\anneal.cmd --help | findstr /b "anneal:" || exit /b 1
+          rmdir /s /q plugin\libexec\x86_64-pc-windows-msvc
+          call plugin\libexec\anneal.cmd hook bootstrap || exit /b 1
+          call plugin\libexec\anneal.cmd hook guard --fail-closed
+          if not errorlevel 2 exit /b 1
 
   plugin:
     runs-on: ubuntu-latest
