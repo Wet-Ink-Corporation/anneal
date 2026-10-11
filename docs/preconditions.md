@@ -66,8 +66,12 @@ error (2) and runs nothing. `data` reports `id`, `command`, `worktree`, `outcome
 `repro leftovers` lists every line that holds a debug tag, `[DEBUG-` then an id of 1 to 64 ASCII
 letters, digits, `_` or `-`, then `]`, in the files git knows of in the worktree (tracked, plus
 untracked files git does not ignore; prose included). Text that spells the pattern with a
-placeholder, as this page does, is not a tag. Each file is read up to 1 MiB; larger ones are
-listed in `data.skipped`, not read. It exits 1 with one finding per line (`<file>:<line>: ...`,
+placeholder, as this page does, is not a tag. Lines are read as bytes, so a file that is not
+UTF-8 is scanned as it is. Each file is read up to 1 MiB and the whole scan up to 64 MiB; a file
+over either is listed in `data.skipped`, not read, and running out of the total sets
+`data.over_budget`. A file name that is not UTF-8 is opened by its raw bytes on unix and reported
+with U+FFFD in place of the bad bytes; elsewhere such a name is listed in `data.skipped`. It
+exits 1 with one finding per line (`<file>:<line>: ...`,
 at most 1,000, the rest counted in `data.omitted`) and 0 when there are none. The same scan is
 `anneal_cli::repro::debug_leftovers`, for the Stop hook (#26).
 

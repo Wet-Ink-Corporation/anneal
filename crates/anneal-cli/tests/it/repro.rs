@@ -290,3 +290,27 @@ fn leftovers_in_a_clean_worktree_exits_0() -> TestResult {
     assert_eq!(envelope["data"]["leftovers"], json!([]), "{envelope}");
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn leftovers_past_1000_lines_counts_the_rest_and_still_exits_1() -> TestResult {
+    let dir = repo()?;
+    let lines: Vec<String> = (0..1005).map(|n| format!("[{}-n{n}]", "DEBUG")).collect();
+    std::fs::write(dir.path().join("many.txt"), lines.join("\n"))?;
+
+    let output = repro(dir.path(), &["leftovers"])?;
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let envelope: Value = serde_json::from_slice(&output.stdout)?;
+    let findings = envelope["findings"].as_array().ok_or("findings")?;
+    assert_eq!(
+        (
+            findings.len(),
+            &envelope["data"]["omitted"],
+            findings.last().map(|f| &f["key"])
+        ),
+        (1001, &json!(5), Some(&json!("repro/leftover-omitted"))),
+        "1,000 listed and one finding for the rest"
+    );
+    Ok(())
+}

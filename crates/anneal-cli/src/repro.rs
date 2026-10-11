@@ -341,9 +341,10 @@ fn leftovers_in<O: Write>(cwd: &Path, out: &mut O) -> Result<Code, CliError> {
     let root = worktree_root(cwd)?;
     let found = debug_leftovers(Path::new(&root)).map_err(ReproError::from)?;
     let mut findings: Vec<Finding> = found
-        .leftovers
+        .leftovers()
         .iter()
-        .map(|Leftover { file, line }| {
+        .map(|leftover| {
+            let (file, line) = (leftover.file(), leftover.line());
             Finding::new(
                 format!("repro/leftover:{file}:{line}"),
                 format!(
@@ -353,10 +354,10 @@ fn leftovers_in<O: Write>(cwd: &Path, out: &mut O) -> Result<Code, CliError> {
             )
         })
         .collect();
-    if found.omitted > 0 {
+    if found.omitted() > 0 {
         findings.push(Finding::new(
             "repro/leftover-omitted",
-            format!("{} more tagged lines are not listed", found.omitted),
+            format!("{} more tagged lines are not listed", found.omitted()),
         ));
     }
     let code = if found.is_clean() {

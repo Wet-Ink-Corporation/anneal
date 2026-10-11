@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::{Leftover, MAX_FILE_BYTES, debug_leftovers, tagged};
+use super::{LIMITS, Leftover, Limits, MAX_FILE_BYTES, debug_leftovers, scan, tagged};
 
 /// A debug tag with `id`, built so the source never spells one.
 fn tag(id: &str) -> String {
@@ -20,6 +20,7 @@ fn git(dir: &Path, args: &[&str]) {
         .current_dir(dir)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git runs");
@@ -61,9 +62,9 @@ fn a_tag_is_debug_then_an_id_then_a_closing_bracket() {
     let line = format!("eprintln!(\"{} x={{x}}\");", tag("a1"));
 
     assert!(tagged(&line), "a tag with an id: {line}");
-    assert!(tagged(&tag("parse_2-b")), "letters, digits, `_` and `-`");
+    assert!(tagged(tag("parse_2-b")), "letters, digits, `_` and `-`");
     assert!(
-        tagged(&format!("[DEBUG-<id>] then {}", tag("z"))),
+        tagged(format!("[DEBUG-<id>] then {}", tag("z"))),
         "a real tag after a placeholder"
     );
 }
@@ -153,4 +154,79 @@ fn a_clean_worktree_has_no_leftovers() {
     let found = debug_leftovers(dir.path()).expect("the scan runs");
 
     assert!(found.is_clean(), "{found:?}");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn past_1000_tagged_lines_the_rest_are_counted_as_omitted() {
+    let lines: Vec<String> = (0..1005).map(|n| tag(&format!("n{n}"))).collect();
+    let dir = repo(&[("many.txt", &lines.join("\n"))], &[]);
+
+    let found = debug_leftovers(dir.path()).expect("the scan runs");
+
+    assert_eq!(
+        (found.leftovers().len(), found.omitted(), found.is_clean()),
+        (1000, 5, false),
+        "1,000 listed, 5 counted"
+    );
+    assert_eq!(
+        found.leftovers().last(),
+        Some(&leftover("many.txt", 1000)),
+        "the first 1,000 in line order"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn past_the_total_byte_budget_files_are_skipped_and_the_scan_says_so() {
+    let line = format!("{}\n", tag("b"));
+    let dir = repo(&[("a.txt", &line), ("b.txt", &line)], &[]);
+    let one_file = u64::try_from(line.len()).expect("a short line");
+    let limits = Limits {
+        total_bytes: one_file,
+        ..LIMITS
+    };
+
+    let found = scan(dir.path(), limits).expect("the scan runs");
+
+    assert_eq!(
+        found.leftovers(),
+        [leftover("a.txt", 1)],
+        "the first file is read"
+    );
+    assert_eq!(found.skipped(), ["b.txt".to_owned()], "the second is not");
+    assert!(found.over_budget(), "the scan reports it ran out of budget");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn a_scan_within_the_default_budget_does_not_report_it_spent() {
+    let dir = repo(&[("a.txt", "clean\n")], &["a.txt"]);
+
+    let found = debug_leftovers(dir.path()).expect("the scan runs");
+
+    assert!(!found.over_budget(), "{found:?}");
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn a_file_whose_name_is_not_utf8_is_still_read() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = repo(&[], &[]);
+    let name = std::ffi::OsStr::from_bytes(b"bad\xff.txt");
+    // APFS (macOS) refuses names that are not UTF-8; there is nothing to scan then.
+    if std::fs::write(dir.path().join(name), format!("{}\n", tag("u"))).is_err() {
+        return;
+    }
+
+    let found = debug_leftovers(dir.path()).expect("the scan runs");
+
+    assert_eq!(
+        found.leftovers(),
+        [leftover("bad\u{FFFD}.txt", 1)],
+        "read through its raw name, reported lossily"
+    );
+    assert_eq!(found.skipped(), Vec::<String>::new(), "not skipped");
 }

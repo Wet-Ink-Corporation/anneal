@@ -1,5 +1,6 @@
 //! `repro record`'s ending of a run, below the binary: a timeout cannot be forced through the
-//! command line (`--timeout` is at least 1 s and git answers faster), so it is driven here.
+//! command line (`--timeout` is at least 1 s and git answers faster), nor portably a kill by a
+//! signal, so both are driven here.
 
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use anneal_ledger::event::ReproRed;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Timestamp};
 use serde_json::Value;
 
-use super::{Attempt, finish};
+use super::{Attempt, Outcome, finish, verdict};
 use crate::paths::{PathError, StoreLocation};
 use crate::task::{Ending, Run};
 
@@ -17,6 +18,24 @@ fn envelope() -> EventEnvelope {
         test: "cargo test parse".to_owned(),
     });
     EventEnvelope::new(event, "cli", Timestamp::now().expect("the clock reads"))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_run_killed_by_a_signal_is_red_and_recorded() {
+    use std::os::unix::process::ExitStatusExt;
+
+    // The wait status of a process killed by SIGKILL: no exit code.
+    let killed = std::process::ExitStatus::from_raw(9);
+    assert_eq!(killed.code(), None, "a signal leaves no exit code");
+
+    let (outcome, code, findings) = verdict("bug-1", Ending::Exited(killed));
+
+    assert_eq!(
+        (outcome, code.value(), findings.len()),
+        (Outcome::Red, 0, 0),
+        "a crash reproduces a failure"
+    );
 }
 
 #[test]
