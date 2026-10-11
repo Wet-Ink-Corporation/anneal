@@ -14,6 +14,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use crate::command::CommandName;
 use crate::error::CliError;
+use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
 use crate::hook;
@@ -85,7 +86,7 @@ pub enum Command {
     Calibrate(Stub),
     /// Run evaluation suites, such as skill routing
     #[command(after_help = command_help(CommandName::Eval))]
-    Eval(Stub),
+    Eval(EvalArgs),
     /// Render the Claude Code status line
     #[command(after_help = command_help(CommandName::Statusline))]
     Statusline(Stub),
@@ -181,6 +182,7 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
             ledger::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Lint(args) => lint::run(args, out),
+        Command::Eval(args) => eval::run(args, out),
         Command::Task(_)
         | Command::Plan(_)
         | Command::Dag(_)
@@ -193,7 +195,6 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         | Command::Brief(_)
         | Command::Decide(_)
         | Command::Calibrate(_)
-        | Command::Eval(_)
         | Command::Statusline(_) => Err(CliError::NotImplemented {
             command: command.name(),
         }),

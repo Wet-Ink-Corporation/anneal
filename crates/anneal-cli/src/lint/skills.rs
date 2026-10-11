@@ -12,9 +12,10 @@ mod checks_body;
 mod checks_prose;
 mod checks_set;
 mod checks_spec;
-mod discover;
+pub(crate) mod discover;
 mod document;
-mod frontmatter;
+pub(crate) mod frontmatter;
+pub(crate) mod listing;
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -31,6 +32,8 @@ use cache::{Cache, content_hash};
 use checker::Checker;
 use discover::{SkillDir, Surroundings, discover, read_capped};
 use document::Skill;
+
+pub(crate) use checks_set::vocabulary;
 
 /// Arguments of `anneal lint skills`.
 #[derive(Debug, Clone, Args)]

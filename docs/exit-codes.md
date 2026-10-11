@@ -165,6 +165,7 @@ A green result proves the calibration run completed and was recorded. It does **
 |---|---|
 | 0 | ok |
 | 1 | below bound |
+| 2 | invalid fixtures or skills |
 
 A green result proves skill routing accuracy is at or above its bound on the eval set. It does **not** prove routing accuracy on prompts outside the eval set.
 

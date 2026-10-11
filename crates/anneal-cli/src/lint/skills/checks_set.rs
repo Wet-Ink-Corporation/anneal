@@ -123,8 +123,9 @@ pub(crate) fn overlap(skills: &[Skill<'_>]) -> Vec<LintFinding> {
     findings
 }
 
-/// Content words of a trigger: lowercase, three letters or more, stopwords removed.
-fn vocabulary(text: &str) -> BTreeSet<String> {
+/// Content words of a trigger: lowercase, three letters or more, stopwords removed. Tier 1
+/// routing (`eval routing`) scores with the same words.
+pub(crate) fn vocabulary(text: &str) -> BTreeSet<String> {
     words(text)
         .filter(|w| w.chars().count() >= 3 && !STOPWORDS.contains(&w.as_str()))
         .collect()

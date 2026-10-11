@@ -208,7 +208,9 @@ fn literal(lines: &[&str]) -> String {
         .to_owned()
 }
 
-fn unquote(scalar: &str, line: usize) -> Result<String, ParseError> {
+/// One scalar value on `line`: quoted (quotes and escapes removed) or plain (trailing comment
+/// dropped). Shared with the routing fixture reader, so both accept the same scalars.
+pub(crate) fn unquote(scalar: &str, line: usize) -> Result<String, ParseError> {
     let Some(quote @ ('"' | '\'')) = scalar.chars().next() else {
         return plain(scalar, line);
     };
