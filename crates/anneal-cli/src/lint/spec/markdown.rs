@@ -217,35 +217,28 @@ struct Fence {
 }
 
 impl Fence {
-    /// The fence `raw` opens, as in `CommonMark`: at most three spaces of indent, then three or
-    /// more backticks or tildes; a backtick fence's info string holds no backtick (so a line
-    /// that is an inline span, such as ```` ```x``` ````, is text).
+    /// The fence `raw` opens: after any indentation (a fence inside a list item is indented
+    /// further than `CommonMark`'s three spaces), three or more backticks or tildes; a backtick
+    /// fence's info string holds no backtick, so a line that is an inline span, such as
+    /// ```` ```x``` ````, is text.
     fn opened_by(raw: &str) -> Option<Self> {
-        let trimmed = indented_at_most_3(raw)?;
+        let trimmed = raw.trim_start();
         let mark = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
         let len = trimmed.chars().take_while(|c| *c == mark).count();
         let info = trimmed.get(len..)?;
         (len >= 3 && !(mark == '`' && info.contains('`'))).then_some(Self { mark, len })
     }
 
-    /// Whether `raw` closes this fence: at most three spaces of indent, at least as many of the
-    /// fence character, then only whitespace.
+    /// Whether `raw` closes this fence: after any indentation, at least as many of the fence
+    /// character, then only whitespace.
     fn is_closed_by(self, raw: &str) -> bool {
-        let Some(trimmed) = indented_at_most_3(raw) else {
-            return false;
-        };
+        let trimmed = raw.trim_start();
         let run = trimmed.chars().take_while(|c| *c == self.mark).count();
         run >= self.len
             && trimmed
                 .get(run..)
                 .is_some_and(|rest| rest.trim().is_empty())
     }
-}
-
-/// `raw` without its leading spaces, when there are at most three.
-fn indented_at_most_3(raw: &str) -> Option<&str> {
-    let trimmed = raw.trim_start_matches(' ');
-    (raw.len().saturating_sub(trimmed.len()) <= 3).then_some(trimmed)
 }
 
 /// `text` with every inline code span, backticks included, replaced by as many spaces as it has

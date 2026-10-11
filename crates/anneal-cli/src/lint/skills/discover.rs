@@ -85,10 +85,11 @@ fn skill_dir(dir: PathBuf) -> SkillDir {
     SkillDir { dir, name }
 }
 
-/// A file read up to [`MAX_READ_BYTES`]: its full size and, when within the cap, its bytes.
+/// A file read up to [`MAX_READ_BYTES`]: its size and, when within the cap, its bytes.
 #[derive(Debug)]
 pub(crate) struct Capped {
-    /// The file's size on disk.
+    /// The file's size on disk; or, for a file that grew past the cap after its size was
+    /// read, the bytes actually read (one past the cap).
     pub size: u64,
     /// The contents, or `None` when the file is larger than the cap.
     pub bytes: Option<Vec<u8>>,

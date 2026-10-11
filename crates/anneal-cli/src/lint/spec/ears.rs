@@ -229,14 +229,11 @@ pub fn parse(text: &str) -> Result<Pattern, EarsError> {
                 return main_clause(tail).map(|()| Pattern { clauses });
             }
             [(_, Word::Shall), ..] if !clauses.is_empty() => return Err(EarsError::MissingThe),
-            [(word, Word::Text), ..] if let Some(last) = clauses.last() => {
-                // A clause's text runs to the next keyword, so text here follows `THEN`.
+            // A clause's text runs to the next keyword, so text here can only follow the
+            // `THEN` of an `IF` clause.
+            [(word, Word::Text), ..] if clauses.last() == Some(&Clause::If) => {
                 return Err(EarsError::Expected {
-                    after: if *last == Clause::If {
-                        "THEN"
-                    } else {
-                        last.keyword()
-                    },
+                    after: "THEN",
                     expected: "THE <system>",
                     found: (*word).to_owned(),
                 });

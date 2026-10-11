@@ -69,10 +69,10 @@ The markdown is read by hand:
 - **Hidden text.** Fenced code blocks and HTML comments (`<!-- -->`, also across lines) are
   not read. Headings, list items, markers and gates inside them do not count. Avoided terms
   are the exception: like `lint terms`, they are looked for in the whole file.
-- **Fences** follow CommonMark: at most three spaces of indent, then three or more backticks
-  or tildes. A backtick fence's info string may not hold a backtick, so a line such as
-  ```` ```x``` and more ```` is text. A fence closes at a line of the same character, at
-  least as long, with at most three spaces of indent.
+- **Fences** open at three or more backticks or tildes after any indentation, so a fence
+  indented inside a list item still hides its contents. A backtick fence's info string may not
+  hold a backtick, so a line such as ```` ```x``` and more ```` is text. A fence closes at a
+  line of the same character, at least as long, with nothing else on it but whitespace.
 - **Code spans.** A run of N backticks opens an inline code span that the next run of exactly
   N backticks on the same line closes; a run with no such partner is plain text. Whichever of
   a code span and an HTML comment starts first wins, so `` `<!--` `` is text, not a comment.

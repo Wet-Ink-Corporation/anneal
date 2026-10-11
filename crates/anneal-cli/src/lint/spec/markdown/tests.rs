@@ -50,10 +50,14 @@ fn a_line_that_is_only_an_inline_span_does_not_open_a_fence() {
         ["Problem"],
         "a backtick in a backtick fence's info string makes it text"
     );
+}
+
+#[test]
+fn an_indented_fence_hides_its_lines_until_a_closing_fence() {
     assert_eq!(
-        titles("    ```\n## Problem\n"),
-        ["Problem"],
-        "four spaces of indent is not a fence"
+        titles("    ```text\n    ## Hidden\n    ```\n## Shown\n"),
+        ["Shown"],
+        "a fence indented inside a list item still hides its contents"
     );
 }
 

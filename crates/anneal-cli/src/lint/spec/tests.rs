@@ -169,6 +169,28 @@ fn labels_and_checkboxes_before_a_criterion_are_not_part_of_it() {
 }
 
 #[test]
+fn a_fence_indented_four_spaces_inside_a_criterion_is_hidden() {
+    let text = edited(
+        "- WHEN the user asks for an export, THE exporter SHALL write a CSV file.\n",
+        "- THE exporter SHALL log each row, for example:\n\
+         \n\
+         \x20   ```text\n\
+         \x20   - row 1\n\
+         \x20   ## Not a heading\n\
+         \x20   ```\n",
+    );
+
+    let report = check(spec(&text), None, Some(constitution(CONSTITUTION)));
+
+    assert_eq!(
+        found(&report),
+        [],
+        "the fence's lines are not criteria or sections"
+    );
+    assert_eq!(report.criteria, 2, "the fenced item is not a criterion");
+}
+
+#[test]
 fn a_bold_label_with_its_colon_inside_is_skipped() {
     let text = edited("- **AC-2**: WHILE offline,", "- **AC-2:** WHILE offline,");
 
