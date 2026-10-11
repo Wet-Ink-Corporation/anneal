@@ -1,8 +1,11 @@
 //! `rm` with both recursive and force flags, outside the temporary and scratch directories.
+//!
+//! An argument that is wholly a variable or substitution (`$F`, `"$FLAGS"`) may hold the flags,
+//! so when another operand follows it, it is taken as `-rf`.
 
 use std::path::Path;
 
-use super::wrappers::is_option;
+use super::wrappers::may_be_option;
 use super::{Context, normalize};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
@@ -18,7 +21,7 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     let mut options = true;
     for word in args {
         let text = word.text.as_str();
-        if !(options && is_option(word)) {
+        if !(options && may_be_option(word)) {
             targets.push(word);
             continue;
         }
@@ -33,8 +36,13 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
             }
         }
     }
+    let mut flags = None;
     if !(recursive && force) {
-        return None;
+        let hidden = targets
+            .iter()
+            .position(|target| is_whole_expansion(target))
+            .filter(|_| targets.len() >= 2)?;
+        flags = Some(targets.remove(hidden));
     }
     let deny = |reason: String| Some(Denial::new(Rule::RecursiveForceDelete, reason));
     if appended {
@@ -44,8 +52,19 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     }
     targets.into_iter().find_map(|target| {
         let why = unsafe_target(target, context)?;
-        deny(format!("rm -rf {}: {why}; {ALLOWED}", target.text))
+        match flags {
+            Some(flags) => deny(format!(
+                "rm {} {}: {} may be -rf, and {why}; {ALLOWED}",
+                flags.text, target.text, flags.text
+            )),
+            None => deny(format!("rm -rf {}: {why}; {ALLOWED}", target.text)),
+        }
     })
+}
+
+/// Whether `word` is one expansion and nothing else, so its value may be any argument.
+fn is_whole_expansion(word: &Word) -> bool {
+    matches!(word.expansions.as_slice(), [only] if only.range == (0..word.text.len()))
 }
 
 /// Why `target` may not be force-deleted, or `None` when it may.

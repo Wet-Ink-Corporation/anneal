@@ -1,5 +1,11 @@
 //! Table-driven tests: each denylist entry with its allowed near misses, the bypass forms, and
-//! commands that cannot be read.
+//! commands that cannot be read. The review's bypass repros are in [`bypasses`], forms that
+//! reach a command through indirection in [`indirection`], and every wrapping form crossed with
+//! every denied command in [`forms`].
+
+mod bypasses;
+mod forms;
+mod indirection;
 
 use std::ffi::OsString;
 

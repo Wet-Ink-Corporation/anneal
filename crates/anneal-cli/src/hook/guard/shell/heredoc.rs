@@ -1,4 +1,5 @@
-//! Heredoc bodies: data, whose substitutions still run unless the delimiter is quoted.
+//! Heredoc bodies: data, whose substitutions still run unless the delimiter is quoted. Each
+//! body is kept as the standard input of the command that named it.
 
 use std::mem;
 
@@ -9,10 +10,20 @@ impl Lexer {
     pub(super) fn heredoc_bodies(&mut self, depth: usize) -> Result<(), ParseError> {
         for heredoc in mem::take(&mut self.heredocs) {
             let body = self.heredoc_body(&heredoc);
-            if heredoc.expands {
+            let word = if heredoc.expands {
                 let mut lexer = Self::new(&body);
-                lexer.quoted_body(&mut Word::new(), None, depth.saturating_add(1))?;
-                self.commands.append(&mut lexer.commands);
+                let mut word = Word::quoted(String::new());
+                lexer.quoted_body(&mut word, None, depth.saturating_add(1))?;
+                self.adopt(lexer.into_commands());
+                word
+            } else {
+                Word::quoted(body)
+            };
+            while self.bodies.len() <= heredoc.number {
+                self.bodies.push(None);
+            }
+            if let Some(slot) = self.bodies.get_mut(heredoc.number) {
+                *slot = Some(word);
             }
         }
         Ok(())

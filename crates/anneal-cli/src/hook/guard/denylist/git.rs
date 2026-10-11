@@ -1,6 +1,11 @@
-//! `git push` forcing a protected branch, and `git add -f`.
+//! `git push` forcing a protected branch, `git add -f` (or `git stage -f`), and global
+//! settings that define an alias or run a command ([`settings`]).
 
-use super::wrappers::{is_option, skip_one, skip_options};
+mod settings;
+
+pub(super) use settings::settings;
+
+use super::wrappers::{may_be_option, skip_one, skip_options};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
@@ -20,6 +25,15 @@ const PUSH_VALUES: &[&str] = &["--repo", "--receive-pack", "--exec", "--push-opt
 
 /// Checks `git <args>`.
 pub(super) fn check(args: &[Word]) -> Option<Denial> {
+    if let Some(setting) = settings(args).unseen {
+        return Some(Denial::new(
+            Rule::Unparseable,
+            format!(
+                "git {setting} may define an alias or a command the guard cannot see; run the \
+                 command it stands for"
+            ),
+        ));
+    }
     let [subcommand, rest @ ..] = skip_options(args, GLOBAL_VALUES) else {
         return None;
     };
@@ -28,7 +42,7 @@ pub(super) fn check(args: &[Word]) -> Option<Denial> {
     }
     match subcommand.text.as_str() {
         "push" => push(rest),
-        "add" => add(rest),
+        "add" | "stage" => add(rest),
         _ => None,
     }
 }
@@ -55,7 +69,7 @@ impl<'a> Push<'a> {
                 push.operands.extend(tail);
                 break;
             }
-            if !is_option(first) {
+            if !may_be_option(first) {
                 push.operands.push(first);
                 continue;
             }
@@ -189,7 +203,7 @@ fn add(args: &[Word]) -> Option<Denial> {
         if text == "--" {
             break;
         }
-        let force = is_option(first)
+        let force = may_be_option(first)
             && (text == "--force" || (!text.starts_with("--") && text.contains('f')));
         if force {
             return Some(Denial::new(

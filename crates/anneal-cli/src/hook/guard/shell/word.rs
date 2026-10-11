@@ -1,6 +1,96 @@
 //! Words: quote removal, escapes, and the expansions that make a word dynamic.
 
-use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, Shape, Word, is_meta};
+use std::ops::Range;
+
+use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, is_meta};
+
+/// A shell word after quote removal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Word {
+    /// The word's text with quotes and escapes removed; an expansion keeps its source text.
+    pub(crate) text: String,
+    /// How far the text is from what the shell passes on.
+    pub(crate) shape: Shape,
+    /// Whether any part of the word was quoted or escaped.
+    pub(crate) quoted: bool,
+    /// Each expansion's source text in `text` (`$x`, `${x}`, `$( )`, backticks, `<( )`).
+    pub(crate) expansions: Vec<Expansion>,
+}
+
+/// Where an expansion's source text is in its word's text, and whether it was in double
+/// quotes (so its value is not split into words).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Expansion {
+    /// The byte range of the source text.
+    pub(crate) range: Range<usize>,
+    /// Whether it was inside double quotes (or a heredoc body).
+    pub(crate) quoted: bool,
+}
+
+/// How far a word's text is from what the shell passes on, from exact to unknowable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Shape {
+    /// No expansion: the text is the argument.
+    Literal,
+    /// An unquoted glob (`*`, `?`, `[`), brace or leading `~`: the text is a pattern.
+    Pattern,
+    /// A variable, command substitution or arithmetic: the value is only known at run time.
+    Dynamic,
+}
+
+impl Word {
+    pub(super) const fn new() -> Self {
+        Self {
+            text: String::new(),
+            shape: Shape::Literal,
+            quoted: false,
+            expansions: Vec::new(),
+        }
+    }
+
+    /// A quoted word whose text is exactly `text`.
+    pub(super) const fn quoted(text: String) -> Self {
+        Self {
+            text,
+            shape: Shape::Literal,
+            quoted: true,
+            expansions: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, shape: Shape) {
+        self.shape = self.shape.max(shape);
+    }
+
+    /// Whether the text is exactly what runs.
+    pub(crate) fn is_literal(&self) -> bool {
+        self.shape == Shape::Literal
+    }
+
+    /// Whether the word exists at all: `''` does, an unquoted nothing does not.
+    pub(super) fn is_present(&self) -> bool {
+        !self.text.is_empty() || self.quoted || !self.is_literal()
+    }
+
+    /// An unquoted run of digits, which before `<` or `>` names a file descriptor.
+    pub(super) fn is_fd(&self) -> bool {
+        !self.quoted
+            && self.is_literal()
+            && !self.text.is_empty()
+            && self.text.chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// Whether the word is one process substitution, `<( )` or `>( )`: a pipe's path.
+    pub(crate) fn is_process_substitution(&self) -> bool {
+        matches!(self.expansions.as_slice(), [only] if only.range == (0..self.text.len()))
+            && (self.text.starts_with("<(") || self.text.starts_with(">("))
+    }
+
+    /// An unquoted literal word, which may be a reserved word.
+    pub(super) fn is_bare(&self, reserved: &[&str]) -> bool {
+        !self.quoted && self.is_literal() && reserved.contains(&self.text.as_str())
+    }
+}
 
 impl Lexer {
     /// Reads one word, removing quotes and escapes.
@@ -37,7 +127,7 @@ impl Lexer {
                 self.quoted_body(word, Some('"'), depth)?;
             }
             '$' => self.dollar(word, Quoting::Bare, depth)?,
-            '`' => self.backticks(word, depth)?,
+            '`' => self.backticks(word, Quoting::Bare, depth)?,
             '*' | '?' | '[' | '{' => {
                 word.mark(Shape::Pattern);
                 word.text.push(c);
@@ -88,7 +178,7 @@ impl Lexer {
                     _ => word.text.push('\\'),
                 },
                 '$' => self.dollar(word, Quoting::Double, depth)?,
-                '`' => self.backticks(word, depth)?,
+                '`' => self.backticks(word, Quoting::Double, depth)?,
                 _ => word.text.push(c),
             }
         }
@@ -135,9 +225,19 @@ impl Lexer {
                 return Ok(());
             }
         }
-        word.mark(Shape::Dynamic);
-        word.text.push_str(&self.raw_since(start));
+        self.push_expansion(word, start, quoting);
         Ok(())
+    }
+
+    /// Adds the source text from `start` to `word` as an expansion.
+    pub(super) fn push_expansion(&self, word: &mut Word, start: usize, quoting: Quoting) {
+        word.mark(Shape::Dynamic);
+        let at = word.text.len();
+        word.text.push_str(&self.raw_since(start));
+        word.expansions.push(Expansion {
+            range: at..word.text.len(),
+            quoted: quoting == Quoting::Double,
+        });
     }
 
     /// The inside of `${ ... }`, which may hold quotes and further substitutions.
@@ -154,17 +254,21 @@ impl Lexer {
                 Some('\'') => self.single_quoted(&mut scratch)?,
                 Some('"') => self.quoted_body(&mut scratch, Some('"'), depth)?,
                 Some('$') => self.dollar(&mut scratch, Quoting::Bare, depth)?,
-                Some('`') => self.backticks(&mut scratch, depth)?,
+                Some('`') => self.backticks(&mut scratch, Quoting::Bare, depth)?,
                 Some(_) => {}
             }
         }
     }
 
-    fn backticks(&mut self, word: &mut Word, depth: usize) -> Result<(), ParseError> {
+    fn backticks(
+        &mut self,
+        word: &mut Word,
+        quoting: Quoting,
+        depth: usize,
+    ) -> Result<(), ParseError> {
         let start = self.pos.saturating_sub(1);
         self.list(Close::Backtick, depth.saturating_add(1))?;
-        word.mark(Shape::Dynamic);
-        word.text.push_str(&self.raw_since(start));
+        self.push_expansion(word, start, quoting);
         Ok(())
     }
 

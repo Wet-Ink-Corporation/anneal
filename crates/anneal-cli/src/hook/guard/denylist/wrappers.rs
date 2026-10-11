@@ -1,15 +1,20 @@
 //! Unwrapping a simple command down to the program that really runs.
+//!
+//! The command strings wrappers run (`bash -c`, `su -c`, `trap`, `watch`, ...) and `find`'s
+//! actions are read in [`strings`].
+
+mod strings;
 
 use std::borrow::Cow;
 
-use crate::hook::guard::shell::Word;
+use crate::hook::guard::shell::{Shape, Word};
 
 /// Words that may start a simple command before its program.
 const KEYWORDS: [&str; 9] = [
     "!", "{", "if", "then", "else", "elif", "do", "while", "until",
 ];
 
-/// Shells whose `-c` string is a command.
+/// Shells whose `-c` string is a command, and which read a script from stdin without one.
 const SHELLS: [&str; 7] = ["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"];
 
 /// Options that take a value in the next word, per wrapper.
@@ -35,11 +40,31 @@ const SUDO_VALUES: &[&str] = &[
     "--other-user",
     "--command-timeout",
 ];
-const ENV_VALUES: &[&str] = &["-u", "-C", "--unset", "--chdir"];
 const EXEC_VALUES: &[&str] = &["-a"];
 const TIME_VALUES: &[&str] = &["-f", "-o", "--format", "--output"];
 const NICE_VALUES: &[&str] = &["-n", "--adjustment"];
 const TIMEOUT_VALUES: &[&str] = &["-s", "-k", "--signal", "--kill-after"];
+const STDBUF_VALUES: &[&str] = &["-i", "-o", "-e", "--input", "--output", "--error"];
+const IONICE_VALUES: &[&str] = &[
+    "-c",
+    "-n",
+    "-p",
+    "-P",
+    "-u",
+    "--class",
+    "--classdata",
+    "--pid",
+    "--pgid",
+    "--uid",
+];
+const CHRT_VALUES: &[&str] = &[
+    "-T",
+    "-P",
+    "-D",
+    "--sched-runtime",
+    "--sched-period",
+    "--sched-deadline",
+];
 const XARGS_VALUES: &[&str] = &[
     "-a",
     "-d",
@@ -59,18 +84,14 @@ const XARGS_VALUES: &[&str] = &[
     "--max-chars",
     "--process-slot-var",
 ];
-const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
-
-/// The `find` actions that run a command on each match.
-const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
 
 /// The program of a simple command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Program<'a> {
     /// Its name, without a path or `.exe`.
     Named(&'a str),
-    /// A name only known at run time (`$(echo rm)`, `"$GIT"`, a glob).
-    Unknown,
+    /// A word that is not a literal name (`$(echo rm)`, `"$GIT"`, a glob or a brace).
+    Unknown(&'a Word),
 }
 
 /// What a simple command runs, once wrappers are removed.
@@ -87,10 +108,27 @@ pub(super) enum Run<'a> {
         /// Whether more arguments are appended at run time.
         appended: bool,
     },
-    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `env -S`.
+    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `env -S`, `trap`.
     Script(Cow<'a, str>),
-    /// The words `find -exec` runs, with each match appended.
-    Exec(&'a [Word]),
+    /// A shell (named) reading its script from standard input.
+    StdinScript(&'a str),
+    /// A shell (named) running a script from a process substitution or a file descriptor,
+    /// known only at run time.
+    Unseen(&'a str),
+    /// The commands `find`'s actions run, each with matches appended.
+    Exec(Vec<&'a [Word]>),
+}
+
+/// One wrapper removed.
+enum Peel<'a> {
+    /// The wrapped command's words.
+    Inner(&'a [Word]),
+    /// The wrapped command's words, with arguments appended at run time (`xargs`).
+    Appending(&'a [Word]),
+    /// The wrapper runs this.
+    Done(Run<'a>),
+    /// Not a wrapper: the program itself.
+    Program,
 }
 
 /// Strips keywords, assignments and wrappers from `words`.
@@ -102,34 +140,18 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
             return Run::Nothing;
         };
         let program = program(first);
-        let Program::Named(name) = program else {
-            return Run::Command {
-                program,
-                args: rest,
-                appended,
-            };
+        let peeled = match program {
+            Program::Named(name) => peel(name, rest),
+            Program::Unknown(_) => Peel::Program,
         };
-        words = match name {
-            "sudo" | "doas" => skip_prefix(skip_options(rest, SUDO_VALUES)),
-            "env" => match env(rest) {
-                Ok(rest) => skip_prefix(rest),
-                Err(script) => return Run::Script(script),
-            },
-            "command" | "nohup" | "builtin" => skip_options(rest, &[]),
-            "exec" => skip_options(rest, EXEC_VALUES),
-            "time" => skip_options(rest, TIME_VALUES),
-            "nice" => skip_options(rest, NICE_VALUES),
-            "timeout" => skip_one(skip_options(rest, TIMEOUT_VALUES)),
-            "xargs" => {
+        words = match peeled {
+            Peel::Inner(inner) => skip_prefix(inner),
+            Peel::Appending(inner) => {
                 appended = true;
-                skip_options(rest, XARGS_VALUES)
+                skip_prefix(inner)
             }
-            "eval" => return Run::Script(Cow::Owned(join(rest))),
-            "find" => return find_exec(rest).map_or(Run::Nothing, Run::Exec),
-            shell if SHELLS.contains(&shell) => {
-                return shell_script(rest).map_or(Run::Nothing, |s| Run::Script(Cow::Borrowed(s)));
-            }
-            _ => {
+            Peel::Done(run) => return run,
+            Peel::Program => {
                 return Run::Command {
                     program,
                     args: rest,
@@ -140,11 +162,47 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
     }
 }
 
+/// Removes the wrapper `name` from its arguments `rest`.
+fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
+    match name {
+        "sudo" | "doas" => strings::sudo(rest),
+        "env" => strings::env(rest),
+        "command" | "nohup" | "builtin" | "setsid" | "unbuffer" => {
+            Peel::Inner(skip_options(rest, &[]))
+        }
+        "exec" => Peel::Inner(skip_options(rest, EXEC_VALUES)),
+        "time" => Peel::Inner(skip_options(rest, TIME_VALUES)),
+        "nice" => Peel::Inner(skip_options(rest, NICE_VALUES)),
+        "stdbuf" => Peel::Inner(skip_options(rest, STDBUF_VALUES)),
+        "ionice" => Peel::Inner(skip_options(rest, IONICE_VALUES)),
+        // The duration, the priority, the CPU mask, the function's name.
+        "timeout" => Peel::Inner(skip_one(skip_options(rest, TIMEOUT_VALUES))),
+        "chrt" => Peel::Inner(skip_one(skip_options(rest, CHRT_VALUES))),
+        "taskset" => Peel::Inner(skip_one(skip_options(rest, &[]))),
+        "function" => Peel::Inner(skip_one(rest)),
+        // `busybox <applet> ...`.
+        "busybox" => Peel::Inner(rest),
+        "coproc" => strings::coproc(rest),
+        "flock" => strings::flock(rest),
+        "xargs" => Peel::Appending(skip_options(rest, XARGS_VALUES)),
+        "eval" => Peel::Done(Run::Script(Cow::Owned(join(rest)))),
+        "alias" => strings::alias(rest),
+        "source" | "." => strings::source(rest),
+        "trap" => strings::trap(rest),
+        "su" => strings::su(rest),
+        "script" => strings::script(rest),
+        "watch" => strings::watch(rest),
+        "find" => strings::find(rest),
+        shell if SHELLS.contains(&shell) => strings::shell(shell, rest),
+        _ => Peel::Program,
+    }
+}
+
 /// The program `word` names: its last path component without `.exe`, or unknown when the
 /// word is not literal.
 fn program(word: &Word) -> Program<'_> {
     if !word.is_literal() {
-        return Program::Unknown;
+        return Program::Unknown(word);
     }
     let text = word.text.as_str();
     let name = text.rsplit(['/', '\\']).next().unwrap_or(text);
@@ -155,8 +213,7 @@ fn program(word: &Word) -> Program<'_> {
 fn skip_prefix(words: &[Word]) -> &[Word] {
     let mut rest = words;
     while let [first, tail @ ..] = rest {
-        let keyword = !first.quoted && KEYWORDS.contains(&first.text.as_str());
-        if !(keyword || is_assignment(first)) {
+        if !(is_keyword(first) || is_assignment(first)) {
             break;
         }
         rest = tail;
@@ -164,8 +221,18 @@ fn skip_prefix(words: &[Word]) -> &[Word] {
     rest
 }
 
+/// Skips leading keywords (`if`, `then`, `{`, `!`, ...).
+pub(super) fn skip_keywords(words: &[Word]) -> &[Word] {
+    let at = words.iter().take_while(|word| is_keyword(word)).count();
+    words.split_at_checked(at).map_or(words, |(_, rest)| rest)
+}
+
+fn is_keyword(word: &Word) -> bool {
+    !word.quoted && KEYWORDS.contains(&word.text.as_str())
+}
+
 /// `NAME=value`, with `NAME` a shell identifier.
-fn is_assignment(word: &Word) -> bool {
+pub(super) fn is_assignment(word: &Word) -> bool {
     word.text.split_once('=').is_some_and(|(name, _)| {
         name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -174,7 +241,13 @@ fn is_assignment(word: &Word) -> bool {
 
 /// Whether `word` is an option: literal, starting with `-`, and not `-` alone.
 pub(super) fn is_option(word: &Word) -> bool {
-    word.is_literal() && word.text.starts_with('-') && word.text != "-"
+    word.is_literal() && may_be_option(word)
+}
+
+/// Whether `word` may be an option once expanded: it starts with `-` (not `-` alone) and
+/// holds no variable. A brace-expanded `-f` (a pattern) counts.
+pub(super) fn may_be_option(word: &Word) -> bool {
+    word.shape != Shape::Dynamic && word.text.starts_with('-') && word.text != "-"
 }
 
 /// Skips options up to the first operand, and a `--` that ends them. Options in `with_value`
@@ -203,91 +276,10 @@ pub(super) fn skip_one(words: &[Word]) -> &[Word] {
 }
 
 /// The words' texts joined by spaces, as `eval` joins its arguments.
-fn join(words: &[Word]) -> String {
+pub(super) fn join(words: &[Word]) -> String {
     words
         .iter()
         .map(|word| word.text.as_str())
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// `env`'s operands after its options, or the script `-S` (`--split-string`) runs.
-fn env(words: &[Word]) -> Result<&[Word], Cow<'_, str>> {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        let split = match text {
-            "-S" | "--split-string" => {
-                Some((tail.first().map(|w| w.text.as_str()), skip_one(tail)))
-            }
-            _ => text
-                .strip_prefix("--split-string=")
-                .or_else(|| text.strip_prefix("-S").filter(|s| !s.is_empty()))
-                .map(|attached| (Some(attached), tail)),
-        };
-        if let Some((script, after)) = split.filter(|_| first.is_literal()) {
-            // `-S` as the last word splits nothing: an empty script.
-            let script = script.unwrap_or("");
-            return Err(if after.is_empty() {
-                Cow::Borrowed(script)
-            } else {
-                Cow::Owned(format!("{script} {}", join(after)))
-            });
-        }
-        if text == "--" {
-            return Ok(tail);
-        }
-        if !is_option(first) {
-            break;
-        }
-        rest = if ENV_VALUES.contains(&text) {
-            skip_one(tail)
-        } else {
-            tail
-        };
-    }
-    Ok(rest)
-}
-
-/// The string a shell's `-c` runs: the first operand after options that include `c`.
-fn shell_script(words: &[Word]) -> Option<&str> {
-    let mut rest = words;
-    let mut command_string = false;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if text == "--" || text == "-" {
-            rest = tail;
-            break;
-        }
-        let short = first.is_literal() && (text.starts_with('-') || text.starts_with('+'));
-        if !short {
-            break;
-        }
-        let long = text.starts_with("--");
-        command_string |= !long && text.starts_with('-') && text.contains('c');
-        let takes_value = if long {
-            SHELL_VALUES.contains(&text)
-        } else {
-            text.ends_with(['o', 'O'])
-        };
-        rest = if takes_value { skip_one(tail) } else { tail };
-    }
-    if command_string {
-        rest.first().map(|word| word.text.as_str())
-    } else {
-        None
-    }
-}
-
-/// The command `find -exec` (or `-execdir`, `-ok`, `-okdir`) runs, up to its `;` or `+`.
-fn find_exec(words: &[Word]) -> Option<&[Word]> {
-    let start = words
-        .iter()
-        .position(|word| FIND_EXEC.contains(&word.text.as_str()))?;
-    let command = words.get(start.checked_add(1)?..)?;
-    let end = command
-        .iter()
-        .position(|word| word.text == ";" || word.text == "+")
-        .unwrap_or(command.len());
-    command.get(..end)
 }

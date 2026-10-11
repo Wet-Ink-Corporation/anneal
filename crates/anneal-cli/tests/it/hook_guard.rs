@@ -5,7 +5,7 @@
 use std::error::Error;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::{Value, json};
 
@@ -32,21 +32,9 @@ impl Scratch {
 
     /// Runs `anneal hook guard --fail-closed` with `stdin`, the ledger at `store`.
     fn guard(&self, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
-        let mut child = anneal_in(self.path())
-            .args(["hook", "guard", "--fail-closed"])
-            .env("ANNEAL_STORE", &self.store)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut input = child.stdin.take().ok_or("stdin is piped")?;
-        match input.write_all(stdin) {
-            // The guard stops reading at its cap and may exit before taking all of it.
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
-            written => written?,
-        }
-        drop(input);
-        Ok(child.wait_with_output()?)
+        let mut command = anneal_in(self.path());
+        command.env("ANNEAL_STORE", &self.store);
+        run_guard(command, stdin)
     }
 
     /// The `PreToolUse` input for a Bash call of `command` in this directory.
@@ -78,6 +66,24 @@ impl Scratch {
             .cloned()
             .unwrap_or_default())
     }
+}
+
+/// Runs `command` as `hook guard --fail-closed` with `stdin`.
+fn run_guard(mut command: Command, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
+    let mut child = command
+        .args(["hook", "guard", "--fail-closed"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut input = child.stdin.take().ok_or("stdin is piped")?;
+    match input.write_all(stdin) {
+        // The guard stops reading at its cap and may exit before taking all of it.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        written => written?,
+    }
+    drop(input);
+    Ok(child.wait_with_output()?)
 }
 
 /// The deny reason in `output`, after checking it is exactly one deny decision, exit 0, and
@@ -259,5 +265,51 @@ fn a_usage_error_exits_2() -> TestResult {
         "a mis-invoked guard blocks: {output:?}"
     );
     assert!(output.stdout.is_empty(), "nothing on stdout: {output:?}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary and a fake git")]
+fn a_git_that_never_answers_still_gets_the_deny_out_within_the_hook_budget() -> TestResult {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    /// The hook's `timeout` in `hooks.json`: after it, Claude Code blocks without the reason.
+    const HOOK_BUDGET: Duration = Duration::from_secs(5);
+
+    let scratch = Scratch::new()?;
+    // A git that blocks opening a FIFO nobody ever writes, until it is killed.
+    let fifo = scratch.path().join("never-written");
+    let made = Command::new("mkfifo").arg(&fifo).status()?;
+    assert!(made.success(), "mkfifo: {made:?}");
+    let bin = scratch.path().join("bin");
+    fs::create_dir(&bin)?;
+    let git = bin.join("git");
+    fs::write(
+        &git,
+        format!("#!/bin/sh\nread line < '{}'\n", fifo.display()),
+    )?;
+    fs::set_permissions(&git, Permissions::from_mode(0o755))?;
+    let mut command = anneal_in(scratch.path());
+    command.env("PATH", &bin);
+
+    // The one clock read: the budget is wall time by definition.
+    let started = Instant::now();
+    let output = run_guard(command, &scratch.bash("rm -rf /")?)?;
+    let elapsed = started.elapsed();
+
+    let reason = deny_reason(&output)?;
+    assert!(
+        reason.starts_with("ERROR guard rm-rf: ")
+            && reason.contains("not recorded in the ledger")
+            && reason.contains("git did not answer within 1s"),
+        "denied, with a note that the block was not recorded: {reason}"
+    );
+    assert!(
+        elapsed < HOOK_BUDGET,
+        "the deny arrives within the hook's timeout: {elapsed:?}"
+    );
     Ok(())
 }

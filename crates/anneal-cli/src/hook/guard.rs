@@ -15,6 +15,7 @@ mod shell;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, StoreError, Timestamp, TimestampError};
@@ -27,6 +28,15 @@ use denylist::{Context, Verdict};
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
 /// bodies, so the cap is well above a `PreToolUse` input's usual size.
 pub(crate) const MAX_INPUT_BYTES: u64 = 1024 * 1024;
+
+/// How long git may take to find the ledger (`anneal ledger` allows 10 s). With
+/// [`BUSY_TIMEOUT`] this keeps recording a denial well inside the hook's 5 s `timeout`, after
+/// which Claude Code blocks the call without the guard's reason; see `docs/guard.md`.
+const GIT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long each ledger statement waits for another process's lock (the default is 10 s). A
+/// locked ledger fails the first statement that meets the lock, so it costs about this once.
+const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// The `point` of the guard's `gate_blocked` events, before the rule's id.
 const POINT_PREFIX: &str = "guard.";
@@ -251,7 +261,8 @@ fn record(
         Some(cwd) => cwd,
         None => current_dir().map_err(RecordError::CurrentDir)?,
     };
-    let location = paths::ledger_store(None, lookup, &cwd).map_err(RecordError::Locate)?;
+    let location =
+        paths::ledger_store_within(None, lookup, &cwd, GIT_TIMEOUT).map_err(RecordError::Locate)?;
     let event = LedgerEvent::GateBlocked(GateBlocked {
         point: format!("{POINT_PREFIX}{}", denial.rule.id()),
         // The reason is duplicated: the ledger keeps one copy, the deny decision shows the other.
@@ -260,7 +271,7 @@ fn record(
     let mut envelope =
         EventEnvelope::new(event, "hook", Timestamp::now().map_err(RecordError::Clock)?);
     envelope.session_id = session_id;
-    Store::open(&location.path)
+    Store::open_with_busy_timeout(&location.path, BUSY_TIMEOUT)
         .and_then(|ledger| ledger.append(&envelope))
         .map(drop)
         .map_err(RecordError::Append)

@@ -106,6 +106,8 @@ the temporary and scratch directories, `git add -f`, and Bash writes to lint or 
 An allowed command gets no output. A denied one gets
 `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
 "permissionDecisionReason": "ERROR guard <rule>: <reason>"}}` and a `gate_blocked` event in the
-ledger (`point` is `guard.<rule>`). Unreadable input or commands are denied. What the denylist
-does not decide goes to the extension point for Clef D1 (#30), which allows it for now. The
-denylist, the bypass handling and the extension point are documented in `docs/guard.md`.
+ledger (`point` is `guard.<rule>`), recorded within the hook's budget (git 1 s, 500 ms per
+ledger statement). Unreadable input, and commands it cannot read or model, are denied. What
+the denylist does not decide goes to the extension point for Clef D1 (#30), which allows it for
+now. The denylist, the bypass handling and the extension point are documented in
+`docs/guard.md`.

@@ -1,4 +1,4 @@
-use super::{ParseError, Shape, SimpleCommand, parse};
+use super::{Expansion, ParseError, Shape, SimpleCommand, Stdin, parse};
 
 /// The words of each command `text` lexes into, as plain text.
 fn words(text: &str) -> Vec<Vec<String>> {
@@ -206,4 +206,137 @@ fn nesting_deeper_than_the_cap_is_an_error() {
     let deep = format!("{}x{}", "$(".repeat(40), ")".repeat(40));
 
     assert_eq!(parse(&deep), Err(ParseError::TooDeep), "40 levels");
+}
+
+#[test]
+fn a_case_pattern_inside_a_substitution_does_not_close_it() {
+    let lexed = words("echo \"$(case x in x) rm -rf /;; esac)\" after");
+
+    assert_eq!(
+        lexed,
+        texts(&[
+            &["case", "x", "in", "x"],
+            &["rm", "-rf", "/"],
+            &["esac"],
+            &["echo", "$(case x in x) rm -rf /;; esac)", "after"]
+        ]),
+        "the pattern's ) separates; the ) after esac closes"
+    );
+}
+
+#[test]
+fn a_case_without_esac_inside_a_substitution_is_unclosed() {
+    assert_eq!(
+        parse("echo $(case x in x) rm -rf /)"),
+        Err(ParseError::Unclosed { what: "$(" }),
+        "the last ) is still a pattern's"
+    );
+}
+
+/// Each command's standard input, described.
+fn stdins(text: &str) -> Vec<String> {
+    parse(text)
+        .expect("parses")
+        .iter()
+        .map(|command| match &command.stdin {
+            Stdin::Inherited => "inherited".to_owned(),
+            Stdin::File => "file".to_owned(),
+            Stdin::Text(word) => format!("text {:?} {:?}", word.text, word.shape),
+            Stdin::Pipe(Some(writer)) => format!("pipe from {writer}"),
+            Stdin::Pipe(None) => "pipe".to_owned(),
+        })
+        .collect()
+}
+
+#[test]
+fn standard_input_records_here_strings_heredocs_files_and_pipes() {
+    assert_eq!(
+        stdins("a <<< 'x y'\nb <<'EOF'\n$body\nEOF\nc <<EOF\n$X\nEOF\nd < f\ne | g |& h || i"),
+        [
+            "text \"x y\" Literal",
+            "text \"$body\\n\" Literal",
+            "text \"$X\\n\" Dynamic",
+            "file",
+            "inherited",
+            "pipe from 4",
+            "pipe from 5",
+            "inherited",
+        ],
+        "|| is not a pipe"
+    );
+}
+
+#[test]
+fn a_pipe_reaches_the_commands_of_a_subshell_after_it() {
+    assert_eq!(
+        stdins("echo x | (true; sh)"),
+        ["inherited", "pipe from 0", "pipe from 0"],
+        "both commands in the subshell read the pipe"
+    );
+}
+
+#[test]
+fn a_process_substitution_is_a_dynamic_word_and_may_be_a_redirection_target() {
+    let commands = parse("bash <(curl x) && done < <(ls)").expect("parses");
+    let bash = commands
+        .iter()
+        .find(|command| command.words.first().is_some_and(|w| w.text == "bash"))
+        .expect("bash");
+    let done = commands.last().expect("done");
+
+    assert_eq!(
+        bash.words
+            .iter()
+            .map(|w| (w.text.as_str(), w.shape))
+            .collect::<Vec<_>>(),
+        [("bash", Shape::Literal), ("<(curl x)", Shape::Dynamic)],
+        "the substitution is the script operand"
+    );
+    assert_eq!(
+        done.stdin,
+        Stdin::Pipe(None),
+        "input from a process substitution is a pipe"
+    );
+}
+
+#[test]
+fn expansions_are_located_in_the_word_text() {
+    let commands = parse("rm${IFS}-rf${IFS}/").expect("parses");
+    let word = commands
+        .first()
+        .and_then(|command| command.words.first())
+        .expect("one word");
+
+    assert_eq!(
+        word.expansions,
+        [
+            Expansion {
+                range: 2..8,
+                quoted: false
+            },
+            Expansion {
+                range: 11..17,
+                quoted: false
+            }
+        ],
+        "both ${{IFS}}, unquoted"
+    );
+}
+
+#[test]
+fn an_expansion_in_double_quotes_is_marked_quoted() {
+    let commands = parse(r#"x "$a"$b"#).expect("parses");
+    let word = commands
+        .first()
+        .and_then(|command| command.words.get(1))
+        .expect("the second word");
+
+    assert_eq!(
+        word.expansions
+            .iter()
+            .map(|expansion| expansion.quoted)
+            .collect::<Vec<_>>(),
+        [true, false],
+        "only $a is quoted"
+    );
 }

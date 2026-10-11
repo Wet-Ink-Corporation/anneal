@@ -3,82 +3,57 @@
 //! [`parse`] removes quotes (single, double, ANSI-C `$'...'`) and backslash escapes, splits at
 //! `&&`, `||`, `;`, `|`, `&` and newlines, and flattens `$( )`, backticks, `( )` subshells,
 //! `<( )` process substitutions and the substitutions in unquoted heredoc bodies into the same
-//! list, so a command cannot hide inside another. Heredoc bodies are data. Expansions are not
-//! performed: a word that has one is marked [`Shape::Dynamic`], one with an unquoted glob,
-//! brace or leading `~` [`Shape::Pattern`].
+//! list, so a command cannot hide inside another. A `case` pattern's `)` does not close a
+//! substitution. Heredoc bodies are data, kept as the standard input of the command reading
+//! them. Expansions are not performed: a word that has one is marked [`Shape::Dynamic`], one
+//! with an unquoted glob, brace or leading `~` [`Shape::Pattern`].
 //!
-//! Commands and redirections are read here; words (quotes, escapes, `$`) in [`word`], heredoc
-//! bodies in [`heredoc`].
+//! Commands are read here; words (quotes, escapes, `$`) in [`word`], redirections in
+//! [`redirect`], heredoc bodies in [`heredoc`].
 
 mod heredoc;
+mod redirect;
 mod word;
 
 use std::mem;
 
+use redirect::Heredoc;
+pub(crate) use word::{Expansion, Shape, Word};
+
 /// How deep `$( )`, backticks, `( )` and `${ }` may nest before a command is refused (H-13).
 pub(crate) const MAX_NESTING: usize = 32;
 
-/// A shell word after quote removal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Word {
-    /// The word's text with quotes and escapes removed; an expansion keeps its source text.
-    pub(crate) text: String,
-    /// How far the text is from what the shell passes on.
-    pub(crate) shape: Shape,
-    /// Whether any part of the word was quoted or escaped.
-    pub(crate) quoted: bool,
-}
+/// Words that may come before a reserved word such as `case` in command position.
+const RESERVED: [&str; 10] = [
+    "!", "{", "if", "then", "else", "elif", "do", "while", "until", "time",
+];
 
-/// How far a word's text is from what the shell passes on, from exact to unknowable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Shape {
-    /// No expansion: the text is the argument.
-    Literal,
-    /// An unquoted glob (`*`, `?`, `[`), brace or leading `~`: the text is a pattern.
-    Pattern,
-    /// A variable, command substitution or arithmetic: the value is only known at run time.
-    Dynamic,
-}
-
-impl Word {
-    const fn new() -> Self {
-        Self {
-            text: String::new(),
-            shape: Shape::Literal,
-            quoted: false,
-        }
-    }
-
-    fn mark(&mut self, shape: Shape) {
-        self.shape = self.shape.max(shape);
-    }
-
-    /// Whether the text is exactly what runs.
-    pub(crate) fn is_literal(&self) -> bool {
-        self.shape == Shape::Literal
-    }
-
-    /// Whether the word exists at all: `''` does, an unquoted nothing does not.
-    fn is_present(&self) -> bool {
-        !self.text.is_empty() || self.quoted || !self.is_literal()
-    }
-
-    /// An unquoted run of digits, which before `<` or `>` names a file descriptor.
-    fn is_fd(&self) -> bool {
-        !self.quoted
-            && self.is_literal()
-            && !self.text.is_empty()
-            && self.text.chars().all(|c| c.is_ascii_digit())
-    }
-}
-
-/// A simple command: its words and the files its redirections write.
+/// A simple command: its words, the files its redirections write, and its standard input.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct SimpleCommand {
     /// The words, program first.
     pub(crate) words: Vec<Word>,
     /// The targets of `>`, `>>`, `>|`, `&>`, `<>` and `>&file`.
     pub(crate) writes: Vec<Word>,
+    /// Where its standard input comes from.
+    pub(crate) stdin: Stdin,
+    /// The heredoc it reads, by number, until the body is read.
+    heredoc: Option<usize>,
+}
+
+/// Where a simple command's standard input comes from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Stdin {
+    /// The standard input of the whole command.
+    #[default]
+    Inherited,
+    /// A file (`<`, `<&`).
+    File,
+    /// A here-string or heredoc body.
+    Text(Word),
+    /// A pipe: the index (in [`parse`]'s list) of the command writing it, when that is the
+    /// command just before the `|`.
+    Pipe(Option<usize>),
 }
 
 /// Why a command could not be read.
@@ -106,7 +81,7 @@ pub(crate) enum ParseError {
 pub(crate) fn parse(text: &str) -> Result<Vec<SimpleCommand>, ParseError> {
     let mut lexer = Lexer::new(text);
     lexer.list(Close::End, 0)?;
-    Ok(lexer.commands)
+    Ok(lexer.into_commands())
 }
 
 /// What ends the command list being read.
@@ -120,6 +95,20 @@ enum Close {
     Backtick,
 }
 
+/// The command list being read: what ends it, how deep it is, and the pipe and open `case`
+/// count it started with.
+#[derive(Debug, Clone, Copy)]
+struct Level {
+    close: Close,
+    depth: usize,
+    pipe: Option<Writer>,
+    cases: usize,
+}
+
+/// The command writing the pipe the next commands read (its index, when known).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Writer(Option<usize>);
+
 /// Whether `$` inside double quotes, where `$'` and `$"` are not quoting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Quoting {
@@ -127,38 +116,21 @@ enum Quoting {
     Double,
 }
 
-/// What a redirection operator does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Redirect {
-    /// `>`, `>>`, `>|`, `&>`, `&>>`, `<>`: the target is written.
-    Write,
-    /// `>&`: a file when the target is not a descriptor.
-    Duplicate,
-    /// `<`, `<&`, `<<<`: the target is read.
-    Read,
-    /// `<<` or `<<-`.
-    Heredoc { strip_tabs: bool },
-    /// `<(` or `>(`.
-    Process,
-}
-
-/// A heredoc whose body starts after the next newline.
-#[derive(Debug)]
-struct Heredoc {
-    delimiter: String,
-    /// An unquoted delimiter: the body's substitutions run.
-    expands: bool,
-    strip_tabs: bool,
-}
-
-/// The lexer's state: the input, the cursor, the commands read so far and the heredocs whose
-/// bodies start at the next newline.
+/// The lexer's state: the input, the cursor, the commands read so far, the heredocs whose
+/// bodies start at the next newline, the bodies read, the pipe the next command reads and
+/// the `case` statements open.
 #[derive(Debug)]
 struct Lexer {
     chars: Vec<char>,
     pos: usize,
     commands: Vec<SimpleCommand>,
     heredocs: Vec<Heredoc>,
+    /// Heredoc bodies by number; `None` until read.
+    bodies: Vec<Option<Word>>,
+    /// How many heredocs have been opened, which numbers the next one.
+    heredoc_count: usize,
+    pipe: Option<Writer>,
+    cases: usize,
 }
 
 /// Characters that end an unquoted word.
@@ -176,6 +148,10 @@ impl Lexer {
             pos: 0,
             commands: Vec::new(),
             heredocs: Vec::new(),
+            bodies: Vec::new(),
+            heredoc_count: 0,
+            pipe: None,
+            cases: 0,
         }
     }
 
@@ -222,6 +198,12 @@ impl Lexer {
         if depth > MAX_NESTING {
             return Err(ParseError::TooDeep);
         }
+        let level = Level {
+            close,
+            depth,
+            pipe: self.pipe,
+            cases: self.cases,
+        };
         let mut command = SimpleCommand::default();
         loop {
             self.skip_blanks();
@@ -229,24 +211,23 @@ impl Lexer {
                 self.finish(&mut command);
                 return unclosed(close);
             };
-            let closes = (c == ')' && matches!(close, Close::Paren(_)))
-                || (c == '`' && close == Close::Backtick);
+            // A `)` while a `case` opened in this list is open ends a pattern, not the list.
+            let closes =
+                (c == ')' && matches!(close, Close::Paren(_)) && self.cases <= level.cases)
+                    || (c == '`' && close == Close::Backtick);
             if closes {
                 self.advance();
                 self.finish(&mut command);
+                self.pipe = level.pipe;
+                self.cases = level.cases;
                 return Ok(());
             }
-            self.step(&mut command, close, depth)?;
+            self.step(&mut command, level)?;
         }
     }
 
     /// Reads the token at the cursor into `command`.
-    fn step(
-        &mut self,
-        command: &mut SimpleCommand,
-        close: Close,
-        depth: usize,
-    ) -> Result<(), ParseError> {
+    fn step(&mut self, command: &mut SimpleCommand, level: Level) -> Result<(), ParseError> {
         let Some(c) = self.peek() else {
             return Ok(());
         };
@@ -254,26 +235,38 @@ impl Lexer {
             '#' => self.skip_comment(),
             '\n' => {
                 self.advance();
-                self.finish(command);
-                self.heredoc_bodies(depth)?;
+                self.separate(command, level);
+                self.heredoc_bodies(level.depth)?;
             }
-            '&' if self.peek_next() == Some('>') => self.redirect(command, close, depth)?,
-            // An unmatched `)` (a `case` pattern) only separates.
-            ';' | '&' | '|' | ')' => {
+            '&' if self.peek_next() == Some('>') => self.redirect(command, level, true)?,
+            '|' => {
                 self.advance();
-                self.finish(command);
+                if self.eat('|') {
+                    self.separate(command, level);
+                } else {
+                    // `|&` pipes stderr too.
+                    self.eat('&');
+                    let writer = self.finish(command);
+                    self.pipe = Some(Writer(writer));
+                }
+            }
+            // An unmatched `)` (a `case` pattern) only separates.
+            ';' | '&' | ')' => {
+                self.advance();
+                self.separate(command, level);
             }
             '(' => {
                 self.advance();
                 self.finish(command);
-                self.list(Close::Paren("("), depth.saturating_add(1))?;
+                self.list(Close::Paren("("), level.depth.saturating_add(1))?;
             }
-            '<' | '>' => self.redirect(command, close, depth)?,
+            '<' | '>' => self.redirect(command, level, true)?,
             _ => {
-                let word = self.word(close, depth)?;
+                let word = self.word(level.close, level.depth)?;
                 if word.is_fd() && matches!(self.peek(), Some('<' | '>')) {
-                    self.redirect(command, close, depth)?;
+                    self.redirect(command, level, word.text == "0")?;
                 } else if word.is_present() {
+                    self.count_case(command, &word, level);
                     command.words.push(word);
                 }
             }
@@ -281,10 +274,60 @@ impl Lexer {
         Ok(())
     }
 
-    fn finish(&mut self, command: &mut SimpleCommand) {
-        if !command.words.is_empty() || !command.writes.is_empty() {
-            self.commands.push(mem::take(command));
+    /// Counts `case` and `esac` when `word` is in command position.
+    fn count_case(&mut self, command: &SimpleCommand, word: &Word, level: Level) {
+        if !command.words.iter().all(|before| before.is_bare(&RESERVED)) {
+            return;
         }
+        if word.is_bare(&["case"]) {
+            self.cases = self.cases.saturating_add(1);
+        } else if word.is_bare(&["esac"]) && self.cases > level.cases {
+            self.cases = self.cases.saturating_sub(1);
+        }
+    }
+
+    /// Ends `command` at a separator: the next command no longer reads the pipe, unless the
+    /// whole list does.
+    fn separate(&mut self, command: &mut SimpleCommand, level: Level) {
+        self.finish(command);
+        self.pipe = level.pipe;
+    }
+
+    /// Pushes `command` if it has anything, returning its index.
+    fn finish(&mut self, command: &mut SimpleCommand) -> Option<usize> {
+        if command.words.is_empty() && command.writes.is_empty() {
+            return None;
+        }
+        let reads_pipe = command.stdin == Stdin::Inherited && command.heredoc.is_none();
+        if let Some(Writer(writer)) = self.pipe.filter(|_| reads_pipe) {
+            command.stdin = Stdin::Pipe(writer);
+        }
+        let index = self.commands.len();
+        self.commands.push(mem::take(command));
+        Some(index)
+    }
+
+    /// Appends `commands`, lexed apart (a heredoc body), shifting their pipe writers.
+    fn adopt(&mut self, commands: Vec<SimpleCommand>) {
+        let offset = self.commands.len();
+        self.commands
+            .extend(commands.into_iter().map(|mut command| {
+                if let Stdin::Pipe(Some(writer)) = &mut command.stdin {
+                    *writer = writer.saturating_add(offset);
+                }
+                command
+            }));
+    }
+
+    /// The commands, each reading the heredoc body it named (empty if never read).
+    fn into_commands(mut self) -> Vec<SimpleCommand> {
+        for command in &mut self.commands {
+            if let Some(number) = command.heredoc.take() {
+                let body = self.bodies.get_mut(number).and_then(Option::take);
+                command.stdin = Stdin::Text(body.unwrap_or_else(|| Word::quoted(String::new())));
+            }
+        }
+        self.commands
     }
 
     fn skip_blanks(&mut self) {
@@ -303,87 +346,6 @@ impl Lexer {
     fn skip_comment(&mut self) {
         while self.peek().is_some_and(|c| c != '\n') {
             self.advance();
-        }
-    }
-
-    /// Reads a redirection operator and its target.
-    fn redirect(
-        &mut self,
-        command: &mut SimpleCommand,
-        close: Close,
-        depth: usize,
-    ) -> Result<(), ParseError> {
-        match self.operator() {
-            Redirect::Process => self.list(Close::Paren("<("), depth.saturating_add(1)),
-            Redirect::Heredoc { strip_tabs } => {
-                let delimiter = self.target(close, depth)?;
-                self.heredocs.push(Heredoc {
-                    expands: !delimiter.quoted,
-                    delimiter: delimiter.text,
-                    strip_tabs,
-                });
-                Ok(())
-            }
-            Redirect::Write => {
-                let target = self.target(close, depth)?;
-                command.writes.push(target);
-                Ok(())
-            }
-            Redirect::Duplicate => {
-                let target = self.target(close, depth)?;
-                if !(target.is_fd() || target.text == "-") {
-                    command.writes.push(target);
-                }
-                Ok(())
-            }
-            Redirect::Read => self.target(close, depth).map(drop),
-        }
-    }
-
-    /// Consumes a redirection operator (the cursor is on `<`, `>` or `&>`).
-    fn operator(&mut self) -> Redirect {
-        let first = self.bump();
-        let second = self.peek();
-        let (two_chars, redirect) = match (first, second) {
-            // `&>` (and `&>>`), `<>`, `>>`, `>|`.
-            (Some('&'), _) | (Some('<'), Some('>')) | (Some('>'), Some('>' | '|')) => {
-                (true, Redirect::Write)
-            }
-            (Some('<'), Some('<')) => {
-                self.advance();
-                if self.eat('<') {
-                    return Redirect::Read;
-                }
-                let strip_tabs = self.eat('-');
-                return Redirect::Heredoc { strip_tabs };
-            }
-            (Some('<' | '>'), Some('(')) => (true, Redirect::Process),
-            (Some('<'), Some('&')) => (true, Redirect::Read),
-            (Some('>'), Some('&')) => (true, Redirect::Duplicate),
-            (Some('<'), _) => (false, Redirect::Read),
-            _ => (false, Redirect::Write),
-        };
-        if two_chars {
-            self.advance();
-        }
-        if first == Some('&') && self.peek() == Some('>') {
-            // The second `>` of `&>>`.
-            self.advance();
-        }
-        redirect
-    }
-
-    /// The word after a redirection operator.
-    fn target(&mut self, close: Close, depth: usize) -> Result<Word, ParseError> {
-        self.skip_blanks();
-        if self.peek().is_none_or(is_meta) {
-            return Err(ParseError::MissingRedirectTarget);
-        }
-        let word = self.word(close, depth)?;
-        if word.is_present() {
-            Ok(word)
-        } else {
-            Err(ParseError::MissingRedirectTarget)
         }
     }
 }

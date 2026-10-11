@@ -90,7 +90,8 @@ pub enum Command {
     /// Render the Claude Code status line
     #[command(after_help = command_help(CommandName::Statusline))]
     Statusline(Stub),
-    /// Run a plugin hook (hooks.json calls these; they fail open)
+    /// Run a plugin hook (hooks.json calls these; they fail open unless passed --fail-closed,
+    /// and the guard always fails closed)
     #[command(after_help = command_help(CommandName::Hook))]
     Hook(HookArgs),
 }

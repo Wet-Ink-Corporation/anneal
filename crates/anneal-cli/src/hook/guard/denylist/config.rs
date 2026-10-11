@@ -1,164 +1,21 @@
 //! Bash writes to lint or hook config: redirections, `tee`, `truncate`, `sed -i`, `cp`, `mv`,
 //! `ln`, `install`, `rm` and `chmod` aimed at a protected path.
 //!
-//! Paths are matched on their components, so `docs/hooks.md` and `myhooks/x` are not `hooks/`.
-//! A component with an unquoted glob matches when it could match a protected name
-//! (`.cl*/settings.json`).
+//! Paths are matched on their components ([`paths`]), so `docs/hooks.md` and `myhooks/x` are
+//! not `hooks/`. A component with an unquoted glob matches when it could match a protected name
+//! (`.cl*/settings.json`). `..` is resolved lexically; a relative path that climbs above where
+//! it starts may land under any parent, so `../settings.json` counts as `.claude/settings.json`.
+//! A relative path after a `cd` is also read from the directory the `cd` named, and from
+//! anywhere after a `cd` the guard cannot follow.
+
+mod paths;
+
+pub(super) use paths::Cwd;
+use paths::{CONTAINERS, contains_protected, last_component, protected};
 
 use super::wrappers::{is_option, skip_one};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
-
-/// A path component's name.
-#[derive(Debug, Clone, Copy)]
-enum Name {
-    Exact(&'static str),
-    /// Starts with `prefix` and ends with `suffix`; a glob is tried against `samples`.
-    Affix {
-        prefix: &'static str,
-        suffix: &'static str,
-        samples: &'static [&'static str],
-    },
-}
-
-impl Name {
-    /// Whether `component` is this name; when `glob` and the component holds a wildcard,
-    /// whether it could match it.
-    fn matches(self, component: &str, glob: bool) -> bool {
-        let wildcard = glob && component.contains(['*', '?', '[']);
-        match self {
-            Self::Exact(name) if wildcard => glob_match(component, name),
-            Self::Exact(name) => component == name,
-            Self::Affix { samples, .. } if wildcard => {
-                samples.iter().any(|sample| glob_match(component, sample))
-            }
-            Self::Affix { prefix, suffix, .. } => component
-                .strip_prefix(prefix)
-                .is_some_and(|rest| rest.ends_with(suffix)),
-        }
-    }
-}
-
-/// A protected path: a component, directly under `parent` when that is set.
-#[derive(Debug)]
-struct Protected {
-    /// How a denial names it.
-    label: &'static str,
-    parent: Option<&'static str>,
-    name: Name,
-}
-
-impl Protected {
-    fn matches(&self, components: &[&str], glob: bool) -> bool {
-        match self.parent {
-            None => components.iter().any(|c| self.name.matches(c, glob)),
-            Some(parent) => components.windows(2).any(|pair| {
-                matches!(pair, [above, component]
-                    if Name::Exact(parent).matches(above, glob) && self.name.matches(component, glob))
-            }),
-        }
-    }
-}
-
-/// A file protected wherever it is.
-const fn file(name: &'static str) -> Protected {
-    Protected {
-        label: name,
-        parent: None,
-        name: Name::Exact(name),
-    }
-}
-
-/// The protected paths.
-const PROTECTED: [Protected; 12] = [
-    Protected {
-        label: "hooks/",
-        parent: None,
-        name: Name::Exact("hooks"),
-    },
-    Protected {
-        label: ".claude/settings*.json",
-        parent: Some(".claude"),
-        name: Name::Affix {
-            prefix: "settings",
-            suffix: ".json",
-            samples: &["settings.json", "settings.local.json"],
-        },
-    },
-    Protected {
-        label: ".cargo/config*",
-        parent: Some(".cargo"),
-        name: Name::Affix {
-            prefix: "config",
-            suffix: "",
-            samples: &["config", "config.toml"],
-        },
-    },
-    Protected {
-        label: ".github/workflows/",
-        parent: Some(".github"),
-        name: Name::Exact("workflows"),
-    },
-    Protected {
-        label: ".eslintrc*",
-        parent: None,
-        name: Name::Affix {
-            prefix: ".eslintrc",
-            suffix: "",
-            samples: &[
-                ".eslintrc",
-                ".eslintrc.json",
-                ".eslintrc.js",
-                ".eslintrc.cjs",
-                ".eslintrc.yml",
-            ],
-        },
-    },
-    file("clippy.toml"),
-    file(".clippy.toml"),
-    file("rustfmt.toml"),
-    file(".rustfmt.toml"),
-    file("deny.toml"),
-    file(".pre-commit-config.yaml"),
-    file("lefthook.yml"),
-];
-
-/// Directories that hold protected config: removing, moving or re-permissioning one changes it.
-const CONTAINERS: [(&str, &str); 3] = [
-    (".claude", ".claude/"),
-    (".github", ".github/"),
-    (".cargo", ".cargo/"),
-];
-
-/// The components of a path, without empty and `.` ones.
-fn components(path: &str) -> Vec<&str> {
-    path.split(['/', '\\'])
-        .filter(|component| !component.is_empty() && *component != ".")
-        .collect()
-}
-
-/// The protected path `path` writes, if any.
-fn protected(path: &str, shape: Shape) -> Option<&'static str> {
-    let glob = shape != Shape::Literal;
-    let components = components(path);
-    PROTECTED
-        .iter()
-        .find(|protected| protected.matches(&components, glob))
-        .map(|protected| protected.label)
-}
-
-/// The protected path removing (or re-permissioning) `path` changes, if any: a protected path
-/// or a directory holding one.
-fn contains_protected(path: &str, shape: Shape) -> Option<&'static str> {
-    protected(path, shape).or_else(|| {
-        let glob = shape != Shape::Literal;
-        let last = *components(path).last()?;
-        CONTAINERS
-            .iter()
-            .find(|(name, _)| Name::Exact(name).matches(last, glob))
-            .map(|(_, label)| *label)
-    })
-}
 
 fn deny(action: &str, label: &str) -> Denial {
     Denial::new(
@@ -170,31 +27,31 @@ fn deny(action: &str, label: &str) -> Denial {
     )
 }
 
-/// A redirection writing `target`.
-pub(super) fn redirect(target: &Word) -> Option<Denial> {
-    let label = protected(&target.text, target.shape)?;
+/// A redirection writing `target`, from `cwd`.
+pub(super) fn redirect(target: &Word, cwd: &Cwd) -> Option<Denial> {
+    let label = protected(&target.text, target.shape, cwd)?;
     Some(deny(
         &format!("a redirection writes {}", target.text),
         label,
     ))
 }
 
-/// Checks `<program> <args>` for writes to protected config.
-pub(super) fn check(program: &str, args: &[Word]) -> Option<Denial> {
+/// Checks `<program> <args>`, run from `cwd`, for writes to protected config.
+pub(super) fn check(program: &str, args: &[Word], cwd: &Cwd) -> Option<Denial> {
     match program {
         "tee" | "truncate" => args.iter().find_map(|arg| {
-            let label = protected(&arg.text, arg.shape)?;
+            let label = protected(&arg.text, arg.shape, cwd)?;
             Some(deny(&format!("{program} writes {}", arg.text), label))
         }),
         "rm" | "unlink" | "rmdir" | "shred" | "chmod" | "chown" | "chgrp" => {
             args.iter().find_map(|arg| {
-                let label = contains_protected(&arg.text, arg.shape)?;
+                let label = contains_protected(&arg.text, arg.shape, cwd)?;
                 Some(deny(&format!("{program} changes {}", arg.text), label))
             })
         }
-        "sed" => sed(args),
-        "cp" | "install" | "ln" => copy(program, args, false),
-        "mv" => copy(program, args, true),
+        "sed" => sed(args, cwd),
+        "cp" | "install" | "ln" => copy(program, args, false, cwd),
+        "mv" => copy(program, args, true, cwd),
         _ => None,
     }
 }
@@ -257,7 +114,7 @@ impl<'a> SedArgs<'a> {
     }
 }
 
-fn sed(args: &[Word]) -> Option<Denial> {
+fn sed(args: &[Word], cwd: &Cwd) -> Option<Denial> {
     let sed = SedArgs::parse(args);
     if !sed.in_place {
         return None;
@@ -270,7 +127,7 @@ fn sed(args: &[Word]) -> Option<Denial> {
             .map_or(&[][..], |(_, files)| files)
     };
     files.iter().find_map(|file| {
-        let label = protected(&file.text, file.shape)?;
+        let label = protected(&file.text, file.shape, cwd)?;
         Some(deny(&format!("sed -i edits {}", file.text), label))
     })
 }
@@ -330,7 +187,7 @@ fn basename(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-fn copy(program: &str, args: &[Word], moves: bool) -> Option<Denial> {
+fn copy(program: &str, args: &[Word], moves: bool, cwd: &Cwd) -> Option<Denial> {
     let copy = CopyArgs::parse(args);
     // A source lands at `<dest>/<its name>` when the destination is a directory: always for
     // `-t`, and, since the guard cannot look, when the destination ends in `/` or names a
@@ -340,58 +197,22 @@ fn copy(program: &str, args: &[Word], moves: bool) -> Option<Denial> {
     } else {
         let (last, sources) = copy.operands.split_last()?;
         let named_dir = last.text.ends_with(['/', '\\'])
-            || components(&last.text)
-                .last()
-                .is_some_and(|name| CONTAINERS.iter().any(|(dir, _)| dir == name));
+            || last_component(&last.text)
+                .is_some_and(|name| CONTAINERS.iter().any(|(dir, _)| *dir == name));
         ((last.text.as_str(), last.shape), sources, named_dir)
     };
     if sources.is_empty() {
         return None;
     }
-    if let Some(label) = protected(dest, dest_shape) {
+    if let Some(label) = protected(dest, dest_shape, cwd) {
         return Some(deny(&format!("{program} writes {dest}"), label));
     }
     sources.iter().find_map(|source| {
-        if moves && let Some(label) = contains_protected(&source.text, source.shape) {
+        if moves && let Some(label) = contains_protected(&source.text, source.shape, cwd) {
             return Some(deny(&format!("{program} moves {}", source.text), label));
         }
         let joined = format!("{dest}/{}", basename(&source.text));
-        let label = protected(&joined, dest_shape.max(source.shape)).filter(|_| into_dir)?;
+        let label = protected(&joined, dest_shape.max(source.shape), cwd).filter(|_| into_dir)?;
         Some(deny(&format!("{program} writes {joined}"), label))
     })
-}
-
-/// Whether `text` matches the shell pattern `pattern` (`*`, `?`, and `[...]` as any one
-/// character, which can only widen a match).
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let text: Vec<char> = text.chars().collect();
-    let (mut p, mut t) = (0, 0);
-    let mut star: Option<(usize, usize)> = None;
-    while t < text.len() {
-        match pattern.get(p) {
-            Some('*') => {
-                star = Some((p, t));
-                p += 1;
-            }
-            Some('[') => {
-                let close = pattern.iter().skip(p).position(|c| *c == ']');
-                p = close.map_or(p + 1, |close| p + close + 1);
-                t += 1;
-            }
-            Some(c) if *c == '?' || Some(c) == text.get(t) => {
-                p += 1;
-                t += 1;
-            }
-            _ => {
-                let Some((star_p, star_t)) = star else {
-                    return false;
-                };
-                p = star_p + 1;
-                t = star_t + 1;
-                star = Some((star_p, t));
-            }
-        }
-    }
-    pattern.iter().skip(p).all(|c| *c == '*')
 }
