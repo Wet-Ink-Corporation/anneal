@@ -117,12 +117,13 @@ now. The denylist, the bypass handling and the extension point are documented in
 Matcher `Edit|Write`, `timeout` 5 s, `onFailure: "block"`, arguments
 `hook preconditions --fail-closed`. It reads Claude Code's `PreToolUse` input on stdin (at most
 1 MiB; it uses `tool_name`, `tool_input.file_path`, `session_id` and `cwd`) and the worktree's
-anneal mode (`anneal mode build|diagnose|off`, a `mode_set` event in the ledger). With no
-ledger, no mode or mode `off` it allows silently and never creates a ledger. In build mode it
+anneal mode (`anneal mode build|diagnose|off`, a `mode_set` event in the ledger). The worktree
+is the edited file's own, found from its longest existing ancestor directory, not the hook's
+cwd. For a file in no git repository, with no ledger, no mode or mode `off` it allows silently and never creates a ledger. In build mode it
 denies source edits until the plan's spec passes `lint spec`, the design tree is confirmed at its
 current hash, the tree was clean at entry and the plan is approved and current; in diagnose mode
-until a `repro_red` is recorded after entry. Test files, the plan, spec and tree, scratch
-directories, prose documents and paths outside the worktree are always allowed. A denial is the
+until a `repro_red` is recorded after entry. Test files, the plan and tree, scratch
+directories and prose documents are always allowed; the plan's `Spec:` line exempts nothing. A denial is the
 same deny decision as the guard's, with one `ERROR` line naming the missing precondition and the
 command that satisfies it, plus a `gate_blocked` event (`point` is `preconditions.<check>`).
 Unreadable input, and a ledger or git it cannot read, are denied. See `docs/preconditions.md`.

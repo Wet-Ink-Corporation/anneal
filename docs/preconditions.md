@@ -9,16 +9,22 @@ mode needs first exists. With no mode it does nothing, so plain usage is never b
 The mode is recorded in the ledger by `anneal mode`, run in the worktree:
 
 ```text
-anneal mode build --plan <plan.md> --tree <design-tree.json> [--session <id>] [--store <file>]
-anneal mode diagnose [--session <id>] [--store <file>]
-anneal mode off [--session <id>] [--store <file>]
+anneal mode build --plan <plan.md> --tree <design-tree.json> [--session <id>]
+anneal mode diagnose [--session <id>]
+anneal mode off [--session <id>]
 ```
 
 Each appends one `mode_set` event (registry v4, [ledger.md](ledger.md)): `mode` (`build`,
 `diagnose` or `off`), `clean`, and for `build` the `plan` and `tree`. The envelope's `worktree`
-is the worktree's top-level directory as `git rev-parse --show-toplevel` prints it, so the event
-is tagged `worktree:<that path>`. The worktree's mode is its latest `mode_set`; `off`, or none
-at all, means no mode. Every linked worktree has its own mode, although they share one ledger.
+is the worktree's key: its top-level directory as `git rev-parse --show-toplevel` prints it,
+with `/` separators, and in ASCII lowercase on Windows and macOS, whose file systems ignore
+letter case by default (so every spelling of the directory is one worktree). The event is tagged
+`worktree:<key>`. The worktree's mode is its latest `mode_set`; `off`, or none at all, means no
+mode. Every linked worktree has its own mode, although they share one ledger.
+
+There is no `--store`: the mode goes to the ledger the hook reads, resolved as every command
+resolves it without the flag (`$ANNEAL_STORE`, else the git common dir, else `.anneal/` in the
+folder; [ledger.md](ledger.md)).
 
 - `--plan` and `--tree` must be regular files inside the worktree. They are recorded relative to
   the worktree root, separated by `/`, so the hook finds them from any directory.
@@ -55,16 +61,29 @@ Source edits need a `repro_red` event recorded after the latest `mode_set` that 
 mode: a recorded reproduction that failed. A reproduction recorded before, for an earlier
 session, does not count, so entering diagnose mode again needs a new one.
 
+A `repro_red` recorded in another worktree of the same repository also counts: `repro_red`
+names a task, not a worktree. `anneal repro record` (#25) should set the envelope's `worktree`
+(the same key `anneal mode` writes) so the hook can then count only the edited worktree's
+reproductions.
+
 ### Always allowed
 
 In either mode, these paths are never source and are always allowed:
 
-- test files, as `anneal floor-guard` reads them: under a `tests` directory, or named
-  `*_test.*`, `*.test.*`, `*.spec.*` or `test_*.py`;
-- the build's plan, its spec and its design tree;
+- test files, as `anneal floor-guard` reads them (under a `tests` directory, or named
+  `*_test.*`, `*.test.*`, `*.spec.*` or `test_*.py`), and Rust test module files named
+  `tests.rs` or `test.rs`;
+- the build's plan and design tree, as recorded at entry;
 - anything under `.temper/`, `.anneal/`, `tmp/` or `scratch/` at the worktree root;
-- prose documents: `*.md`, `*.txt` and `*.rst`;
-- any path outside the worktree.
+- prose documents: `*.md`, `*.txt` and `*.rst`. The spec is editable as one of these; it is not
+  exempt by name, since the plan's `Spec:` line is itself editable and naming a source file
+  there would otherwise unlock it;
+- any file in no git repository.
+
+The worktree that judges an edit is the edited file's own: git is asked from the file's longest
+existing ancestor directory, not from the session's working directory. So a session running
+above the repository, or in a sibling linked worktree, cannot write into a gated worktree. A
+file in another repository is judged by that repository's ledger and that worktree's mode.
 
 Paths are compared after they are made relative to the worktree root: `\` reads as `/` (Windows
 paths and drive letters work), `.` and `..` are taken lexically, symlinks in the existing part
@@ -104,13 +123,13 @@ judge:
 | Failure | Result |
 |---|---|
 | stdin is not `PreToolUse` JSON, is larger than 1 MiB, or has no `tool_input.file_path` | deny, `bad-input` |
-| the ledger exists but cannot be opened or read; git fails other than "not a repository"; the path cannot be resolved | deny, `unjudged` |
+| the ledger exists but cannot be opened or read; git, asked from the file's longest existing ancestor directory, fails other than "not a repository"; the file has no existing ancestor directory, or is not inside its own worktree once symlinks are resolved | deny, `unjudged` |
 | build mode recorded without a plan or tree (an event appended by hand) | deny, `mode` |
 | the plan or design tree cannot be read | deny, `plan` or `grill` |
 | the decision cannot be written | exit 2 with one `ERROR` line |
 
-Only these mean "no mode" and allow: no ledger file (the hook never creates one), a directory
-outside any git repository, and no `mode_set` (or `off`) for the worktree.
+Only these mean "no mode" and allow: a file in no git repository, no ledger file for its
+repository (the hook never creates one), and no `mode_set` (or `off`) for its worktree.
 
 It stays inside its 5 s budget as the guard does: git gets 1 s for each of its two calls (the
 ledger's location, the worktree root) and each ledger statement waits at most 500 ms for

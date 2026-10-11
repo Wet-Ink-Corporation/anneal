@@ -49,16 +49,13 @@ pub(super) fn check(
             ));
         }
     };
+    // The spec is not exempt by name: the plan's `Spec:` line is editable, so naming a source
+    // file there would unlock it. A spec is editable as the prose document it is (`*.md`,
+    // `*.txt`, `*.rst`, allowed above), and any other file it names is source like the rest.
     let spec = plan_lint::examine(&plan_path, &bytes).spec;
     let spec_relative = spec
         .as_deref()
         .and_then(|spec| lexically_relative(root, spec));
-    if spec_relative
-        .as_deref()
-        .is_some_and(|spec| spec.eq_ignore_ascii_case(relative))
-    {
-        return None;
-    }
     let spec = spec.map(|path| SpecFile {
         shown: spec_relative.unwrap_or_else(|| path.display().to_string()),
         path,

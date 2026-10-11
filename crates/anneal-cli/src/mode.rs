@@ -1,8 +1,8 @@
 //! `anneal mode build|diagnose|off`: the anneal mode of a worktree, which the preconditions
 //! hook (`hook::preconditions`) enforces.
 //!
-//! Each command appends one `mode_set` event whose envelope names the worktree (its top-level
-//! directory as git prints it), so the latest `mode_set` tagged with a worktree is its mode.
+//! Each command appends one `mode_set` event whose envelope names the worktree (its key,
+//! `scope::worktree_key` of the top-level directory git prints), so the latest `mode_set` tagged with a worktree is its mode.
 //! `build` records the plan and design tree, relative to the worktree root, and whether the
 //! working tree was clean (untracked files included); a dirty tree is still recorded, with a
 //! finding, and the hook then denies source edits until build mode is entered clean. See
@@ -67,15 +67,13 @@ pub struct BuildArgs {
     record: RecordArgs,
 }
 
-/// Where and for whom `anneal mode` records.
+/// For whom `anneal mode` records. There is no `--store`: the mode goes to the ledger the
+/// preconditions hook reads (`$ANNEAL_STORE`, else the git common dir, else the folder).
 #[derive(Debug, Args)]
 pub struct RecordArgs {
     /// The session id to record
     #[arg(long, value_name = "ID")]
     session: Option<String>,
-    /// Use this ledger file instead of the resolved one
-    #[arg(long, value_name = "FILE")]
-    store: Option<PathBuf>,
 }
 
 /// Why `anneal mode` could not record the mode.
@@ -157,7 +155,7 @@ pub(crate) fn run<O: Write>(
         tree,
     });
     let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
-    envelope.worktree = Some(root);
+    envelope.worktree = Some(scope::worktree_key(&root));
     envelope.session_id.clone_from(&record.session);
     // The worktree, plan and session become ledger tags; check them before a ledger is opened
     // (or created), so a value the store would refuse is a usage error that leaves no file.
@@ -168,7 +166,7 @@ pub(crate) fn run<O: Write>(
             ),
         });
     }
-    let location = paths::ledger_store(record.store.as_deref(), lookup, cwd)?;
+    let location = paths::ledger_store(None, lookup, cwd)?;
     let position = Store::open(&location.path)?.append(&envelope)?;
     let recorded = Recording {
         subcommand,
@@ -340,13 +338,14 @@ pub(crate) struct Entered {
     pub(crate) mode: Active,
 }
 
-/// The active mode of the worktree `worktree` (its top-level directory as git prints it): its
-/// latest `mode_set`, or `None` when there is none or it is `off`.
+/// The active mode of the worktree whose top-level directory git prints as `root`: the latest
+/// `mode_set` tagged with its key ([`scope::worktree_key`]), or `None` when there is none or
+/// it is `off`.
 ///
 /// # Errors
 /// The [`StoreError`] when the ledger cannot be read.
-pub(crate) fn active(store: &Store, worktree: &str) -> Result<Option<Entered>, StoreError> {
-    let tag = match LedgerTag::new(TagKey::Worktree, worktree) {
+pub(crate) fn active(store: &Store, root: &str) -> Result<Option<Entered>, StoreError> {
+    let tag = match LedgerTag::new(TagKey::Worktree, &scope::worktree_key(root)) {
         Ok(tag) => tag,
         // `anneal mode` refuses a worktree the ledger cannot tag, so none has a mode.
         Err(_untaggable) => return Ok(None),

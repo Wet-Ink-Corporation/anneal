@@ -58,7 +58,7 @@ Every event is one JSON object: the event's `type` and payload, flattened beside
 | *payload* | | The type's fields (below) |
 | `actor` | string | Who wrote it: `cli`, `hook`, `agent` or `human:<name>` |
 | `session_id` | string or null | The writing agent session |
-| `worktree` | string or null | The writer's git worktree; `anneal mode` writes its top-level directory as `git rev-parse --show-toplevel` prints it |
+| `worktree` | string or null | The writer's git worktree; `anneal mode` writes its key: the top-level directory `git rev-parse --show-toplevel` prints, with `/` separators, ASCII-lowercased on Windows and macOS |
 | `branch` | string or null | The checked-out branch |
 | `head` | string or null | The commit at `HEAD` |
 | `ts` | string | When it was written, RFC 3339 (anneal writes UTC seconds: `2026-10-11T09:30:00Z`) |

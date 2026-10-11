@@ -124,16 +124,14 @@ impl Repo {
 
     /// The `PreToolUse` input for `tool` writing `file_path`.
     fn input(&self, tool: &str, file_path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(serde_json::to_vec(&json!({
-            "session_id": "s-it",
-            "transcript_path": "/dev/null",
-            "cwd": self.path(),
-            "permission_mode": "default",
-            "hook_event_name": "PreToolUse",
-            "tool_name": tool,
-            "tool_input": {"file_path": file_path, "content": "x"},
-            "tool_use_id": "toolu_1",
-        }))?)
+        input_from(self.path(), tool, file_path)
+    }
+
+    /// Runs the hook on a Write of `rel` (relative to the repository root), with Claude Code's
+    /// working directory, and the hook's, at `cwd`.
+    fn write_from(&self, cwd: &Path, rel: &str) -> Result<Output, Box<dyn Error>> {
+        let stdin = input_from(cwd, "Write", &self.path().join(rel))?;
+        hook_in(cwd, &stdin)
     }
 
     /// Runs the hook on a Write of `rel` (relative to the repository root).
@@ -143,18 +141,40 @@ impl Repo {
 
     /// Runs `anneal hook preconditions --fail-closed` in the repository with `stdin`.
     fn hook(&self, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
-        let mut child = anneal_in(self.path())
-            .args(["hook", "preconditions", "--fail-closed"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let mut input = child.stdin.take().ok_or("stdin is piped")?;
-        input.write_all(stdin)?;
-        drop(input);
-        Ok(child.wait_with_output()?)
+        hook_in(self.path(), stdin)
     }
+}
 
+/// The `PreToolUse` input for `tool` writing `file_path`, with Claude Code's working directory
+/// at `cwd`.
+fn input_from(cwd: &Path, tool: &str, file_path: &Path) -> Result<Vec<u8>, Box<dyn Error>> {
+    Ok(serde_json::to_vec(&json!({
+        "session_id": "s-it",
+        "transcript_path": "/dev/null",
+        "cwd": cwd,
+        "permission_mode": "default",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": {"file_path": file_path, "content": "x"},
+        "tool_use_id": "toolu_1",
+    }))?)
+}
+
+/// Runs `anneal hook preconditions --fail-closed` in `cwd` with `stdin`.
+fn hook_in(cwd: &Path, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
+    let mut child = anneal_in(cwd)
+        .args(["hook", "preconditions", "--fail-closed"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut input = child.stdin.take().ok_or("stdin is piped")?;
+    input.write_all(stdin)?;
+    drop(input);
+    Ok(child.wait_with_output()?)
+}
+
+impl Repo {
     /// Appends a `repro_red` event, as `anneal repro record` will.
     fn repro(&self) -> TestResult {
         self.anneal(
@@ -562,11 +582,12 @@ fn a_ledger_that_cannot_be_opened_denies_rather_than_reading_as_no_mode() -> Tes
 #[test]
 fn build_mode_recorded_without_a_plan_denies_source_edits() -> TestResult {
     let repo = Repo::new()?;
-    let toplevel = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(repo.path())
-        .output()?;
-    let worktree = String::from_utf8(toplevel.stdout)?.trim_end().to_owned();
+    // The worktree key exactly as `anneal mode` writes it, read back from a real entry.
+    let entered = repo.anneal(&["mode", "diagnose"], 0)?;
+    let worktree = entered
+        .pointer("/data/worktree")
+        .cloned()
+        .ok_or("mode reports its worktree")?;
     let event = json!({"type": "mode_set", "mode": "build", "clean": true, "worktree": worktree});
     repo.anneal(&["ledger", "append", &event.to_string()], 0)?;
 
@@ -614,5 +635,87 @@ fn entering_diagnose_again_needs_a_new_repro() -> TestResult {
     repo.anneal(&["mode", "diagnose"], 0)?;
 
     denial(&repo.write_to(SOURCE)?)?;
+    Ok(())
+}
+
+#[test]
+fn a_write_into_a_gated_worktree_from_a_cwd_outside_any_repository_is_denied() -> TestResult {
+    let repo = Repo::new()?;
+    repo.build()?;
+    let elsewhere = tempfile::tempdir()?;
+
+    let reason = denial(&repo.write_from(elsewhere.path(), SOURCE)?)?;
+
+    assert!(reason.starts_with("ERROR build mode: "), "{reason}");
+    Ok(())
+}
+
+#[test]
+fn a_write_into_a_gated_worktree_from_a_sibling_linked_worktree_is_denied() -> TestResult {
+    let repo = Repo::new()?;
+    let siblings = tempfile::tempdir()?;
+    let sibling = siblings.path().join("sibling");
+    let sibling_arg = sibling.to_str().ok_or("a UTF-8 temporary path")?;
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", "-b", "sibling", sibling_arg],
+    );
+    repo.build()?;
+    let own = input_from(&sibling, "Write", &sibling.join(SOURCE))?;
+    assert_allowed(
+        &hook_in(&sibling, &own)?,
+        "the sibling has no mode of its own",
+    );
+
+    let reason = denial(&repo.write_from(&sibling, SOURCE)?)?;
+
+    assert!(reason.starts_with("ERROR build mode: "), "{reason}");
+    Ok(())
+}
+
+#[test]
+fn mode_takes_no_store_flag_and_records_nothing_when_given_one() -> TestResult {
+    let repo = Repo::new()?;
+    let store = repo.path().join("elsewhere.sqlite3");
+
+    let output = anneal_in(repo.path())
+        .args(["mode", "diagnose", "--store"])
+        .arg(&store)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2), "a usage error: {output:?}");
+    assert!(output.stdout.is_empty(), "nothing on stdout: {output:?}");
+    assert!(!store.exists(), "no ledger at the flag's path");
+    assert!(!repo.ledger().exists(), "nothing recorded");
+    Ok(())
+}
+
+#[test]
+fn a_spec_line_pointing_at_source_does_not_exempt_that_source() -> TestResult {
+    let repo = Repo::new()?;
+    repo.ready()?;
+    let plan = repo.path().join(PLAN);
+    let text = std::fs::read_to_string(&plan)?;
+    std::fs::write(&plan, text.replace("(spec.md)", "(../src/lib.rs)"))?;
+
+    let reason = denial(&repo.write_to("src/lib.rs")?)?;
+
+    assert!(reason.starts_with("ERROR build mode: "), "{reason}");
+    Ok(())
+}
+
+#[test]
+#[cfg(any(windows, target_os = "macos"))]
+fn a_mode_entered_through_one_letter_case_gates_edits_through_another() -> TestResult {
+    let repo = Repo::new()?;
+    let shouted = PathBuf::from(repo.path().to_string_lossy().to_uppercase());
+
+    let output = anneal_in(&shouted)
+        .args(["mode", "build", "--plan", PLAN, "--tree", TREE])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let reason = denial(&repo.write_to(SOURCE)?)?;
+    assert!(reason.starts_with("ERROR build mode: "), "{reason}");
     Ok(())
 }

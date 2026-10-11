@@ -1,6 +1,7 @@
-//! Which files the preconditions hook guards. Paths are compared as text: `\` reads as `/`,
-//! `.` and `..` are taken lexically (symlinks are not followed), and ASCII letters match in any
-//! case, as the guard's protected paths do (APFS and NTFS are case-insensitive by default).
+//! Which files the preconditions hook guards, and the key that names a worktree. Paths are
+//! compared as text: `\` reads as `/`, `.` and `..` are taken lexically (`mode` resolves
+//! symlinks before calling in), and ASCII letters match in any case, as the guard's protected
+//! paths do (APFS and NTFS are case-insensitive by default).
 
 use crate::floor_guard::is_test_path;
 
@@ -15,7 +16,7 @@ const DOC_EXTENSIONS: [&str; 3] = ["md", "txt", "rst"];
 /// is guarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PathKind {
-    /// The plan, its spec or the design tree of the build.
+    /// The plan or the design tree recorded when build mode was entered.
     Artifact,
     /// Under `.temper/`, `.anneal/`, `tmp/` or `scratch/` at the worktree root.
     Scratch,
@@ -78,7 +79,7 @@ pub(crate) fn relative<'p>(root: &str, path: &'p str) -> Option<&'p str> {
 }
 
 /// The kind of `path`, relative to the worktree root and `/`-separated; `artifacts` are the
-/// build's plan, spec and design tree, relative the same way.
+/// build's plan and design tree, relative the same way.
 pub(crate) fn classify(path: &str, artifacts: &[&str]) -> PathKind {
     if artifacts
         .iter()
@@ -96,10 +97,30 @@ pub(crate) fn classify(path: &str, artifacts: &[&str]) -> PathKind {
     if extension.is_some_and(|extension| DOC_EXTENSIONS.contains(&extension)) {
         return PathKind::Doc;
     }
-    if is_test_path(&lower) {
+    if is_test_path(&lower) || is_rust_test_module(&lower) {
         return PathKind::Test;
     }
     PathKind::Source
+}
+
+/// True for a Rust test module file, `tests.rs` or `test.rs` (`#[cfg(test)] mod tests;`).
+/// Only the hook counts these: floor-guard's `is_test_path` stays as it is.
+fn is_rust_test_module(path: &str) -> bool {
+    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+    name == "tests.rs" || name == "test.rs"
+}
+
+/// The value that names a worktree in the ledger (`EventEnvelope::worktree`, tag
+/// `worktree:`): its top-level directory with `/` separators, and on Windows and macOS, whose
+/// file systems ignore letter case by default, in ASCII lowercase, so every spelling of one
+/// directory gives one key. `anneal mode` writes it and the hook reads by it.
+pub(crate) fn worktree_key(root: &str) -> String {
+    let slashed = root.replace('\\', "/");
+    if cfg!(any(windows, target_os = "macos")) {
+        slashed.to_ascii_lowercase()
+    } else {
+        slashed
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use super::{PathKind, classify, normalise, relative};
+use super::{PathKind, classify, normalise, relative, worktree_key};
 
 #[test]
 fn a_posix_path_keeps_its_root_and_drops_dot_and_empty_components() {
@@ -74,6 +74,50 @@ fn source_files_are_source() {
     for path in ["src/main.rs", "crates/x/src/lib.rs", "Cargo.toml", "app.py"] {
         assert_eq!(classify(path, &[]), PathKind::Source, "{path}");
     }
+}
+
+#[test]
+fn rust_test_module_files_are_tests() {
+    for path in [
+        "src/hook/guard/tests.rs",
+        "src/parser/test.rs",
+        "src/Tests.rs",
+        "crates/x/src/tests/forms.rs",
+    ] {
+        assert_eq!(classify(path, &[]), PathKind::Test, "{path}");
+    }
+    for path in ["src/testsuite.rs", "src/contest.rs", "src/tests_helper.rs"] {
+        assert_eq!(classify(path, &[]), PathKind::Source, "{path}");
+    }
+}
+
+#[test]
+fn the_worktree_key_reads_backslashes_as_slashes() {
+    assert_eq!(
+        worktree_key(r"C:\work\repo").replace("c:", "C:"),
+        "C:/work/repo",
+        "separators normalised"
+    );
+}
+
+#[test]
+#[cfg(any(windows, target_os = "macos"))]
+fn the_worktree_key_ignores_letter_case_where_the_file_system_does() {
+    assert_eq!(
+        worktree_key("/Users/Me/Repo"),
+        "/users/me/repo",
+        "one key for every casing"
+    );
+}
+
+#[test]
+#[cfg(not(any(windows, target_os = "macos")))]
+fn the_worktree_key_keeps_letter_case_where_the_file_system_does() {
+    assert_eq!(
+        worktree_key("/home/Me/Repo"),
+        "/home/Me/Repo",
+        "case-sensitive file systems keep distinct worktrees"
+    );
 }
 
 #[test]

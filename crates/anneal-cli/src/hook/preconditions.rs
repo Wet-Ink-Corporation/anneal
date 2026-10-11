@@ -1,10 +1,12 @@
 //! `anneal hook preconditions`: the `PreToolUse` gate on Edit and Write. It fails closed.
 //!
-//! It reads Claude Code's `PreToolUse` input on stdin and the worktree's anneal mode from the
-//! ledger (`mode::active`). With no ledger, no mode or mode `off` it allows silently, and it
-//! never creates a ledger. In a mode it allows test files, the build's plan, spec and design
-//! tree, scratch directories, prose documents and paths outside the worktree (`mode::scope`),
-//! and judges every other file as source:
+//! It reads Claude Code's `PreToolUse` input on stdin and finds the edited file's own
+//! worktree (from the file's longest existing ancestor directory, not the session's working
+//! directory) and that worktree's anneal mode in the ledger (`mode::active`). A file in no
+//! repository, no ledger, no mode or mode `off` is allowed silently, and it never creates a
+//! ledger. In a mode it allows test files, the build's plan and design tree, scratch
+//! directories and prose documents (the spec among them when it is one) (`mode::scope`), and
+//! judges every other file as source:
 //!
 //! - build mode (`build`): the plan's spec passes `lint spec`, the design tree is confirmed at
 //!   its current hash, the tree was clean at entry and the plan is approved and current;
@@ -274,13 +276,6 @@ fn judge(
             }
         },
     };
-    let ledger = match open_existing(&cwd, lookup) {
-        Ok(ledger) => ledger,
-        Err(error) => {
-            let denial = unjudged("the ledger cannot be read", &error);
-            return Verdict::deny(denial, Err(error));
-        }
-    };
     let Some(file_path) = input.tool.file_path else {
         let denial = Denial::new(
             Check::BadInput,
@@ -290,23 +285,53 @@ fn judge(
                 input.tool_name
             ),
         );
-        return Verdict::deny(denial, Ok(ledger));
+        return Verdict::deny(denial, open_existing(&cwd, lookup));
+    };
+    let target = cwd.join(file_path);
+    // The edited file's own worktree decides, wherever the session runs: a session in a
+    // sibling worktree, or above the repository, writes into a gated worktree all the same.
+    let Some(anchor) = existing_ancestor(&target) else {
+        let denial = Denial::new(
+            Check::Unjudged,
+            format!(
+                "preconditions: no directory of {} exists, so the edit cannot be checked",
+                target.display()
+            ),
+        );
+        return Verdict::deny(denial, Ok(None));
+    };
+    let ledger = match open_existing(&anchor, lookup) {
+        Ok(ledger) => ledger,
+        Err(error) => {
+            let denial = unjudged("the ledger cannot be read", &error);
+            return Verdict::deny(denial, Err(error));
+        }
     };
     let Some(store) = ledger else {
-        // No ledger: no mode was ever entered here.
+        // No ledger: no mode was ever entered in the edited file's repository.
         return Verdict::allow();
     };
-    match judge_in_mode(&store, &cwd, &cwd.join(file_path)) {
+    match judge_in_mode(&store, &anchor, &target) {
         Some(denial) => Verdict::deny(denial, Ok(Some(store))),
         None => Verdict::allow(),
     }
 }
 
-/// The denial for an edit of `target` (absolute) seen from `cwd`, given the ledger `store`:
-/// `None` outside a repository, with no mode, for a path the mode allows, or when the mode's
-/// preconditions hold.
-fn judge_in_mode(store: &Store, cwd: &Path, target: &Path) -> Option<Denial> {
-    let root = match paths::worktree_root_within(cwd, GIT_TIMEOUT) {
+/// The longest existing directory among `target` (absolute) and its ancestors, after `.` and
+/// `..` are taken lexically: where git is asked which worktree the edit is in.
+fn existing_ancestor(target: &Path) -> Option<PathBuf> {
+    let lexical = PathBuf::from(scope::normalise(&target.to_string_lossy()));
+    lexical
+        .ancestors()
+        .find(|dir| dir.is_dir())
+        .map(Path::to_path_buf)
+}
+
+/// The denial for an edit of `target` (absolute), whose longest existing ancestor directory is
+/// `anchor`, given the ledger `store`: `None` when `target` is in no repository, with no mode
+/// for its worktree, for a path the mode allows, or when the mode's preconditions hold.
+fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> {
+    let root = match paths::worktree_root_within(anchor, GIT_TIMEOUT) {
         Ok(root) => root,
         Err(PathError::NotARepository { .. }) => return None,
         Err(error) => return Some(unjudged("the worktree cannot be found", &error)),
@@ -316,7 +341,18 @@ fn judge_in_mode(store: &Store, cwd: &Path, target: &Path) -> Option<Denial> {
         Err(error) => return Some(unjudged("the ledger cannot be read", &error)),
     };
     let relative = match mode::worktree_relative(Path::new(&root), target) {
-        Ok(relative) => relative?,
+        Ok(Some(relative)) => relative,
+        Ok(None) => {
+            let denial = Denial::new(
+                Check::Unjudged,
+                format!(
+                    "preconditions: {} is not inside its own worktree {root} once resolved, so \
+                     the edit cannot be checked",
+                    target.display()
+                ),
+            );
+            return Some(denial);
+        }
         Err(error) => return Some(unjudged("the edited path cannot be resolved", &error)),
     };
     match &entered.mode {
