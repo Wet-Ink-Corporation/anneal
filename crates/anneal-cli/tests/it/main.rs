@@ -11,6 +11,7 @@ mod hooks_manifest;
 mod ledger;
 mod lint_skills;
 mod lint_skills_inputs;
+mod lint_spec;
 mod lint_terms;
 mod paths;
 mod repo_gates;

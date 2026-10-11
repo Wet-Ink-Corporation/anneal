@@ -1,0 +1,196 @@
+use super::{Document, Item, Row, Table, heading, items, tables, without_code_spans};
+
+fn titles(text: &str) -> Vec<String> {
+    Document::parse(text)
+        .sections()
+        .iter()
+        .map(|section| section.title.to_owned())
+        .collect()
+}
+
+#[test]
+fn a_code_span_pairs_with_the_next_run_of_as_many_backticks() {
+    assert_eq!(
+        without_code_spans("a ``b ` c`` d `e` f ``g"),
+        "a           d     f ``g",
+        "spans blanked to their length; an unmatched run stays"
+    );
+    assert_eq!(without_code_spans("plain"), "plain", "nothing to blank");
+}
+
+#[test]
+fn an_html_comment_opener_inside_inline_code_is_text() {
+    let text = "Write `<!--` to open a comment.\n## Problem\nx\n";
+
+    let doc = Document::parse(text);
+
+    assert_eq!(
+        doc.lines().first().map(|line| line.text.as_ref()),
+        Some("Write `<!--` to open a comment."),
+        "the line stays visible"
+    );
+    assert_eq!(titles(text), ["Problem"], "nothing after it is hidden");
+}
+
+#[test]
+fn a_comment_after_a_code_span_on_the_same_line_is_still_hidden() {
+    let doc = Document::parse("`x` a <!-- hidden --> b\n");
+
+    assert_eq!(
+        doc.lines().first().map(|line| line.text.as_ref()),
+        Some("`x` a  b"),
+        "the comment goes, the span stays"
+    );
+}
+
+#[test]
+fn a_line_that_is_only_an_inline_span_does_not_open_a_fence() {
+    assert_eq!(
+        titles("```x``` and more\n## Problem\n"),
+        ["Problem"],
+        "a backtick in a backtick fence's info string makes it text"
+    );
+}
+
+#[test]
+fn an_indented_fence_hides_its_lines_until_a_closing_fence() {
+    assert_eq!(
+        titles("    ```text\n    ## Hidden\n    ```\n## Shown\n"),
+        ["Shown"],
+        "a fence indented inside a list item still hides its contents"
+    );
+}
+
+#[test]
+fn a_tilde_fence_may_hold_backticks_in_its_info_string() {
+    assert_eq!(
+        titles("~~~ a`b\n## Hidden\n~~~\n## Shown\n"),
+        ["Shown"],
+        "tilde fences allow backticks"
+    );
+}
+
+fn item(line: usize, text: &str) -> Item {
+    Item {
+        line,
+        text: text.to_owned(),
+    }
+}
+
+#[test]
+fn fenced_code_and_html_comments_are_not_visible() {
+    let doc = Document::parse(
+        "a <!-- hidden --> b\n<!-- start\nstill hidden\nend --> c\n```md\n## Not a heading\n```\n~~~\nx\n~~~\nd\n",
+    );
+
+    let visible: Vec<&str> = doc.lines().iter().map(|line| line.text.as_ref()).collect();
+
+    assert_eq!(
+        visible,
+        ["a  b", "", "", " c", "", "", "", "", "", "", "d"],
+        "comments and fences blanked, line numbers kept"
+    );
+}
+
+#[test]
+fn a_longer_fence_needs_a_closing_fence_as_long() {
+    let doc = Document::parse("````\n```\nhidden\n````\nshown\n");
+
+    let visible: Vec<&str> = doc.lines().iter().map(|line| line.text.as_ref()).collect();
+
+    assert_eq!(
+        visible,
+        ["", "", "", "", "shown"],
+        "``` does not close ````"
+    );
+}
+
+#[test]
+fn headings_have_a_level_and_a_title() {
+    assert_eq!(heading("## Out of Scope"), Some((2, "Out of Scope")), "h2");
+    assert_eq!(
+        heading("### Complexity ###"),
+        Some((3, "Complexity")),
+        "closing #s"
+    );
+    assert_eq!(heading("#hashtag"), None, "no space");
+    assert_eq!(heading("####### seven"), None, "too deep");
+    assert_eq!(
+        heading("## C#"),
+        Some((2, "C#")),
+        "a # inside the title stays"
+    );
+}
+
+#[test]
+fn sections_are_level_2_headings_with_their_bodies() {
+    let doc = Document::parse("# Spec\nintro\n## Problem\np\n### Sub\ns\n## Users\nu\n");
+
+    let sections: Vec<(&str, usize, usize)> = doc
+        .sections()
+        .iter()
+        .map(|section| (section.title, section.line, section.body.len()))
+        .collect();
+
+    assert_eq!(
+        sections,
+        [("Problem", 3, 3), ("Users", 7, 1)],
+        "title, heading line, body lines up to the next level-2 heading"
+    );
+}
+
+#[test]
+fn list_items_join_their_indented_continuation_lines() {
+    let doc = Document::parse(
+        "- WHEN a user saves,\n  THE app SHALL store it.\n* second\n1. third\n2) fourth\n-\nplain\n- fifth\n\n  not joined\n",
+    );
+
+    let found = items(doc.lines());
+
+    assert_eq!(
+        found,
+        [
+            item(1, "WHEN a user saves, THE app SHALL store it."),
+            item(3, "second"),
+            item(4, "third"),
+            item(5, "fourth"),
+            item(6, ""),
+            item(8, "fifth"),
+        ],
+        "markers -, *, 1., 2); blank lines end an item"
+    );
+}
+
+#[test]
+fn bold_text_and_rules_are_not_list_items() {
+    let doc = Document::parse("**AC1**: x\n---\n*emphasis*\n");
+
+    assert_eq!(items(doc.lines()), [], "no item");
+}
+
+#[test]
+fn tables_have_a_header_and_rows_with_their_lines() {
+    let doc = Document::parse(
+        "text\n| Gate | Violation | Justification |\n|---|:-:|---|\n| G1 | two stores | needed |\n|G2||\nafter\n",
+    );
+
+    let found = tables(doc.lines());
+
+    assert_eq!(
+        found,
+        [Table {
+            header: vec!["Gate", "Violation", "Justification"],
+            rows: vec![
+                Row {
+                    line: 4,
+                    cells: vec!["G1", "two stores", "needed"],
+                },
+                Row {
+                    line: 5,
+                    cells: vec!["G2", ""],
+                },
+            ],
+        }],
+        "separator row skipped, short rows kept"
+    );
+}

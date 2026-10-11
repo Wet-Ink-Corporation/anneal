@@ -4,17 +4,21 @@
 //! - [`skills`]: `lint skills`, the 21 skill design rules.
 //! - [`terms`]: `lint terms`, uses of the glossary's avoided terms; its hits are
 //!   `{file, line, term}`, not rule findings, so it writes its own envelope `data`.
-//! - [`finding`]: the finding model the rule targets share, and its envelope form.
+//! - [`spec`]: `lint spec`, a spec's sections, EARS criteria, markers, constitution check and
+//!   avoided terms; its findings are [`spec::SpecFinding`]s (a spec rule, not a skill
+//!   checker), so it writes its own envelope `data` too.
+//! - [`finding`]: the finding model the skill rules use, and its envelope form.
 //!
-//! `lint spec|plan|brief` are stubs until their stories land. Each will be a module beside
-//! [`skills`] with its own `Args` type and `lint` function returning findings; [`run`] gets
-//! one more arm and reuses the crate-internal `report` unchanged.
+//! `lint plan|brief` are stubs until their stories land. Each will be a module beside
+//! [`skills`] with its own `Args` type and `lint` function; [`run`] gets one more arm.
 
 pub mod finding;
 pub mod skills;
+pub mod spec;
 pub mod terms;
 
 use std::io::Write;
+use std::path::Path;
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -26,6 +30,8 @@ use crate::error::CliError;
 use crate::exit_codes::render::command_help;
 use crate::exit_codes::{self, Code};
 use finding::{LintFinding, Severity};
+use skills::discover::{Capped, read_capped};
+use skills::{LintError, require_file};
 
 /// Arguments of `anneal lint`.
 #[derive(Debug, Args)]
@@ -44,8 +50,10 @@ pub enum LintTarget {
     /// Find the glossary's avoided terms (`_Avoid_:` lines) in files
     #[command(after_help = command_help(CommandName::Lint))]
     Terms(terms::TermsArgs),
-    /// Check a spec (not implemented yet)
-    Spec(Stub),
+    /// Check a spec: required sections, EARS acceptance criteria, Out of Scope, clarification
+    /// markers, the constitution check and avoided terms
+    #[command(after_help = command_help(CommandName::Lint))]
+    Spec(spec::SpecArgs),
     /// Check a plan (not implemented yet)
     Plan(Stub),
     /// Check a brief (not implemented yet)
@@ -72,11 +80,13 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
             let outcome = terms::lint(terms_args)?;
             terms::report(&terms_args.glossary, &outcome, out)
         }
-        LintTarget::Spec(_) | LintTarget::Plan(_) | LintTarget::Brief(_) => {
-            Err(CliError::NotImplemented {
-                command: CommandName::Lint,
-            })
+        LintTarget::Spec(spec_args) => {
+            let outcome = spec::lint(spec_args)?;
+            spec::report(&outcome, out)
         }
+        LintTarget::Plan(_) | LintTarget::Brief(_) => Err(CliError::NotImplemented {
+            command: CommandName::Lint,
+        }),
     }
 }
 
@@ -155,4 +165,41 @@ pub(crate) fn report<O: Write>(
         .with_findings(&envelope_findings)
         .emit(out)
         .map_err(CliError::Output)
+}
+
+/// The contents of a file named on the command line, read up to the cap.
+#[derive(Debug)]
+pub(crate) enum Contents {
+    /// Its text, lossily decoded.
+    Text(String),
+    /// Its size, over the cap.
+    TooLarge(u64),
+}
+
+/// Reads a file named on the command line, up to the read cap. Text that is not UTF-8 is read
+/// lossily.
+///
+/// # Errors
+/// [`LintError::MissingPath`] or [`LintError::WrongKind`] when `path` is missing or a
+/// directory, [`LintError::Io`] when it cannot be read.
+pub(crate) fn read_named(path: &Path) -> Result<Contents, LintError> {
+    require_file(path)?;
+    let Capped { size, bytes } = read_capped(path)?;
+    Ok(bytes.map_or(Contents::TooLarge(size), |bytes| {
+        Contents::Text(String::from_utf8_lossy(&bytes).into_owned())
+    }))
+}
+
+/// Reads a file named on the command line that must be read whole.
+///
+/// # Errors
+/// As [`read_named`], plus [`LintError::TooLarge`] when it is over the read cap.
+pub(crate) fn read_whole(path: &Path) -> Result<String, LintError> {
+    match read_named(path)? {
+        Contents::Text(text) => Ok(text),
+        Contents::TooLarge(size) => Err(LintError::TooLarge {
+            path: path.to_path_buf(),
+            size,
+        }),
+    }
 }

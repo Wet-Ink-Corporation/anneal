@@ -45,7 +45,7 @@ _Avoid_: purchase, purchase order, `txn`.
   with its size, so it is never passed over silently. A file that is not UTF-8 is read
   lossily: a replacement character is not a word character, so it never creates a hit.
 
-`lint spec` (#18) can call the same function (`anneal_cli::lint::terms::Glossary::scan`).
+`lint spec` calls the same function (`anneal_cli::lint::terms::Glossary::scan`) for its `avoided-term` rule (`docs/spec.md`).
 
 ## ADR numbering
 

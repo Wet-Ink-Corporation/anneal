@@ -85,10 +85,11 @@ fn skill_dir(dir: PathBuf) -> SkillDir {
     SkillDir { dir, name }
 }
 
-/// A file read up to [`MAX_READ_BYTES`]: its full size and, when within the cap, its bytes.
+/// A file read up to [`MAX_READ_BYTES`]: its size and, when within the cap, its bytes.
 #[derive(Debug)]
 pub(crate) struct Capped {
-    /// The file's size on disk.
+    /// The file's size on disk; or, for a file that grew past the cap after its size was
+    /// read, the bytes actually read (one past the cap).
     pub size: u64,
     /// The contents, or `None` when the file is larger than the cap.
     pub bytes: Option<Vec<u8>>,
@@ -113,7 +114,17 @@ pub(crate) fn read_bounded(path: &Path) -> io::Result<Capped> {
         return Ok(Capped { size, bytes: None });
     }
     let mut bytes = Vec::new();
-    file.take(MAX_READ_BYTES).read_to_end(&mut bytes)?;
+    // One byte past the cap tells a file that grew since its size was read: it is too large,
+    // never silently truncated.
+    file.take(MAX_READ_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    let read = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if read > MAX_READ_BYTES {
+        return Ok(Capped {
+            size: read,
+            bytes: None,
+        });
+    }
     Ok(Capped {
         size,
         bytes: Some(bytes),
@@ -203,4 +214,21 @@ pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(OsString, EntryKind)>, LintErr
     }
     listed.sort();
     Ok(listed)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::path::Path;
+
+    use super::{MAX_READ_BYTES, read_bounded};
+
+    #[test]
+    fn a_file_that_reads_past_its_reported_size_is_too_large_not_truncated() {
+        // `/dev/zero` reports size 0 and never ends: the same as a file that grew after its
+        // size was read.
+        let capped = read_bounded(Path::new("/dev/zero")).expect("/dev/zero opens");
+
+        assert!(capped.bytes.is_none(), "not read as content");
+        assert_eq!(capped.size, MAX_READ_BYTES + 1, "the bytes actually read");
+    }
 }

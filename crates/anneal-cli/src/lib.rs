@@ -12,7 +12,8 @@
 //! - [`hook`]: `anneal hook <name>`, the commands `hooks.json` runs (the fail-open
 //!   `SessionStart` bootstrap and the fail-closed `PreToolUse` Bash guard), and the
 //!   one-`ERROR`-line output hooks share.
-//! - [`lint`]: `anneal lint skills`, `anneal lint terms` and the lint finding model.
+//! - [`lint`]: `anneal lint skills`, `anneal lint terms`, `anneal lint spec` and the lint
+//!   finding model.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
 //! - [`grill`]: `anneal grill frontier|confirm` over the `grill` skill's design tree.

@@ -65,7 +65,7 @@ pub struct Outcome {
     pub cached: usize,
 }
 
-/// Why `lint skills` or `lint terms` could not run.
+/// Why `lint skills`, `lint terms` or `lint spec` could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum LintError {
     /// A path given on the command line does not exist.
@@ -83,8 +83,8 @@ pub enum LintError {
         /// What it should be.
         expected: &'static str,
     },
-    /// A file given on the command line that must be read whole (the `lint terms` glossary)
-    /// is larger than the read cap.
+    /// A file given on the command line that must be read whole (the `lint terms` glossary;
+    /// the `lint spec` spec, glossary and constitution) is larger than the read cap.
     #[error("{path} is {size} bytes, over the {MAX_READ_BYTES}-byte read cap", path = path.display())]
     TooLarge {
         /// The path as given.
