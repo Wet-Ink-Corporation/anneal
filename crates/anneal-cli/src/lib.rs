@@ -23,7 +23,7 @@
 //!   applied and a row in `~/.anneal/decisions/decisions.jsonl`, and `decide label`.
 //! - [`calibrate`]: `anneal calibrate`, each decision point scored against its labelled
 //!   outcomes (Brier, bins, ask rate), a proposed threshold and a promotion verdict.
-//! - [`grill`]: `anneal grill frontier|confirm` over the `grill` skill's design tree.
+//! - [`grill`]: `anneal grill frontier|classify|confirm` over the `grill` skill's design tree.
 //! - [`task`]: `anneal task done`, recording `task_done` only after a green test command.
 //! - [`floor_guard`]: `anneal floor-guard`, refusing a diff that lowers a quality floor.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
@@ -58,6 +58,8 @@ pub mod mode;
 pub mod paths;
 pub mod plan;
 mod process;
+#[cfg(test)]
+mod release_check;
 pub mod repro;
 pub mod rulings;
 pub mod task;
