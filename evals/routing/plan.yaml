@@ -1,0 +1,21 @@
+# evals/routing/plan.yaml: prompts for the `plan` skill.
+positives:
+  - the spec is ready, split it into tasks
+  - split the ready spec into tasks with files and a test command each
+  - get the plan approved for the export spec
+  - break the finished spec into ordered tasks with their blockers
+  - which tasks block which for this spec
+  - make a plan of tasks from the spec
+  - list the files and the test command for each task of the spec
+  - the spec has no open questions, plan the tasks and get approval
+near_misses:
+  spec:
+    - the requirements are agreed, write the spec with acceptance criteria
+    - write EARS acceptance criteria for the agreed feature
+    - draft the spec and its out of scope section
+    - check the spec against the constitution
+  grill:
+    - this request is vague, question me
+    - grill me on the new idea
+    - ask me questions in rounds with recommended answers
+    - question me until I confirm the requirements

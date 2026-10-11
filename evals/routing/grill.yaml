@@ -1,0 +1,22 @@
+# evals/routing/grill.yaml: prompts for the `grill` skill.
+positives:
+  - grill me on this feature idea before we build anything
+  - I have a vague idea for offline sync, question me until it is clear
+  - this request is vague, ask me questions in rounds
+  - question me about the export idea until we confirm what I want
+  - the ask is vague; grill me and recommend an answer for each question
+  - we got a new request from sales and nobody knows what it means, question me
+  - ask me one round of questions, each with your recommended answer
+  - help me think a new request through before anyone writes anything
+  - keep asking until I confirm we share the same understanding
+near_misses:
+  spec:
+    - the requirements are agreed, write the spec with acceptance criteria
+    - write EARS acceptance criteria for the agreed export feature
+    - turn our agreed notes into a specification document
+    - draft the spec and its out of scope section
+  plan:
+    - the spec is ready, split it into tasks
+    - build a dependency graph of tasks for the approved spec
+    - break the agreed work into ordered tasks and get the plan approved
+    - order the implementation tasks for the export spec

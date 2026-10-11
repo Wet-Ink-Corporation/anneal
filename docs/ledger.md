@@ -45,7 +45,8 @@ Query results report the file in `data.store` and the step that chose it in `dat
 - **Conditioned appends (DCB).** `Store::append_if` writes only if no event matching a condition
   exists (optionally: after a position the writer has read). It is checked inside the append's
   transaction, so of two writers racing on the same condition exactly one wins; the other gets
-  `Conflict`. Gates that need first-writer-wins (for example `plan_approved` for one plan) use it.
+  `Conflict`. Gates that need first-writer-wins use it: `anneal plan approve` appends
+  `plan_approved` only if no other approval of the plan landed after the one it read.
 
 ## The envelope
 
@@ -96,7 +97,7 @@ registry version) or add types. Version 2 added `hash` and `quote` to `grill_con
 |---|---|---|
 | `test_run` | `task?` string, `command` string, `outcome` `green`/`red` | `task:` |
 | `task_done` | `task` string | `task:` |
-| `plan_approved` | `plan` string (path from the repository root), `hash` string (of the approved content) | `plan:` |
+| `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`) | `plan:` |
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
 | `repro_red` | `task` string, `test` string (the failing reproduction) | `task:` |
 | `verdict_set` | `pr` number, `verdict` `approved`/`changes_requested`/`noise_only` | `pr:` |

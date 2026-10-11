@@ -123,7 +123,7 @@ fn a_stub_exits_64_with_one_error_line_and_no_stdout() {
     for args in [
         &["task"][..],
         &["task", "done", "--kind", "x"],
-        &["lint", "plan", "-q"],
+        &["lint", "brief", "-q"],
     ] {
         let (code, out, err) = anneal(args);
         assert_eq!(code, 64, "{args:?} is not implemented");

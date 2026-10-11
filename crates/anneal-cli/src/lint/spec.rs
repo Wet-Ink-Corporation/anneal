@@ -10,7 +10,7 @@
 mod checks;
 mod constitution;
 pub mod ears;
-mod markdown;
+pub(crate) mod markdown;
 
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
@@ -309,6 +309,14 @@ fn named_or_present<'p>(named: Option<&'p Path>, default: &'static str) -> Optio
         let default = Path::new(default);
         default.exists().then_some(default)
     })
+}
+
+/// The `[NEEDS CLARIFICATION]` markers in `text`, counted as `lint spec` counts them: outside
+/// code fences, HTML comments and code spans. `plan approve` needs none.
+#[must_use]
+pub fn needs_clarification(text: &str) -> usize {
+    let doc = Document::parse(text);
+    checks::clarifications("", doc.lines()).0
 }
 
 /// The envelope's `data` for `lint spec`.

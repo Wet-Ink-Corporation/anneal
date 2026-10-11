@@ -41,6 +41,9 @@ pub enum CliError {
     /// `anneal lint` could not check its inputs.
     #[error("lint")]
     Lint(#[from] LintError),
+    /// `anneal plan` could not read its plan or the spec it links.
+    #[error("plan")]
+    Plan(#[source] LintError),
     /// The ledger could not be opened, written or read.
     #[error(transparent)]
     Ledger(#[from] StoreError),
@@ -77,7 +80,7 @@ impl CliError {
             | Self::Clock(_)
             | Self::CurrentDir(_)
             | Self::Dag(_) => exit_codes::INTERNAL,
-            Self::Lint(error) => error.code(),
+            Self::Lint(error) | Self::Plan(error) => error.code(),
             Self::Eval(error) => error.code(),
             Self::Grill(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
