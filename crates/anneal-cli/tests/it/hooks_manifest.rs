@@ -306,6 +306,87 @@ fn every_hooks_json_entry_is_exec_form_with_a_failure_policy_and_a_timeout() -> 
     Ok(())
 }
 
+/// A hooks.json entry under its event and matcher.
+#[derive(Debug)]
+struct Placed {
+    event: HookEvent,
+    matcher: String,
+    hook: CommandHook,
+}
+
+/// Every hooks.json entry with its event and matcher.
+fn command_hooks() -> Result<Vec<Placed>, Box<dyn Error>> {
+    let file: HooksFile = serde_json::from_value(read_json("hooks.json")?)?;
+    let mut hooks = Vec::new();
+    for (event, groups) in file.hooks {
+        for group in groups {
+            let matcher = group.matcher.unwrap_or_default();
+            for raw in group.hooks {
+                hooks.push(Placed {
+                    event,
+                    // Each entry of the group records the group's matcher.
+                    matcher: matcher.clone(),
+                    hook: serde_json::from_value(raw)?,
+                });
+            }
+        }
+    }
+    Ok(hooks)
+}
+
+#[test]
+fn the_guard_hook_runs_before_every_bash_call_and_fails_closed() -> TestResult {
+    let guards: Vec<Placed> = command_hooks()?
+        .into_iter()
+        .filter(|placed| placed.hook.args.get(1).map(String::as_str) == Some("guard"))
+        .collect();
+    let [
+        Placed {
+            event,
+            matcher,
+            hook,
+        },
+    ] = guards.as_slice()
+    else {
+        return Err(format!("one guard entry, got {guards:?}").into());
+    };
+    assert_eq!(*event, HookEvent::PreToolUse, "before the tool runs");
+    assert_eq!(matcher, "Bash", "on every Bash call");
+    assert_eq!(
+        hook.args,
+        ["hook", "guard", "--fail-closed"],
+        "the launcher blocks when no binary is installed"
+    );
+    assert_eq!(
+        hook.on_failure,
+        OnFailure::Block,
+        "a crash, a timeout or bad output blocks"
+    );
+    assert_eq!(hook.timeout, 5, "the guard budget is 5 s");
+    let role = metadata()?
+        .hooks
+        .into_iter()
+        .find(|row| row.id == HookName::Guard.as_str())
+        .map(|row| row.role);
+    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    Ok(())
+}
+
+#[test]
+fn an_entry_blocks_on_failure_exactly_when_it_passes_fail_closed() -> TestResult {
+    for Placed { hook, .. } in command_hooks()? {
+        let fail_closed = hook.args.iter().any(|arg| arg == "--fail-closed");
+        assert_eq!(
+            hook.on_failure == OnFailure::Block,
+            fail_closed,
+            "{:?}: onFailure block and --fail-closed go together, so the binary, the launcher \
+             and Claude Code agree",
+            hook.args
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn the_bootstrap_hook_runs_on_every_session_start_and_fails_open() -> TestResult {
     let bootstrap: Vec<Entry> = entries()?

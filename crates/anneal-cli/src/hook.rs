@@ -2,10 +2,13 @@
 //! hooks share: silent on success, exactly one grep-able `ERROR <reason>` line on failure.
 //!
 //! Hooks fail open: a hook's own failures are reported in its output (or as an `ERROR` line on
-//! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2.
+//! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2. The
+//! exception is a guard (`hook guard`, or any hook passed `--fail-closed`), which fails closed: it
+//! denies what it cannot judge, and exits 2 when its decision cannot be written.
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
+pub(crate) mod guard;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -20,6 +23,18 @@ pub struct HookArgs {
     /// The hook to run.
     #[command(subcommand)]
     pub hook: HookName,
+    /// Fail closed: exit 2 when the hook's output cannot be written. The launcher reads the
+    /// same flag to exit 2 when no binary is installed. A guard always fails closed.
+    #[arg(long, global = true)]
+    pub fail_closed: bool,
+}
+
+impl HookArgs {
+    /// Whether a failure to deliver the hook's output blocks (exit 2) rather than failing open.
+    #[must_use]
+    pub const fn fails_closed(&self) -> bool {
+        self.fail_closed || self.hook.is_guard()
+    }
 }
 
 /// The hooks, by their id in `hooks.metadata.json`.
@@ -27,17 +42,29 @@ pub struct HookArgs {
 pub enum HookName {
     /// `SessionStart`: inject the bootstrap index, and the live state when it changed
     Bootstrap,
+    /// `PreToolUse` (Bash): deny commands on the denylist; fails closed
+    Guard,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 1] = [Self::Bootstrap];
+    pub const ALL: [Self; 2] = [Self::Bootstrap, Self::Guard];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Bootstrap => "bootstrap",
+            Self::Guard => "guard",
+        }
+    }
+
+    /// Whether the hook enforces a gate, and so fails closed.
+    #[must_use]
+    pub const fn is_guard(self) -> bool {
+        match self {
+            Self::Bootstrap => false,
+            Self::Guard => true,
         }
     }
 }
@@ -57,7 +84,8 @@ pub(crate) struct HookEnv<R, D, L> {
 /// `out`. Pass `&mut out` to keep the writer.
 ///
 /// # Errors
-/// Only the I/O error from writing `out`; every other failure is reported in the output.
+/// Only the I/O error from writing `out`; every other failure is reported in the output (a
+/// guard denies).
 pub(crate) fn run<R, D, L, W>(args: &HookArgs, env: HookEnv<R, D, L>, out: W) -> io::Result<()>
 where
     R: Read,
@@ -67,6 +95,7 @@ where
 {
     match args.hook {
         HookName::Bootstrap => bootstrap::run(env, out),
+        HookName::Guard => guard::run(env, out),
     }
 }
 

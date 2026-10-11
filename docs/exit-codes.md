@@ -18,6 +18,10 @@ be written, in one `ERROR` line on stderr) and still exits 0. Its usage errors s
 Claude Code reads as "block" on events that can block, so a test runs every `hooks.json` entry's
 arguments through the binary.
 
+A guard (`anneal hook guard`, or any hook passed `--fail-closed`) fails closed instead. It denies
+what it cannot judge with a deny decision on stdout and exit 0, and when that decision cannot be
+written it exits 2 with one `ERROR` line on stderr, so Claude Code blocks the tool call.
+
 ## All commands
 
 | Code | Meaning |
@@ -180,10 +184,11 @@ A green result proves skill routing accuracy is at or above its bound on the eva
 
 A green result proves the status line was rendered. It does **not** prove that the state it shows is current.
 
-## `anneal hook bootstrap`
+## `anneal hook`
 
 | Code | Meaning |
 |---|---|
-| 0 | ran, or failed open with the failure noted |
+| 0 | ran (a guard's deny is on stdout), or failed open with the failure noted |
+| 2 | a guard failed closed: its output was not written |
 
-A green result proves the hook ran; anything it could not do is noted in its output. It does **not** prove that the hook succeeded: hooks fail open, so they exit 0 on failure too.
+A green result proves the hook ran; anything it could not do is noted in its output. It does **not** prove that the hook succeeded: hooks other than guards fail open, so they exit 0 on failure too; for a guard, that the tool call was allowed.

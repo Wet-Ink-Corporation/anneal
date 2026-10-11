@@ -3,6 +3,7 @@
 mod cli;
 mod eval_routing;
 mod hook_bootstrap;
+mod hook_guard;
 mod hooks_manifest;
 mod ledger;
 mod lint_skills;

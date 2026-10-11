@@ -102,6 +102,9 @@ enum OnFailure {
     Exit,
     /// Still exit 0: a hook fails open. The error is still written as one `ERROR` line.
     FailOpen,
+    /// Exit 2, which Claude Code reads as "block": a guard fails closed. The error is still
+    /// written as one `ERROR` line.
+    FailClosed,
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
@@ -137,10 +140,11 @@ impl Command {
         }
     }
 
-    /// Hooks fail open; every other command exits with its error's code. Exhaustive, so a new
-    /// command has to choose.
+    /// Hooks fail open and guards closed; every other command exits with its error's code.
+    /// Exhaustive, so a new command has to choose.
     const fn on_failure(&self) -> OnFailure {
         match self {
+            Self::Hook(args) if args.fails_closed() => OnFailure::FailClosed,
             Self::Hook(_) => OnFailure::FailOpen,
             Self::Ledger(_)
             | Self::Task(_)
@@ -167,7 +171,8 @@ impl Command {
 ///
 /// On success `err` stays empty; on failure it gets exactly one `ERROR <reason>` line and the
 /// code is the error's documented code, never 0. The one exception is `anneal hook`, which
-/// fails open: after the `ERROR` line it still exits 0 (only its usage errors exit 2).
+/// fails open: after the `ERROR` line it still exits 0 (only its usage errors exit 2). A guard
+/// (`hook guard`, or a hook passed `--fail-closed`) fails closed instead: it exits 2.
 pub fn run<I, T, O, E>(args: I, mut out: O, mut err: E) -> Code
 where
     I: IntoIterator<Item = T>,
@@ -185,6 +190,8 @@ where
     match (on_failure, reported) {
         // A hook fails open whether or not stderr took the line.
         (OnFailure::FailOpen, _) => exit_codes::HOOK_DONE,
+        // A guard blocks whether or not stderr took the line.
+        (OnFailure::FailClosed, _) => exit_codes::HOOK_BLOCKED,
         (OnFailure::Exit, Ok(())) => error.code(),
         // stderr is closed too: the exit code is the only report left.
         (OnFailure::Exit, Err(_unreportable)) => exit_codes::OUTPUT,

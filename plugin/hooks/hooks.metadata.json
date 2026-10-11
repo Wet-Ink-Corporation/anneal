@@ -11,6 +11,16 @@
       "role": "scaffolding",
       "model_generation": "claude-5",
       "source": "Blueprint: Hooks (bootstrap), Feature catalog #1, skill rules 4, 15, 19 and 21; story #13"
+    },
+    {
+      "id": "guard",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "fingerprint": "sha256:df2690e5abee2911",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (guard), Gate escalation, skill rule 15; story #14"
     }
   ]
 }

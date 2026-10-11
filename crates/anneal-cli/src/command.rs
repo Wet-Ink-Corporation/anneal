@@ -147,7 +147,10 @@ impl CommandName {
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",
             Self::Eval => "routing accuracy on prompts outside the eval set",
             Self::Statusline => "that the state it shows is current",
-            Self::Hook => "that the hook succeeded: hooks fail open, so they exit 0 on failure too",
+            Self::Hook => {
+                "that the hook succeeded: hooks other than guards fail open, so they exit 0 on \
+                 failure too; for a guard, that the tool call was allowed"
+            }
         }
     }
 }
