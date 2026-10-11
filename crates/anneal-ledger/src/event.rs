@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 2;
+pub const REGISTRY_VERSION: u32 = 3;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -191,6 +191,17 @@ pub struct TestRun {
     pub command: String,
     /// Whether it passed.
     pub outcome: TestOutcome,
+    /// The command's exit code; `None` when it has none: it was killed (on a timeout, or by a
+    /// signal) (registry v3).
+    #[serde(default)]
+    pub exit: Option<i32>,
+    /// How long the command ran, in milliseconds, from a monotonic clock (registry v3).
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// The deadline in seconds, set only when the command ran past it and was killed
+    /// (registry v3).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 /// `task_done`: a task was marked done. Subject tag `task:`.
@@ -281,7 +292,7 @@ pub struct StopBlocked {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventKind, GrillConfirmed, LedgerEvent, UnknownEventKind};
+    use super::{EventKind, GrillConfirmed, LedgerEvent, TestOutcome, TestRun, UnknownEventKind};
     use serde_json::json;
 
     #[test]
@@ -323,6 +334,60 @@ mod tests {
                 plan: "p.md".to_owned(),
                 hash: None,
                 quote: None,
+            }),
+            "the added fields default to none"
+        );
+    }
+
+    #[test]
+    fn test_run_carries_the_exit_code_duration_and_timeout() {
+        let value = json!({
+            "type": "test_run",
+            "task": "T1",
+            "command": "cargo test",
+            "outcome": "red",
+            "exit": null,
+            "duration_ms": 1500,
+            "timeout_secs": 1,
+        });
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::TestRun(TestRun {
+                task: Some("T1".to_owned()),
+                command: "cargo test".to_owned(),
+                outcome: TestOutcome::Red,
+                exit: None,
+                duration_ms: Some(1500),
+                timeout_secs: Some(1),
+            }),
+            "exit, duration and timeout are read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+    }
+
+    #[test]
+    fn a_test_run_written_before_exit_and_duration_still_reads() {
+        let event: LedgerEvent = serde_json::from_value(
+            json!({"type": "test_run", "command": "cargo test", "outcome": "green"}),
+        )
+        .expect("registry v2 shape");
+
+        assert_eq!(
+            event,
+            LedgerEvent::TestRun(TestRun {
+                task: None,
+                command: "cargo test".to_owned(),
+                outcome: TestOutcome::Green,
+                exit: None,
+                duration_ms: None,
+                timeout_secs: None,
             }),
             "the added fields default to none"
         );

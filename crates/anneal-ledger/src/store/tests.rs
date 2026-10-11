@@ -36,6 +36,9 @@ fn test_run(task: &str, session: &str) -> EventEnvelope {
             task: Some(task.to_owned()),
             command: "cargo test".to_owned(),
             outcome: TestOutcome::Green,
+            exit: Some(0),
+            duration_ms: Some(10),
+            timeout_secs: None,
         }),
         session,
     )
