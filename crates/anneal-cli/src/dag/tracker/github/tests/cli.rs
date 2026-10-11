@@ -1,8 +1,6 @@
 //! The real `gh` adapter's edges: how a failure is classified, the output cap, and the timeout.
 
-use std::time::Duration;
-
-use crate::dag::tracker::github::gh::{GhApi, GhCli, GhError, MAX_GH_OUTPUT, failure, within_cap};
+use crate::dag::tracker::github::gh::{GhError, MAX_GH_OUTPUT, failure, within_cap};
 
 #[test]
 fn gh_saying_http_410_gone_is_not_found_too() {
@@ -36,6 +34,9 @@ fn a_gh_that_never_answers_is_killed_at_the_timeout() -> Result<(), Box<dyn std:
     use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
+    use std::time::Duration;
+
+    use crate::dag::tracker::github::gh::{GhApi, GhCli};
 
     let scratch = tempfile::tempdir()?;
     // A gh that blocks opening a FIFO nobody ever writes, until it is killed.
