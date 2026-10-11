@@ -206,6 +206,12 @@ impl Rule {
         &self.subject
     }
 
+    /// The bands, highest `at_least` first.
+    #[must_use]
+    pub fn bands(&self) -> &[Band] {
+        &self.bands
+    }
+
     /// The action for `probability`: the first band it reaches, else `otherwise`.
     #[must_use]
     pub fn apply(&self, probability: f64) -> Applied<'_> {
@@ -216,6 +222,20 @@ impl Rule {
                 || Applied::new(&self.otherwise, None),
                 |band| Applied::new(&band.action, Some(band.at_least)),
             )
+    }
+}
+
+impl Band {
+    /// The lowest probability the band applies to.
+    #[must_use]
+    pub const fn at_least(&self) -> f64 {
+        self.at_least
+    }
+
+    /// The band's action.
+    #[must_use]
+    pub fn action(&self) -> &str {
+        &self.action
     }
 }
 

@@ -117,6 +117,9 @@ pub enum Question {
 }
 
 impl Question {
+    /// Every question type, in order.
+    pub const ALL: [Self; 3] = [Self::Noul, Self::Choice, Self::Score];
+
     /// The name as typed: `noul`, `choice` or `score`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

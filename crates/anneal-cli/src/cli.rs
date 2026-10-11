@@ -12,6 +12,7 @@ use std::io::Write;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
+use crate::calibrate::{self, CalibrateArgs, CalibrateEnv};
 use crate::command::CommandName;
 use crate::dag::{self, DagArgs};
 use crate::decide::clock::SystemClock;
@@ -100,9 +101,9 @@ pub enum Command {
     /// Ask a Clef decision point and record the answer
     #[command(after_help = command_help(CommandName::Decide))]
     Decide(DecideArgs),
-    /// Calibrate a decision point against its log
+    /// Score each Clef decision point against its labelled outcomes and propose thresholds
     #[command(after_help = command_help(CommandName::Calibrate))]
-    Calibrate(Stub),
+    Calibrate(CalibrateArgs),
     /// Run evaluation suites, such as skill routing
     #[command(after_help = command_help(CommandName::Eval))]
     Eval(EvalArgs),
@@ -195,9 +196,10 @@ impl Command {
 /// Runs `anneal` with `args` (including the program name), writing results to `out` and
 /// errors to `err`, and returns the exit code. `out` is flushed before returning.
 ///
-/// On success `err` stays empty; on failure it gets exactly one `ERROR <reason>` line and the
-/// code is the error's documented code, never 0. The one exception is `anneal hook`, which
-/// fails open: after the `ERROR` line it still exits 0 (only its usage errors exit 2). A guard
+/// On success `err` stays empty, except for `anneal calibrate`'s short human summary, written
+/// after its envelope; on failure it gets exactly one `ERROR <reason>` line and the code is the
+/// error's documented code, never 0. The one exception is `anneal hook`, which fails open:
+/// after the `ERROR` line it still exits 0 (only its usage errors exit 2). A guard
 /// (`hook guard`, or a hook passed `--fail-closed`) fails closed instead: it exits 2.
 pub fn run<I, T, O, E>(args: I, mut out: O, mut err: E) -> Code
 where
@@ -206,7 +208,7 @@ where
     O: Write,
     E: Write,
 {
-    let (result, on_failure) = execute(args, &mut out);
+    let (result, on_failure) = execute(args, &mut out, &mut err);
     let result = result.and_then(|code| out.flush().map(|()| code).map_err(CliError::Output));
     let error = match result {
         Ok(code) => return code,
@@ -226,11 +228,12 @@ where
 
 /// Parses `args` and runs the command, returning its result and what a failure of it does to
 /// the exit code. A usage error always exits with its code.
-fn execute<I, T, O>(args: I, out: &mut O) -> (Result<Code, CliError>, OnFailure)
+fn execute<I, T, O, E>(args: I, out: &mut O, err: &mut E) -> (Result<Code, CliError>, OnFailure)
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
     O: Write,
+    E: Write,
 {
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     match Cli::try_parse_from(&args) {
@@ -242,7 +245,7 @@ where
         }
         Ok(Cli {
             command: Some(command),
-        }) => (dispatch(&command, out), command.on_failure()),
+        }) => (dispatch(&command, out, err), command.on_failure()),
     }
 }
 
@@ -250,8 +253,13 @@ where
 ///
 /// The process's working directory and environment are read here, at the edge, and passed
 /// in; only the commands that use them read them, so `--help` and the stubs still work in a
-/// directory that no longer exists.
-fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> {
+/// directory that no longer exists. `err` is for a command's own human output on success
+/// (`calibrate`'s summary); errors are written by [`run`].
+fn dispatch<O: Write, E: Write>(
+    command: &Command,
+    out: &mut O,
+    err: &mut E,
+) -> Result<Code, CliError> {
     match command {
         Command::Ledger(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
@@ -288,6 +296,7 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         }
         Command::Eval(args) => eval::run(args, out),
         Command::Decide(args) => run_decide(args, out),
+        Command::Calibrate(args) => run_calibrate(args, out, err),
         Command::Hook(args) => {
             let env = HookEnv {
                 stdin: std::io::stdin().lock(),
@@ -304,7 +313,6 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         | Command::Rollout(_)
         | Command::Perf(_)
         | Command::Brief(_)
-        | Command::Calibrate(_)
         | Command::Statusline(_) => Err(CliError::NotImplemented {
             command: command.name(),
         }),
@@ -323,6 +331,20 @@ fn run_decide<O: Write>(args: &DecideArgs, out: &mut O) -> Result<Code, CliError
         clock: &SystemClock::new(),
     };
     decide::run(args, &env, out)
+}
+
+/// `anneal calibrate` with the process's working directory and environment.
+fn run_calibrate<O: Write, E: Write>(
+    args: &CalibrateArgs,
+    out: &mut O,
+    err: &mut E,
+) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let env = CalibrateEnv {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+    };
+    calibrate::run(args, &env, out, err)
 }
 
 /// `--help` and `--version` go to stdout and exit 0 when they are the last argument; anything

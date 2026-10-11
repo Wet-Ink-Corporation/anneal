@@ -148,4 +148,5 @@ JSON escapes, and a test keeps the largest such row under the cap. When the live
 pass 16 MiB it becomes `decisions.1.jsonl`, the older files move up to `decisions.4.jsonl` and
 the fifth is dropped, so the log holds at most 80 MiB; when two calls rotate at once, the one
 that finds the live file already gone carries on and appends to a new one. `anneal calibrate`
-(#29) has to read the rotated files as well as the live one.
+reads the rotated files as well as the live one, joins the labels to their decisions and
+scores each point (`docs/calibrate.md`).
