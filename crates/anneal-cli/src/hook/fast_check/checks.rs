@@ -10,9 +10,9 @@
 //! under `anneal floor-guard`, anything `check:fast` starts) can outlive it, as for `task
 //! done`, since std has no portable process-group kill. On Windows a child's handles are
 //! inherited by the processes it starts: a killed `anneal floor-guard` can leave a `git` call
-//! holding its output pipe, so joining the readers waits until git exits (bounded by
-//! floor-guard's own 60 s per call, past the hook's timeout, after which Claude Code drops the
-//! output). A process `check:fast` leaves behind keeps the log file open there, so removing it
+//! holding its output pipe, so joining the readers waits until git exits on its own (nothing
+//! bounds it once floor-guard, whose per-call deadline it was, is killed); past the hook's
+//! timeout Claude Code drops the output. A process `check:fast` leaves behind keeps the log file open there, so removing it
 //! fails and is noted, and the file stays in the temporary directory.
 
 use std::fs::{self, File, OpenOptions};
