@@ -2,9 +2,10 @@
 //!
 //! A standalone assignment (`F=x`, also after `export`, `declare`, `local`, `typeset` or
 //! `readonly`) with a literal value is followed, and its value put in where the variable is
-//! used. `read`, `for`, `select`, `mapfile`, `printf -v`, `+=`, a value known only at run time,
-//! or a second, different assignment leave the variable set but unknown. A program word that
-//! uses such a variable, or is the output of a command substitution, is denied by the caller.
+//! used. `read`, `for`, `select`, `mapfile`, `printf -v`, `+=`, a name reference or array
+//! (`declare -n`, `-a`, `-A`), a value known only at run time, or a second, different
+//! assignment leave the variable set but unknown. A program word that uses such a variable, is
+//! the output of a command substitution or is an indirect expansion, is denied by the caller.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -39,6 +40,15 @@ impl Variables {
             ""
         };
         match name {
+            "export" | "declare" | "typeset" | "local" | "readonly" if refers(args) => {
+                for arg in args.iter().filter(|arg| !is_option(arg)) {
+                    let name = arg
+                        .text
+                        .split_once('=')
+                        .map_or(arg.text.as_str(), |(n, _)| n);
+                    self.unknown(name);
+                }
+            }
             "export" | "declare" | "typeset" | "local" | "readonly" => {
                 for arg in args.iter().filter(|arg| is_assignment(arg)) {
                     self.assign(arg);
@@ -184,6 +194,14 @@ pub(super) fn literal(text: &str) -> Word {
     }
 }
 
+/// Whether a declaration's options make its names references or arrays (`-n`, `-a`, `-A`,
+/// alone or in a cluster such as `-gn`), whose value the guard does not follow.
+fn refers(args: &[Word]) -> bool {
+    args.iter()
+        .filter(|arg| is_option(arg) && !arg.text.starts_with("--"))
+        .any(|arg| arg.text.contains(['n', 'a', 'A']))
+}
+
 /// The variable a plain `$NAME` or `${NAME}` names.
 fn plain(raw: &str) -> Option<&str> {
     let rest = raw.strip_prefix('$')?;
@@ -212,8 +230,8 @@ fn is_name(name: &str) -> bool {
 }
 
 /// Where `word`'s value comes from when it is nothing but expansions (and blanks) and one of
-/// them is a command's output or the arguments of a function or script (`$@`, `$*`, `$1`):
-/// values only known at run time, often a command line.
+/// them is a command's output, the arguments of a function or script (`$@`, `$*`, `$1`) or an
+/// indirect expansion (`${!name}`): values only known at run time, often a command line.
 pub(super) fn runtime_source(word: &Word) -> Option<&'static str> {
     if !fields(word).is_empty() {
         return None;
@@ -226,6 +244,8 @@ pub(super) fn runtime_source(word: &Word) -> Option<&'static str> {
         });
         if (raw.starts_with("$(") && !raw.starts_with("$((")) || raw.starts_with('`') {
             Some("the output of a command substitution")
+        } else if raw.starts_with("${!") {
+            Some("an indirect expansion, whose variable is named at run time")
         } else if parameter.is_some_and(|name| {
             matches!(name, "@" | "*")
                 || (!name.is_empty() && name.chars().all(|c| c.is_ascii_digit()))
@@ -243,15 +263,24 @@ pub(super) fn fields(word: &Word) -> Vec<Word> {
     if word.expansions.is_empty() {
         return Vec::new();
     }
-    let in_expansion = |at: usize| {
-        word.expansions
-            .iter()
-            .any(|expansion| expansion.range.contains(&at))
-    };
+    // One pass over the text with a cursor over the ranges sorted by start (linear, H-13).
+    let mut ranges: Vec<(usize, usize)> = word
+        .expansions
+        .iter()
+        .map(|expansion| (expansion.range.start, expansion.range.end))
+        .collect();
+    ranges.sort_unstable();
+    let mut ranges = ranges.into_iter().peekable();
+    let mut covered_to = 0;
     let skeleton: String = word
         .text
         .char_indices()
-        .map(|(at, c)| if in_expansion(at) { ' ' } else { c })
+        .map(|(at, c)| {
+            while let Some((_, end)) = ranges.next_if(|(start, _)| *start <= at) {
+                covered_to = covered_to.max(end);
+            }
+            if at < covered_to { ' ' } else { c }
+        })
         .collect();
     skeleton.split_whitespace().map(literal).collect()
 }

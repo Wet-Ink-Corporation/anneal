@@ -23,7 +23,7 @@ pub(crate) use word::{Expansion, Shape, Word};
 /// How deep `$( )`, backticks, `( )` and `${ }` may nest before a command is refused (H-13).
 pub(crate) const MAX_NESTING: usize = 32;
 
-/// Words that may come before a reserved word such as `case` in command position.
+/// Words that may come before a reserved word such as `esac` in command position.
 const RESERVED: [&str; 10] = [
     "!", "{", "if", "then", "else", "elif", "do", "while", "until", "time",
 ];
@@ -274,14 +274,18 @@ impl Lexer {
         Ok(())
     }
 
-    /// Counts `case` and `esac` when `word` is in command position.
+    /// Counts an unquoted `case` wherever it is, and an `esac` in command position.
+    ///
+    /// Bash also opens a `case` after `time -p`, `function NAME` or `coproc NAME`, so any
+    /// bare `case` counts: a stray one (`$(echo case)`) leaves its substitution unclosed, which
+    /// denies, where missing one would let a pattern's `)` close the substitution early.
     fn count_case(&mut self, command: &SimpleCommand, word: &Word, level: Level) {
-        if !command.words.iter().all(|before| before.is_bare(&RESERVED)) {
-            return;
-        }
         if word.is_bare(&["case"]) {
             self.cases = self.cases.saturating_add(1);
-        } else if word.is_bare(&["esac"]) && self.cases > level.cases {
+        } else if word.is_bare(&["esac"])
+            && self.cases > level.cases
+            && command.words.iter().all(|before| before.is_bare(&RESERVED))
+        {
             self.cases = self.cases.saturating_sub(1);
         }
     }

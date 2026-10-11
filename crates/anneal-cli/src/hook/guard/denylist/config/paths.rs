@@ -21,14 +21,17 @@ enum Name {
 
 impl Name {
     /// Whether `component` is this name; when `glob` and the component holds a wildcard,
-    /// whether it could match it.
+    /// whether it could match it. Letter case is ignored: on case-insensitive file systems
+    /// (APFS, NTFS by default) `.CLAUDE/settings.json` is `.claude/settings.json`.
     fn matches(self, component: &str, glob: bool) -> bool {
         let wildcard = glob && component.contains(['*', '?', '[']);
+        // The names are lower case; the component is lowered to compare.
+        let component = component.to_ascii_lowercase();
         match self {
-            Self::Exact(name) if wildcard => glob_match(component, name),
+            Self::Exact(name) if wildcard => glob_match(&component, name),
             Self::Exact(name) => component == name,
             Self::Affix { samples, .. } if wildcard => {
-                samples.iter().any(|sample| glob_match(component, sample))
+                samples.iter().any(|sample| glob_match(&component, sample))
             }
             Self::Affix { prefix, suffix, .. } => component
                 .strip_prefix(prefix)

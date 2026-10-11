@@ -203,6 +203,8 @@ fn bash_writes_to_lint_or_hook_config_are_denied() {
         ("rm -r .github", CONFIG),
         ("truncate -s 0 .eslintrc.json", CONFIG),
         ("chmod -x .claude/hooks/check.sh", CONFIG),
+        ("echo x > .Claude/Settings.json", CONFIG),
+        ("cp x .GitHub/Workflows/x.yml", CONFIG),
     ]);
 }
 

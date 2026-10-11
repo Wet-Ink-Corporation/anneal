@@ -17,6 +17,19 @@ const KEYWORDS: [&str; 9] = [
 /// Shells whose `-c` string is a command, and which read a script from stdin without one.
 const SHELLS: [&str; 7] = ["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"];
 
+/// Programs the guard checks, or that run shell text: the arguments of a program it does not
+/// know are read as a command from each word naming one of these (or a wrapper).
+const CHECKED: [&str; 15] = [
+    "rm", "git", "tee", "truncate", "cp", "mv", "install", "ln", "sed", "unlink", "rmdir", "shred",
+    "chmod", "chown", "chgrp",
+];
+
+/// Programs and keywords that only print, search, test or describe their arguments.
+const PASSIVE: [&str; 20] = [
+    "echo", "printf", "grep", "egrep", "fgrep", "rg", "man", "info", "help", "which", "whereis",
+    "type", "whatis", "apropos", "for", "select", "case", "test", "[", "[[",
+];
+
 /// Options that take a value in the next word, per wrapper.
 const SUDO_VALUES: &[&str] = &[
     "-u",
@@ -65,6 +78,8 @@ const CHRT_VALUES: &[&str] = &[
     "--sched-period",
     "--sched-deadline",
 ];
+/// `--eof`, `--replace` and `--max-lines` are absent: their value is optional and only ever
+/// follows `=`, so the next word is the command.
 const XARGS_VALUES: &[&str] = &[
     "-a",
     "-d",
@@ -76,9 +91,6 @@ const XARGS_VALUES: &[&str] = &[
     "-s",
     "--arg-file",
     "--delimiter",
-    "--eof",
-    "--replace",
-    "--max-lines",
     "--max-args",
     "--max-procs",
     "--max-chars",
@@ -209,6 +221,23 @@ fn program(word: &Word) -> Program<'_> {
     Program::Named(name.strip_suffix(".exe").unwrap_or(name))
 }
 
+/// Whether `word` names a program the guard checks, a shell or a wrapper it unwraps.
+pub(super) fn names_checked(word: &Word) -> bool {
+    match program(word) {
+        // Every wrapper peels something off even with no arguments; other programs do not.
+        Program::Named(name) => {
+            CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
+        }
+        Program::Unknown(_) => false,
+    }
+}
+
+/// Whether `name`, a program that is not a wrapper the guard unwraps, may run its arguments as
+/// a command: it is not one the guard checks, nor one that only prints or searches them.
+pub(super) fn may_run_arguments(name: &str) -> bool {
+    !(CHECKED.contains(&name) || PASSIVE.contains(&name) || matches!(name, "cd" | "pushd"))
+}
+
 /// Skips leading keywords (`if`, `then`, `{`, `!`, ...) and `NAME=value` assignments.
 fn skip_prefix(words: &[Word]) -> &[Word] {
     let mut rest = words;
@@ -250,6 +279,49 @@ pub(super) fn may_be_option(word: &Word) -> bool {
     word.shape != Shape::Dynamic && word.text.starts_with('-') && word.text != "-"
 }
 
+/// A long option as written, `--name` or `--name=value`. `getopt_long` and git accept a long
+/// option's name abbreviated to any unique prefix (`--forc` is `--force`).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Long<'a> {
+    /// The name as written, `--` included.
+    name: &'a str,
+    /// The value after `=`, if any.
+    pub(super) value: Option<&'a str>,
+}
+
+impl<'a> Long<'a> {
+    /// `text` as a long option: `--` and at least one more character before any `=`.
+    pub(super) fn parse(text: &'a str) -> Option<Self> {
+        let (name, value) = match text.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (text, None),
+        };
+        (name.len() > 2 && name.starts_with("--")).then_some(Self { name, value })
+    }
+
+    /// Whether this may be the option `full` (`--force`), written out or abbreviated. A
+    /// prefix several options share counts as each of them: the guard reads it as the one it
+    /// denies, and the program refuses it anyway.
+    pub(super) fn is(self, full: &str) -> bool {
+        full.starts_with(self.name)
+    }
+}
+
+/// Whether `text` is the long option `full`, written out or abbreviated, with or without a
+/// `=value`.
+pub(super) fn is_long(text: &str, full: &str) -> bool {
+    Long::parse(text).is_some_and(|long| long.is(full))
+}
+
+/// Whether the option `text` takes the next word as its value: it is one of `with_value`
+/// (a long one possibly abbreviated) with no `=value` of its own.
+pub(super) fn takes_value(text: &str, with_value: &[&str]) -> bool {
+    match Long::parse(text) {
+        Some(long) => long.value.is_none() && with_value.iter().any(|option| long.is(option)),
+        None => with_value.contains(&text),
+    }
+}
+
 /// Skips options up to the first operand, and a `--` that ends them. Options in `with_value`
 /// take the next word as their value.
 pub(super) fn skip_options<'a>(words: &'a [Word], with_value: &[&str]) -> &'a [Word] {
@@ -261,7 +333,7 @@ pub(super) fn skip_options<'a>(words: &'a [Word], with_value: &[&str]) -> &'a [W
         if !is_option(first) {
             break;
         }
-        rest = if with_value.contains(&first.text.as_str()) {
+        rest = if takes_value(&first.text, with_value) {
             skip_one(tail)
         } else {
             tail

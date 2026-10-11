@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use super::wrappers::may_be_option;
+use super::wrappers::{is_long, may_be_option};
 use super::{Context, normalize};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
@@ -27,9 +27,10 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
         }
         match text {
             "--" => options = false,
-            "--recursive" => recursive = true,
-            "--force" => force = true,
-            long if long.starts_with("--") => {}
+            long if long.starts_with("--") => {
+                recursive |= is_long(long, "--recursive");
+                force |= is_long(long, "--force");
+            }
             short => {
                 recursive |= short.contains(['r', 'R']);
                 force |= short.contains('f');

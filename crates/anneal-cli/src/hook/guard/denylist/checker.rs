@@ -35,9 +35,16 @@ impl Scope<'_> {
 pub(super) struct Checker<'c> {
     context: &'c Context,
     lexed: usize,
+    /// How many times arguments have been read as a command ([`Checker::arguments`]).
+    argument_commands: usize,
     cwd: Cwd,
     variables: Variables,
 }
+
+/// The most commands arguments are read as in one check (H-13): each read walks the rest of
+/// the arguments and may read some of them again, so the total is capped, which also bounds
+/// how deeply such reads nest.
+const MAX_ARGUMENT_COMMANDS: usize = 32;
 
 /// A denial for a command the guard cannot read.
 fn unreadable(reason: String) -> Denial {
@@ -49,6 +56,7 @@ impl<'c> Checker<'c> {
         Self {
             context,
             lexed: 0,
+            argument_commands: 0,
             cwd: Cwd::Start,
             variables: Variables::default(),
         }
@@ -176,15 +184,47 @@ impl<'c> Checker<'c> {
                 self.cwd.change(args);
                 None
             }
-            Program::Named(name) => config::check(name, args, &self.cwd),
+            Program::Named(name) => config::check(name, args, &self.cwd).or_else(|| {
+                wrappers::may_run_arguments(name)
+                    .then(|| self.arguments(args, scope))
+                    .flatten()
+            }),
             Program::Unknown(word) => self.unknown(word, args, scope),
         }
     }
 
+    /// The arguments of a program the guard does not know, read as a command from each word
+    /// that names a program it checks or unwraps: an unlisted wrapper (`caffeinate`,
+    /// `runuser -u root --`, `chroot /`) runs them. At most [`MAX_ARGUMENT_COMMANDS`] are read
+    /// in one check; past that it denies.
+    fn arguments(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        for (at, _) in args
+            .iter()
+            .enumerate()
+            .filter(|(_, word)| wrappers::names_checked(word))
+        {
+            self.argument_commands = self.argument_commands.saturating_add(1);
+            if self.argument_commands > MAX_ARGUMENT_COMMANDS {
+                return Some(unreadable(format!(
+                    "arguments name more than {MAX_ARGUMENT_COMMANDS} commands the guard \
+                     checks; run them one by one"
+                )));
+            }
+            let Some(command) = args.get(at..) else {
+                continue;
+            };
+            if let Some(denial) = self.words(command, scope) {
+                return Some(denial);
+            }
+        }
+        None
+    }
+
     /// A program word that is not a literal name: denied when brace expansion builds it, read
     /// as the words its literal parts split into (`rm${IFS}-rf`), its arguments checked
-    /// against every entry, and then denied when it is a command's output or a variable this
-    /// command set to a value known only at run time.
+    /// against every entry and read as a command ([`Checker::arguments`]), and then denied
+    /// when it is a command's output or a variable this command set to a value known only at
+    /// run time.
     fn unknown(&mut self, word: &Word, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         if braces::has_group(word) {
             return Some(unreadable(format!(
@@ -205,6 +245,9 @@ impl<'c> Checker<'c> {
             .or_else(|| config::check("cp", args, &self.cwd));
         if by_entry.is_some() {
             return by_entry;
+        }
+        if let Some(denial) = self.arguments(args, scope) {
+            return Some(denial);
         }
         if let Some(source) = variables::runtime_source(word) {
             return Some(unreadable(format!(

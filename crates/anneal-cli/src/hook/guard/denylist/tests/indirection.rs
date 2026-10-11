@@ -98,3 +98,23 @@ fn arguments_run_as_a_command_are_checked_or_denied() {
         ("echo \"$1\"", ALLOW),
     ]);
 }
+
+#[test]
+fn namerefs_arrays_and_indirect_expansions_as_the_program_are_denied() {
+    assert_table(&[
+        ("declare -n r=x; x=rm; $r -rf build", RM_RF),
+        ("declare -n r=x; x=rm; $r notes", UNREADABLE),
+        ("local -n r=x; x=rm; $r notes", UNREADABLE),
+        ("typeset -n r=x; x=rm; $r notes", UNREADABLE),
+        ("declare -gn r=x; x=rm; $r notes", UNREADABLE),
+        ("declare -n r; r=x; x=rm; $r notes", UNREADABLE),
+        ("declare -a a=x; $a notes", UNREADABLE),
+        ("declare -A m; $m notes", UNREADABLE),
+        ("y=x; x=rm; ${!y} notes", UNREADABLE),
+        ("${!prefix@}", UNREADABLE),
+        // Other declarations are still followed.
+        ("declare -r F='rm -rf /'; $F", RM_RF),
+        ("declare -x D=/tmp/b; rm -rf $D", ALLOW),
+        ("echo ${!y}", ALLOW),
+    ]);
+}

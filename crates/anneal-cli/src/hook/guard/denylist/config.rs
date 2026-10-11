@@ -13,7 +13,7 @@ mod paths;
 pub(super) use paths::Cwd;
 use paths::{CONTAINERS, contains_protected, last_component, protected};
 
-use super::wrappers::{is_option, skip_one};
+use super::wrappers::{Long, is_option, skip_one};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
@@ -78,13 +78,15 @@ impl<'a> SedArgs<'a> {
             }
             if !is_option(first) {
                 sed.operands.push(first);
-            } else if text.starts_with("--in-place") {
-                sed.in_place = true;
-            } else if matches!(text, "--expression" | "--file") {
-                sed.script_given = true;
-                rest = skip_one(rest);
-            } else if text.starts_with("--expression=") || text.starts_with("--file=") {
-                sed.script_given = true;
+            } else if let Some(long) = Long::parse(text) {
+                // `--in-place[=SUFFIX]`, `--expression SCRIPT`, `--file FILE`, abbreviated or not.
+                sed.in_place |= long.is("--in-place");
+                if long.is("--expression") || long.is("--file") {
+                    sed.script_given = true;
+                    if long.value.is_none() {
+                        rest = skip_one(rest);
+                    }
+                }
             } else if !text.starts_with("--") && sed.cluster(text) {
                 rest = skip_one(rest);
             }
@@ -156,13 +158,18 @@ impl<'a> CopyArgs<'a> {
             }
             if !is_option(first) {
                 copy.operands.push(first);
-            } else if text == "--target-directory" {
-                copy.target_dir = tail.first().map(|dir| (dir.text.as_str(), dir.shape));
-                rest = skip_one(rest);
-            } else if let Some(dir) = text.strip_prefix("--target-directory=") {
-                copy.target_dir = Some((dir, first.shape));
-            } else if text == "--suffix" {
-                rest = skip_one(rest);
+            } else if let Some(long) = Long::parse(text) {
+                // `--target-directory DIR` and `--suffix SUFFIX`, abbreviated or not.
+                if long.is("--target-directory") {
+                    copy.target_dir = match long.value {
+                        Some(dir) => Some((dir, first.shape)),
+                        None => tail.first().map(|dir| (dir.text.as_str(), dir.shape)),
+                    };
+                }
+                let valued = long.is("--target-directory") || long.is("--suffix");
+                if valued && long.value.is_none() {
+                    rest = skip_one(rest);
+                }
             } else if text.starts_with("--") {
             } else if let Some((_, dir)) = text.split_once('t') {
                 if dir.is_empty() {
@@ -197,8 +204,11 @@ fn copy(program: &str, args: &[Word], moves: bool, cwd: &Cwd) -> Option<Denial> 
     } else {
         let (last, sources) = copy.operands.split_last()?;
         let named_dir = last.text.ends_with(['/', '\\'])
-            || last_component(&last.text)
-                .is_some_and(|name| CONTAINERS.iter().any(|(dir, _)| *dir == name));
+            || last_component(&last.text).is_some_and(|name| {
+                CONTAINERS
+                    .iter()
+                    .any(|(dir, _)| dir.eq_ignore_ascii_case(name))
+            });
         ((last.text.as_str(), last.shape), sources, named_dir)
     };
     if sources.is_empty() {

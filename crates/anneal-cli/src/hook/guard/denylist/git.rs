@@ -5,7 +5,7 @@ mod settings;
 
 pub(super) use settings::settings;
 
-use super::wrappers::{may_be_option, skip_one, skip_options};
+use super::wrappers::{Long, is_long, may_be_option, skip_one, skip_options, takes_value};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
@@ -75,7 +75,7 @@ impl<'a> Push<'a> {
             }
             if text.starts_with("--") {
                 push.long(text);
-                if PUSH_VALUES.contains(&text) {
+                if takes_value(text, PUSH_VALUES) {
                     rest = skip_one(rest);
                 }
             } else if push.short(text) {
@@ -85,13 +85,21 @@ impl<'a> Push<'a> {
         push
     }
 
+    /// Reads a long option, possibly abbreviated (`--force-w`) or with a value.
     fn long(&mut self, flag: &'a str) {
-        let force = matches!(flag, "--force" | "--force-with-lease" | "--mirror")
-            || flag.starts_with("--force-with-lease=");
-        if force {
+        let Some(long) = Long::parse(flag) else {
+            return;
+        };
+        if ["--force", "--force-with-lease", "--mirror"]
+            .into_iter()
+            .any(|option| long.is(option))
+        {
             self.force = Some(flag);
         }
-        if matches!(flag, "--all" | "--branches" | "--mirror") {
+        if ["--all", "--branches", "--mirror"]
+            .into_iter()
+            .any(|option| long.is(option))
+        {
             self.every_branch = Some(flag);
         }
     }
@@ -204,7 +212,7 @@ fn add(args: &[Word]) -> Option<Denial> {
             break;
         }
         let force = may_be_option(first)
-            && (text == "--force" || (!text.starts_with("--") && text.contains('f')));
+            && (is_long(text, "--force") || (!text.starts_with("--") && text.contains('f')));
         if force {
             return Some(Denial::new(
                 Rule::ForceAdd,

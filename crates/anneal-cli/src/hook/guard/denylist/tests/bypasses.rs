@@ -152,3 +152,109 @@ fn near_misses_of_the_new_forms_are_allowed() {
         ("echo esac case", ALLOW),
     ]);
 }
+
+#[test]
+fn abbreviated_long_options_count_as_the_options_they_abbreviate() {
+    assert_table(&[
+        ("git push --force-w origin main", FORCE_PUSH),
+        ("git push --forc origin main", FORCE_PUSH),
+        ("git push --mirr", FORCE_PUSH),
+        ("git push --bra --force origin", FORCE_PUSH),
+        ("git add --forc x", ADD_FORCE),
+        ("rm --r --f src", RM_RF),
+        ("rm --recur --forc /etc", RM_RF),
+        ("cp --target=.claude settings.json", CONFIG),
+        ("mv --t .claude settings.json", CONFIG),
+        ("sed --in s/a/b/ .claude/settings.json", CONFIG),
+        ("sed --in --fil=edit.sed .claude/settings.json", CONFIG),
+        ("env --split='rm -rf /'", RM_RF),
+        ("su --comm='rm -rf /' root", RM_RF),
+        ("script --comm 'rm -rf /' /dev/null", RM_RF),
+        // xargs's `--replace` takes no next word: its value only follows `=`.
+        ("echo x | xargs --replace rm -rf /", RM_RF),
+        // Near misses: other options, and words that only start like one.
+        ("git push --follow-tags origin feature", ALLOW),
+        ("git push --force origin feature", ALLOW),
+        ("git add --verbose x", ALLOW),
+        ("rm --recursive build", ALLOW),
+        ("rm --verbose --force x", ALLOW),
+        ("sed --quiet s/a/b/ .claude/settings.json", ALLOW),
+        ("cp --verbose a b", ALLOW),
+    ]);
+}
+
+#[test]
+fn a_case_after_time_function_or_coproc_keeps_a_substitution_open() {
+    assert_table(&[
+        ("echo \"$(time -p case x in x) rm -rf /;; esac)\"", RM_RF),
+        (
+            "echo \"$(function f case x in x) rm -rf /;; esac; f)\"",
+            RM_RF,
+        ),
+        ("echo \"$(coproc case x in x) rm -rf /;; esac)\"", RM_RF),
+        (
+            "echo \"$(time -- case x in x) git add -f x;; esac)\"",
+            ADD_FORCE,
+        ),
+        // A stray `case` word in a substitution cannot be told apart, so it denies.
+        ("echo \"$(echo case)\"", UNREADABLE),
+        ("echo case; echo \"$(ls)\"", ALLOW),
+    ]);
+}
+
+#[test]
+fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
+    assert_table(&[
+        ("caffeinate rm -rf /", RM_RF),
+        ("runuser -u root -- rm -rf /", RM_RF),
+        ("chroot / rm -rf /", RM_RF),
+        ("unshare -r rm -rf /", RM_RF),
+        ("nsenter -t 1 -m -- git push -f origin main", FORCE_PUSH),
+        ("systemd-run --user rm -rf /", RM_RF),
+        ("pkexec rm -rf /", RM_RF),
+        ("parallel rm -rf ::: /", RM_RF),
+        ("runuser -s /bin/bash -u root -- rm -rf /", RM_RF),
+        ("caffeinate sh -c 'git add -f x'", ADD_FORCE),
+        ("caffeinate tee .claude/settings.json", CONFIG),
+        ("\"$RUNNER\" sh -c 'rm -rf /'", RM_RF),
+        // Programs that only print or search their arguments, and harmless runs.
+        ("grep rm -rf src", ALLOW),
+        ("echo git push -f origin main", ALLOW),
+        ("which rm git", ALLOW),
+        ("caffeinate cargo test", ALLOW),
+        ("runuser -u app -- rm -rf /tmp/build", ALLOW),
+    ]);
+}
+
+#[test]
+fn arguments_read_as_commands_are_capped_per_check() {
+    let few = format!("caffeinate{}", " ls rm".repeat(8));
+    let many = format!("caffeinate{}", " ls rm".repeat(40));
+
+    assert_table(&[(&few, ALLOW), (&many, UNREADABLE)]);
+}
+
+#[test]
+fn protected_paths_match_whatever_their_letter_case() {
+    assert_table(&[
+        ("cat x > .CLAUDE/settings.json", CONFIG),
+        ("echo x > .Claude/Settings.json", CONFIG),
+        ("cp x .GitHub/Workflows/x.yml", CONFIG),
+        ("tee Clippy.TOML", CONFIG),
+        ("echo x > .ESLINTRC.json", CONFIG),
+        ("rm -r .GITHUB", CONFIG),
+        ("echo x > .CL*/SETTINGS.json", CONFIG),
+        ("echo x > .Claude/notes.md", ALLOW),
+        ("echo x > Hooks.md", ALLOW),
+    ]);
+}
+
+#[test]
+fn adversarially_long_words_are_read_in_linear_time() {
+    // Quadratic scans took tens of seconds on these; linear ones take milliseconds.
+    let braces = format!("echo {}", "{".repeat(200_000));
+    let commas = format!("echo {}", "{a,".repeat(50_000));
+    let expansions = "$a".repeat(100_000);
+
+    assert_table(&[(&braces, ALLOW), (&commas, ALLOW), (&expansions, ALLOW)]);
+}

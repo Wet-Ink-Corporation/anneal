@@ -89,40 +89,52 @@ fn expand_text(text: &str, out: &mut Vec<String>, groups: usize) -> Result<(), T
     Ok(())
 }
 
-/// The first brace group in `text` that has a comma at its top level.
-fn group(text: &str) -> Option<Group<'_>> {
-    text.match_indices('{')
-        .find_map(|(open, _)| group_at(text, open))
+/// A `{` not yet closed: where it is, and the commas at its top level.
+#[derive(Debug)]
+struct Open {
+    at: usize,
+    commas: Vec<usize>,
 }
 
-/// The brace group opened by the `{` at byte `open`, if it closes and has a top-level comma.
-fn group_at(text: &str, open: usize) -> Option<Group<'_>> {
-    let inner = open.checked_add(1)?;
-    let mut depth = 0_usize;
-    let mut start = inner;
-    let mut alternatives = Vec::new();
-    for (offset, c) in text.get(inner..)?.char_indices() {
-        let at = inner.checked_add(offset)?;
+/// The first brace group in `text` (by its `{`) that closes and has a comma at its top level.
+///
+/// One pass with a stack of the open braces, so a word of many `{` stays linear (H-13).
+fn group(text: &str) -> Option<Group<'_>> {
+    let mut open: Vec<Open> = Vec::new();
+    let mut first: Option<(Open, usize)> = None;
+    for (at, c) in text.char_indices() {
         match c {
-            '{' => depth = depth.saturating_add(1),
-            '}' if depth > 0 => depth = depth.saturating_sub(1),
-            '}' => {
-                if alternatives.is_empty() {
-                    return None;
+            '{' => open.push(Open {
+                at,
+                commas: Vec::new(),
+            }),
+            ',' => {
+                if let Some(innermost) = open.last_mut() {
+                    innermost.commas.push(at);
                 }
-                alternatives.push(text.get(start..at)?);
-                return Some(Group {
-                    prefix: text.get(..open)?,
-                    alternatives,
-                    suffix: text.get(at.checked_add(1)?..)?,
-                });
             }
-            ',' if depth == 0 => {
-                alternatives.push(text.get(start..at)?);
-                start = at.checked_add(1)?;
+            '}' => {
+                let Some(closed) = open.pop() else {
+                    continue;
+                };
+                let earlier = first.as_ref().is_none_or(|(best, _)| closed.at < best.at);
+                if !closed.commas.is_empty() && earlier {
+                    first = Some((closed, at));
+                }
             }
             _ => {}
         }
     }
-    None
+    let (open, close) = first?;
+    let mut alternatives = Vec::with_capacity(open.commas.len().saturating_add(1));
+    let mut start = open.at.checked_add(1)?;
+    for comma in open.commas.into_iter().chain([close]) {
+        alternatives.push(text.get(start..comma)?);
+        start = comma.checked_add(1)?;
+    }
+    Some(Group {
+        prefix: text.get(..open.at)?,
+        alternatives,
+        suffix: text.get(close.checked_add(1)?..)?,
+    })
 }

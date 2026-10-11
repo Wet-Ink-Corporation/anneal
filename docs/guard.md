@@ -39,10 +39,11 @@ Whatever the guard cannot judge, it denies:
 |---|---|
 | stdin is not `PreToolUse` JSON, is larger than 1 MiB, or cannot be read | deny, rule `bad-input` |
 | a Bash call with no `tool_input.command` | deny, rule `bad-input` |
-| the command cannot be read: an unclosed quote, `$(`, backtick or `${`, a `case` with no `esac` inside `$( )`, a redirection with no target, nesting deeper than 32 | deny, rule `unparseable` |
+| the command cannot be read: an unclosed quote, `$(`, backtick or `${`, a `case` with no `esac` inside `$( )` (any unquoted `case` word counts, so `$(echo case)` is denied too), a redirection with no target, nesting deeper than 32 | deny, rule `unparseable` |
 | `bash -c`, `eval`, `env -S` or `find -exec` nested deeper than 8, or more than 4 MiB lexed in total across those levels | deny, rule `unparseable` |
 | a form the guard does not model (see [Bypass handling](#bypass-handling)): a script from stdin or a process substitution known only at run time, a program word built by brace expansion or from a command's output, a `git -c alias.*` | deny, rule `unparseable` |
 | brace expansion that makes more than 256 words | deny, rule `unparseable` |
+| the arguments of programs the guard does not know read as a command more than 32 times in one check | deny, rule `unparseable` |
 | the decision cannot be written to stdout | exit 2 with one `ERROR` line on stderr (`docs/exit-codes.md`) |
 | bad arguments (a usage error) | exit 2 |
 | no anneal binary is installed | the launcher exits 2 with one `ERROR` line (`--fail-closed`) |
@@ -63,7 +64,9 @@ below and more; `tests/forms.rs` checks every entry in every wrapping form of th
 ### `force-push`: force push to a protected branch
 
 A `git push` is forced when it has `--force`, `-f` (also inside a short-option cluster such as
-`-fu`), `--force-with-lease[=...]`, `--mirror`, or a refspec that starts with `+`. A forced
+`-fu`), `--force-with-lease[=...]`, `--mirror`, or a refspec that starts with `+`. Long options
+match when abbreviated, as git and `getopt_long` accept any unique prefix (`--forc`,
+`--force-w`, `--mirr`); a prefix several options share (`--f`) counts as the one denied. A forced
 push is denied when:
 
 - a forced refspec's destination is protected: `main`, `master`, `release/*`, with or without
@@ -92,7 +95,8 @@ skipped before the subcommand, after these checks on `-c` and `--config-env`:
 ### `rm-rf`: recursive force delete outside temp and scratch
 
 `rm` with both a recursive flag and a force flag, in any spelling (`-rf`, `-fr`, `-Rf`,
-`-r -f`, `--recursive --force`, flags after the operands). It is allowed only when every
+`-r -f`, `--recursive --force` or any abbreviation such as `--r --f`, flags after the
+operands). It is allowed only when every
 operand is a literal absolute path strictly inside a temporary or scratch directory:
 
 - `$TMPDIR`, `/tmp`, `/var/folders`, `/private/tmp` or `/private/var/folders`;
@@ -115,14 +119,15 @@ Allowed: `rm -rf /tmp/build`, `rm -r src` (not forced), `rm -f file` (not recurs
 
 ### `git-add-force`: `git add -f`
 
-`git add` (or its synonym `git stage`) with `-f`, `--force`, or `f` in a short-option cluster
-(`-fA`). It stages files that `.gitignore` excludes. Allowed: `git add -- -f` (a path named
+`git add` (or its synonym `git stage`) with `-f`, `--force` (or an abbreviation such as
+`--forc`), or `f` in a short-option cluster (`-fA`). It stages files that `.gitignore` excludes. Allowed: `git add -- -f` (a path named
 `-f`) and every other `git add`.
 
 ### `config-write`: Bash writes to lint or hook config
 
 A Bash command may not change these paths. They are matched on path components, so
-`docs/hooks.md` and `myhooks/x` do not match:
+`docs/hooks.md` and `myhooks/x` do not match, and without regard to letter case, since on a
+case-insensitive file system (APFS, NTFS) `.CLAUDE/Settings.json` is `.claude/settings.json`:
 
 | Path | Matches |
 |---|---|
@@ -139,9 +144,10 @@ The writes it checks:
 - a redirection: `>`, `>>`, `>|`, `&>`, `&>>`, `<>`, `>&file`, with or without a descriptor
   number;
 - `tee` and `truncate` operands;
-- `sed -i` (also `-i.bak`, `--in-place`) operands. The script is not a path, so
+- `sed -i` (also `-i.bak`, `--in-place`, `--in`) operands. The script is not a path, so
   `sed -i 's/hooks/x/' notes` is allowed;
-- the destination of `cp`, `mv`, `ln` and `install`, including `-t DIR`. When the destination
+- the destination of `cp`, `mv`, `ln` and `install`, including `-t DIR` and
+  `--target-directory` (or `--target`, `--t`). When the destination
   is a directory (`-t`, a trailing `/`, or `.claude`, `.github`, `.cargo`), the destination is
   also checked joined with each source's name, so `cp settings.json .claude/` is denied;
 - what `mv` moves away, and what `rm`, `unlink`, `rmdir`, `shred`, `chmod`, `chown` and `chgrp`
@@ -176,7 +182,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | Quoting: `"git" push`, `g'i't`, `r\m`, `rm -r''f`, `$'\x72\x6d'` | quotes and escapes are removed before matching; ANSI-C escapes are decoded |
 | Chains: `&&`, `\|\|`, `;`, `\|`, `\|&`, `&`, newlines, `\`-newline | each simple command is checked |
 | Subshells, groups and functions: `( )`, `{ ...; }`, `if`/`then`/`while`/`do`/`!`, `f() { ...; }`, `function f { ...; }`, `coproc [NAME]` | flattened; leading keywords, `function NAME` and `coproc NAME` are skipped, so a function body is checked where it is defined |
-| `case` | a pattern's `)` does not close an enclosing `$( )` or `${x:-$( )}`; `case` and `esac` are counted in command position |
+| `case` | a pattern's `)` does not close an enclosing `$( )` or `${x:-$( )}`; every unquoted `case` word is counted (bash also opens one after `time -p`, `function f` or `coproc`), and `esac` in command position |
 | Substitutions: `$( )`, backticks, `<( )`, `>( )`, `$(( ))`, `${x:-$(...)}` | the inner commands are checked; the word holding one is dynamic; a process substitution is a word (a pipe's path) |
 | Heredocs | the body is data and the reading command's stdin; with an unquoted delimiter its substitutions are checked |
 | `bash -c`, `sh -c`, `zsh -c`, `dash`, `ksh`, `mksh`, `ash` (also `-lc`, `-o opt -c`) | the string is lexed and checked, up to 8 levels deep and 4 MiB in total |
@@ -185,10 +191,12 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | `eval`, `alias NAME=VALUE`, `trap '...' SIG`, `su -c`, `script -c`, `watch`, `flock -c`, `env -S '...'` | the string is lexed and checked (`eval` and `watch` join their arguments) |
 | Environment: `VAR=x cmd`, `env [-i] [-u N] VAR=x cmd` | assignments and options are skipped |
 | Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked |
+| Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
+| Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
 | Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied |
-| Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied; after the command sets `IFS`, unquoted values are not put in |
-| A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks) or the arguments of a function or script (`"$@"`, `$*`, `$1`), it is denied |
+| Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied, as is a name reference or array (`declare -n`, `local -n`, `-a`, `-A`, alone or in a cluster such as `-gn`); after the command sets `IFS`, unquoted values are not put in |
+| A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks), the arguments of a function or script (`"$@"`, `$*`, `$1`) or an indirect expansion (`${!y}`), it is denied |
 
 ### Limits
 
@@ -205,6 +213,9 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - `PATH` changes, functions or aliases defined by an earlier Bash call, and how a pipe's
   writer that is not a static `echo` or `printf` reaches `xargs`;
 - symbolic links (`/tmp/link` that points elsewhere);
+- a command string given to a program it does not know as one word (`ssh host 'rm -rf /'`,
+  `tmux new 'git push -f'`): only words that name a program are read, not shell text inside
+  one;
 - a `cp`, `mv` or `ln` destination that is an existing directory not named as one
   (`cp clippy.toml crates/foo`, with no trailing `/`);
 - a write into a protected directory from a working directory inside it that an earlier Bash

@@ -3,7 +3,9 @@
 
 use std::borrow::Cow;
 
-use super::{Peel, Run, SUDO_VALUES, is_option, join, skip_one, skip_options};
+use super::{
+    Long, Peel, Run, SUDO_VALUES, is_long, is_option, join, skip_one, skip_options, takes_value,
+};
 use crate::hook::guard::shell::Word;
 
 const ENV_VALUES: &[&str] = &["-u", "-C", "--unset", "--chdir"];
@@ -21,7 +23,8 @@ pub(super) fn sudo(words: &[Word]) -> Peel<'_> {
     let rest = skip_options(words, SUDO_VALUES);
     let mut options = words.iter().take(words.len().saturating_sub(rest.len()));
     let shell = options.any(|word| {
-        matches!(word.text.as_str(), "--shell" | "--login")
+        is_long(&word.text, "--shell")
+            || is_long(&word.text, "--login")
             || (is_option(word) && !word.text.starts_with("--") && word.text.contains(['s', 'i']))
     });
     if rest.is_empty() && shell {
@@ -36,14 +39,14 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     let mut rest = words;
     while let [first, tail @ ..] = rest {
         let text = first.text.as_str();
-        let split = match text {
-            "-S" | "--split-string" => {
-                Some((tail.first().map(|w| w.text.as_str()), skip_one(tail)))
-            }
-            _ => text
-                .strip_prefix("--split-string=")
-                .or_else(|| text.strip_prefix("-S").filter(|s| !s.is_empty()))
-                .map(|attached| (Some(attached), tail)),
+        let split = if text == "-S" {
+            Some((tail.first().map(|w| w.text.as_str()), skip_one(tail)))
+        } else {
+            long_value(text, tail, "--split-string").or_else(|| {
+                text.strip_prefix("-S")
+                    .filter(|s| !s.is_empty())
+                    .map(|attached| (Some(attached), tail))
+            })
         };
         if let Some((script, after)) = split.filter(|_| first.is_literal()) {
             // `-S` as the last word splits nothing: an empty script.
@@ -60,13 +63,33 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
         if !is_option(first) {
             break;
         }
-        rest = if ENV_VALUES.contains(&text) {
+        rest = if takes_value(text, ENV_VALUES) {
             skip_one(tail)
         } else {
             tail
         };
     }
     Peel::Inner(rest)
+}
+
+/// A long option's value (`None` when it is missing) and the words after it.
+type Valued<'a> = (Option<&'a str>, &'a [Word]);
+
+/// When `text` is the long option `full` (abbreviated or not): its value, after `=` or in the
+/// next word of `tail`, and the words after that.
+fn long_value<'a>(text: &'a str, tail: &'a [Word], full: &str) -> Option<Valued<'a>> {
+    let long = Long::parse(text).filter(|long| long.is(full))?;
+    Some(match long.value {
+        Some(value) => (Some(value), tail),
+        None => (tail.first().map(|word| word.text.as_str()), skip_one(tail)),
+    })
+}
+
+/// A wrapper running the command string `command`; nothing when it has none.
+fn command_string(command: Option<&str>) -> Peel<'_> {
+    command.map_or(Peel::Done(Run::Nothing), |command| {
+        Peel::Done(Run::Script(Cow::Borrowed(command)))
+    })
 }
 
 /// `coproc [NAME] command`: a name only comes before a compound command (`{`).
@@ -81,11 +104,13 @@ pub(super) fn coproc(words: &[Word]) -> Peel<'_> {
 pub(super) fn flock(words: &[Word]) -> Peel<'_> {
     let after_file = skip_one(skip_options(words, FLOCK_VALUES));
     match after_file {
-        [flag, string, ..]
-            if is_option(flag) && matches!(flag.text.as_str(), "-c" | "--command") =>
-        {
-            Peel::Done(Run::Script(Cow::Borrowed(&string.text)))
+        [flag, tail @ ..] if is_option(flag) && flag.text == "-c" => {
+            command_string(tail.first().map(|string| string.text.as_str()))
         }
+        [flag, tail @ ..] if is_option(flag) => long_value(&flag.text, tail, "--command")
+            .map_or(Peel::Inner(after_file), |(command, _)| {
+                command_string(command)
+            }),
         _ => Peel::Inner(after_file),
     }
 }
@@ -104,15 +129,13 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let mut rest = words;
     while let [first, tail @ ..] = rest {
         let text = first.text.as_str();
-        if let Some(command) = text.strip_prefix("--command=") {
-            return Peel::Done(Run::Script(Cow::Borrowed(command)));
+        if let Some((command, _)) = long_value(text, tail, "--command") {
+            return command_string(command);
         }
-        if matches!(text, "-c" | "--command") {
-            return tail.first().map_or(Peel::Done(Run::Nothing), |command| {
-                Peel::Done(Run::Script(Cow::Borrowed(&command.text)))
-            });
+        if text == "-c" {
+            return command_string(tail.first().map(|command| command.text.as_str()));
         }
-        rest = if SU_VALUES.contains(&text) {
+        rest = if takes_value(text, SU_VALUES) {
             skip_one(tail)
         } else {
             tail
@@ -127,23 +150,18 @@ pub(super) fn script(words: &[Word]) -> Peel<'_> {
     while let [first, tail @ ..] = rest {
         rest = tail;
         let text = first.text.as_str();
-        if let Some(command) = text.strip_prefix("--command=") {
-            return Peel::Done(Run::Script(Cow::Borrowed(command)));
+        if let Some((command, _)) = long_value(text, tail, "--command") {
+            return command_string(command);
         }
         let cluster = is_option(first) && !text.starts_with("--");
-        let command = if text == "--command" {
-            Some("")
-        } else {
-            text.split_once('c')
-                .filter(|_| cluster)
-                .map(|(_, attached)| attached)
-        };
+        let command = text
+            .split_once('c')
+            .filter(|_| cluster)
+            .map(|(_, attached)| attached);
         match command {
             // `-c` last in its cluster: the next word is the command.
             Some("") => {
-                return tail.first().map_or(Peel::Done(Run::Nothing), |command| {
-                    Peel::Done(Run::Script(Cow::Borrowed(&command.text)))
-                });
+                return command_string(tail.first().map(|command| command.text.as_str()));
             }
             Some(attached) => return Peel::Done(Run::Script(Cow::Borrowed(attached))),
             None => {}

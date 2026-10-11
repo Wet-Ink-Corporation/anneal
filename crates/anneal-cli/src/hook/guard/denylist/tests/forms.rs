@@ -5,11 +5,14 @@ use super::{ADD_FORCE, CONFIG, FORCE_PUSH, RM_RF, UNREADABLE, double_quote, rule
 use crate::hook::guard::Rule;
 
 /// Denied commands and the rule each one breaks.
-const BASES: [(&str, Option<Rule>); 4] = [
+const BASES: [(&str, Option<Rule>); 6] = [
     ("rm -rf /", RM_RF),
     ("git push -f origin main", FORCE_PUSH),
     ("git add -f x", ADD_FORCE),
     ("echo x > .claude/settings.json", CONFIG),
+    // Abbreviated long options.
+    ("rm --recur --forc /", RM_RF),
+    ("git push --force-w origin main", FORCE_PUSH),
 ];
 
 /// `text` in single quotes, as a shell reads it back.
@@ -22,6 +25,13 @@ type Form = (&'static str, fn(&str) -> String);
 
 /// The ways a command can be wrapped, quoted or hidden.
 fn forms() -> Vec<Form> {
+    let mut forms = shell_forms();
+    forms.extend(wrapper_forms());
+    forms
+}
+
+/// Quoting, substitutions, compound commands, chains and command strings.
+fn shell_forms() -> Vec<Form> {
     vec![
         ("bare", |c| c.to_owned()),
         ("bash -c", |c| format!("bash -c {}", single_quote(c))),
@@ -63,6 +73,13 @@ fn forms() -> Vec<Form> {
         ("&", |c| format!("sleep 1 & {c}")),
         ("newline", |c| format!("ls\n{c}")),
         ("continuation", |c| format!("ls \\\n&& {c}")),
+        ("comment after", |c| format!("{c} # done")),
+    ]
+}
+
+/// Programs that run another command.
+fn wrapper_forms() -> Vec<Form> {
+    vec![
         ("coproc", |c| format!("coproc {c}")),
         ("time", |c| format!("time -p {c}")),
         ("nohup", |c| format!("nohup {c} &")),
@@ -80,8 +97,44 @@ fn forms() -> Vec<Form> {
             format!("script -q -c {} /dev/null", single_quote(c))
         }),
         ("watch", |c| format!("watch {}", single_quote(c))),
-        ("comment after", |c| format!("{c} # done")),
+        ("caffeinate", |c| format!("caffeinate {c}")),
+        ("runuser", |c| format!("runuser -u root -- {c}")),
     ]
+}
+
+/// Whether wrapping `inner` in the form `outer` still runs `inner`. It does not when `eval`
+/// re-splits a quoted command (`eval bash -c 'x y'` runs `bash -c x` with `y` as `$0`), when
+/// backticks would nest unescaped, or when a pipe ends `find -exec`'s command and leaves the
+/// shell a file operand (`find . -exec echo 'x' | sh \;` runs the file `;`).
+fn still_runs(outer: &str, inner: &str) -> bool {
+    match outer {
+        "eval bare" => !inner.contains(['\'', '"']),
+        "backticks" => !inner.contains('`'),
+        "find -exec" | "second -exec" => !inner.contains("| sh"),
+        _ => true,
+    }
+}
+
+#[test]
+fn every_denied_command_stays_denied_in_every_pair_of_forms() {
+    let forms = forms();
+    let mut missed = Vec::new();
+    for (base, _) in BASES {
+        for (inner_name, inner) in &forms {
+            let inner = inner(base);
+            for (outer_name, outer) in &forms {
+                if !still_runs(outer_name, &inner) {
+                    continue;
+                }
+                let command = outer(&inner);
+                if rule_for(&command).is_none() {
+                    missed.push(format!("{outer_name} of {inner_name}: {command:?}"));
+                }
+            }
+        }
+    }
+
+    assert!(missed.is_empty(), "allowed:\n{}", missed.join("\n"));
 }
 
 #[test]
