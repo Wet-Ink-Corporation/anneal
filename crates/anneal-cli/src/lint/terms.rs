@@ -15,6 +15,7 @@ use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
+use crate::lint::plan::slashed;
 use crate::lint::skills::LintError;
 use crate::lint::{Contents, read_named, read_whole};
 
@@ -54,8 +55,8 @@ pub struct Skipped {
 /// Scans `args.files` for the avoided terms of `args.glossary`.
 ///
 /// Each file is named in output with its `.` components dropped, so a file named twice
-/// (`a.md` and `./a.md`) is scanned once and shown as `a.md`; no other normalisation is done
-/// (`..` and symlinks are kept as given). Files that are not UTF-8 are read lossily (a
+/// (`a.md` and `./a.md`) is scanned once and shown as `a.md`, with `/` separators on every
+/// platform; no other normalisation is done (`..` and symlinks are kept as given). Files that are not UTF-8 are read lossily (a
 /// replacement character is not a word character, so it creates no hit); files over the read
 /// cap are listed in [`Outcome::skipped`].
 ///
@@ -73,7 +74,8 @@ pub fn lint(args: &TermsArgs) -> Result<Outcome, LintError> {
         skipped: Vec::new(),
     };
     for path in files {
-        let file = path.display().to_string();
+        let shown = path.display().to_string();
+        let file = slashed(&shown, std::path::MAIN_SEPARATOR).into_owned();
         match read_named(&path)? {
             Contents::Text(text) => {
                 outcome.hits.extend(glossary.scan(&file, &text));
