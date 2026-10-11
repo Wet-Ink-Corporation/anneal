@@ -1,6 +1,8 @@
 //! Numeric thresholds on a line (`key = 80`, `"key": 80`, `key: 80`, `--key=80`, `--key 80`),
 //! and whether a change of one loosens a floor.
 
+use crate::floor_guard::ratchet::RATCHETS_PATH;
+
 /// A `key` and its numeric `value` on one line.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Pair<'a> {
@@ -39,9 +41,13 @@ const COVERAGE_THRESHOLD_CHILDREN: [&str; 4] = ["lines", "branches", "functions"
 const TIMEOUT_KEYS: [&str; 4] = ["timeout", "timeout_ms", "testTimeout", "timeout-minutes"];
 
 /// The kind of threshold `key` is in the file at `path`; `coverage_threshold` says whether the
-/// file mentions `coverageThreshold`. In a `*ratchet*.json` file (a placeholder until #24
-/// defines the ratchet format) every `max*`/`min*` key is a ratchet value.
+/// file mentions `coverageThreshold`. In a `*ratchet*.json` file (another tool's ratchet file)
+/// every `max*`/`min*` key is a ratchet value. anneal's own ratchet file
+/// ([`RATCHETS_PATH`]) holds no threshold here: its schema-checked reader judges it.
 pub(super) fn kind(path: &str, key: &str, coverage_threshold: bool) -> Option<Kind> {
+    if path == RATCHETS_PATH {
+        return None;
+    }
     let key = key.trim_start_matches('-');
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     let json = name.rsplit_once('.').is_some_and(|(_, ext)| ext == "json");

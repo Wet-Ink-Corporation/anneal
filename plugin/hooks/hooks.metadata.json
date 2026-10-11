@@ -31,6 +31,16 @@
       "role": "guard",
       "model_generation": "claude-5",
       "source": "Blueprint: Hooks (preconditions), Feature catalog #4 and #20; story #23"
+    },
+    {
+      "id": "fast-check",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:066536530af1eeaa",
+      "on_failure": "continue",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (fast-check), check placement by cost; story #24"
     }
   ]
 }

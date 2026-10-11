@@ -8,6 +8,7 @@ mod eval_routing;
 mod floor_guard;
 mod grill;
 mod hook_bootstrap;
+mod hook_fast_check;
 mod hook_guard;
 mod hooks_manifest;
 mod ledger;

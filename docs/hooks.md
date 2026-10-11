@@ -127,3 +127,48 @@ directories and prose documents are always allowed; the plan's `Spec:` line exem
 same deny decision as the guard's, with one `ERROR` line naming the missing precondition and the
 command that satisfies it, plus a `gate_blocked` event (`point` is `preconditions.<check>`).
 Unreadable input, and a ledger or git it cannot read, are denied. See `docs/preconditions.md`.
+
+## `fast-check` (PostToolBatch)
+
+No matcher (`PostToolBatch` takes none), `timeout` 15 s, `onFailure: "continue"`, arguments
+`hook fast-check`. Claude Code 2.1.296 fires `PostToolBatch` once after every call of a batch of
+parallel tool calls has resolved, before the next model request, with `tool_calls` (each
+`{tool_name, tool_input, tool_use_id, tool_response}`); `PostToolUse`, by contrast, fires once per
+call. So ten parallel edits run these checks once. It reads at most 8 MiB of stdin (it uses
+`cwd` and `tool_calls`).
+
+It runs only when the batch holds a file edit (`Edit`, `Write` or `MultiEdit` `file_path`,
+`NotebookEdit` `notebook_path`) and the session's worktree is in an anneal mode (`anneal mode
+build|diagnose`); outside a repository, with no ledger or no mode it is silent and never creates
+a ledger. The changed files are the edited files inside the worktree, each once, at most 128;
+an input that lists no calls (or cannot be read, which is noted) takes them from `git status`
+(changed and untracked, 2 s). Then, within 13 s in total:
+
+| Order | Check | Limit | A failure is |
+|---|---|---|---|
+| 1 | `anneal floor-guard` | 6 s | exit 1: a **block**; anything else (exit 2, a timeout): a note |
+| 2 | `check_fast` from `.anneal/config.json` (an argv array, no shell), when set | 5 s | a note with its exit and the last 2 KiB of its output |
+| 3 | `anneal lint terms --glossary CONTEXT.md` on the changed files, when `CONTEXT.md` exists | 2 s | a note with the hits |
+| 4 | `anneal lint spec` or `anneal lint plan` for each changed `.md` file whose nearest `specs` or `plans` directory names it | 2 s each | a note with the findings |
+
+When every check passes it writes nothing. A block is
+`{"decision": "block", "reason": "ERROR fast-check: anneal floor-guard reports a lowered floor: ..."}`,
+one line, which Claude Code hands back to the model. Notes go in
+`{"hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": ...}}`. Its own
+failures (the ledger, git, a check that cannot start) are notes too: the hook never blocks on
+them. `check_fast` writes to a fresh temporary file rather than a pipe, so a process it leaves
+running cannot hold the hook open past its timeout; the file is removed afterwards.
+
+Limits:
+
+- On a timeout only the child itself is killed. A process it started (a `git` call under a
+  killed `anneal floor-guard`, anything `check_fast` starts) can outlive it and keep running;
+  std has no portable process-group kill (as for `anneal task done`, `docs/task.md`).
+- On Windows a child's handles are inherited by the processes it starts. A killed
+  `anneal floor-guard` can leave a `git` call holding its output pipe, and the hook waits for
+  that git to exit on its own (nothing bounds it once floor-guard is killed), so it can run
+  past its 15 s timeout;
+  Claude Code then drops its output and carries on (it fails open). A process `check_fast`
+  leaves running keeps the log file open, so removing it fails: that is a note, and the file
+  stays in the temporary directory. On unix the log is removed and the hook returns as soon as
+  `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).

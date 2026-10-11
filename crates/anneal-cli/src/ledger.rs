@@ -19,8 +19,8 @@ use serde_json::{Map, Value};
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
+use crate::error_chain;
 use crate::exit_codes::{self, Code};
-use crate::hook;
 use crate::paths::{self, StoreLocation, StoreSource};
 
 /// `anneal ledger`.
@@ -258,7 +258,7 @@ fn schema_error<O: Write>(
     error: &dyn std::error::Error,
     out: &mut O,
 ) -> Result<Code, CliError> {
-    let findings = [Finding::new("ledger/schema", hook::reason(error))];
+    let findings = [Finding::new("ledger/schema", error_chain::reason(error))];
     let types: Vec<&str> = EventKind::ALL.iter().map(|kind| kind.as_str()).collect();
     let data = serde_json::json!({"registry": REGISTRY_VERSION, "types": types});
     let envelope = Envelope::new(

@@ -42,6 +42,7 @@
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
+            "PostToolBatch",
             "PermissionRequest",
             "Stop",
             "SubagentStop",
