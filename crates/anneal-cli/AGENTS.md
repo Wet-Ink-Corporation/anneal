@@ -4,7 +4,7 @@
 The `anneal` binary: the deterministic layer behind the plugin's hooks and skills. It is the composition root, so argument parsing, output formatting and exit codes live here. Domain logic moves into library crates when a second consumer appears (ARC-07).
 
 ## Layer
-binary. Owns process concerns: arguments, stdout and stderr, exit codes.
+binary. Owns process concerns: arguments, stdout and stderr, exit codes. Its in-crate library target holds that process-level CLI logic only; domain logic still moves to a separate crate under ARC-07.
 
 ## Allowed dependencies
 - Workspace crates: none yet.
