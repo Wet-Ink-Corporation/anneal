@@ -4,14 +4,17 @@
 //! - [`skills`]: `lint skills`, the 21 skill design rules.
 //! - [`terms`]: `lint terms`, uses of the glossary's avoided terms; its hits are
 //!   `{file, line, term}`, not rule findings, so it writes its own envelope `data`.
-//! - [`finding`]: the finding model the rule targets share, and its envelope form.
+//! - [`spec`]: `lint spec`, a spec's sections, EARS criteria, markers, constitution check and
+//!   avoided terms; its findings are [`spec::SpecFinding`]s (a spec rule, not a skill
+//!   checker), so it writes its own envelope `data` too.
+//! - [`finding`]: the finding model the skill rules use, and its envelope form.
 //!
-//! `lint spec|plan|brief` are stubs until their stories land. Each will be a module beside
-//! [`skills`] with its own `Args` type and `lint` function returning findings; [`run`] gets
-//! one more arm and reuses the crate-internal `report` unchanged.
+//! `lint plan|brief` are stubs until their stories land. Each will be a module beside
+//! [`skills`] with its own `Args` type and `lint` function; [`run`] gets one more arm.
 
 pub mod finding;
 pub mod skills;
+pub mod spec;
 pub mod terms;
 
 use std::io::Write;
@@ -44,8 +47,10 @@ pub enum LintTarget {
     /// Find the glossary's avoided terms (`_Avoid_:` lines) in files
     #[command(after_help = command_help(CommandName::Lint))]
     Terms(terms::TermsArgs),
-    /// Check a spec (not implemented yet)
-    Spec(Stub),
+    /// Check a spec: required sections, EARS acceptance criteria, Out of Scope, clarification
+    /// markers, the constitution check and avoided terms
+    #[command(after_help = command_help(CommandName::Lint))]
+    Spec(spec::SpecArgs),
     /// Check a plan (not implemented yet)
     Plan(Stub),
     /// Check a brief (not implemented yet)
@@ -72,11 +77,13 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
             let outcome = terms::lint(terms_args)?;
             terms::report(&terms_args.glossary, &outcome, out)
         }
-        LintTarget::Spec(_) | LintTarget::Plan(_) | LintTarget::Brief(_) => {
-            Err(CliError::NotImplemented {
-                command: CommandName::Lint,
-            })
+        LintTarget::Spec(spec_args) => {
+            let outcome = spec::lint(spec_args)?;
+            spec::report(&outcome, out)
         }
+        LintTarget::Plan(_) | LintTarget::Brief(_) => Err(CliError::NotImplemented {
+            command: CommandName::Lint,
+        }),
     }
 }
 
