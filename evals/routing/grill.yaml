@@ -20,3 +20,6 @@ near_misses:
     - build a dependency graph of tasks for the approved spec
     - break the agreed work into ordered tasks and get the plan approved
     - order the implementation tasks for the export spec
+  diagnose:
+    - the feature we shipped is broken, find the root cause
+    - this test fails unexpectedly, reproduce it before any fix

@@ -25,6 +25,7 @@ use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
 use crate::mode::{self, ModeArgs};
 use crate::plan::{self, PlanArgs};
+use crate::repro::{self, ReproArgs};
 use crate::task::{self, TaskArgs};
 
 /// The flags clap answers by printing instead of running a command.
@@ -63,6 +64,9 @@ pub enum Command {
     /// Enter build or diagnose mode, whose preconditions gate source edits, or leave it
     #[command(after_help = command_help(CommandName::Mode))]
     Mode(ModeArgs),
+    /// Record a red reproduction for diagnose mode, or list `[DEBUG-<id>]` leftovers
+    #[command(after_help = command_help(CommandName::Repro))]
+    Repro(ReproArgs),
     /// Lint skills, specs, plans and briefs
     #[command(after_help = command_help(CommandName::Lint))]
     Lint(LintArgs),
@@ -138,6 +142,7 @@ impl Command {
             Self::Task(_) => CommandName::Task,
             Self::Plan(_) => CommandName::Plan,
             Self::Mode(_) => CommandName::Mode,
+            Self::Repro(_) => CommandName::Repro,
             Self::Lint(_) => CommandName::Lint,
             Self::Dag(_) => CommandName::Dag,
             Self::FloorGuard(_) => CommandName::FloorGuard,
@@ -166,6 +171,7 @@ impl Command {
             | Self::Task(_)
             | Self::Plan(_)
             | Self::Mode(_)
+            | Self::Repro(_)
             | Self::Lint(_)
             | Self::Dag(_)
             | Self::FloorGuard(_)
@@ -259,6 +265,10 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         Command::Mode(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             mode::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
+        Command::Repro(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            repro::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Task(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;

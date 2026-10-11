@@ -80,7 +80,7 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 | Tag | Carried by |
 |---|---|
 | `session:<session_id>` | every event with a `session_id` |
-| `worktree:<worktree>` | every event with a `worktree` (`mode_set` is selected by it) |
+| `worktree:<worktree>` | every event with a `worktree` (`mode_set` and `repro_red` are selected by it) |
 | `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red` |
 | `plan:<plan>` | `plan_approved`, `grill_confirmed` |
 | `pr:<number>` | `verdict_set`, `round_started` |
@@ -101,7 +101,7 @@ version 4 added `mode_set` (#23, `docs/preconditions.md`).
 | `task_done` | `task` string | `task:` |
 | `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`) | `plan:` |
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
-| `repro_red` | `task` string, `test` string (the failing reproduction) | `task:` |
+| `repro_red` | `task` string, `test` string (the failing reproduction); `anneal repro record` sets the envelope's `worktree` ([preconditions.md](preconditions.md)) | `task:` |
 | `verdict_set` | `pr` number, `verdict` `approved`/`changes_requested`/`noise_only` | `pr:` |
 | `round_started` | `pr` number, `round` number (from 1) | `pr:` |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |

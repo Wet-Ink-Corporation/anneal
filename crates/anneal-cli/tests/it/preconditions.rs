@@ -175,17 +175,9 @@ fn hook_in(cwd: &Path, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
 }
 
 impl Repo {
-    /// Appends a `repro_red` event, as `anneal repro record` will.
+    /// Records a red reproduction with `anneal repro record` in the repository.
     fn repro(&self) -> TestResult {
-        self.anneal(
-            &[
-                "ledger",
-                "append",
-                r#"{"type": "repro_red", "task": "bug-1", "test": "cargo test parse"}"#,
-            ],
-            0,
-        )?;
-        Ok(())
+        repro_in(self.path(), &RED, 0)
     }
 
     /// The `gate_blocked` events, through `anneal ledger query`.
@@ -197,6 +189,20 @@ impl Repo {
             .cloned()
             .unwrap_or_default())
     }
+}
+
+/// A reproduction that fails (exit 1) and one that passes, on every CI platform.
+const RED: [&str; 2] = ["git", "definitely-not-a-command"];
+const GREEN: [&str; 2] = ["git", "--version"];
+
+/// Runs `anneal repro record --id bug-1 -- <command>` in `cwd`, expecting exit `code`.
+fn repro_in(cwd: &Path, command: &[&str], code: i32) -> TestResult {
+    let output = anneal_in(cwd)
+        .args(["repro", "record", "--id", "bug-1", "--"])
+        .args(command)
+        .output()?;
+    assert_eq!(output.status.code(), Some(code), "{command:?}: {output:?}");
+    Ok(())
 }
 
 /// Asserts the hook allowed silently: exit 0, nothing on stdout or stderr.
@@ -658,6 +664,45 @@ fn entering_diagnose_again_needs_a_new_repro() -> TestResult {
     repo.anneal(&["mode", "diagnose"], 0)?;
 
     denial(&repo.write_to(SOURCE)?)?;
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn in_diagnose_mode_a_repro_that_exits_0_does_not_unlock_edits_and_a_red_one_does() -> TestResult {
+    let repo = Repo::new()?;
+    repo.anneal(&["mode", "diagnose"], 0)?;
+
+    repro_in(repo.path(), &GREEN, 3)?;
+
+    let reason = denial(&repo.write_to(SOURCE)?)?;
+    assert!(reason.starts_with("ERROR diagnose mode: "), "{reason}");
+    repro_in(repo.path(), &RED, 0)?;
+    assert_allowed(&repo.write_to(SOURCE)?, "a red repro recorded");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn only_a_repro_recorded_in_the_edited_worktree_unlocks_diagnose_mode() -> TestResult {
+    let repo = Repo::new()?;
+    let siblings = tempfile::tempdir()?;
+    let sibling = siblings.path().join("sibling");
+    let sibling_arg = sibling.to_str().ok_or("a UTF-8 temporary path")?;
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", "-b", "sibling", sibling_arg],
+    );
+    repo.anneal(&["mode", "diagnose"], 0)?;
+
+    repro_in(&sibling, &RED, 0)?;
+    let untagged = r#"{"type": "repro_red", "task": "bug-1", "test": "cargo test parse"}"#;
+    repo.anneal(&["ledger", "append", untagged], 0)?;
+
+    let reason = denial(&repo.write_to(SOURCE)?)?;
+    assert!(reason.starts_with("ERROR diagnose mode: "), "{reason}");
+    repo.repro()?;
+    assert_allowed(&repo.write_to(SOURCE)?, "a repro in its own worktree");
     Ok(())
 }
 

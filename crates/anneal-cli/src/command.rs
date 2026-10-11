@@ -15,6 +15,8 @@ pub enum CommandName {
     Plan,
     /// `anneal mode`: the anneal mode the preconditions hook enforces
     Mode,
+    /// `anneal repro`: the red reproduction diagnose mode waits for, and debug leftovers
+    Repro,
     /// `anneal lint`
     Lint,
     /// `anneal dag`
@@ -56,12 +58,13 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
         Self::Plan,
         Self::Mode,
+        Self::Repro,
         Self::Lint,
         Self::Dag,
         Self::FloorGuard,
@@ -87,6 +90,7 @@ impl CommandName {
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Mode => "mode",
+            Self::Repro => "repro",
             Self::Lint => "lint",
             Self::Dag => "dag",
             Self::FloorGuard => "floor-guard",
@@ -125,6 +129,10 @@ impl CommandName {
             Self::Mode => {
                 "the mode was recorded for this worktree, with whether its tree was clean"
             }
+            Self::Repro => {
+                "the reproduction exited non-zero and repro_red was recorded for this worktree \
+                 (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers)"
+            }
             Self::Lint => "the checked files have no error under anneal's lint rules",
             Self::Dag => "the task graph has no cycle and no dangling dependency",
             Self::FloorGuard => "no quality floor (coverage, lint level, test count) was lowered",
@@ -154,6 +162,11 @@ impl CommandName {
             Self::Mode => {
                 "that the mode's preconditions hold: the preconditions hook checks them at each \
                  edit"
+            }
+            Self::Repro => {
+                "that the command fails because of the reported bug rather than for another \
+                 reason (record), or that files over 1 MiB or ignored by git are clean \
+                 (leftovers)"
             }
             Self::Lint => {
                 "that the content is right, or that its warnings and review items were addressed"

@@ -20,6 +20,7 @@ mod paths;
 mod plan;
 mod preconditions;
 mod repo_gates;
+mod repro;
 #[cfg(test)]
 mod support;
 mod task;

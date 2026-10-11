@@ -27,6 +27,8 @@
 //! - [`paths`]: the ledger store (normally in the git common dir) and the anneal home
 //!   (`~/.anneal`).
 //! - [`adr`]: ADR numbering, `docs/adr/NNNN-<slug>.md` with the next free number.
+//! - [`repro`]: `anneal repro record|leftovers`, the red reproduction diagnose mode waits for
+//!   and the `[DEBUG-<id>]` instrumentation left behind ([`repro::debug_leftovers`]).
 //! - [`rulings`]: the out-of-scope ruling store, `.out-of-scope/<slug>.md`, listed by id.
 
 pub mod adr;
@@ -48,5 +50,6 @@ pub mod mode;
 pub mod paths;
 pub mod plan;
 mod process;
+pub mod repro;
 pub mod rulings;
 pub mod task;

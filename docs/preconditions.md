@@ -35,8 +35,41 @@ folder; [ledger.md](ledger.md)).
 - Exit 0 when the mode is recorded. Outside a git worktree, or with a `--plan` or `--tree` that
   is not a file inside the worktree, it is a usage error (2) and nothing is recorded.
 
-The `build` and `diagnose` skills (#24, #25) enter these modes; `anneal repro record` (#25)
+The `build` and `diagnose` skills (#24, #25) enter these modes; `anneal repro record` (below)
 records the red reproduction diagnose mode waits for.
+
+## Recording a reproduction
+
+```text
+anneal repro record [--id <task or bug id>] [--timeout <secs>] [--session <id>] -- <command>
+anneal repro leftovers
+```
+
+`repro record` runs the command as `anneal task done` runs a test command: as given, without a
+shell, in the working directory, with stdin closed and its output on anneal's stderr, killed
+after `--timeout` seconds (default 1800). Only a red run appends `repro_red` (`task` is `--id`,
+default `repro`; `test` is the command), with the envelope's `worktree` set to the key `anneal
+mode` writes, so it counts for this worktree only. Like `anneal mode` it has no `--store`.
+
+| Run | Recorded | Exit |
+|---|---|---|
+| exits non-zero, or is killed by a signal | `repro_red` | 0, `data.recorded: true` |
+| exits 0: it reproduces nothing | nothing, and no ledger is opened | 3, finding `repro/not-red:<id>` |
+| runs past `--timeout`: a hang is not a reproduction | nothing, and no ledger is opened | 4, finding `repro/timed-out:<id>` |
+| cannot be started | nothing | 2, one `ERROR` line |
+
+Outside a git worktree, or with an `--id` or `--session` the ledger cannot tag, it is a usage
+error (2) and runs nothing. `data` reports `id`, `command`, `worktree`, `outcome` (`red`,
+`green` or `timed_out`), `exit`, `duration_ms`, `timeout_secs`, `recorded` and, when recorded,
+`ledger` (`store`, `source`, `position`, `event`).
+
+`repro leftovers` lists every line that holds a debug tag, `[DEBUG-` then an id of 1 to 64 ASCII
+letters, digits, `_` or `-`, then `]`, in the files git knows of in the worktree (tracked, plus
+untracked files git does not ignore; prose included). Text that spells the pattern with a
+placeholder, as this page does, is not a tag. Each file is read up to 1 MiB; larger ones are
+listed in `data.skipped`, not read. It exits 1 with one finding per line (`<file>:<line>: ...`,
+at most 1,000, the rest counted in `data.omitted`) and 0 when there are none. The same scan is
+`anneal_cli::repro::debug_leftovers`, for the Stop hook (#26).
 
 ## What the hook checks
 
@@ -57,14 +90,12 @@ matched by hash, so any path spelling of the tree counts.
 
 ### Diagnose mode
 
-Source edits need a `repro_red` event recorded after the latest `mode_set` that entered diagnose
-mode: a recorded reproduction that failed. A reproduction recorded before, for an earlier
-session, does not count, so entering diagnose mode again needs a new one.
-
-A `repro_red` recorded in another worktree of the same repository also counts: `repro_red`
-names a task, not a worktree. `anneal repro record` (#25) should set the envelope's `worktree`
-(the same key `anneal mode` writes) so the hook can then count only the edited worktree's
-reproductions.
+Source edits need a `repro_red` event tagged with the edited worktree's key, recorded after the
+latest `mode_set` that entered diagnose mode: a recorded reproduction that failed, in this
+worktree (`anneal repro record`). A reproduction recorded before, for an earlier session, does
+not count, so entering diagnose mode again needs a new one. Neither does one recorded in another
+worktree of the same repository, nor a `repro_red` without a worktree (appended by hand with
+`anneal ledger append`). This is the `repro_red` part of #80, done in #25.
 
 ### Always allowed
 
