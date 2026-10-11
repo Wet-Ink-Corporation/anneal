@@ -2,14 +2,12 @@
 //! trees, and the confirmation that is appended only with the human's words and no open node.
 
 use std::error::Error;
-use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Output;
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
-use crate::support::anneal_in;
+use crate::support::{anneal_in, sha256_hex};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -52,14 +50,6 @@ fn envelope(output: &Output, code: i32) -> Result<Value, Box<dyn Error>> {
     assert_eq!(output.status.code(), Some(code), "{output:?}");
     assert!(output.stderr.is_empty(), "nothing on stderr: {output:?}");
     Ok(serde_json::from_slice(&output.stdout)?)
-}
-
-fn sha256_hex(bytes: &[u8]) -> Result<String, Box<dyn Error>> {
-    let mut hex = String::from("sha256:");
-    for byte in Sha256::digest(bytes) {
-        write!(hex, "{byte:02x}")?;
-    }
-    Ok(hex)
 }
 
 fn finding_keys(envelope: &Value) -> Vec<&str> {

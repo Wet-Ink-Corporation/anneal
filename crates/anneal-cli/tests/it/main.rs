@@ -3,6 +3,7 @@
 mod cli;
 mod dag;
 mod design_tree_schema;
+mod dry_run;
 mod eval_routing;
 mod grill;
 mod hook_bootstrap;

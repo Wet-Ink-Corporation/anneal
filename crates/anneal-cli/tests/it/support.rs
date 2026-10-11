@@ -1,8 +1,12 @@
-//! Shared helpers: scratch git repositories, fixture copies and an isolated `anneal` command.
+//! Shared helpers: scratch git repositories, fixture copies, content hashes and an isolated
+//! `anneal` command.
 
+use std::fmt::Write as _;
 use std::io;
 use std::path::Path;
 use std::process::Command;
+
+use sha2::{Digest, Sha256};
 
 /// Runs `git <args>` in `dir`, isolated from the caller's repository and identity, and panics
 /// with git's stderr if it fails.
@@ -57,6 +61,15 @@ pub(crate) fn repo_with_linked_worktree(root: &Path) {
         &main,
         &["worktree", "add", "-q", "-b", "linked", "../linked"],
     );
+}
+
+/// `sha256:` and the lowercase hex digest of `bytes`, as the ledger records content hashes.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> Result<String, std::fmt::Error> {
+    let mut hex = String::from("sha256:");
+    for byte in Sha256::digest(bytes) {
+        write!(hex, "{byte:02x}")?;
+    }
+    Ok(hex)
 }
 
 /// Copies the directory tree at `from` to `to`, creating `to`.

@@ -41,7 +41,7 @@ To build out a stub: replace its `Stub` in `cli::Command` with a real `clap::Arg
 Usage errors exit 2, stubs 64, internal errors (git, snapshots, the ledger store, a tracker that cannot be read) 70, and a write failure on stdout or stderr 74. A command's own outcomes (cycle, red test, findings) are envelopes with per-command codes, not errors.
 
 ## Test strategy
-Unit tests beside the code for parsing and output; integration tests in `tests/it/` run the built binary. Run with `cargo test -p anneal-cli`. `tests/it/repo_gates.rs` runs the repository's own `plugin/skills` and `evals/routing` against the Tier 0 and Tier 1 bars, so CI's `cargo test` enforces them.
+Unit tests beside the code for parsing and output; integration tests in `tests/it/` run the built binary. Run with `cargo test -p anneal-cli`. `tests/it/repo_gates.rs` runs the repository's own `plugin/skills` and `evals/routing` against the Tier 0 and Tier 1 bars, so CI's `cargo test` enforces them. `tests/it/dry_run.rs` replays the recorded define chain in `evals/fixtures/dry-run/` (grill, spec, plan, tickets) on a temporary copy and compares the ledger events with its `events.jsonl`; a change that alters an artifact or an event re-records the fixture (its README says how).
 
 ## Do not
 - Do not print with `println!`; write through a locked handle.
