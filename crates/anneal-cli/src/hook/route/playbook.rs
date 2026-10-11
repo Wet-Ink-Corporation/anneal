@@ -86,8 +86,11 @@ impl Playbook {
             return invalid("version must be 1");
         }
         let names: BTreeSet<&str> = self.phases.iter().map(Phase::name).collect();
-        if !(2..=MAX_OPTIONS).contains(&self.phases.len()) || names.len() != self.phases.len() {
-            return invalid("phases must be 2 to 32 distinct names");
+        if !(2..=MAX_OPTIONS).contains(&self.phases.len()) {
+            return invalid("there must be 2 to 32 phases");
+        }
+        if names.len() != self.phases.len() {
+            return invalid("phase names must be distinct");
         }
         if !names.iter().all(|name| is_word(name)) {
             return invalid("a phase name must be 1 to 64 of A-Z a-z 0-9 _ . : -");
@@ -172,7 +175,7 @@ impl Size {
 mod tests {
     use std::path::Path;
 
-    use super::{Phase, Playbook, Size};
+    use super::{Phase, Playbook, PlaybookError, Size};
     use crate::lint::skills::checker::ENTRY_SKILLS;
 
     #[test]
@@ -273,14 +276,61 @@ mod tests {
 
     #[test]
     fn a_playbook_with_unknown_fields_or_bad_names_is_refused() {
-        for text in [
-            r#"{"version": 1, "phases": [{"phase": "a", "entry_skill": null}], "no_skill_phase": "a", "sizes": [{"size": "s", "depth": "d"}], "extra": 1}"#,
-            r#"{"version": 2, "phases": [{"phase": "a", "entry_skill": null}], "no_skill_phase": "a", "sizes": [{"size": "s", "depth": "d"}]}"#,
-            r#"{"version": 1, "phases": [{"phase": "a b", "entry_skill": null}], "no_skill_phase": "a b", "sizes": [{"size": "s", "depth": "d"}]}"#,
-            r#"{"version": 1, "phases": [{"phase": "a", "entry_skill": null}], "no_skill_phase": "a", "sizes": []}"#,
-            r#"{"version": 1, "phases": [{"phase": "a", "entry_skill": null}, {"phase": "a", "entry_skill": null}], "no_skill_phase": "a", "sizes": [{"size": "s", "depth": "d"}]}"#,
-        ] {
-            assert!(Playbook::parse(text).is_err(), "{text}");
+        const TWO: &str =
+            r#"{"phase": "a", "entry_skill": null}, {"phase": "b", "entry_skill": "build"}"#;
+        const SIZES: &str = r#"[{"size": "s", "depth": "d"}]"#;
+        let playbook = |version: u32, phases: &str, no_skill: &str, sizes: &str, extra: &str| {
+            format!(
+                r#"{{"version": {version}, "phases": [{phases}], "no_skill_phase": "{no_skill}", "sizes": {sizes}{extra}}}"#
+            )
+        };
+        assert!(
+            Playbook::parse(&playbook(1, TWO, "a", SIZES, "")).is_ok(),
+            "the base case is valid"
+        );
+        let invalid = [
+            (playbook(2, TWO, "a", SIZES, ""), "version must be 1"),
+            (
+                playbook(1, r#"{"phase": "a", "entry_skill": null}"#, "a", SIZES, ""),
+                "there must be 2 to 32 phases",
+            ),
+            (
+                playbook(
+                    1,
+                    &format!(r#"{TWO}, {{"phase": "a", "entry_skill": null}}"#),
+                    "a",
+                    SIZES,
+                    "",
+                ),
+                "phase names must be distinct",
+            ),
+            (
+                playbook(
+                    1,
+                    &format!(r#"{TWO}, {{"phase": "c d", "entry_skill": null}}"#),
+                    "a",
+                    SIZES,
+                    "",
+                ),
+                "a phase name must be 1 to 64 of A-Z a-z 0-9 _ . : -",
+            ),
+            (
+                playbook(1, TWO, "b", SIZES, ""),
+                "no_skill_phase must name a phase without an entry skill",
+            ),
+            (playbook(1, TWO, "a", "[]", ""), "sizes must not be empty"),
+        ];
+        for (text, reason) in &invalid {
+            let result = Playbook::parse(text);
+            assert!(
+                matches!(&result, Err(PlaybookError::Invalid(r)) if r == reason),
+                "{text}: {result:?}"
+            );
         }
+        let extra = playbook(1, TWO, "a", SIZES, r#", "extra": 1"#);
+        assert!(
+            matches!(Playbook::parse(&extra), Err(PlaybookError::Json(_))),
+            "an unknown field: {extra}"
+        );
     }
 }

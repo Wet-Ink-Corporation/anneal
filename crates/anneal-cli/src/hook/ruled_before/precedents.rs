@@ -1,14 +1,16 @@
 //! The rulings D6 offers as options: the `.out-of-scope/` store and accepted weigh-in decision
 //! atoms.
 //!
-//! [`gather`] reads, under a repository root, every ruling in [`rulings::STORE_DIR`] (an
-//! invalid one fails the whole list, as `rulings::list` does) and then the weigh-in decision
+//! [`gather`] reads, under a repository root, every ruling in [`rulings::STORE_DIR`] through
+//! `rulings::list_within` (an invalid one, or a store over the bounds below, fails the whole
+//! list; a symlink is never followed) and then the weigh-in decision
 //! atoms in `.kb/_intake/decisions/*.md`, from their frontmatter only: `weighin_item` (the
 //! `wi-` id), `status` (only `accepted` counts) and `title` (else `question`) as the summary.
 //! An atom that does not read is skipped: the atoms are weigh-in's files, not anneal's.
 //!
-//! Bounds (H-13): at most [`MAX_DIR_ENTRIES`] entries of the atoms directory are looked at and
-//! [`MAX_ATOM_FILES`] atoms read, each only its first [`MAX_ATOM_BYTES`]; at most
+//! Bounds (H-13): the ruling store may hold at most [`MAX_DIR_ENTRIES`] entries and
+//! [`MAX_ATOM_FILES`] rulings; at most [`MAX_DIR_ENTRIES`] entries of the atoms directory are
+//! looked at and [`MAX_ATOM_FILES`] atoms read, each only its first [`MAX_ATOM_BYTES`]; at most
 //! [`MAX_PRECEDENTS`] precedents are offered, rulings first, then atoms, each in id order;
 //! summaries are cut to [`MAX_SUMMARY_BYTES`]. An id must be a decide option word (1 to 64 of
 //! `A-Z a-z 0-9 _ . : -`) and not `none`, which stands for "no ruling"; an atom a ruling
@@ -22,7 +24,7 @@ use std::path::{Path, PathBuf};
 use crate::decide::client::MAX_OPTIONS;
 use crate::decide::id::is_word;
 use crate::lint::skills::frontmatter;
-use crate::rulings::{self, RulingError};
+use crate::rulings::{self, ListLimits, RulingError};
 
 /// The atoms directory, relative to the repository root.
 const ATOMS_DIR: [&str; 3] = [".kb", "_intake", "decisions"];
@@ -36,10 +38,10 @@ pub(crate) const MAX_PRECEDENTS: usize = MAX_OPTIONS - 1;
 /// Most bytes of a summary sent to Clef or injected.
 pub(crate) const MAX_SUMMARY_BYTES: usize = 120;
 
-/// Most entries of the atoms directory looked at.
+/// Most entries of the ruling store or the atoms directory looked at.
 const MAX_DIR_ENTRIES: usize = 4096;
 
-/// Most atoms read.
+/// Most rulings, and most atoms, read.
 const MAX_ATOM_FILES: usize = 256;
 
 /// Most bytes read of each atom: its frontmatter must close within them.
@@ -93,7 +95,11 @@ pub(crate) enum PrecedentError {
 /// [`PrecedentError::Rulings`] for a ruling store that does not read,
 /// [`PrecedentError::Atoms`] for an atoms directory that cannot be listed.
 pub(crate) fn gather(root: &Path) -> Result<Vec<Precedent>, PrecedentError> {
-    let rulings = rulings::list(&root.join(rulings::STORE_DIR))?;
+    let limits = ListLimits {
+        max_entries: MAX_DIR_ENTRIES,
+        max_files: MAX_ATOM_FILES,
+    };
+    let rulings = rulings::list_within(&root.join(rulings::STORE_DIR), limits)?;
     let cited: BTreeSet<&str> = rulings.iter().filter_map(|r| r.weigh_in_ref()).collect();
     // `rulings::list` refuses duplicate ids, so only the atoms can repeat one.
     let mut precedents: Vec<Precedent> = rulings
@@ -186,7 +192,10 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{MAX_PRECEDENTS, MAX_SUMMARY_BYTES, Precedent, PrecedentError, gather};
+    use super::{
+        MAX_ATOM_FILES, MAX_PRECEDENTS, MAX_SUMMARY_BYTES, Precedent, PrecedentError, gather,
+    };
+    use crate::rulings::RulingError;
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -361,6 +370,28 @@ mod tests {
         let error = gather(root.path()).expect_err("an invalid ruling");
 
         assert!(matches!(error, PrecedentError::Rulings(_)), "{error:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_ruling_store_over_its_file_bound_fails_rather_than_being_read_whole() -> TestResult {
+        let root = tempfile::tempdir()?;
+        for n in 0..=MAX_ATOM_FILES {
+            ruling(root.path(), &format!("r{n:03}"), "")?;
+        }
+
+        let error = gather(root.path()).expect_err("over the bound");
+
+        assert!(
+            matches!(
+                error,
+                PrecedentError::Rulings(RulingError::TooMany {
+                    limit: MAX_ATOM_FILES,
+                    ..
+                })
+            ),
+            "{error:?}"
+        );
         Ok(())
     }
 

@@ -813,3 +813,41 @@ fn ask_still_fails_when_the_row_cannot_be_written() {
         "{outcome:?}"
     );
 }
+
+#[test]
+fn an_answer_to_a_bandless_question_is_logged_but_does_not_advance_the_shadow_period() {
+    let world = World::configured();
+    let options = phases();
+    let size = Ask {
+        question: Question::Score,
+        options: &[],
+        ..world.question(Point::D3, &options)
+    };
+
+    let size_answer = world
+        .ask(&size, &FakeEndpoint::answering(&json!({"score": 0.5})))
+        .expect("D3 asks a score");
+    let after_size = world.log.answered(Point::D3).expect("counts read");
+    let phase_answer = world
+        .ask(
+            &world.question(Point::D3, &options),
+            &FakeEndpoint::answering(&json!({"probabilities": {"plan": 0.9, "build": 0.1}})),
+        )
+        .expect("D3 asks a choice");
+    let after_phase = world.log.answered(Point::D3).expect("counts read");
+
+    assert!(
+        matches!(&size_answer, Outcome::Decided(d) if d.action == "record"),
+        "{size_answer:?}"
+    );
+    assert!(
+        matches!(phase_answer, Outcome::Decided(_)),
+        "{phase_answer:?}"
+    );
+    assert_eq!(world.rows().len(), 2, "both rows logged");
+    assert_eq!(
+        (after_size, after_phase),
+        (0, 1),
+        "only the banded choice counts toward D3's 50"
+    );
+}

@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Ruling, RulingError, list, parse};
+use super::{ListLimits, Ruling, RulingError, list, list_within, parse};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -201,5 +201,98 @@ fn one_invalid_file_fails_the_whole_list() -> TestResult {
         matches!(&result, Err(RulingError::Frontmatter { file, .. }) if file.ends_with("bad.md")),
         "never skipped silently: {result:?}"
     );
+    Ok(())
+}
+
+const ROOMY: ListLimits = ListLimits {
+    max_entries: 16,
+    max_files: 16,
+};
+
+#[test]
+fn a_bounded_list_reads_what_list_reads() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::write(dir.path().join("b.md"), text("b"))?;
+    fs::write(dir.path().join("a.md"), text("a"))?;
+    fs::write(dir.path().join("notes.txt"), "not a ruling")?;
+
+    let bounded = list_within(dir.path(), ROOMY)?;
+
+    assert_eq!(bounded, list(dir.path())?);
+    assert!(list_within(&dir.path().join("missing"), ROOMY)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn more_ruling_files_than_the_limit_fail_the_bounded_list() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    for id in ["a", "b", "c"] {
+        fs::write(dir.path().join(format!("{id}.md")), text(id))?;
+    }
+    let limits = ListLimits {
+        max_files: 2,
+        ..ROOMY
+    };
+
+    let result = list_within(dir.path(), limits);
+
+    assert!(
+        matches!(
+            &result,
+            Err(RulingError::TooMany {
+                limit: 2,
+                what: "ruling files",
+                ..
+            })
+        ),
+        "never cut short silently: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn more_directory_entries_than_the_limit_fail_the_bounded_list() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::write(dir.path().join("a.md"), text("a"))?;
+    for name in ["x.txt", "y.txt"] {
+        fs::write(dir.path().join(name), "other")?;
+    }
+    let limits = ListLimits {
+        max_entries: 2,
+        ..ROOMY
+    };
+
+    let result = list_within(dir.path(), limits);
+
+    assert!(
+        matches!(
+            &result,
+            Err(RulingError::TooMany {
+                limit: 2,
+                what: "directory entries",
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn the_bounded_list_does_not_follow_a_symlinked_ruling() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    let target = outside.path().join("elsewhere.md");
+    fs::write(&target, text("elsewhere"))?;
+    fs::write(dir.path().join("a.md"), text("a"))?;
+    std::os::unix::fs::symlink(&target, dir.path().join("link.md"))?;
+
+    let ids: Vec<String> = list_within(dir.path(), ROOMY)?
+        .iter()
+        .map(|ruling| ruling.id().to_owned())
+        .collect();
+
+    assert_eq!(ids, ["a"]);
     Ok(())
 }

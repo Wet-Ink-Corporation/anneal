@@ -365,7 +365,7 @@ fn in_enforce_an_answer_that_cannot_be_logged_is_not_injected_and_is_one_error_l
         !world
             .home()
             .join("decisions")
-            .join("route-pending.json")
+            .join("route-pending")
             .exists(),
         "an unlogged decision is not kept for labelling"
     );

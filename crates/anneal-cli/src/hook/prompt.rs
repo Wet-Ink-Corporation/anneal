@@ -103,23 +103,34 @@ pub(crate) fn safe_prompt(prompt: &str) -> String {
     let mut safe = String::new();
     let mut chars = 0_usize;
     let mut after_bearer = false;
-    for word in prompt.split_whitespace() {
+    let mut words = prompt.split_whitespace();
+    while let Some(word) = words.next() {
         let before = safe.len();
         if !safe.is_empty() {
             safe.push(' ');
         }
-        // Punctuation before a word (`"TOKEN=x"`, `(KEY=y)`) does not hide an assignment.
-        let start = word.len().saturating_sub(
-            word.trim_start_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .len(),
-        );
-        let (lead, rest) = word.split_at_checked(start).unwrap_or(("", word));
-        if after_bearer || looks_like_token(word) {
+        // Punctuation around a word (`"TOKEN=x"`, `(KEY=y)`, `'ghp_…',`) hides neither an
+        // assignment nor a token.
+        let punctuation = |c: char| !(c.is_ascii_alphanumeric() || c == '_');
+        let rest = word.trim_start_matches(punctuation);
+        let lead = word
+            .get(..word.len().saturating_sub(rest.len()))
+            .unwrap_or("");
+        let core = rest.trim_end_matches(punctuation);
+        let trail = rest.get(core.len()..).unwrap_or("");
+        if after_bearer || looks_like_token(core) {
+            safe.push_str(lead);
             safe.push_str(REDACTED);
+            safe.push_str(trail);
         } else if let Some(assignment) = secret_assignment_prefix(rest) {
             safe.push_str(lead);
             safe.push_str(assignment);
             safe.push_str(REDACTED);
+            let value = rest.get(assignment.len()..).unwrap_or("");
+            if !skip_quoted(value, &mut words) {
+                // An unclosed quote: everything after it may be the secret.
+                break;
+            }
         } else {
             safe.push_str(word);
         }
@@ -132,6 +143,17 @@ pub(crate) fn safe_prompt(prompt: &str) -> String {
         }
     }
     cut_chars(&safe, MAX_PROMPT_CHARS)
+}
+
+/// Consumes from `words` the rest of a quoted assignment `value`: when it opens a quote (`'` or
+/// `"`) that its own word does not close, the words up to and including the one that does.
+/// Returns `false` when no word closes it, so the rest of the prompt went with it.
+fn skip_quoted<'p>(value: &str, words: &mut impl Iterator<Item = &'p str>) -> bool {
+    let mut chars = value.chars();
+    let Some(quote @ ('\'' | '"')) = chars.next() else {
+        return true;
+    };
+    chars.as_str().contains(quote) || words.any(|word| word.contains(quote))
 }
 
 /// A prompt hook's time: [`HOOK_BUDGET`] from the hook's start, on the monotonic clock.
@@ -259,12 +281,45 @@ mod tests {
     fn environment_assignment_values_are_redacted() {
         assert_eq!(
             safe_prompt("run with API_KEY=abc123 and export DB_PASS='p w' then go"),
-            "run with API_KEY=<redacted> and export DB_PASS=<redacted> w' then go"
+            "run with API_KEY=<redacted> and export DB_PASS=<redacted> then go"
         );
         assert_eq!(
             safe_prompt("set x=1 in the loop"),
             "set x=1 in the loop",
             "lower-case names are code, not environment"
+        );
+    }
+
+    #[test]
+    fn a_quoted_assignment_value_is_redacted_through_its_closing_quote() {
+        assert_eq!(
+            safe_prompt("use API_KEY=\"a b c\" now, and Token='x' too"),
+            "use API_KEY=<redacted> now, and Token=<redacted> too"
+        );
+        assert_eq!(
+            safe_prompt("use SECRET=\"one two\"; then go"),
+            "use SECRET=<redacted> then go",
+            "what follows the closing quote in its word goes too"
+        );
+    }
+
+    #[test]
+    fn an_unterminated_quoted_value_redacts_the_rest_of_the_prompt() {
+        assert_eq!(
+            safe_prompt("set DB_PASS='p w then go on and on"),
+            "set DB_PASS=<redacted>"
+        );
+        assert_eq!(
+            safe_prompt("set password=\"hunter2 and more"),
+            "set password=<redacted>"
+        );
+    }
+
+    #[test]
+    fn a_token_inside_punctuation_is_redacted() {
+        assert_eq!(
+            safe_prompt("try (\"ghp_0123456789abcdefghij\"), or 'AKIAIOSFODNN7EXAMPLE'."),
+            "try (\"<redacted>\"), or '<redacted>'."
         );
     }
 

@@ -8,16 +8,21 @@
 //! (nothing was there to invoke), else the playbook's no-skill phase. So the label is the top
 //! phase exactly when the hinted skill was invoked, and `calibrate` scores it as such.
 //!
-//! The state is [`PENDING_FILE`] in the decision log's directory: per session a hash of its id,
-//! the decision's id, its top phase and the offset, newest last, at most [`MAX_SESSIONS`]. A
-//! decision is forgotten before it is labelled, so it is never labelled twice. Not labelled:
-//! a session's last decision (no next prompt), one whose transcript was rewritten (it is
-//! shorter, or no longer ends a line at the remembered length) or grew by more than
-//! [`MAX_WINDOW_BYTES`] before the next prompt, and one whose entry was
-//! lost to another session's hook writing the file at the same moment.
+//! The state is one file per session in [`PENDING_DIR`], in the decision log's directory:
+//! `<hex>.json`, where `<hex>` is the 64-digit SHA-256 of the session id (so the name is
+//! bounded, safe on every file system, and holds no id), with the decision's id, its top phase
+//! and the offset. Sessions never write the same file, so parallel sessions lose nothing. A
+//! decision is claimed before it is labelled, by renaming its file (atomic: only one claim can
+//! succeed), so it is never labelled twice. At most [`MAX_SESSIONS`] files are kept; past that
+//! the oldest are dropped. Not labelled: a session's last decision (no next prompt), one whose
+//! transcript was rewritten (it is shorter, or no longer ends a line at the remembered length)
+//! or grew by more than [`MAX_WINDOW_BYTES`] before the next prompt, and one dropped as the
+//! oldest.
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -38,47 +43,59 @@ pub(crate) struct Session<'a> {
     pub(crate) transcript: &'a Path,
 }
 
-/// The state file's name in the decision log's directory.
-const PENDING_FILE: &str = "route-pending.json";
+/// The directory, in the decision log's directory, holding one pending file per session.
+const PENDING_DIR: &str = "route-pending";
 
-/// The state file's `kind`, so another file of the same name is not overwritten.
+/// A pending file's extension.
+const PENDING_EXTENSION: &str = "json";
+
+/// A claimed file's extension, while it is being labelled.
+const CLAIMED_EXTENSION: &str = "claimed";
+
+/// A pending file's `kind`, so another file of the same name is not taken for one.
 const KIND: &str = "anneal-route-pending";
 
-/// The state file's format version.
+/// A pending file's format version.
 const FORMAT_VERSION: u32 = 1;
 
-/// How many sessions the file remembers; older ones are dropped (H-13).
+/// How many sessions are remembered; the oldest files past it are dropped (H-13).
 const MAX_SESSIONS: usize = 64;
+
+/// Most entries of the pending directory looked at when dropping the oldest (H-13).
+const MAX_LISTED: usize = 1024;
 
 /// Most transcript bytes read between a decision and the next prompt (H-13).
 const MAX_WINDOW_BYTES: u64 = 16 * 1024 * 1024;
 
-/// One session's decision awaiting its label.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// On disk: `{"kind": "anneal-route-pending", "version": 1, "id", "phase", "offset"}`.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Entry {
-    session: String,
+struct Pending {
+    kind: String,
+    version: u32,
     id: String,
     phase: String,
     offset: u64,
 }
 
-/// On disk: `{"kind": "anneal-route-pending", "version": 1, "sessions": [...]}`.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PendingFile {
-    kind: String,
-    version: u32,
-    sessions: Vec<Entry>,
-}
-
 /// Why a decision could not be remembered or labelled.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OutcomeError {
-    /// The state file could not be read or written.
+    /// A pending file could not be read or written.
     #[error(transparent)]
     File(#[from] BaselineError),
-    /// The state file is not ours, or not of this version.
+    /// The pending directory or a file in it could not be listed, claimed or removed.
+    #[error("{op} {path}", path = path.display())]
+    Dir {
+        /// What was being done.
+        op: &'static str,
+        /// The directory or file.
+        path: PathBuf,
+        /// The failure.
+        #[source]
+        source: io::Error,
+    },
+    /// A pending file is not ours, or not of this version.
     #[error("{path} is not {KIND} version {FORMAT_VERSION}", path = path.display())]
     Foreign {
         /// The file.
@@ -108,90 +125,75 @@ pub(crate) enum OutcomeError {
 /// prompt.
 ///
 /// # Errors
-/// [`OutcomeError`] when the transcript's length cannot be read or the state file cannot be
-/// read or written.
+/// [`OutcomeError`] when the transcript's length cannot be read, the session's file cannot be
+/// written, or the oldest files cannot be dropped.
 pub(crate) fn remember(
     clef: &Prepared,
     session: Session<'_>,
     id: &DecisionId,
     phase: &str,
 ) -> Result<(), OutcomeError> {
-    let Session {
-        id: session,
-        transcript,
-    } = session;
-    let offset = match transcript::transcript_len(transcript) {
+    let offset = match transcript::transcript_len(session.transcript) {
         Ok(len) => len,
         // A session's first prompt can come before its transcript is written.
         Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
         Err(source) => {
             return Err(OutcomeError::Transcript {
-                path: transcript.to_path_buf(),
+                path: session.transcript.to_path_buf(),
                 source,
             });
         }
     };
-    let path = clef.log_dir().join(PENDING_FILE);
-    let mut entries = load(&path)?;
-    let key = key(session);
-    entries.retain(|entry| entry.session != key);
-    entries.push(Entry {
-        session: key,
+    let dir = clef.log_dir().join(PENDING_DIR);
+    let path = pending_path(&dir, session.id);
+    let pending = Pending {
+        kind: KIND.to_owned(),
+        version: FORMAT_VERSION,
         id: id.to_string(),
         phase: phase.to_owned(),
         offset,
-    });
-    let excess = entries.len().saturating_sub(MAX_SESSIONS);
-    entries.drain(..excess);
-    save(&path, entries)
+    };
+    baseline::write_snapshot_json(&path, &pending)?;
+    drop_oldest(&dir, &path)
 }
 
 /// Labels `session`'s remembered decision, if any, from what its transcript gained since.
 ///
 /// # Errors
-/// [`OutcomeError`] when the state file, the transcript or the log cannot be read or written.
+/// [`OutcomeError`] when the session's file, the transcript or the log cannot be read or
+/// written.
 pub(crate) fn settle(
     clef: &Prepared,
     playbook: &Playbook,
     session: Session<'_>,
     clock: &impl Clock,
 ) -> Result<(), OutcomeError> {
-    let Session {
-        id: session,
-        transcript,
-    } = session;
-    let path = clef.log_dir().join(PENDING_FILE);
-    let mut entries = load(&path)?;
-    let key = key(session);
-    let Some(at) = entries.iter().position(|entry| entry.session == key) else {
+    let Some(pending) = claim(&clef.log_dir().join(PENDING_DIR), session.id)? else {
         return Ok(());
     };
-    let entry = entries.remove(at);
-    // Forgotten first: a failure below leaves it unlabelled, never labelled twice.
-    save(&path, entries)?;
     // From one byte before the offset: the transcript remembered ends a line there.
-    let from = entry.offset.saturating_sub(1);
-    let window = match transcript::read_since(transcript, from, MAX_WINDOW_BYTES.saturating_add(1))
-    {
+    let from = pending.offset.saturating_sub(1);
+    let read = transcript::read_since(session.transcript, from, MAX_WINDOW_BYTES.saturating_add(1));
+    let window = match read {
         Ok(Some(window)) => window,
         // Shrunk, overgrown or gone: what happened in between cannot be told.
         Ok(None) => return Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(source) => {
             return Err(OutcomeError::Transcript {
-                path: transcript.to_path_buf(),
+                path: session.transcript.to_path_buf(),
                 source,
             });
         }
     };
-    let since = match (entry.offset, window.split_first()) {
+    let since = match (pending.offset, window.split_first()) {
         (0, _) => window.as_slice(),
         (_, Some((b'\n', since))) => since,
         // Rewritten since (no line ends at the offset any more): it cannot be told either.
         _ => return Ok(()),
     };
-    let id: DecisionId = entry.id.parse().map_err(OutcomeError::Invalid)?;
-    let label: OutcomeLabel = observed(playbook, &entry.phase, since)
+    let id: DecisionId = pending.id.parse().map_err(OutcomeError::Invalid)?;
+    let label: OutcomeLabel = observed(playbook, &pending.phase, since)
         .parse()
         .map_err(OutcomeError::Invalid)?;
     Ok(clef.label(&id, &label, clock)?)
@@ -217,33 +219,103 @@ fn observed<'p>(playbook: &'p Playbook, top: &'p str, since: &[u8]) -> &'p str {
     }
 }
 
-/// The entries in `path`, oldest first; a missing file has none.
-fn load(path: &Path) -> Result<Vec<Entry>, OutcomeError> {
-    let Some(bytes) = baseline::read_state_bytes(path)? else {
-        return Ok(Vec::new());
-    };
+/// `session`'s pending file in `dir`: `<hex>.json`, `<hex>` the SHA-256 of its id.
+fn pending_path(dir: &Path, session: &str) -> PathBuf {
+    let hash = content_hash::sha256(session.as_bytes());
+    let hex = hash.strip_prefix("sha256:").unwrap_or(&hash);
+    dir.join(hex).with_extension(PENDING_EXTENSION)
+}
+
+/// Takes `session`'s pending decision out of `dir`, if any: its file is renamed to a name of
+/// this process's own, which only one claimant can do, then read and removed.
+fn claim(dir: &Path, session: &str) -> Result<Option<Pending>, OutcomeError> {
+    let path = pending_path(dir, session);
+    let claimed = path.with_extension(format!("{}.{CLAIMED_EXTENSION}", std::process::id()));
+    match fs::rename(&path, &claimed) {
+        Ok(()) => {}
+        // Nothing pending, or another hook claimed it first.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(OutcomeError::Dir {
+                op: "claiming",
+                path,
+                source,
+            });
+        }
+    }
+    let read = load(&claimed);
+    fs::remove_file(&claimed).map_err(|source| OutcomeError::Dir {
+        op: "removing",
+        path: claimed,
+        source,
+    })?;
+    read.map(Some)
+}
+
+/// The pending decision in `path`.
+fn load(path: &Path) -> Result<Pending, OutcomeError> {
     let foreign = |source| OutcomeError::Foreign {
         path: path.to_path_buf(),
         source,
     };
-    let file: PendingFile = serde_json::from_slice(&bytes).map_err(|e| foreign(Some(e)))?;
-    if file.kind != KIND || file.version != FORMAT_VERSION {
+    let bytes = baseline::read_state_bytes(path)?.ok_or_else(|| foreign(None))?;
+    let pending: Pending = serde_json::from_slice(&bytes).map_err(|e| foreign(Some(e)))?;
+    if pending.kind != KIND || pending.version != FORMAT_VERSION {
         return Err(foreign(None));
     }
-    Ok(file.sessions)
+    Ok(pending)
 }
 
-/// Writes `entries` to `path`, atomically, creating its directory.
-fn save(path: &Path, entries: Vec<Entry>) -> Result<(), OutcomeError> {
-    let file = PendingFile {
-        kind: KIND.to_owned(),
-        version: FORMAT_VERSION,
-        sessions: entries,
+/// Removes the oldest pending and claimed files in `dir` past [`MAX_SESSIONS`], never `keep`
+/// (the file just written). Another hook removing one first is not an error.
+fn drop_oldest(dir: &Path, keep: &Path) -> Result<(), OutcomeError> {
+    let dir_error = |op, source| OutcomeError::Dir {
+        op,
+        path: dir.to_path_buf(),
+        source,
     };
-    Ok(baseline::write_snapshot_json(path, &file)?)
+    let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for entry in fs::read_dir(dir)
+        .map_err(|e| dir_error("listing", e))?
+        .take(MAX_LISTED)
+    {
+        let entry = entry.map_err(|e| dir_error("listing", e))?;
+        let path = entry.path();
+        let ours = path
+            .extension()
+            .is_some_and(|ext| ext == PENDING_EXTENSION || ext == CLAIMED_EXTENSION);
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            // Claimed or dropped by another hook since it was listed.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(dir_error("reading", error)),
+        };
+        if ours && metadata.is_file() {
+            let modified = metadata.modified().map_err(|e| dir_error("reading", e))?;
+            files.push((modified, path));
+        }
+    }
+    let excess = files.len().saturating_sub(MAX_SESSIONS);
+    files.sort();
+    for (_, path) in files
+        .into_iter()
+        .filter(|(_, path)| path != keep)
+        .take(excess)
+    {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OutcomeError::Dir {
+                    op: "removing",
+                    path,
+                    source,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
-/// What a session is stored as: the `sha256:` hash of its id, so the file holds no ids.
-fn key(session: &str) -> String {
-    content_hash::sha256(session.as_bytes())
-}
+#[cfg(test)]
+mod tests;

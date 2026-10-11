@@ -307,11 +307,13 @@ Shared behaviour:
   `NAME[i]=`), even behind punctuation such as a quote, whose name looks like an environment
   variable or holds a credential word in any case (`token`, `password`, `passwd`, `secret`,
   `apikey`, `api-key`, `api_key`, `credential`, `private-key`, `private_key`), becomes
-  `<redacted>`. Since a prompt is prose rather than shell, the guard's quoting, comment and
-  heredoc rules do not apply; instead obvious credentials are redacted whole: `sk-`, `ghp_`,
-  `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-` and `eyJ` prefixes,
-  AWS access key ids, the word after `Bearer`, and opaque words of 32 or more letters and digits
-  mixed. This is a filter, not a secret scanner. The rows keep no `input`, only the state's
+  `<redacted>`; a value that opens a quote (`'` or `"`) is redacted through the word that
+  closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
+  `DB_PASS=<redacted> then go`). Since a prompt is prose rather than shell, the guard's comment
+  and heredoc rules do not apply; instead obvious credentials are redacted whole, even inside
+  punctuation such as quotes or brackets: `sk-`, `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`, `xox[abps]-`, `glpat-` and `eyJ` prefixes, AWS access key ids, the word after
+  `Bearer`, and opaque words of 32 or more letters and digits mixed. This is a filter, not a secret scanner. The rows keep no `input`, only the state's
   hash.
 - **Failures** that are not Clef's (a malformed `clef_mode`, account or token, an unreadable
   thresholds file or log, an answer that could not be logged, an invalid ruling, unreadable
@@ -352,17 +354,19 @@ anneal route: load the `build` skill before acting (phase build, size medium, de
 
 Without a size answer the size and depth are left out.
 
-**Outcome label.** Each answered phase decision is remembered for its session in
-`route-pending.json` beside the decision log (a hash of the session id, the decision id, its
-top phase and the transcript's length; at most 64 sessions). At the session's next prompt the
+**Outcome label.** Each answered phase decision is remembered in its session's own file,
+`route-pending/<sha256 of the session id>.json` beside the decision log (the decision id, its
+top phase and the transcript's length; at most 64 files, the oldest dropped). Sessions never
+share a file, so parallel sessions lose nothing, and the next prompt claims the file by an
+atomic rename before labelling, so a decision is labelled at most once. At the session's next prompt the
 hook reads what the transcript gained since then (at most 16 MiB) and labels the decision with
 `decide label`'s row: the top phase when its entry skill was invoked through the `Skill` tool
 (`build` or `anneal:build`), else the phase of the first entry skill invoked, else, with no
 entry skill invoked, the top phase when it has no skill and `answer` otherwise. So
 `anneal calibrate` scores the label as positive exactly when the hinted skill was invoked. Not
 labelled: a session's last decision, one whose transcript was rewritten in between (it is
-shorter, or no longer ends a line where it ended) or grew past the cap, and one whose entry another session's hook overwrote at the same
-moment. A slash command the human types is not a `Skill` tool call and does not count.
+shorter, or no longer ends a line where it ended) or grew past the cap, and one whose file was
+dropped as the oldest. A slash command the human types is not a `Skill` tool call and does not count.
 
 ### `ruled-before` (D6)
 
@@ -370,8 +374,10 @@ It gathers the rulings of the repository around `cwd` (its git worktree root, fo
 1 s or what the budget can spare beside Clef's timeout, whichever is less, or `cwd` outside
 one):
 
-1. every ruling in `.out-of-scope/` (`rulings::list`, `docs/define.md`), by id. An invalid
-   ruling fails the hook with an `ERROR` line naming the file, and nothing is asked;
+1. every ruling in `.out-of-scope/` (`rulings::list_within`, `docs/define.md`), by id, from
+   at most 4,096 directory entries and 256 ruling files, regular files only (a symlink is not
+   followed). An invalid ruling, or a store over either bound, fails the hook with an `ERROR`
+   line naming the file or directory, and nothing is asked;
 2. then the accepted weigh-in decision atoms in `.kb/_intake/decisions/*.md`, read from their
    frontmatter alone: `weighin_item` (the `wi-` id, the option), `status` (only `accepted`
    counts) and `title`, else `question`, as the summary. At most 4,096 directory entries are

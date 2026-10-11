@@ -417,7 +417,9 @@ impl<'s> Call<'_, 's> {
         }
     }
 
-    /// Logs an answered decision and counts it toward the shadow period.
+    /// Logs an answered decision and, when its rule has bands, counts it toward the shadow
+    /// period: an answer to a record-only question (no bands, such as D3's size) can never
+    /// act, so it says nothing about whether the point is ready to.
     fn decided(self, log: &DecisionLog, stamp: Stamp, answer: Answer) -> Asked<'s> {
         let applied = self.rule.apply(answer.probability());
         let mut row = self.row(&stamp);
@@ -428,9 +430,16 @@ impl<'s> Call<'_, 's> {
         row.action = Some(applied.action);
         // The answer stands whether or not it could be kept; the caller decides what a record
         // failure means.
+        let counts = !self.rule.bands().is_empty();
         let unrecorded = log
             .append(&row)
-            .and_then(|()| log.count_answered(self.ask.point))
+            .and_then(|()| {
+                if counts {
+                    log.count_answered(self.ask.point).map(drop)
+                } else {
+                    Ok(())
+                }
+            })
             .err();
         Asked {
             outcome: Outcome::Decided(Decision {

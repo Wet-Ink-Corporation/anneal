@@ -109,7 +109,9 @@ and logs nothing: exit 3, and the caller uses its deterministic layer; the envel
 `data.reason` (`mode_off` or `no_account`) and the point's `data.configured_mode`. `shadow` asks, logs and
 reports the action with `data.enforce: false`; callers do not act on it. `enforce` reports
 `data.enforce: true`, except that a point stays in shadow (`data.mode: "shadow"`,
-`data.configured_mode: "enforce"`) until it has 50 answered decisions. The count is kept in
+`data.configured_mode: "enforce"`) until it has 50 answered decisions. Only answers to a
+question whose rule has bands count: a record-only question (no bands, such as D3's size
+score) is logged but never advances the shadow period. The count is kept in
 `decisions/counts.json`, so rotation does not reset it; two decisions at once can lose an
 increment, which only lengthens the shadow period. The file is not protected: editing it by
 hand to raise a point's count skips (part of) the shadow period, so `enforce` takes effect
