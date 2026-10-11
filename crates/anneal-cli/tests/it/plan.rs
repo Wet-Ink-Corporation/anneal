@@ -304,8 +304,9 @@ fn a_plan_path_that_is_not_utf8_is_a_usage_error_and_opens_no_ledger() -> TestRe
     use std::os::unix::ffi::OsStrExt;
 
     let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+    // Not created: some filesystems (APFS) refuse a name that is not UTF-8, and the path is
+    // refused before the file is read, so the error names UTF-8 rather than a missing file.
     let odd = OsStr::from_bytes(b"docs/plans/odd-\xff.md");
-    fs::write(work.path().join(odd), CLEAN_PLAN)?;
     for action in ["approve", "check"] {
         let output = anneal_in(work.path())
             .args(["plan", action])
