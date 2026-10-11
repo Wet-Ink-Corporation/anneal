@@ -164,3 +164,59 @@ fn a_long_chain_is_checked_without_recursion() {
     assert_eq!(graph.check().code(), exit_codes::OK, "a deep chain is fine");
     assert_eq!(ids(graph.frontier()), ["0"], "only the head is ready");
 }
+
+#[test]
+fn external_tickets_resolve_references_but_are_leaves_never_counted_or_ready() {
+    let graph = Graph::with_external(
+        vec![
+            open("1", &["e-done"]),
+            open("2", &["e-open"]),
+            open("3", &[]),
+        ],
+        vec![
+            ticket("e-done", &["nowhere"], Status::Done),
+            ticket("e-open", &["2"], Status::Open),
+        ],
+    )
+    .expect("unique ids");
+
+    assert_eq!(
+        graph.check().code(),
+        exit_codes::OK,
+        "no dangling ref, no cycle through 2"
+    );
+    assert_eq!(
+        ids(graph.tickets()),
+        ["1", "2", "3"],
+        "external tickets are not counted"
+    );
+    assert_eq!(
+        ids(graph.frontier()),
+        ["1", "3"],
+        "2 waits for the open external ticket"
+    );
+    let blockers: Vec<(&str, Vec<&str>)> = graph
+        .external_blockers()
+        .map(|b| {
+            (
+                b.ticket.id.as_str(),
+                b.blocks.iter().map(|id| id.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        blockers,
+        [("e-open", vec!["2"])],
+        "the open external blocker and what it holds"
+    );
+}
+
+#[test]
+fn an_external_ticket_sharing_an_id_with_one_in_scope_is_a_duplicate() {
+    let result = Graph::with_external(vec![open("1", &[])], vec![open("1", &[])]);
+
+    assert!(
+        matches!(&result, Err(GraphError::DuplicateId { id }) if id.as_str() == "1"),
+        "got {result:?}"
+    );
+}

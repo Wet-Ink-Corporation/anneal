@@ -6,6 +6,8 @@ use super::{GhApi, GhCli, GhError, GitHub, GitHubError, MAX_PAGES, PER_PAGE, Rep
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::dag::tracker::{Tracker, TrackerError};
 
+mod external;
+
 /// A `gh` that answers from a function of the endpoint: no process, no network.
 struct FakeGh<F>(F);
 

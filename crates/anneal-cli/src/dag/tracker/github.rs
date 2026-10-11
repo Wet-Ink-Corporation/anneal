@@ -5,145 +5,39 @@
 //! (`repos/{owner}/{repo}/issues?state=all`), pull requests skipped. A ticket's id is its issue
 //! number, it is done when the issue is closed, and its blockers are the `#n` references after
 //! `Blocked by` in its body (any case, an optional `:` and markdown emphasis, then `#a`,
-//! `#a, #b` or `#a and #b`). A reference to an issue outside the tickets read is dangling.
+//! `#a, #b` or `#a and #b`).
+//!
+//! A blocker outside the tickets read (a story of an earlier release, a pull request) is
+//! fetched on its own (`repos/{owner}/{repo}/issues/{n}`, at most [`MAX_EXTERNAL`] of them) and
+//! becomes an external ticket: closed satisfies the blocker, open blocks. Its own blockers are
+//! not followed. One GitHub does not know (HTTP 404) stays dangling.
 //!
 //! Every call goes through the [`GhApi`] port, so tests answer from recorded JSON with no
 //! process or network; [`GhCli`] runs the real `gh` with a timeout and capped output (H-13).
 
-use std::ffi::OsString;
+mod gh;
+
+use std::collections::BTreeSet;
 use std::fmt;
-use std::io;
-use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::time::Duration;
 
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 
 use crate::dag::ticket::{Status, Ticket, TicketId};
-use crate::dag::tracker::{Tracker, TrackerError};
-use crate::process::{self, WaitError};
+use crate::dag::tracker::{Tickets, Tracker, TrackerError};
+#[cfg(test)]
+use gh::failure;
+pub use gh::{GH_TIMEOUT, GhApi, GhCli, GhError, MAX_GH_OUTPUT};
 
 /// Issues asked for per page (GitHub's maximum).
 pub const PER_PAGE: usize = 100;
 /// The most pages read (H-13): 2,000 issues. A read that fills them all fails instead of
 /// returning part of the graph.
 pub const MAX_PAGES: usize = 20;
-/// How long one `gh api` call may take before it is killed (H-13).
-pub const GH_TIMEOUT: Duration = Duration::from_secs(30);
-/// The most bytes kept from one `gh api` call's output (H-13).
-pub const MAX_GH_OUTPUT: u64 = 16 * 1024 * 1024;
-
-/// Read-only access to GitHub's REST API: the port the reader depends on.
-pub trait GhApi {
-    /// The response body of `GET <endpoint>` (relative to the API root, query included).
-    ///
-    /// # Errors
-    /// A [`GhError`] when the call fails or its answer is unusable.
-    fn get(&self, endpoint: &str) -> Result<Vec<u8>, GhError>;
-}
-
-/// Why a `gh api` call failed.
-#[derive(Debug, thiserror::Error)]
-pub enum GhError {
-    /// `gh` could not be started (not installed, not on PATH).
-    #[error("running gh")]
-    Spawn(#[source] io::Error),
-    /// `gh` could not be waited on or its output read.
-    #[error("waiting for gh api {endpoint}")]
-    Wait {
-        /// The endpoint asked for.
-        endpoint: String,
-        /// The I/O failure.
-        #[source]
-        source: io::Error,
-    },
-    /// `gh` did not answer in time and was killed.
-    #[error("gh api {endpoint} did not answer within {}s", timeout.as_secs())]
-    Timeout {
-        /// The endpoint asked for.
-        endpoint: String,
-        /// The limit.
-        timeout: Duration,
-    },
-    /// `gh` exited non-zero (not logged in, not found, rate limited, offline).
-    #[error("gh api {endpoint} failed: {stderr}")]
-    Failed {
-        /// The endpoint asked for.
-        endpoint: String,
-        /// What `gh` said, trimmed.
-        stderr: String,
-    },
-    /// The answer reached [`MAX_GH_OUTPUT`], so it may be cut short.
-    #[error("gh api {endpoint} printed {MAX_GH_OUTPUT} bytes or more")]
-    TooLarge {
-        /// The endpoint asked for.
-        endpoint: String,
-    },
-}
-
-/// The real `gh`, run as `gh api --method GET <endpoint>` with prompts and colour off.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GhCli {
-    program: OsString,
-    timeout: Duration,
-}
-
-impl GhCli {
-    /// `gh` from PATH, killed after [`GH_TIMEOUT`].
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            program: OsString::from("gh"),
-            timeout: GH_TIMEOUT,
-        }
-    }
-}
-
-impl Default for GhCli {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl GhApi for GhCli {
-    fn get(&self, endpoint: &str) -> Result<Vec<u8>, GhError> {
-        let mut child = Command::new(&self.program)
-            .args(["api", "--method", "GET", endpoint])
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GH_NO_UPDATE_NOTIFIER", "1")
-            .env("NO_COLOR", "1")
-            .env("LC_ALL", "C")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(GhError::Spawn)?;
-        let output = process::wait_with_deadline(&mut child, self.timeout, MAX_GH_OUTPUT, "gh")
-            .map_err(|error| match error {
-                WaitError::Io(source) => GhError::Wait {
-                    endpoint: endpoint.to_owned(),
-                    source,
-                },
-                WaitError::Timeout => GhError::Timeout {
-                    endpoint: endpoint.to_owned(),
-                    timeout: self.timeout,
-                },
-            })?;
-        if !output.status.success() {
-            return Err(GhError::Failed {
-                endpoint: endpoint.to_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            });
-        }
-        if u64::try_from(output.stdout.len()).map_or(true, |len| len >= MAX_GH_OUTPUT) {
-            return Err(GhError::TooLarge {
-                endpoint: endpoint.to_owned(),
-            });
-        }
-        Ok(output.stdout)
-    }
-}
+/// The most distinct outside blockers fetched (H-13): one `gh` call each. Past it the read
+/// fails instead of leaving some unresolved.
+pub const MAX_EXTERNAL: usize = 100;
 
 /// Why the GitHub tickets could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -151,8 +45,8 @@ pub enum GitHubError {
     /// A `gh api` call failed.
     #[error(transparent)]
     Gh(#[from] GhError),
-    /// An answer was not the list of issues expected.
-    #[error("gh api {endpoint} did not return a list of issues")]
+    /// An answer was not the issue or list of issues expected.
+    #[error("gh api {endpoint} did not return the issues expected")]
     Json {
         /// The endpoint asked for.
         endpoint: String,
@@ -163,6 +57,12 @@ pub enum GitHubError {
     /// Every one of the [`MAX_PAGES`] pages was full.
     #[error("more than {} issues; narrow the graph with --issue", MAX_PAGES * PER_PAGE)]
     TooMany,
+    /// The tickets name more outside blockers than [`MAX_EXTERNAL`].
+    #[error("{count} blockers outside the issues read, over the limit of {MAX_EXTERNAL}")]
+    TooManyExternal {
+        /// How many distinct outside blockers there are.
+        count: usize,
+    },
 }
 
 /// A repository as `owner/name`, each part of ASCII letters, digits, `-`, `_` and `.` (and
@@ -230,6 +130,12 @@ impl<G: GhApi> Tracker for GitHub<G> {
     fn read(&self) -> Result<Vec<Ticket>, TrackerError> {
         Ok(self.read_issues()?)
     }
+
+    fn read_with_external(&self) -> Result<Tickets, TrackerError> {
+        let in_scope = self.read_issues()?;
+        let external = self.read_external(&in_scope)?;
+        Ok(Tickets { in_scope, external })
+    }
 }
 
 impl<G: GhApi> GitHub<G> {
@@ -249,10 +155,7 @@ impl<G: GhApi> GitHub<G> {
         for page in 1..=MAX_PAGES {
             let endpoint = self.endpoint(page);
             let body = self.gh.get(&endpoint)?;
-            let issues: Vec<Issue> = match serde_json::from_slice(&body) {
-                Ok(issues) => issues,
-                Err(source) => return Err(GitHubError::Json { endpoint, source }),
-            };
+            let issues: Vec<Issue> = decode(&body, endpoint)?;
             let full = issues.len() >= PER_PAGE;
             tickets.extend(
                 issues
@@ -266,6 +169,44 @@ impl<G: GhApi> GitHub<G> {
         }
         Err(GitHubError::TooMany)
     }
+
+    /// Fetches each issue (or pull request) that a ticket in `in_scope` is blocked by but that
+    /// is not among them, in id order, as a ticket with no blockers of its own. One GitHub does
+    /// not find is skipped, so the reference stays dangling.
+    fn read_external(&self, in_scope: &[Ticket]) -> Result<Vec<Ticket>, GitHubError> {
+        let known: BTreeSet<&TicketId> = in_scope.iter().map(|ticket| &ticket.id).collect();
+        let outside: BTreeSet<&TicketId> = in_scope
+            .iter()
+            .flat_map(|ticket| &ticket.blocked_by)
+            .filter(|id| !known.contains(id))
+            .collect();
+        if outside.len() > MAX_EXTERNAL {
+            return Err(GitHubError::TooManyExternal {
+                count: outside.len(),
+            });
+        }
+        let mut external = Vec::with_capacity(outside.len());
+        for id in outside {
+            let endpoint = format!("repos/{}/issues/{id}", self.repo);
+            let body = match self.gh.get(&endpoint) {
+                Ok(body) => body,
+                // Not an error to report here: the graph reports the reference as dangling.
+                Err(GhError::NotFound { .. }) => continue,
+                Err(other) => return Err(other.into()),
+            };
+            let issue: Issue = decode(&body, endpoint)?;
+            external.push(Ticket {
+                blocked_by: Vec::new(),
+                ..Ticket::from(issue)
+            });
+        }
+        Ok(external)
+    }
+}
+
+/// Decodes the JSON answer `body` of `endpoint`.
+fn decode<T: for<'de> Deserialize<'de>>(body: &[u8], endpoint: String) -> Result<T, GitHubError> {
+    serde_json::from_slice(body).map_err(|source| GitHubError::Json { endpoint, source })
 }
 
 /// The fields of a REST issue the reader uses; the rest are ignored.

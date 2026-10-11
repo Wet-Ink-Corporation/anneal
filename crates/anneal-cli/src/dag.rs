@@ -26,7 +26,7 @@ use crate::error::CliError;
 use crate::exit_codes::Code;
 use crate::exit_codes::render::command_help;
 use estimate::{DEFAULT_BUDGET, Estimate};
-use graph::{Check, Dangling, Graph, GraphError};
+use graph::{Check, Dangling, ExternalBlocker, Graph, GraphError};
 use ticket::{Status, TicketId};
 use tracker::github::{GhCli, GitHub, Repo};
 use tracker::markdown::Markdown;
@@ -161,13 +161,15 @@ fn tracker(source: &Source, cwd: &Path) -> Result<Box<dyn Tracker>, CliError> {
     }
 }
 
-/// Reads `tracker` into a graph.
+/// Reads `tracker`, with the external tickets its blockers name, into a graph.
 fn read_graph(tracker: &dyn Tracker) -> Result<Graph, DagError> {
-    let tickets = tracker.read().map_err(|source| DagError::Tracker {
-        tracker: tracker.name(),
-        source,
-    })?;
-    Ok(Graph::new(tickets)?)
+    let tickets = tracker
+        .read_with_external()
+        .map_err(|source| DagError::Tracker {
+            tracker: tracker.name(),
+            source,
+        })?;
+    Ok(Graph::with_external(tickets.in_scope, tickets.external)?)
 }
 
 /// The envelope's `data` for `dag check`.
@@ -193,12 +195,8 @@ fn check<O: Write>(tracker: &dyn Tracker, out: &mut O) -> Result<Code, CliError>
     let verdict = graph.check();
     let data = CheckData {
         tracker: tracker.name(),
-        tickets: graph.tickets().len(),
-        done: graph
-            .tickets()
-            .iter()
-            .filter(|t| t.status == Status::Done)
-            .count(),
+        tickets: graph.tickets().count(),
+        done: graph.tickets().filter(|t| t.status == Status::Done).count(),
         edges: graph.edges(),
         dangling: verdict
             .dangling
@@ -245,6 +243,15 @@ struct FrontierData<'g> {
     ready: usize,
     over_budget: usize,
     tickets: Vec<Ready<'g>>,
+    external_blockers: Vec<ExternalRef<'g>>,
+}
+
+/// An open blocker from outside the tracker's scope, and the tickets it holds up.
+#[derive(Debug, Serialize)]
+struct ExternalRef<'g> {
+    id: &'g TicketId,
+    title: &'g str,
+    blocks: Vec<&'g TicketId>,
 }
 
 /// One ready ticket.
@@ -299,12 +306,25 @@ fn frontier<O: Write>(
         })
         .collect();
     let findings: Vec<Finding> = check_findings(&verdict).into_iter().chain(over).collect();
+    let external_blockers = if code.is_success() {
+        graph
+            .external_blockers()
+            .map(|ExternalBlocker { ticket, blocks }| ExternalRef {
+                id: &ticket.id,
+                title: &ticket.title,
+                blocks,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let data = FrontierData {
         tracker: tracker.name(),
         budget,
         ready: tickets.len(),
         over_budget: tickets.iter().filter(|ready| ready.over_budget).count(),
         tickets,
+        external_blockers,
     };
     Envelope::new(CommandName::Dag, Some("frontier"), code, data)
         .with_findings(&findings)

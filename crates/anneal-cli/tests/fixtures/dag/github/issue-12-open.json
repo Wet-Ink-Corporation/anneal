@@ -1,0 +1,31 @@
+{
+  "url": "https://api.github.com/repos/octo/tickets/issues/12",
+  "repository_url": "https://api.github.com/repos/octo/tickets",
+  "html_url": "https://github.com/octo/tickets/issues/12",
+  "id": 3001000012,
+  "node_id": "I_kwDOAAAAAc4AAA012",
+  "number": 12,
+  "title": "Lint skills",
+  "user": {
+    "login": "octo",
+    "id": 1,
+    "type": "User"
+  },
+  "labels": [],
+  "state": "open",
+  "state_reason": null,
+  "locked": false,
+  "assignees": [],
+  "milestone": null,
+  "comments": 0,
+  "created_at": "2026-10-01T09:00:00Z",
+  "updated_at": "2026-10-02T09:00:00Z",
+  "closed_at": null,
+  "author_association": "OWNER",
+  "body": null,
+  "sub_issues_summary": {
+    "total": 0,
+    "completed": 0,
+    "percent_completed": 0
+  }
+}

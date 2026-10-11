@@ -171,3 +171,99 @@ fn the_github_frontier_from_the_recorded_fixture_has_the_unblocked_issues() {
         .collect();
     assert_eq!(ids, ["19", "20"], "10 is closed; 21 waits for 19 and 20");
 }
+
+/// Recorded answers for the sub-issues of #4 and the outside issues they name (closed #11,
+/// open #12, merged pull request #30), the one-issue page of #5 (`Blocked by #404`), and
+/// "Not Found" for anything else.
+struct Outside;
+
+impl GhApi for Outside {
+    fn get(&self, endpoint: &str) -> Result<Vec<u8>, GhError> {
+        let name = match endpoint {
+            "repos/octo/tickets/issues/4/sub_issues?per_page=100&page=1" => {
+                "sub-issues-outside.json"
+            }
+            "repos/octo/tickets/issues/11" => "issue-11-closed.json",
+            "repos/octo/tickets/issues/12" => "issue-12-open.json",
+            "repos/octo/tickets/issues/30" => "pull-30-merged.json",
+            "repos/octo/tickets/issues/5/sub_issues?per_page=100&page=1" => {
+                return Ok(br#"[{"number": 50, "title": "t", "state": "open", "body": "Blocked by #404"}]"#.to_vec());
+            }
+            _ => {
+                return Err(GhError::NotFound {
+                    endpoint: endpoint.to_owned(),
+                });
+            }
+        };
+        let path: PathBuf = [
+            env!("CARGO_MANIFEST_DIR"),
+            "tests/fixtures/dag/github",
+            name,
+        ]
+        .iter()
+        .collect();
+        fs::read(path).map_err(|source| GhError::Wait {
+            endpoint: endpoint.to_owned(),
+            source,
+        })
+    }
+}
+
+#[test]
+fn a_closed_outside_blocker_is_satisfied_and_an_open_one_is_listed_as_external() {
+    let tracker = GitHub::new(Outside, "octo/tickets".parse().expect("repo"), Some(4));
+    let root = Path::new("/nonexistent-anneal-root");
+
+    let (code, envelope) = emitted(|out| frontier(&tracker, root, 100_000, out));
+
+    assert_eq!(code, 0, "outside issues that exist resolve every reference");
+    let ids: Vec<&str> = envelope["data"]["tickets"]
+        .as_array()
+        .expect("tickets")
+        .iter()
+        .map(|t| t["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        ids,
+        ["40", "43"],
+        "#11 closed, #30 merged; 41 waits for open #12"
+    );
+    assert_eq!(
+        envelope["data"]["external_blockers"],
+        json!([{"id": "12", "title": "Lint skills", "blocks": ["41"]}]),
+        "the open outside blocker and what it holds up"
+    );
+}
+
+#[test]
+fn check_counts_only_the_tickets_in_scope() {
+    let tracker = GitHub::new(Outside, "octo/tickets".parse().expect("repo"), Some(4));
+
+    let (code, envelope) = emitted(|out| check(&tracker, out));
+
+    assert_eq!(code, 0, "valid");
+    assert_eq!(
+        envelope["data"]["tickets"],
+        json!(3),
+        "#40, #41, #43; not the outside issues"
+    );
+    assert_eq!(
+        envelope["data"]["done"],
+        json!(0),
+        "none of the three is closed"
+    );
+}
+
+#[test]
+fn an_outside_blocker_github_does_not_know_is_dangling() {
+    let tracker = GitHub::new(Outside, "octo/tickets".parse().expect("repo"), Some(5));
+
+    let (code, envelope) = emitted(|out| check(&tracker, out));
+
+    assert_eq!(code, 2, "dangling");
+    assert_eq!(
+        envelope["findings"][0]["message"],
+        json!("50 is blocked by 404, which is not a ticket"),
+        "named"
+    );
+}

@@ -56,13 +56,25 @@ Read-only, through `gh api --method GET` (REST). `gh` must be installed and logg
   case and allows an optional `:` and markdown emphasis. All of these work:
   `Blocked by #10`, `**Blocked by:** #10`, `Blocked by #1, #2 and #3`. A cross-repository
   reference (`owner/repo#4`) is not read.
-- A reference to an issue outside the tickets that were read is **dangling**. With `--issue`,
-  that means the blocker is not a sibling sub-issue.
+- A blocker outside the tickets that were read, such as a story from an earlier release or a
+  pull request, is fetched on its own with `gh api repos/{owner}/{repo}/issues/{n}`. It
+  becomes an **external** ticket:
+  - **Closed** (a merged or closed pull request counts the same way): the blocker is
+    satisfied.
+  - **Open**: the dependant is not ready. `frontier` lists the blocker under
+    `external_blockers` with the tickets it holds up.
+  - **Not found** (`gh` reports HTTP 404): the reference stays **dangling**, and the command
+    exits 2.
+
+  External tickets are leaves: their own blockers are not followed. They are never counted,
+  checked or listed as ready, so cycle detection is unchanged.
 
 Bounds: each call has a 30 s timeout and keeps at most 16 MiB of output. Pages hold 100 issues,
 and the reader stops after 20 pages. If all 20 pages come back full, the command fails rather
-than return part of the graph; narrow it with `--issue`. Any `gh` failure (not installed, not
-logged in, not found, rate limited) exits 70 with `gh`'s message.
+than return part of the graph; narrow it with `--issue`. At most 100 distinct outside
+blockers are fetched, one call each. If there are more, the command fails before fetching any
+of them. Any other `gh` failure (not installed, not logged in, rate limited, a 404 on the
+issues read) exits 70 with `gh`'s message.
 
 ### The tracker adapter trait
 
@@ -74,8 +86,16 @@ pub trait Tracker {
     fn name(&self) -> &'static str;
     /// Reads every ticket in scope.
     fn read(&self) -> Result<Vec<Ticket>, TrackerError>;
+    /// Reads every ticket in scope plus the outside tickets they are blocked by.
+    /// The default returns no outside tickets.
+    fn read_with_external(&self) -> Result<Tickets, TrackerError> { /* ... */ }
 }
 ```
+
+`Tickets` holds `in_scope` and `external`. Only a tracker whose scope is part of a larger
+tracker overrides `read_with_external`. GitHub does, because `--issue` reads only the
+sub-issues of one issue. It must look up each outside reference and leave unknown ones out, so
+that they stay dangling.
 
 A `Ticket` has an `id`, `title`, `body`, `blocked_by` ids, explicitly listed `files` and a
 `status` (`Open` or `Done`). An implementation must:
@@ -122,7 +142,9 @@ is then rotated to start at its smallest id. Each id is blocked by the next, and
 the first. The search is iterative, so a very long chain cannot overflow the stack. A ticket
 blocked by itself is a cycle of one.
 
-`data` is `{tracker, tickets, done, edges, dangling: [{ticket, missing}], cycle: [ids]}`. The
+`data` is `{tracker, tickets, done, edges, dangling: [{ticket, missing}], cycle: [ids]}`.
+`tickets` and `done` count only tickets in scope, while `edges` also counts edges to external
+tickets. The
 findings are `dag/dangling:<ticket>-><missing>` for each dangling reference and
 `dag/cycle:<a>-><b>...` for the cycle.
 
@@ -132,8 +154,10 @@ findings are `dag/dangling:<ticket>-><missing>` for each dangling reference and
 exits with the check's code and findings. Otherwise it lists every **ready** ticket, in id
 order: open, with every blocker done. Done tickets are never ready.
 
-`data` is `{tracker, budget, ready, over_budget, tickets}`. Each ticket is
-`{id, title, blocked_by, over_budget, estimate: {tokens, body_tokens, files}}`.
+`data` is `{tracker, budget, ready, over_budget, tickets, external_blockers}`. Each ticket is
+`{id, title, blocked_by, over_budget, estimate: {tokens, body_tokens, files}}`. Each external
+blocker is `{id, title, blocks: [ids]}`: an open ticket from outside the scope, with the open
+tickets in scope that wait for it. The list is empty for markdown.
 
 ### The token estimate
 

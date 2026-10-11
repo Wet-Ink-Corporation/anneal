@@ -56,7 +56,10 @@ pub enum GraphError {
 pub struct Graph {
     /// Sorted by id; indices below point into it.
     tickets: Vec<Ticket>,
+    /// `scope[i]`: whether `tickets[i]` is in scope or an external blocker.
+    scope: Vec<Scope>,
     /// `blockers[i]`: the indices of the tickets `tickets[i]` is blocked by, ascending, once.
+    /// Always empty for an external ticket.
     blockers: Vec<Vec<usize>>,
     /// Every reference to a missing ticket, by ticket and then missing id.
     dangling: Vec<Dangling>,
@@ -88,6 +91,24 @@ impl Check<'_> {
     }
 }
 
+/// Whether a ticket is one the graph is about, or only a blocker from outside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Checked, counted, and listed in the frontier when ready.
+    InScope,
+    /// Resolves references to it; never counted or ready; a leaf.
+    External,
+}
+
+/// An open external ticket and the open tickets in scope it holds up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalBlocker<'g> {
+    /// The external ticket.
+    pub ticket: &'g Ticket,
+    /// The open in-scope tickets blocked by it, in id order.
+    pub blocks: Vec<&'g TicketId>,
+}
+
 /// Where the depth-first search stands with a ticket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Visit {
@@ -102,20 +123,41 @@ impl Graph {
     ///
     /// # Errors
     /// [`GraphError::DuplicateId`] when two tickets share an id.
-    pub fn new(mut tickets: Vec<Ticket>) -> Result<Self, GraphError> {
-        tickets.sort_by(|a, b| a.id.cmp(&b.id));
-        if let Some([first, _]) = tickets
+    pub fn new(tickets: Vec<Ticket>) -> Result<Self, GraphError> {
+        Self::with_external(tickets, Vec::new())
+    }
+
+    /// The graph of `tickets`, with `external` tickets from outside the scope that resolve
+    /// references to them: a done one is a satisfied blocker, an open one blocks. External
+    /// tickets are leaves (their own `blocked_by` is ignored) and are never counted, checked
+    /// for dangling references or ready.
+    ///
+    /// # Errors
+    /// [`GraphError::DuplicateId`] when two tickets, in scope or external, share an id.
+    pub fn with_external(tickets: Vec<Ticket>, external: Vec<Ticket>) -> Result<Self, GraphError> {
+        let mut entries: Vec<(Ticket, Scope)> = tickets
+            .into_iter()
+            .map(|ticket| (ticket, Scope::InScope))
+            .chain(external.into_iter().map(|ticket| (ticket, Scope::External)))
+            .collect();
+        entries.sort_by(|(a, _), (b, _)| a.id.cmp(&b.id));
+        if let Some([(first, _), _]) = entries
             .windows(2)
-            .find(|w| matches!(w, [a, b] if a.id == b.id))
+            .find(|w| matches!(w, [(a, _), (b, _)] if a.id == b.id))
         {
             // The error outlives the borrowed window, so it owns a copy of the id.
             return Err(GraphError::DuplicateId {
                 id: first.id.clone(),
             });
         }
+        let (tickets, scope): (Vec<Ticket>, Vec<Scope>) = entries.into_iter().unzip();
         let mut blockers = Vec::with_capacity(tickets.len());
         let mut dangling = Vec::new();
-        for ticket in &tickets {
+        for (ticket, &ticket_scope) in tickets.iter().zip(&scope) {
+            if ticket_scope == Scope::External {
+                blockers.push(Vec::new());
+                continue;
+            }
             let mut resolved = Vec::new();
             let mut missing = Vec::new();
             for blocker in &ticket.blocked_by {
@@ -137,18 +179,50 @@ impl Graph {
         }
         Ok(Self {
             tickets,
+            scope,
             blockers,
             dangling,
         })
     }
 
-    /// Every ticket, in id order.
-    #[must_use]
-    pub fn tickets(&self) -> &[Ticket] {
-        &self.tickets
+    /// The tickets in scope, in id order (external tickets excluded).
+    pub fn tickets(&self) -> impl Iterator<Item = &Ticket> + '_ {
+        self.in_scope().map(|(ticket, _)| ticket)
     }
 
-    /// The number of blocking edges between tickets in the graph (dangling refs excluded).
+    /// Each open external ticket that holds up an open ticket in scope, in id order.
+    pub fn external_blockers(&self) -> impl Iterator<Item = ExternalBlocker<'_>> + '_ {
+        self.tickets
+            .iter()
+            .enumerate()
+            .zip(&self.scope)
+            .filter(|((_, ticket), scope)| {
+                **scope == Scope::External && ticket.status == Status::Open
+            })
+            .filter_map(|((index, ticket), _)| {
+                let blocks: Vec<&TicketId> = self
+                    .in_scope()
+                    .filter(|(dependant, blockers)| {
+                        dependant.status == Status::Open && blockers.contains(&index)
+                    })
+                    .map(|(dependant, _)| &dependant.id)
+                    .collect();
+                (!blocks.is_empty()).then_some(ExternalBlocker { ticket, blocks })
+            })
+    }
+
+    /// The tickets in scope with their blockers' indices.
+    fn in_scope(&self) -> impl Iterator<Item = (&Ticket, &Vec<usize>)> + '_ {
+        self.tickets
+            .iter()
+            .zip(&self.blockers)
+            .zip(&self.scope)
+            .filter(|(_, scope)| **scope == Scope::InScope)
+            .map(|(pair, _)| pair)
+    }
+
+    /// The number of resolved blocking edges, including those to external tickets (dangling
+    /// refs excluded).
     #[must_use]
     pub fn edges(&self) -> usize {
         self.blockers.iter().map(Vec::len).sum()
@@ -169,12 +243,10 @@ impl Graph {
         }
     }
 
-    /// The ready tickets, in id order: open, with every blocker done. Meaningful only when
-    /// [`Graph::check`] is clean.
+    /// The ready tickets in scope, in id order: open, with every blocker (in scope or
+    /// external) done. Meaningful only when [`Graph::check`] is clean.
     pub fn frontier(&self) -> impl Iterator<Item = &Ticket> + '_ {
-        self.tickets
-            .iter()
-            .zip(&self.blockers)
+        self.in_scope()
             .filter(|(ticket, blockers)| {
                 ticket.status == Status::Open
                     && blockers.iter().all(|&index| {
