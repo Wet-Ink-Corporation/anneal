@@ -219,7 +219,7 @@ fn outside_git_an_empty_anneal_store_falls_through_to_the_folder() {
 fn the_callers_git_timeout_bounds_store_resolution() {
     let dir = tempfile::tempdir().expect("temp dir");
 
-    // A zero timeout has passed by the first check after git starts, before git can finish.
+    // The deadline is checked before git's exit is polled, so a zero timeout always expires.
     let result = ledger_store_within(None, env(&[]), dir.path(), Duration::ZERO);
 
     assert!(

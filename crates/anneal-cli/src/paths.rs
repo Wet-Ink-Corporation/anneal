@@ -190,20 +190,22 @@ fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, PathError> {
         .map_err(PathError::Git)
 }
 
-/// Polls `child` until it exits; past `timeout` kills and reaps it.
+/// Polls `child` until it exits; past `timeout` kills and reaps it. The deadline is checked
+/// before each poll, so an exit first seen after the deadline is a timeout, and a zero
+/// timeout always is.
 fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, PathError> {
     let started = Instant::now();
     loop {
+        if started.elapsed() >= timeout {
+            child.kill().map_err(PathError::Git)?;
+            child.wait().map_err(PathError::Git)?;
+            return Err(PathError::GitTimeout { timeout });
+        }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
             // Kill it: the reader threads would otherwise wait on its pipes forever.
             Err(error) => return Err(kill_after(child, error)),
-        }
-        if started.elapsed() >= timeout {
-            child.kill().map_err(PathError::Git)?;
-            child.wait().map_err(PathError::Git)?;
-            return Err(PathError::GitTimeout { timeout });
         }
         thread::sleep(POLL_INTERVAL);
     }
