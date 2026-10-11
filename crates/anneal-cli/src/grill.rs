@@ -1,6 +1,8 @@
-//! `anneal grill frontier|confirm`: the design tree behind the `grill` skill.
+//! `anneal grill frontier|classify|confirm`: the design tree behind the `grill` skill.
 //!
 //! - [`tree`]: the design tree file, its checks, its frontier and its confidence summary.
+//! - [`classify`]: Clef D7 on one open question, written into its `is_decision` only once D7
+//!   enforces.
 //!
 //! `frontier` lists the open questions whose dependencies are all answered. `confirm` records
 //! the human's explicit confirmation as a `grill_confirmed` ledger event carrying the tree's
@@ -9,6 +11,7 @@
 //! (exit 1) and a tree with an open question (exit 3), and appends nothing in those cases. See
 //! `docs/grill.md`.
 
+pub mod classify;
 pub mod tree;
 
 use std::ffi::OsString;
@@ -20,12 +23,17 @@ use anneal_ledger::{EventEnvelope, LedgerEvent, Store, TagError, Timestamp};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
+use crate::baseline::BaselineError;
 use crate::command::CommandName;
 use crate::content_hash::sha256;
+use crate::decide::DecideEnv;
+use crate::decide::clock::Clock;
+use crate::decide::transport::Transport;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
 use crate::paths::{self, StoreSource};
+use classify::ClassifyArgs;
 use tree::{
     ConfidenceSummary, DesignTree, MAX_TREE_BYTES, Node, RESTATE_CONFIDENCE,
     RESTATE_TURNS_WITHOUT_GAIN, Status, TreeProblem,
@@ -43,6 +51,8 @@ pub struct GrillArgs {
 pub enum GrillAction {
     /// List the open questions whose dependencies are all answered, and the restate gate
     Frontier(FrontierArgs),
+    /// Ask Clef D7 whether an open question is a decision for the human or a fact to look up
+    Classify(ClassifyArgs),
     /// Record the human's explicit confirmation of the design tree in the ledger
     Confirm(ConfirmArgs),
 }
@@ -97,30 +107,46 @@ pub enum GrillError {
         #[source]
         source: io::Error,
     },
+    /// `classify` could not write Clef's estimate into the file.
+    #[error("writing design tree {}", path.display())]
+    Write {
+        /// The path as given.
+        path: PathBuf,
+        /// The failure.
+        #[source]
+        source: BaselineError,
+    },
 }
 
 impl GrillError {
     /// The documented exit code: a missing file or one that is not a regular file is a usage
-    /// error (2), a read failure 70.
+    /// error (2), a read or write failure 70.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Missing { .. } | Self::NotAFile { .. } => exit_codes::USAGE,
-            Self::Read { .. } => exit_codes::INTERNAL,
+            Self::Read { .. } | Self::Write { .. } => exit_codes::INTERNAL,
         }
     }
 }
 
-/// Runs `anneal grill <action>` in `cwd`, reading environment variables through `lookup`.
-pub(crate) fn run<O: Write>(
+/// Runs `anneal grill <action>` in `env.cwd`, reading environment variables through
+/// `env.lookup`; `classify` reaches Clef through `env.transport` and `env.clock`.
+pub(crate) fn run<O, L, T, C>(
     args: &GrillArgs,
-    cwd: &Path,
-    lookup: impl Fn(&str) -> Option<OsString>,
+    env: &DecideEnv<'_, L, T, C>,
     out: &mut O,
-) -> Result<Code, CliError> {
+) -> Result<Code, CliError>
+where
+    O: Write,
+    L: Fn(&str) -> Option<OsString>,
+    T: Transport,
+    C: Clock,
+{
     match &args.action {
-        GrillAction::Frontier(frontier_args) => frontier(frontier_args, cwd, out),
-        GrillAction::Confirm(confirm_args) => confirm(confirm_args, cwd, lookup, out),
+        GrillAction::Frontier(frontier_args) => frontier(frontier_args, env.cwd, out),
+        GrillAction::Classify(classify_args) => classify::run(classify_args, env, out),
+        GrillAction::Confirm(confirm_args) => confirm(confirm_args, env.cwd, &env.lookup, out),
     }
 }
 

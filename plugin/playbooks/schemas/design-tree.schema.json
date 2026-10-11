@@ -78,7 +78,7 @@
         "is_decision": {
           "$ref": "#/$defs/probability",
           "type": "number",
-          "description": "The probability, from 0 to 1, that only the human can settle this (a decision) rather than the model looking it up (a fact). At 0.5 or more the question is asked, with its recommended answer; below, it is looked up. Clef D7 (#32) writes its estimate here."
+          "description": "The probability, from 0 to 1, that only the human can settle this (a decision) rather than the model looking it up (a fact). At 0.5 or more the question is asked, with its recommended answer; below, it is looked up. Once Clef D7 enforces, `anneal grill classify` writes Clef's estimate here; until then it is the model's."
         },
         "confidence": {
           "$ref": "#/$defs/probability",
