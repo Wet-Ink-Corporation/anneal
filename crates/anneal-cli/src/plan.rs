@@ -9,9 +9,10 @@
 
 mod check;
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
 use anneal_ledger::event::PlanApproved;
 use anneal_ledger::{
@@ -113,14 +114,24 @@ fn read(file: &Path) -> Result<(Read, Filter), CliError> {
     Ok((Read { id, bytes, hash }, approvals))
 }
 
-/// The plan's id: its path as given, without `.` components, so `./p.md` and `p.md` are one
-/// plan. `None` when the path is not UTF-8.
+/// The plan's id: its path as given, separated by `/` on every platform, without `.` or empty
+/// components, so `./p.md`, `p.md` and (on Windows) `.\p.md` are one plan. `None` when the
+/// path is not UTF-8.
 fn plan_id(file: &Path) -> Option<String> {
-    let kept: PathBuf = file
-        .components()
-        .filter(|component| *component != Component::CurDir)
+    let text = file.to_str()?;
+    let slashed = if MAIN_SEPARATOR == '/' {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(text.replace(MAIN_SEPARATOR, "/"))
+    };
+    let kept: Vec<&str> = slashed
+        .split('/')
+        .enumerate()
+        // A leading empty segment is the root of an absolute path; keep it.
+        .filter(|(at, segment)| *segment != "." && (*at == 0 || !segment.is_empty()))
+        .map(|(_, segment)| segment)
         .collect();
-    kept.to_str().map(str::to_owned)
+    Some(kept.join("/"))
 }
 
 /// `sha256:` and the 64 hex digits of the SHA-256 of `bytes`.
@@ -356,6 +367,20 @@ mod tests {
             plan_id(Path::new("a/../b.md")).as_deref(),
             Some("a/../b.md"),
             "parents kept"
+        );
+    }
+
+    #[test]
+    fn the_plan_id_keeps_the_root_and_drops_empty_components() {
+        assert_eq!(
+            plan_id(Path::new("/abs/./p.md")).as_deref(),
+            Some("/abs/p.md"),
+            "absolute"
+        );
+        assert_eq!(
+            plan_id(Path::new("a//b.md")).as_deref(),
+            Some("a/b.md"),
+            "doubled separator"
         );
     }
 }

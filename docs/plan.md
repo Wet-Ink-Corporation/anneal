@@ -76,8 +76,8 @@ Run only on the human's explicit approval of the plan they were shown. It refuse
   them (outside code, comments and fences); `data.needs_clarification` gives the count.
 
 Otherwise it appends `plan_approved {plan, hash}` to the ledger (`docs/ledger.md`) and exits
-0. `plan` is the plan id: the path as given with `.` components dropped, so `./docs/plans/x.md`
-and `docs/plans/x.md` are one plan (`..` is kept, and the path is not made absolute: approve and
+0. `plan` is the plan id: the path as given, separated by `/` on every platform, with `.` and empty
+components dropped, so `./docs/plans/x.md` and `docs/plans/x.md` are one plan (`..` is kept, and the path is not made absolute: approve and
 check a plan from the same directory, normally the repository root). `hash` is `sha256:` and
 the 64 lowercase hex digits of the SHA-256 of the plan's bytes. When the latest approval of the
 plan already has that hash, nothing is appended and `data.appended` is `false`. The append is

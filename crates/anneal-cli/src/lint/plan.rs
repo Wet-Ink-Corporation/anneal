@@ -254,9 +254,13 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
         file: &file,
         text: &text,
     });
+    // Joined with `/` rather than `Path::join`, so the path shown (and keyed) is the same on
+    // every platform; Windows opens `/`-separated paths too.
     let spec = report.plan.spec.as_deref().map(|target| {
-        path.parent()
-            .map_or_else(|| PathBuf::from(target), |dir| dir.join(target))
+        match path.parent().map(Path::display).map(|dir| dir.to_string()) {
+            Some(dir) if !dir.is_empty() => PathBuf::from(format!("{dir}/{target}")),
+            _ => PathBuf::from(target),
+        }
     });
     if let Some(resolved) = spec.as_deref().filter(|resolved| !resolved.is_file()) {
         report
