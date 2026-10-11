@@ -26,6 +26,7 @@ pub mod client;
 pub mod clock;
 pub mod config;
 pub mod id;
+pub(crate) mod in_process;
 pub mod log;
 mod output;
 pub mod point;

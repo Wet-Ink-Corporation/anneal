@@ -5,11 +5,14 @@
 //! Code's deny decision on stdout, whose reason is one `ERROR <reason>` line, and a
 //! `gate_blocked` event in the ledger. An allowed one gets no output. Whatever the guard cannot
 //! read (input that is not `PreToolUse` JSON, over 1 MiB, a command with an unclosed quote) is
-//! denied; a failed write of the decision exits 2 (`cli` fails it closed). What the denylist
-//! leaves undecided goes to `Fallback`, the extension point for Clef D1 (#30). See
+//! denied; a failed write of the decision exits 2 (`cli` fails it closed). A Bash command the
+//! denylist leaves undecided gets `Fallback`'s answer unless Clef D1 (`clef`, #30), enforced,
+//! denies or asks; its command is redacted (`redact`) before Clef or the log see it. See
 //! `docs/guard.md`.
 
+mod clef;
 mod denylist;
+mod redact;
 mod shell;
 
 use std::ffi::OsString;
@@ -21,8 +24,11 @@ use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, StoreError, Timestamp, TimestampError};
 use serde::Deserialize;
 
-use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_deny};
+use crate::decide::clock::{Clock, SystemClock};
+use crate::decide::transport::{NoHttpClient, Transport};
+use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
 use crate::paths::{self, PathError};
+use clef::Ports;
 use denylist::{Context, Verdict};
 
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
@@ -39,6 +45,16 @@ pub(crate) const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 /// locked ledger fails the first statement that meets the lock, so it costs about this once.
 /// The preconditions hook shares it.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// What the guard plans to spend of the hook's 5 s `timeout`, measured from when it starts
+/// reading its input; the other 500 ms cover process start-up and writing the decision. Clef D1
+/// takes up to 2 s of it, so a deny after D1 can leave less than [`GIT_TIMEOUT`] plus
+/// [`BUSY_TIMEOUT`] for the ledger record, which then gets only what remains.
+const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
+
+/// The least time worth giving git to find the ledger; with less, the record is skipped and the
+/// deny says so.
+const MIN_GIT_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// The `point` of the guard's `gate_blocked` events, before the rule's id.
 const POINT_PREFIX: &str = "guard.";
@@ -58,6 +74,8 @@ pub(crate) enum Rule {
     Unparseable,
     /// The hook input could not be read.
     BadInput,
+    /// Clef D1, enforced, rates the command destructive or irreversible.
+    Destructive,
 }
 
 impl Rule {
@@ -70,6 +88,7 @@ impl Rule {
             Self::ConfigWrite => "config-write",
             Self::Unparseable => "unparseable",
             Self::BadInput => "bad-input",
+            Self::Destructive => "destructive",
         }
     }
 }
@@ -97,20 +116,21 @@ impl Denial {
 pub(crate) enum Decision {
     /// Let it run: no output.
     Allow,
+    /// Ask the human (Clef D1, enforced): the reason, one line.
+    Ask(String),
     /// Block it.
     Deny(Denial),
 }
 
-/// What decides a command the denylist leaves undecided.
+/// What decides a command the denylist leaves undecided, before Clef D1 is asked.
 ///
-/// **Extension point for Clef D1 (#30).** The denylist only denies or leaves a command
-/// undecided; every undecided command comes here. Clef D1 plugs in as a new variant (say
-/// `Clef`) whose `decide` asks Clef within the 2 s budget for Clef calls and maps its answer to
-/// a [`Decision`], with `Allow` staying the answer when Clef is off. The match in `decide` is
-/// exhaustive, so a new variant has to say what it does.
+/// The denylist only denies or leaves a command undecided; every undecided command comes here,
+/// and its answer stands unless D1, in enforce mode, decides otherwise (`clef`). With Clef off
+/// or in shadow it is the guard's answer. The match in `decide` is exhaustive, so a new variant
+/// has to say what it does.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Fallback {
-    /// Allow it: the only fallback until Clef D1 lands.
+    /// Allow it.
     #[default]
     Allow,
 }
@@ -169,14 +189,18 @@ enum RecordError {
     Clock(#[source] TimestampError),
     #[error("appending gate_blocked")]
     Append(#[source] StoreError),
+    #[error("no time left in the hook's budget")]
+    NoTime,
 }
 
-/// Runs the guard: reads the input from `env.stdin`, decides, and on a denial records it in
-/// the ledger (resolved from the input's `cwd`, or `env.current_dir`, and `env.lookup`) and
-/// writes the deny decision to `out`. Pass `&mut out` to keep the writer.
+/// Runs the guard: reads the input from `env.stdin`, decides (the denylist, then Clef D1 for a
+/// Bash command it left undecided), and on a denial records it in the ledger (resolved from the
+/// input's `cwd`, or `env.current_dir`, and `env.lookup`) and writes the deny decision to
+/// `out`; an ask writes the ask decision. Clef is reached through [`NoHttpClient`], the only
+/// transport so far. Pass `&mut out` to keep the writer.
 ///
 /// # Errors
-/// Only the I/O error from writing `out`; every other failure denies.
+/// Only the I/O error from writing `out`; every failure of the denylist's input denies.
 pub(crate) fn run<R, D, L, W>(env: HookEnv<R, D, L>, out: W) -> io::Result<()>
 where
     R: Read,
@@ -184,13 +208,77 @@ where
     L: Fn(&str) -> Option<OsString>,
     W: Write,
 {
-    let input = read_input(env.stdin);
-    let decision = decide(&input, &Context::new(&env.lookup));
-    let Decision::Deny(denial) = decision else {
-        return Ok(());
+    let clock = SystemClock::new();
+    let ports = Ports {
+        transport: &NoHttpClient,
+        clock: &clock,
     };
-    let recorded = record(&denial, input.ok(), env.current_dir, &env.lookup);
-    write_denial(out, &denial, recorded.err().as_ref())
+    run_with(env, &ports, out)
+}
+
+/// [`run`], reaching Clef through `ports`.
+///
+/// # Errors
+/// As [`run`].
+pub(crate) fn run_with<R, D, L, W, T, C>(
+    env: HookEnv<R, D, L>,
+    ports: &Ports<'_, T, C>,
+    out: W,
+) -> io::Result<()>
+where
+    R: Read,
+    D: FnOnce() -> io::Result<PathBuf>,
+    L: Fn(&str) -> Option<OsString>,
+    W: Write,
+    T: Transport,
+    C: Clock,
+{
+    let started = ports.clock.monotonic();
+    let input = read_input(env.stdin);
+    let decision = match decide(&input, &Context::new(&env.lookup)) {
+        Decision::Allow => bash_command(&input).map_or(Decision::Allow, |command| {
+            clef::judge(command, &env.lookup, ports)
+        }),
+        decided @ (Decision::Ask(_) | Decision::Deny(_)) => decided,
+    };
+    match decision {
+        Decision::Allow => Ok(()),
+        Decision::Ask(reason) => write_ask(out, &reason),
+        Decision::Deny(denial) => {
+            let spent = ports.clock.monotonic().saturating_sub(started);
+            let recorded = match git_budget(HOOK_BUDGET.saturating_sub(spent)) {
+                Some(git_timeout) => record(&denial, input.ok(), |cwd| {
+                    ledger_path(cwd, env.current_dir, &env.lookup, git_timeout)
+                }),
+                None => Err(RecordError::NoTime),
+            };
+            write_denial(out, &denial, recorded.err().as_ref())
+        }
+    }
+}
+
+/// How long git may take to find the ledger when `remaining` of [`HOOK_BUDGET`] is left: what
+/// is left after one lock wait ([`BUSY_TIMEOUT`]), at most [`GIT_TIMEOUT`]; `None` when that is
+/// under [`MIN_GIT_TIMEOUT`], and the record is skipped so the deny still arrives in time.
+fn git_budget(remaining: Duration) -> Option<Duration> {
+    remaining
+        .checked_sub(BUSY_TIMEOUT)
+        .filter(|git| *git >= MIN_GIT_TIMEOUT)
+        .map(|git| git.min(GIT_TIMEOUT))
+}
+
+/// The command of a Bash call, if `input` is one.
+fn bash_command(input: &Result<Input, InputError>) -> Option<&str> {
+    match input {
+        Ok(Input {
+            tool_name,
+            tool: ToolInput {
+                command: Some(command),
+            },
+            ..
+        }) if tool_name == "Bash" => Some(command),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// Reads and parses at most [`MAX_INPUT_BYTES`] of `stdin`.
@@ -225,21 +313,31 @@ fn bad_input(error: &InputError) -> Verdict {
     ))
 }
 
-/// Appends a `gate_blocked` event for `denial`, tagged with the input's session, to the ledger
-/// seen from the input's `cwd` (or `current_dir` when there is none).
-fn record(
-    denial: &Denial,
-    input: Option<Input>,
+/// The ledger seen from `cwd` (or `current_dir` when there is none), git given `git_timeout`.
+fn ledger_path(
+    cwd: Option<PathBuf>,
     current_dir: impl FnOnce() -> io::Result<PathBuf>,
     lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<(), RecordError> {
-    let (session_id, cwd) = input.map_or((None, None), |input| (input.session_id, input.cwd));
+    git_timeout: Duration,
+) -> Result<PathBuf, RecordError> {
     let cwd = match cwd {
         Some(cwd) => cwd,
         None => current_dir().map_err(RecordError::CurrentDir)?,
     };
-    let location =
-        paths::ledger_store_within(None, lookup, &cwd, GIT_TIMEOUT).map_err(RecordError::Locate)?;
+    paths::ledger_store_within(None, lookup, &cwd, git_timeout)
+        .map(|location| location.path)
+        .map_err(RecordError::Locate)
+}
+
+/// Appends a `gate_blocked` event for `denial`, tagged with the input's session, to the ledger
+/// `ledger` finds from the input's `cwd`.
+fn record(
+    denial: &Denial,
+    input: Option<Input>,
+    ledger: impl FnOnce(Option<PathBuf>) -> Result<PathBuf, RecordError>,
+) -> Result<(), RecordError> {
+    let (session_id, cwd) = input.map_or((None, None), |input| (input.session_id, input.cwd));
+    let path = ledger(cwd)?;
     let event = LedgerEvent::GateBlocked(GateBlocked {
         point: format!("{POINT_PREFIX}{}", denial.rule.id()),
         // The reason is duplicated: the ledger keeps one copy, the deny decision shows the other.
@@ -248,7 +346,7 @@ fn record(
     let mut envelope =
         EventEnvelope::new(event, "hook", Timestamp::now().map_err(RecordError::Clock)?);
     envelope.session_id = session_id;
-    Store::open_with_busy_timeout(&location.path, BUSY_TIMEOUT)
+    Store::open_with_busy_timeout(&path, BUSY_TIMEOUT)
         .and_then(|ledger| ledger.append(&envelope))
         .map(drop)
         .map_err(RecordError::Append)

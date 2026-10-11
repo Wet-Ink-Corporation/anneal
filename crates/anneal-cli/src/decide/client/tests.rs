@@ -6,9 +6,13 @@ use std::time::{Duration, SystemTimeError};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::{Ask, AskError, OffReason, Outcome, Setup, TIMEOUT, ask};
+use super::{
+    Ask, AskError, Asked, MAX_INPUT_ROW_BYTES, OffReason, Outcome, Recorded, Setup, TIMEOUT, ask,
+    ask_recording,
+};
 use crate::decide::clock::Clock;
 use crate::decide::config::{ACCOUNT_VAR, ClefConfig, MODE_VAR, TOKEN_VAR};
+use crate::decide::log::LogError;
 use crate::decide::log::{DecisionLog, MAX_ROW_BYTES};
 use crate::decide::point::{Point, Question};
 use crate::decide::state::CompactState;
@@ -149,6 +153,39 @@ impl World {
             readings: Cell::new(0),
         };
         ask(request, &setup, endpoint, &clock)
+    }
+
+    /// Asks `request`, keeping `input` in the row.
+    fn ask_recording(
+        &self,
+        request: &Ask<'_>,
+        input: &str,
+        endpoint: &FakeEndpoint,
+    ) -> Result<Outcome<'_>, AskError> {
+        self.ask_keeping(request, input, endpoint)
+            .map(|asked| asked.outcome)
+    }
+
+    /// Asks `request`, keeping `input` in the row, with any record failure handed back.
+    fn ask_keeping(
+        &self,
+        request: &Ask<'_>,
+        input: &str,
+        endpoint: &FakeEndpoint,
+    ) -> Result<Asked<'_>, AskError> {
+        let setup = Setup {
+            thresholds: &self.thresholds,
+            config: Ok(&self.config),
+            log: &self.log,
+        };
+        let clock = FakeClock {
+            readings: Cell::new(0),
+        };
+        let recorded = Recorded {
+            ask: *request,
+            input: Some(input),
+        };
+        ask_recording(&recorded, &setup, endpoint, &clock)
     }
 
     /// Asks D1's noul question.
@@ -571,8 +608,9 @@ fn an_option_outside_the_name_alphabet_is_refused() {
     assert_eq!(endpoint.requests(), 0, "nothing is sent");
 }
 
-#[test]
-fn a_worst_case_choice_row_fits_the_row_cap() {
+/// A world whose D3 choice rule has the longest names, with the most and longest options and
+/// an endpoint giving each the longest probability.
+fn worst_case_choice() -> (World, Vec<String>, FakeEndpoint) {
     let mut value: Value =
         serde_json::from_str(crate::decide::thresholds::BUILT_IN).expect("shipped JSON");
     let long_name = |c: char| c.to_string().repeat(64);
@@ -594,6 +632,12 @@ fn a_worst_case_choice_row_fits_the_row_cap() {
         .map(|option| (option.clone(), json!(0.031_250_000_000_000_014)))
         .collect();
     let endpoint = FakeEndpoint::answering(&json!({"probabilities": probabilities}));
+    (world, options, endpoint)
+}
+
+#[test]
+fn a_worst_case_choice_row_fits_the_row_cap() {
+    let (world, options, endpoint) = worst_case_choice();
 
     let outcome = world.ask(&world.question(Point::D3, &options), &endpoint);
 
@@ -632,4 +676,140 @@ fn the_token_never_appears_in_rows_outcomes_or_errors() {
     assert!(!format!("{error:?}").contains(SECRET), "errors");
     assert!(!format!("{:?}", world.config).contains(SECRET), "config");
     assert_eq!(world.rows().len(), endpoints.len(), "one row per call");
+}
+
+#[test]
+fn a_recorded_input_is_kept_in_the_row_answered_or_not() {
+    let world = World::configured();
+    let input = "FOO=<redacted> rm -r build";
+    let endpoints = [
+        FakeEndpoint::answering(&yes(0.5)),
+        FakeEndpoint::failing(TransportError::Unreachable {
+            reason: "dns".to_owned(),
+        }),
+    ];
+
+    for endpoint in &endpoints {
+        world
+            .ask_recording(&world.question(Point::D1, &[]), input, endpoint)
+            .expect("D1 asks noul");
+    }
+
+    let inputs: Vec<Value> = world
+        .rows()
+        .iter()
+        .map(|row| row["input"].clone())
+        .collect();
+    assert_eq!(inputs, [json!(input), json!(input)]);
+}
+
+#[test]
+fn a_row_asked_without_an_input_has_no_input_field() {
+    let world = World::configured();
+
+    world.ask_d1(&FakeEndpoint::answering(&yes(0.5)));
+
+    let rows = world.rows();
+    let [row] = rows.as_slice() else {
+        panic!("one row: {rows:?}");
+    };
+    assert_eq!(
+        row.get("input"),
+        None,
+        "rows without an input keep their shape"
+    );
+}
+
+#[test]
+fn a_long_input_is_cut_by_its_json_size_at_a_char_boundary_and_marked() {
+    let world = World::configured();
+    // Each control character is six bytes of JSON (`\u0001`), the most any character takes.
+    let input = "\u{1}é".repeat(MAX_INPUT_ROW_BYTES);
+
+    world
+        .ask_recording(
+            &world.question(Point::D1, &[]),
+            &input,
+            &FakeEndpoint::answering(&yes(0.5)),
+        )
+        .expect("D1 asks noul");
+
+    let kept = world.rows()[0]["input"]
+        .as_str()
+        .expect("a string")
+        .to_owned();
+    let json_bytes = serde_json::to_string(&kept)
+        .expect("a string encodes")
+        .len();
+    assert!(
+        json_bytes <= MAX_INPUT_ROW_BYTES,
+        "{json_bytes} bytes of JSON"
+    );
+    assert!(kept.ends_with('…'), "marked as cut");
+    assert!(
+        input.starts_with(kept.trim_end_matches('…')),
+        "a prefix of the input"
+    );
+}
+
+#[test]
+fn a_worst_case_choice_row_with_the_longest_input_fits_the_row_cap() {
+    let (world, options, endpoint) = worst_case_choice();
+    let input = "\u{1}".repeat(MAX_INPUT_ROW_BYTES);
+
+    let outcome = world.ask_recording(&world.question(Point::D3, &options), &input, &endpoint);
+
+    assert!(matches!(outcome, Ok(Outcome::Decided(_))), "{outcome:?}");
+    let log = fs::read_to_string(world.log.path()).expect("the log");
+    let row = log.lines().next().expect("one row");
+    assert!(
+        row.len() < MAX_ROW_BYTES,
+        "{} bytes with the newline",
+        row.len() + 1
+    );
+}
+
+/// Puts a directory where the live log file goes, so the row cannot be appended.
+fn block_the_log(world: &World) {
+    fs::create_dir_all(world.log.path()).expect("a directory at the log's path");
+}
+
+#[test]
+fn a_row_that_cannot_be_written_is_handed_back_with_the_answer() {
+    let world = World::configured();
+    block_the_log(&world);
+
+    let asked = world
+        .ask_keeping(
+            &world.question(Point::D1, &[]),
+            "rm -r x",
+            &FakeEndpoint::answering(&yes(0.95)),
+        )
+        .expect("asked");
+
+    let Outcome::Decided(decision) = asked.outcome else {
+        panic!("answered: {:?}", asked.outcome);
+    };
+    assert_eq!(decision.action, "deny", "the answer stands");
+    assert!(
+        matches!(asked.unrecorded, Some(LogError::NotAFile { .. })),
+        "{:?}",
+        asked.unrecorded
+    );
+}
+
+#[test]
+fn ask_still_fails_when_the_row_cannot_be_written() {
+    let world = World::configured();
+    block_the_log(&world);
+
+    let outcome = world.ask(
+        &world.question(Point::D1, &[]),
+        &FakeEndpoint::answering(&yes(0.95)),
+    );
+
+    assert!(
+        matches!(outcome, Err(AskError::Log(LogError::NotAFile { .. }))),
+        "{outcome:?}"
+    );
 }

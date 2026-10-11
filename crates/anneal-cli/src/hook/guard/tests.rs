@@ -205,7 +205,7 @@ fn the_fallback_allows_what_the_denylist_leaves_undecided() {
     assert_eq!(
         Fallback::default().decide(),
         Decision::Allow,
-        "until Clef D1 (#30) plugs in"
+        "the denylist's undecided commands are allowed unless enforced Clef D1 decides otherwise"
     );
 }
 

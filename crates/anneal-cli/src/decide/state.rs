@@ -147,13 +147,18 @@ fn cut(value: Value) -> Value {
 
 /// `text` trimmed, and cut to [`MAX_STRING_CHARS`] characters plus `…` when longer.
 fn cut_text(text: &str) -> String {
-    let trimmed = text.trim();
-    match trimmed.char_indices().nth(MAX_STRING_CHARS) {
+    cut_chars(text.trim(), MAX_STRING_CHARS)
+}
+
+/// `text` cut to `max` characters, at a char boundary, plus `…` when it was longer. Shared with
+/// the guard's redacted command, so both mark a cut the same way.
+pub(crate) fn cut_chars(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
         Some((end, _)) => {
-            let kept = trimmed.get(..end).unwrap_or(trimmed);
+            let kept = text.get(..end).unwrap_or(text);
             format!("{kept}…")
         }
-        None => trimmed.to_owned(),
+        None => text.to_owned(),
     }
 }
 
