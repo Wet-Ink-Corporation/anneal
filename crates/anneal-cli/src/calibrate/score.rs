@@ -188,10 +188,64 @@ pub(crate) fn expected_cost(samples: &[Sample], costs: Costs, threshold: f64) ->
     (n > 0).then(|| f64::from(total_cost(samples, costs, threshold)) / f64::from(n))
 }
 
-/// The observed probability, strictly below `ceiling` when there is one, whose threshold has
-/// the least total cost; a tie goes to the higher threshold, which acts on fewer decisions.
-/// `None` when no observed probability is below the ceiling (or there are no samples).
-pub(crate) fn propose(samples: &[Sample], costs: Costs, ceiling: Option<f64>) -> Option<Proposal> {
+/// The threshold to propose in place of `current`: the cheapest candidate, but only when it
+/// costs strictly less than `current`; otherwise `current` itself, with its cost. `None` only
+/// for no samples.
+///
+/// The candidates stay strictly below `ceiling` (the next band up), so the bands stay strictly
+/// descending: each distinct observed probability, and the midpoint between the highest
+/// observed probability under the ceiling and the ceiling (1.0 without one), which acts on
+/// none of them. Among candidates a tie goes to the higher threshold, which acts on fewer
+/// decisions.
+pub(crate) fn propose(
+    samples: &[Sample],
+    costs: Costs,
+    current: f64,
+    ceiling: Option<f64>,
+) -> Option<Proposal> {
+    if samples.is_empty() {
+        return None;
+    }
+    let current = Proposal {
+        threshold: current,
+        total_cost: total_cost(samples, costs, current),
+    };
+    let candidates = [
+        cheapest_observed(samples, costs, ceiling),
+        above_all(samples, costs, ceiling),
+    ];
+    let best = candidates.into_iter().flatten().reduce(|best, next| {
+        let cheaper = next.total_cost < best.total_cost;
+        let tie_and_higher = next.total_cost == best.total_cost && next.threshold > best.threshold;
+        if cheaper || tie_and_higher {
+            next
+        } else {
+            best
+        }
+    });
+    Some(
+        best.filter(|best| best.total_cost < current.total_cost)
+            .unwrap_or(current),
+    )
+}
+
+/// The candidate that acts on no observed probability under the ceiling.
+fn above_all(samples: &[Sample], costs: Costs, ceiling: Option<f64>) -> Option<Proposal> {
+    let upper = ceiling.unwrap_or(1.0);
+    let highest = samples
+        .iter()
+        .map(|sample| sample.probability)
+        .filter(|probability| *probability < upper)
+        .max_by(f64::total_cmp)?;
+    let threshold = f64::midpoint(highest, upper);
+    (highest < threshold && threshold < upper).then(|| Proposal {
+        threshold,
+        total_cost: total_cost(samples, costs, threshold),
+    })
+}
+
+/// The observed probability under the ceiling with the least total cost, ties to the higher.
+fn cheapest_observed(samples: &[Sample], costs: Costs, ceiling: Option<f64>) -> Option<Proposal> {
     let mut sorted = samples.to_vec();
     sorted.sort_by(|a, b| a.probability.total_cmp(&b.probability));
     let all = Tally::of(&sorted);

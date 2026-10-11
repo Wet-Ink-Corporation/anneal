@@ -247,6 +247,9 @@ fn write_question<E: Write>(question: &QuestionReport<'_>, err: &mut E) -> io::R
         .map_or_else(|| "-".to_owned(), |rate| format!("{:.0}%", rate * 100.0));
     let threshold = &question.threshold;
     let proposal = match (threshold.current, threshold.proposed, threshold.no_proposal) {
+        (Some(current), Some(proposed), _) if current.total_cmp(&proposed).is_eq() => {
+            format!("; threshold {current} kept (nothing cheaper)")
+        }
         (Some(current), Some(proposed), _) => format!("; threshold {current} -> {proposed}"),
         (Some(current), None, Some(why)) => {
             format!("; threshold {current}, no proposal ({})", why.as_str())

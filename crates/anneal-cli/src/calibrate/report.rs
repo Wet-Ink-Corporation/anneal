@@ -56,9 +56,6 @@ pub(crate) enum NoProposal {
     /// No decision of the question has a usable label.
     #[serde(rename = "no_labels")]
     Unlabelled,
-    /// No labelled probability is below the next band up.
-    #[serde(rename = "no_candidate")]
-    AboveCeiling,
 }
 
 impl Verdict {
@@ -88,7 +85,6 @@ impl NoProposal {
         match self {
             Self::Bandless => "no_bands",
             Self::Unlabelled => "no_labels",
-            Self::AboveCeiling => "no_candidate",
         }
     }
 }
@@ -357,12 +353,10 @@ fn threshold_report<'t>(
     };
     let ceiling = higher.last().map(Band::at_least);
     let current = lowest.at_least();
-    let proposal = score::propose(samples, costs, ceiling);
-    let no_proposal = match proposal {
-        Some(_) => None,
-        None if samples.is_empty() => Some(NoProposal::Unlabelled),
-        None => Some(NoProposal::AboveCeiling),
-    };
+    // `propose` is `None` only without labelled samples; otherwise it is the current value
+    // unless a candidate is strictly cheaper.
+    let proposal = score::propose(samples, costs, current, ceiling);
+    let no_proposal = proposal.is_none().then_some(NoProposal::Unlabelled);
     ThresholdReport {
         band: Some(lowest.action()),
         pointer: Some(format!(

@@ -12,14 +12,19 @@ makes the edit.
 The decision log `anneal decide` writes (`docs/decide.md`):
 `<anneal home>/decisions/decisions.4.jsonl` down to `decisions.1.jsonl`, then
 `decisions.jsonl`, read oldest first. The anneal home is `$ANNEAL_HOME`, else `~/.anneal`, as
-`decide` resolves it. Each file must be a regular file of at most 16 MiB, the size at which
-`decide` rotates it; a missing file is skipped.
+`decide` resolves it. Each file must be a regular file; a missing file is skipped.
+
+`decide` rotates the live file at 16 MiB, but it appends without a lock. Concurrent calls can
+each pass its size check and leave the live file a few rows past 16 MiB. So `calibrate` reads
+a file of up to 16 MiB plus 64 rows of decide's 8 KiB row cap (16.5 MiB in all). Nothing
+`decide` writes is larger than that, so a larger file is an error (exit 70), never cut short.
 
 Rows are read tolerantly, so fields a newer `decide` adds are ignored. Lines are handled as
 follows:
 
 - A line that is not a decision or label row, or a probability outside 0..=1, is counted in
-  `data.skipped_rows`. One torn line does not stop calibration.
+  `data.skipped_rows`. One torn line does not stop calibration. A probability of `-0.0` is
+  read as `0.0`, so it sorts and bins with `0.0`.
 - A decision with a probability is **answered**; one without (unreachable, timed out, bad
   response) is counted as `unanswered`.
 - A label row attaches to the decision with its `id`. When an id has several labels, the last
@@ -94,13 +99,20 @@ Which side is which depends on the point:
 | D1 guard, D2 orchestrate, D5 verify, D7 grill | p >= t | a positive below t: let through | a negative at or above t: asked or reviewed for nothing |
 | D3 route, D4 completeness, D6 ruled-before | p >= t | a negative at or above t: a wrong hint, an incomplete section passed, the wrong ruling surfaced | a positive below t: help withheld, a stop blocked for nothing |
 
-The expected cost of t is its total cost divided by the labelled count. The candidates are the
-distinct labelled probabilities, kept only when they are strictly below the next band up, so
-the bands stay strictly descending (for D1 that means below deny's 0.9). The proposal is the
-candidate with the least total cost; a tie goes to the higher threshold, which acts on fewer
-decisions. There is no proposal for a rule without bands (`no_bands`, D3's size score), with
-no labelled decisions (`no_labels`), or when no labelled probability is below the ceiling
-(`no_candidate`).
+The expected cost of t is its total cost divided by the labelled count. The candidates are:
+
+- the current threshold;
+- each distinct labelled probability strictly below the next band up, so the bands stay
+  strictly descending (for D1 that means below deny's 0.9);
+- one threshold above every labelled probability below the next band: halfway between the
+  highest of them and the next band (or 1.0 for the top band), so it acts on none of them.
+
+The cheapest of the new candidates is proposed only when its total cost is strictly less than
+the current threshold's. A tie between new candidates goes to the higher threshold, which acts
+on fewer decisions. Otherwise `proposed` is the current value, and there is no apply step: a
+proposal never costs more than leaving the threshold alone. There is no proposal (`proposed`
+is `null`) for a rule without bands (`no_bands`, D3's size score) or with no labelled
+decisions (`no_labels`).
 
 The costs are constants. The thresholds file is read strictly (`docs/decide.md`), so per-point
 costs there would change its schema. That is a follow-up if the 5:1 ratio turns out wrong for
@@ -117,8 +129,9 @@ labelled decisions (p, o) are (0.1, 0), (0.3, 1), (0.8, 1), (0.95, 0) and (1.0, 
   [0.8, 0.9) holds 1, frequency 1. [0.9, 1.0] holds 2, mean probability 0.975, frequency 0.5.
 - **Current cost.** At the current 0.4, the decision at 0.3 is a false accept (5) and the one
   at 0.95 is a needless ask (1): 6 / 5 = 1.2.
-- **Proposal.** The candidates below 0.9 cost 2 (0.1), 1 (0.3) and 6 (0.8). The proposal is
-  0.3, at 1 / 5 = 0.2.
+- **Proposal.** The candidates cost 6 (the current 0.4), 2 (0.1), 1 (0.3), 6 (0.8) and 11
+  (0.85, halfway from 0.8 to 0.9). The proposal is 0.3, at 1 / 5 = 0.2, strictly cheaper
+  than the current threshold.
 
 ## Output
 
@@ -134,9 +147,14 @@ With `--point`, `points` and `apply` hold that point only.
 
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
-proposed, and the reasons. Then it gives the proposals file and each manual step. Errors are
-one `ERROR` line as for every command (exit 70 for a log, thresholds or proposals file that
-cannot be read or written).
+proposed (or "kept (nothing cheaper)"), and the reasons. Then it gives the proposals file and
+each manual step. Errors are one `ERROR` line as for every command (exit 70 for a log,
+thresholds or proposals file that cannot be read or written, or a log file over 16.5 MiB).
+
+The summary is best effort. It is written and flushed only after the envelope, which already
+says `ok: true` and holds everything the summary repeats. If stderr refuses the summary or its
+flush, the run still exits 0. Nothing else is written then: stderr is the stream that failed,
+and stdout already holds its one envelope.
 
 ### The proposal and how to apply it
 

@@ -95,8 +95,9 @@ fn expected_cost_weighs_a_false_accept_5_and_a_needless_ask_1() {
 
 #[test]
 fn the_proposal_is_the_cheapest_observed_probability_below_the_next_band() {
-    // Candidates under 0.9: 0.1 costs 2 (two needless asks), 0.3 costs 1, 0.8 costs 6.
-    let proposal = propose(&hand_set(), D1_COSTS, Some(0.9));
+    // Candidates under 0.9: 0.1 costs 2 (two needless asks), 0.3 costs 1, 0.8 costs 6, the
+    // current 0.4 costs 6, and above 0.8 (0.85) costs 5 + 5 + 1.
+    let proposal = propose(&hand_set(), D1_COSTS, 0.4, Some(0.9));
 
     assert_eq!(
         proposal,
@@ -114,7 +115,7 @@ fn a_false_accept_above_the_threshold_flips_which_errors_cost_5() {
     let costs = Costs::new(FalseAccept::AtOrAboveThreshold);
 
     let at_0_95 = expected_cost(&hand_set(), costs, 0.95).expect("five samples");
-    let proposal = propose(&hand_set(), costs, None);
+    let proposal = propose(&hand_set(), costs, 0.95, None);
 
     assert!(close(at_0_95, 7.0 / 5.0), "{at_0_95}");
     // 1.0 acts only on 1.0 (yes): misses 0.3 and 0.8 cost 1 each, total 2.
@@ -134,7 +135,8 @@ fn a_tie_goes_to_the_higher_threshold() {
     let mut samples = vec![Sample::new(0.2, true), Sample::new(0.6, true)];
     samples.extend([Sample::new(0.25, false); 5]);
 
-    let proposal = propose(&samples, D1_COSTS, None);
+    // The current 0.25 costs 10; above every sample (0.8) both positives are let through.
+    let proposal = propose(&samples, D1_COSTS, 0.25, None);
 
     assert_eq!(
         proposal,
@@ -146,11 +148,48 @@ fn a_tie_goes_to_the_higher_threshold() {
 }
 
 #[test]
-fn no_samples_or_no_candidate_below_the_ceiling_proposes_nothing() {
-    assert_eq!(propose(&[], D1_COSTS, None), None, "no samples");
+fn no_samples_proposes_nothing_and_no_candidate_below_the_ceiling_keeps_the_current() {
+    assert_eq!(propose(&[], D1_COSTS, 0.4, None), None, "no samples");
+    // 0.95 is not below the next band, and no threshold under 0.9 changes anything: 0.4 stays.
     assert_eq!(
-        propose(&[Sample::new(0.95, true)], D1_COSTS, Some(0.9)),
-        None,
-        "0.95 is not below the next band"
+        propose(&[Sample::new(0.95, true)], D1_COSTS, 0.4, Some(0.9)),
+        Some(Proposal {
+            threshold: 0.4,
+            total_cost: 0
+        }),
     );
+}
+
+/// The review's repro: D1 decisions at 0.1, 0.15 and 0.2, all labelled no.
+fn all_no_below_the_band() -> Vec<Sample> {
+    [0.1, 0.15, 0.2]
+        .into_iter()
+        .map(|probability| Sample::new(probability, false))
+        .collect()
+}
+
+#[test]
+fn a_proposal_never_costs_more_than_the_current_threshold() {
+    // The current 0.4 asks nothing needlessly (0); every observed probability would (1 to 3).
+    let proposal = propose(&all_no_below_the_band(), D1_COSTS, 0.4, Some(0.9));
+
+    assert_eq!(
+        proposal,
+        Some(Proposal {
+            threshold: 0.4,
+            total_cost: 0
+        }),
+        "a tie with the current threshold keeps it"
+    );
+}
+
+#[test]
+fn a_threshold_above_every_labelled_probability_is_a_candidate() {
+    // From a current 0.1 (three needless asks), acting on none below the 0.9 band costs 0:
+    // the candidate is halfway between the highest labelled 0.2 and the ceiling.
+    let proposal =
+        propose(&all_no_below_the_band(), D1_COSTS, 0.1, Some(0.9)).expect("three samples");
+
+    assert!(close(proposal.threshold, 0.55), "{proposal:?}");
+    assert_eq!(proposal.total_cost, 0);
 }

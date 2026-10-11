@@ -38,7 +38,7 @@ use crate::paths;
 use output::Calibration;
 
 /// The proposals file inside the decision log's directory.
-pub const PROPOSALS_FILE: &str = "proposals.json";
+pub(crate) const PROPOSALS_FILE: &str = "proposals.json";
 
 /// `anneal calibrate`.
 #[derive(Debug, Args)]
@@ -67,6 +67,14 @@ pub enum CalibrateError {
     /// A decision log file could not be read.
     #[error("reading the decision log")]
     Read(#[source] BaselineError),
+    /// A decision log file is larger than any `decide` writes.
+    #[error("{path} is larger than {cap} bytes", path = path.display())]
+    TooLarge {
+        /// The file.
+        path: PathBuf,
+        /// The most read.
+        cap: u64,
+    },
     /// The thresholds file could not be read.
     #[error("reading the thresholds")]
     Thresholds(#[source] DecideError),
@@ -80,13 +88,16 @@ impl CalibrateError {
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
-            Self::Read(_) | Self::Thresholds(_) | Self::Proposals(_) => exit_codes::INTERNAL,
+            Self::Read(_) | Self::TooLarge { .. } | Self::Thresholds(_) | Self::Proposals(_) => {
+                exit_codes::INTERNAL
+            }
         }
     }
 }
 
 /// Runs `anneal calibrate` with `env`: the proposals file, then the envelope on `out` (flushed),
-/// then the summary on `err`, so the summary is written only for a run that succeeded.
+/// then the summary on `err` (flushed), so the summary is written only for a run that
+/// succeeded. The summary is best effort: a summary stderr refuses leaves the exit code 0.
 pub(crate) fn run<O, E, L>(
     args: &CalibrateArgs,
     env: &CalibrateEnv<'_, L>,
@@ -121,8 +132,16 @@ where
     let selected = |point: Point| args.point.is_none_or(|only| only == point);
     let code = output::emit(&calibration, selected, out).map_err(CliError::Output)?;
     out.flush().map_err(CliError::Output)?;
-    output::write_summary(&calibration, selected, err).map_err(CliError::Output)?;
-    Ok(code)
+    let summary =
+        output::write_summary(&calibration, selected, &mut *err).and_then(|()| err.flush());
+    match summary {
+        Ok(()) => Ok(code),
+        // Best effort, by design (docs/calibrate.md): the summary repeats the envelope, which
+        // is already on stdout with `ok: true`, so the exit code stays the envelope's. Nothing
+        // is left to carry this failure: stderr is the stream that refused it, and stdout
+        // holds exactly one envelope.
+        Err(_unreportable) => Ok(code),
+    }
 }
 
 #[cfg(test)]

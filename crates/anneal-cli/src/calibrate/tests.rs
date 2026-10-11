@@ -2,13 +2,20 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTimeError};
 
 use clap::Parser;
 use serde_json::{Value, json};
 
 use super::{CalibrateArgs, CalibrateEnv, run};
 use crate::cli::{Cli, Command};
+use crate::decide::{
+    self, DecideEnv,
+    clock::Clock,
+    transport::{ClefRequest, Transport, TransportError},
+};
 use crate::error::CliError;
 use crate::exit_codes::Code;
 
@@ -32,6 +39,21 @@ struct Ran {
 
 /// Runs `anneal calibrate <words>` with `home` as the anneal home and no plugin root.
 fn calibrate(home: &Path, words: &[&str]) -> Ran {
+    let mut err = Vec::new();
+    let (code, envelope) = calibrate_into(home, words, &mut err);
+    Ran {
+        code,
+        envelope,
+        stderr: String::from_utf8(err).expect("the summary is UTF-8"),
+    }
+}
+
+/// As [`calibrate`], with stderr going to `err`; returns the exit code and the envelope.
+fn calibrate_into<E: Write>(
+    home: &Path,
+    words: &[&str],
+    err: &mut E,
+) -> (Result<u8, CliError>, Value) {
     let env = CalibrateEnv {
         cwd: home,
         // The lookup hands out an owned value per call, as `std::env::var_os` does.
@@ -40,17 +62,45 @@ fn calibrate(home: &Path, words: &[&str]) -> Ran {
         },
     };
     let mut out = Vec::new();
-    let mut err = Vec::new();
-    let code = run(&args(words), &env, &mut out, &mut err).map(Code::value);
+    let code = run(&args(words), &env, &mut out, err).map(Code::value);
     let envelope = if out.is_empty() {
         Value::Null
     } else {
         serde_json::from_slice(&out).expect("the envelope is JSON")
     };
-    Ran {
-        code,
-        envelope,
-        stderr: String::from_utf8(err).expect("the summary is UTF-8"),
+    (code, envelope)
+}
+
+/// A stderr that refuses every write and flush.
+struct ClosedStderr;
+
+impl Write for ClosedStderr {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::from(io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::from(io::ErrorKind::BrokenPipe))
+    }
+}
+
+/// A stderr that remembers whether it was flushed after its last write.
+#[derive(Default)]
+struct FlushedStderr {
+    bytes: Vec<u8>,
+    flushed: bool,
+}
+
+impl Write for FlushedStderr {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.flushed = false;
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushed = true;
+        Ok(())
     }
 }
 
@@ -69,7 +119,7 @@ fn label(id: &str, outcome: &str) -> Value {
     json!({"kind": "label", "id": id, "outcome": outcome, "ts_ms": 2})
 }
 
-fn write_log(home: &Path, file: &str, rows: &[Value]) -> std::io::Result<PathBuf> {
+fn write_log(home: &Path, file: &str, rows: &[Value]) -> io::Result<PathBuf> {
     let dir = home.join("decisions");
     fs::create_dir_all(&dir)?;
     let path = dir.join(file);
@@ -79,7 +129,7 @@ fn write_log(home: &Path, file: &str, rows: &[Value]) -> std::io::Result<PathBuf
 }
 
 /// The hand set as D1 decisions, labelled.
-fn hand_log(home: &Path) -> std::io::Result<()> {
+fn hand_log(home: &Path) -> io::Result<()> {
     let set = [
         (0.1, "defer", "no"),
         (0.3, "defer", "yes"),
@@ -97,7 +147,7 @@ fn hand_log(home: &Path) -> std::io::Result<()> {
 }
 
 /// `n` D7 decisions labelled exactly as predicted, none asking.
-fn perfect_d7(home: &Path, n: u32) -> std::io::Result<()> {
+fn perfect_d7(home: &Path, n: u32) -> io::Result<()> {
     let mut rows = Vec::new();
     for k in 0..n {
         let id = format!("d1-7-{k}");
@@ -189,7 +239,7 @@ fn an_eligible_point_gets_a_mode_step_and_nothing_is_applied() -> TestResult {
     let home = tempfile::tempdir()?;
     perfect_d7(home.path(), 50)?;
     let thresholds = home.path().join("clef-thresholds.json");
-    fs::write(&thresholds, crate::decide::thresholds::BUILT_IN)?;
+    fs::write(&thresholds, decide::thresholds::BUILT_IN)?;
     let before = fs::read(&thresholds)?;
 
     let ran = calibrate(
@@ -263,6 +313,117 @@ fn the_summary_on_stderr_names_each_verdict_and_where_the_proposal_is() -> TestR
             && line.contains("/points/D1/rules/noul/bands/1/at_least")),
         "{lines:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_stderr_that_refuses_the_summary_still_exits_0_after_the_ok_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+
+    let (code, envelope) = calibrate_into(home.path(), &[], &mut ClosedStderr);
+
+    assert_eq!(code.as_ref().ok(), Some(&0), "{code:?}");
+    assert_eq!(envelope["ok"], json!(true), "the one envelope stands");
+    Ok(())
+}
+
+#[test]
+fn the_summary_is_flushed() -> TestResult {
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+    let mut err = FlushedStderr::default();
+
+    let (code, _envelope) = calibrate_into(home.path(), &[], &mut err);
+
+    assert_eq!(code.as_ref().ok(), Some(&0), "{code:?}");
+    assert!(!err.bytes.is_empty(), "a summary is written");
+    assert!(err.flushed, "and flushed after its last write");
+    Ok(())
+}
+
+/// Answers every Clef request with `{"probabilities": {"yes": 0.95, "no": 0.05}}`.
+struct Answers;
+
+impl Transport for Answers {
+    fn send(&self, _request: &ClefRequest<'_>) -> Result<Vec<u8>, TransportError> {
+        let inner = json!({"probabilities": {"yes": 0.95, "no": 0.05}});
+        Ok(json!({"result": {"response": inner.to_string()}})
+            .to_string()
+            .into_bytes())
+    }
+}
+
+struct Fixed;
+
+impl Clock for Fixed {
+    fn unix_millis(&self) -> Result<u64, SystemTimeError> {
+        Ok(1_760_000_000_000)
+    }
+
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+
+/// Runs `anneal decide <words>` through decide's own write path, with `home` as the anneal
+/// home and Clef configured; returns the envelope.
+fn decide_in(home: &Path, words: &[&str]) -> Result<Value, Box<dyn std::error::Error>> {
+    let parsed = Cli::try_parse_from(["anneal", "decide"].iter().chain(words))?;
+    let Some(Command::Decide(decide_args)) = parsed.command else {
+        return Err("not decide".into());
+    };
+    let env = DecideEnv {
+        cwd: home,
+        lookup: |var: &str| -> Option<OsString> {
+            match var {
+                "ANNEAL_HOME" => Some(home.as_os_str().to_owned()),
+                "CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID" => Some("acct0123".into()),
+                "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN" => Some("token-value".into()),
+                _ => None,
+            }
+        },
+        transport: &Answers,
+        clock: &Fixed,
+    };
+    let mut out = Vec::new();
+    let code = decide::run(&decide_args, &env, &mut out)?;
+    assert_eq!(code.value(), 0, "decide succeeded");
+    Ok(serde_json::from_slice(&out)?)
+}
+
+#[test]
+fn a_decision_and_label_written_by_decide_are_calibrated() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let decided = decide_in(
+        home.path(),
+        &[
+            "--point",
+            "D1",
+            "--question",
+            "noul",
+            "--state",
+            r#"{"tool":"Bash"}"#,
+        ],
+    )?;
+    let id = decided["data"]["id"]
+        .as_str()
+        .ok_or("decide reports an id")?;
+    decide_in(home.path(), &["label", id, "yes"])?;
+
+    let ran = calibrate(home.path(), &["--point", "D1"]);
+
+    assert_eq!(ran.code.as_ref().ok(), Some(&0), "{:?}", ran.code);
+    assert_eq!(
+        ran.envelope["data"]["skipped_rows"],
+        json!(0),
+        "decide's rows read"
+    );
+    let noul = &point(&ran.envelope, "D1")["questions"][0];
+    assert_eq!((&noul["n"], &noul["labelled"]), (&json!(1), &json!(1)));
+    let brier = noul["brier"].as_f64().ok_or("a Brier score")?;
+    // One decision at 0.95, labelled yes: (0.95 - 1)^2.
+    assert!((brier - 0.0025).abs() < 1e-12, "{brier}");
     Ok(())
 }
 

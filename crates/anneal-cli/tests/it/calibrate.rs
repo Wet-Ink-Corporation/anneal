@@ -167,3 +167,45 @@ fn a_point_with_49_labelled_decisions_is_never_eligible_to_enforce() -> TestResu
     assert_eq!(d7["verdict"], json!("stay-shadow"), "49 is under 50");
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn the_current_threshold_is_kept_when_no_candidate_is_cheaper() -> TestResult {
+    // D1 decisions at 0.1, 0.15 and 0.2, all labelled no: the current 0.4 asks nothing
+    // needlessly, and every observed probability would.
+    let home = tempfile::tempdir()?;
+    let dir = home.path().join("decisions");
+    fs::create_dir_all(&dir)?;
+    let mut log = String::new();
+    for (k, probability) in [0.1, 0.15, 0.2].into_iter().enumerate() {
+        let id = format!("d1760000000000-1-{k}");
+        let decision = json!({
+            "kind": "decision", "id": id, "point": "D1", "question": "noul",
+            "probabilities": {"yes": probability, "no": 1.0 - probability},
+            "top": null, "probability": probability, "action": "defer",
+        });
+        let label = json!({"kind": "label", "id": id, "outcome": "no"});
+        writeln!(log, "{decision}\n{label}")?;
+    }
+    fs::write(dir.join("decisions.jsonl"), log)?;
+
+    let output = anneal(home.path())
+        .args(["calibrate", "--point", "D1"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let envelope = envelope(&output)?;
+    let threshold = &envelope["data"]["points"][0]["questions"][0]["threshold"];
+    assert_eq!(
+        (&threshold["current"], &threshold["proposed"]),
+        (&json!(0.4), &json!(0.4)),
+        "{threshold}"
+    );
+    assert_eq!(
+        threshold["proposed_expected_cost"],
+        json!(0.0),
+        "{threshold}"
+    );
+    assert_eq!(envelope["data"]["apply"], json!([]), "nothing to apply");
+    Ok(())
+}

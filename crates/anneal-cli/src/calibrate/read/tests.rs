@@ -2,10 +2,10 @@ use std::fs;
 
 use serde_json::{Value, json};
 
-use super::{Answered, read_log};
+use super::{Answered, HEADROOM_ROWS, MAX_LOG_FILE_BYTES, ROW_BYTES, read_log};
 use crate::baseline::BaselineError;
 use crate::calibrate::CalibrateError;
-use crate::decide::log::DecisionLog;
+use crate::decide::log::{DecisionLog, MAX_FILE_BYTES, MAX_ROW_BYTES};
 use crate::decide::point::{Point, Question};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -113,6 +113,27 @@ fn a_probability_outside_0_to_1_is_a_skipped_row() -> TestResult {
 }
 
 #[test]
+fn a_negative_zero_probability_is_read_as_zero() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let log = DecisionLog::in_home(home.path());
+    fs::create_dir_all(home.path().join("decisions"))?;
+    write_lines(
+        &log.path(),
+        &[decision("d1-1-0", Some(-0.0), Some("defer"))],
+        "",
+    )?;
+
+    let rows = read_log(&log)?;
+
+    let probability = rows.answered.first().expect("one answered row").probability;
+    assert!(
+        probability.total_cmp(&0.0).is_eq(),
+        "{probability:?} groups with 0.0 under total_cmp"
+    );
+    Ok(())
+}
+
+#[test]
 fn no_log_reads_as_no_rows() -> TestResult {
     let home = tempfile::tempdir()?;
 
@@ -137,6 +158,63 @@ fn a_directory_where_a_log_file_should_be_is_an_error() -> TestResult {
         matches!(
             result,
             Err(CalibrateError::Read(BaselineError::NotAFile { .. }))
+        ),
+        "{result:?}"
+    );
+    Ok(())
+}
+
+/// Writes a live log of exactly `size` bytes: one decision row, then blank lines.
+fn live_log_of(log: &DecisionLog, size: u64) -> TestResult {
+    fs::create_dir_all(log.dir())?;
+    let mut bytes = decision("d1-1-0", Some(0.5), Some("ask"))
+        .to_string()
+        .into_bytes();
+    bytes.push(b'\n');
+    bytes.resize(usize::try_from(size)?, b'\n');
+    fs::write(log.path(), bytes)?;
+    Ok(())
+}
+
+#[test]
+fn the_headroom_is_64_rows_of_decides_row_cap() {
+    assert_eq!(
+        u64::try_from(MAX_ROW_BYTES),
+        Ok(ROW_BYTES),
+        "decide's row cap"
+    );
+    assert_eq!(
+        MAX_LOG_FILE_BYTES,
+        MAX_FILE_BYTES + HEADROOM_ROWS * ROW_BYTES
+    );
+}
+
+#[test]
+fn a_live_file_just_past_the_rotation_size_is_still_read() -> TestResult {
+    // Unlocked concurrent appends can each pass decide's check and land past 16 MiB.
+    let home = tempfile::tempdir()?;
+    let log = DecisionLog::in_home(home.path());
+    live_log_of(&log, MAX_FILE_BYTES + 100 * 1024)?;
+
+    let rows = read_log(&log)?;
+
+    assert_eq!(rows.answered.len(), 1, "the row before the padding is read");
+    Ok(())
+}
+
+#[test]
+fn a_file_past_the_headroom_is_an_error() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let log = DecisionLog::in_home(home.path());
+    live_log_of(&log, MAX_LOG_FILE_BYTES + 1)?;
+
+    let result = read_log(&log);
+
+    assert!(
+        matches!(
+            &result,
+            Err(CalibrateError::TooLarge { path, cap })
+                if *path == log.path() && *cap == MAX_LOG_FILE_BYTES
         ),
         "{result:?}"
     );

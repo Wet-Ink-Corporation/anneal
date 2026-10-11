@@ -21,7 +21,8 @@ D1 (noul), worked by hand:
   [0.8, 0.9) 1, 0.8, 1; [0.9, 1.0] 2, 0.975, 0.5; the rest empty.
 - Expected cost (a false accept, a positive below the threshold, costs 5; a needless ask 1):
   at the current 0.4, 0.3 is let through (5) and 0.95 is a needless ask (1): 6 / 5 = 1.2.
-  Candidates below the next band (0.9): 0.1 costs 2, 0.3 costs 1, 0.8 costs 6. Proposed: 0.3,
-  1 / 5 = 0.2.
+  Candidates below the next band (0.9): the current 0.4 costs 6, 0.1 costs 2, 0.3 costs 1,
+  0.8 costs 6, and 0.85 (halfway from 0.8 to 0.9, above every labelled probability below the
+  band) costs 11. Proposed: 0.3, 1 / 5 = 0.2, strictly cheaper than the current 0.4.
 - Verdict: stay-shadow (too few labelled, Brier above 0.15, ask rate at or above 20%).
 - One label (`d1760000000000-9-9`) matches no decision; the torn last line is a skipped row.

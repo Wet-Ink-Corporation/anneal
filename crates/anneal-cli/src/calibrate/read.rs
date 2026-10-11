@@ -1,21 +1,36 @@
 //! Reading the decision log `anneal decide` writes: every file, oldest first, into the
 //! answered decisions, the unanswered counts and the latest label of each id.
 //!
-//! Each file is read whole through [`baseline::read_state_bytes`]: a regular file of at most
-//! 16 MiB, the size at which `decide` rotates it. Rows are read tolerantly (unknown fields
-//! ignored), as a newer `decide` may add some; a line that is not a decision or label row this
-//! build reads, or a probability outside 0..=1, is counted in `skipped_rows`, not dropped
-//! silently and not fatal, since one torn line must not stop calibration.
+//! Each file is read whole, and must be a regular file (checked by `symlink_metadata` before
+//! it is opened) of at most [`MAX_LOG_FILE_BYTES`]: decide's 16 MiB rotation size plus
+//! [`HEADROOM_ROWS`] rows of its 8 KiB row cap. `decide` appends without a lock, so concurrent
+//! calls can each pass its size check and leave the live file a few rows past 16 MiB; a file
+//! larger still was not written by `decide` and is an error. Rows are read tolerantly (unknown
+//! fields ignored), as a newer `decide` may add some; a line that is not a decision or label
+//! row this build reads, or a probability outside 0..=1, is counted in `skipped_rows`, not
+//! dropped silently and not fatal, since one torn line must not stop calibration.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::baseline;
+use crate::baseline::BaselineError;
 use crate::calibrate::CalibrateError;
-use crate::decide::log::DecisionLog;
+use crate::decide::log::{DecisionLog, MAX_FILE_BYTES};
 use crate::decide::point::{Point, Question};
+
+/// Decide's row cap (`decide::log::MAX_ROW_BYTES`) as a `u64`; a test keeps them equal.
+pub(crate) const ROW_BYTES: u64 = 8 * 1024;
+
+/// How many rows past the rotation size a live file may hold: concurrent appends that each
+/// passed decide's size check before any of them landed.
+pub(crate) const HEADROOM_ROWS: u64 = 64;
+
+/// The largest log file read: the rotation size plus the headroom (16.5 MiB).
+pub(crate) const MAX_LOG_FILE_BYTES: u64 = MAX_FILE_BYTES + HEADROOM_ROWS * ROW_BYTES;
 
 /// An answered decision: one with a probability.
 #[derive(Debug, Clone, PartialEq)]
@@ -79,18 +94,57 @@ struct LabelDto {
 /// Reads every file of `log`, oldest first.
 ///
 /// # Errors
-/// [`CalibrateError::Read`] when a file cannot be read, is not a regular file or is over
-/// 16 MiB.
+/// [`CalibrateError::Read`] when a file cannot be read or is not a regular file;
+/// [`CalibrateError::TooLarge`] when one is over [`MAX_LOG_FILE_BYTES`].
 pub(crate) fn read_log(log: &DecisionLog) -> Result<LogRows, CalibrateError> {
     let mut rows = LogRows::default();
     for path in log.files() {
-        let Some(bytes) = baseline::read_state_bytes(&path).map_err(CalibrateError::Read)? else {
+        let Some(bytes) = read_file(&path)? else {
             continue;
         };
         read_into(&bytes, &mut rows);
         rows.files.push(path);
     }
     Ok(rows)
+}
+
+/// The whole of the log file at `path`, or `None` when there is none.
+fn read_file(path: &Path) -> Result<Option<Vec<u8>>, CalibrateError> {
+    let io_error = |source| {
+        CalibrateError::Read(BaselineError::Io {
+            op: "reading",
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_other) => {
+            return Err(CalibrateError::Read(BaselineError::NotAFile {
+                path: path.to_path_buf(),
+            }));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io_error(source)),
+    }
+    let file = match File::open(path) {
+        Ok(file) => file,
+        // Rotated away since its metadata was read.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io_error(source)),
+    };
+    let mut bytes = Vec::new();
+    // One byte past the cap, so a file over it is reported, never silently cut.
+    file.take(MAX_LOG_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(io_error)?;
+    if u64::try_from(bytes.len()).map_or(true, |len| len > MAX_LOG_FILE_BYTES) {
+        return Err(CalibrateError::TooLarge {
+            path: path.to_path_buf(),
+            cap: MAX_LOG_FILE_BYTES,
+        });
+    }
+    Ok(Some(bytes))
 }
 
 /// Adds the rows of one file to `rows`.
@@ -122,6 +176,9 @@ fn add_decision(decision: DecisionDto, rows: &mut LogRows) {
         rows.skipped_rows = rows.skipped_rows.saturating_add(1);
         return;
     }
+    // `-0.0` passes the range check but sorts apart from `0.0` under `total_cmp`; adding
+    // `0.0` turns it into `0.0` and leaves every other value as it is.
+    let probability = probability + 0.0;
     rows.answered.push(Answered {
         id: decision.id,
         point: decision.point,
