@@ -311,6 +311,11 @@ fn a_floor_guard_that_cannot_run_is_a_note_not_a_block() -> TestResult {
     Ok(())
 }
 
+/// `docs/notes.md:1` as `lint terms` names it: with the platform's path separator.
+fn notes_line() -> String {
+    format!("{}:1", Path::new("docs").join("notes.md").display())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn an_avoided_term_in_a_changed_file_is_a_note() -> TestResult {
@@ -323,7 +328,7 @@ fn an_avoided_term_in_a_changed_file_is_a_note() -> TestResult {
     assert_eq!(decision.get("decision"), None, "{decision}");
     let notes = context(&decision);
     assert!(
-        notes.contains("docs/notes.md:1") && notes.contains("memo"),
+        notes.contains(&notes_line()) && notes.contains("memo"),
         "names the file, line and term: {notes}"
     );
     Ok(())
@@ -365,7 +370,7 @@ fn input_that_lists_no_calls_takes_the_changed_files_from_git() -> TestResult {
     }))?)?;
 
     assert!(
-        context(&decision).contains("docs/notes.md:1"),
+        context(&decision).contains(&notes_line()),
         "the untracked file was scanned: {decision}"
     );
     Ok(())
