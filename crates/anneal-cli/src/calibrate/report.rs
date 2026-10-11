@@ -287,9 +287,10 @@ fn point_report<'t>(
             Some(question_report(key, rule, group, unanswered))
         })
         .collect();
+    // A bandless question is record-only: it never acts, so its rows do not hold the point back.
     let mut active = questions
         .iter()
-        .filter(|question| question.n > 0)
+        .filter(|question| question.n > 0 && question.threshold.band.is_some())
         .peekable();
     let eligible = active.peek().is_some()
         && active.all(|question| question.verdict == Verdict::EligibleToEnforce);
