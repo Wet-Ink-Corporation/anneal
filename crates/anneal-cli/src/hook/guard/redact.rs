@@ -489,8 +489,9 @@ fn skip_escape(text: &str, pos: usize) -> usize {
 }
 
 /// `NAME=`, `NAME+=`, `NAME[…]=` or `NAME[…]+=` at the start of `word`, through the `=`, when
-/// `NAME` is an environment-style name or holds a credential word.
-fn secret_assignment_prefix(word: &str) -> Option<&str> {
+/// `NAME` is an environment-style name or holds a credential word. The prompt hooks
+/// (`hook::prompt`) apply the same rule to the words of a prompt.
+pub(crate) fn secret_assignment_prefix(word: &str) -> Option<&str> {
     let name_len = word
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(word.len());

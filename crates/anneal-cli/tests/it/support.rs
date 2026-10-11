@@ -38,8 +38,8 @@ pub(crate) fn git(dir: &Path, args: &[&str]) {
 }
 
 /// `anneal` run in `cwd`, isolated from the caller's repository, ledger overrides, Clef
-/// configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*` Clef variables are
-/// removed, and `ANNEAL_HOME` is `.anneal-home` under `cwd` when `cwd` is a temporary
+/// configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*` Clef variables and
+/// `CLAUDE_PLUGIN_ROOT` (a hook running the tests may set it to another plugin) are removed, and `ANNEAL_HOME` is `.anneal-home` under `cwd` when `cwd` is a temporary
 /// directory (else under the system's temporary directory), so no test writes to `~/.anneal`.
 /// A test that needs either sets it again.
 pub(crate) fn anneal_in(cwd: &Path) -> Command {
@@ -57,6 +57,7 @@ pub(crate) fn anneal_in(cwd: &Path) -> Command {
         .env_remove("CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID")
         .env_remove("CLAUDE_PLUGIN_OPTION_CF_API_TOKEN")
         .env_remove("CLAUDE_PLUGIN_OPTION_CLEF_MODE")
+        .env_remove("CLAUDE_PLUGIN_ROOT")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")

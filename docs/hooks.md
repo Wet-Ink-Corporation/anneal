@@ -269,3 +269,138 @@ writes nothing unless something failed (one `ERROR` line as `systemMessage`).
   from its first to its last `timestamp`, and `tokens` summed over its assistant messages, each
   message's `usage` counted once although every content-block line repeats it. A longer
   transcript is recorded without them.
+
+## `route` and `ruled-before` (UserPromptSubmit)
+
+No matcher (`UserPromptSubmit` takes none), `timeout` 5 s each, `onFailure: "continue"`,
+arguments `hook route` and `hook ruled-before`. Both read Claude Code's `UserPromptSubmit`
+input (at most 4 MiB; they use `session_id`, `transcript_path`, `cwd` and `prompt`) and ask
+Clef one decision point each, in process, through `decide`'s own code (`decide::in_process`
+and `client::ask_recording`, as the guard's D1 does): the same configuration
+(`docs/decide.md`), thresholds file, decision log, modes and 50-decision shadow period as
+`anneal decide`, without starting a second process.
+
+Shared behaviour:
+
+- **Clef off** (no account, or the point's mode `off`): the hook does nothing. It writes
+  nothing, reads no file and creates nothing in the anneal home.
+- **Shadow** (the default, and every point's first 50 answered decisions even when `enforce`
+  is configured): the question is asked and logged, and nothing is injected.
+- **Enforce**: at most one line of `additionalContext` per hook per prompt, and only when the
+  point's rule gives its acting action (`hint`, `surface`). The fixed wording comes first and
+  the volatile part (skill, ruling) last.
+- **No answer** (unreachable, timed out, bad response): the row is logged and the hook is
+  silent. The binary has no HTTP client yet, so today every call is unreachable. Each call is
+  bounded by `decide`'s 2 s timeout.
+- **Not logged**: an answer whose row (or answered count) could not be written is never acted
+  on, in enforce mode too: nothing is injected, route keeps nothing to label, and the failure is
+  the hook's `ERROR` line. Unlike the guard, a prompt hook has no safe action to keep, so silence
+  is the fail-open choice.
+- **Time**: each hook measures a 4.5 s budget from its start on the monotonic clock (the
+  `hooks.json` timeout is 5 s). Clef is asked only while its whole 2 s timeout fits in what is
+  left; otherwise nothing is asked and the hook writes `ERROR <hook>: Clef was not asked: ...`.
+  `ruled-before` gives git at most 1 s to find the repository, and never the time Clef needs.
+- **The prompt sent** (as `{"input": <prompt>}` in the compact state) is whitespace-collapsed,
+  redacted, and cut to 1,024 characters (the compact state's own cap) with `…` marking a cut,
+  by `decide::state::cut_chars` as for the guard's command. Redaction shares the guard's rule
+  for assignments (`hook::guard::redact`): the value of a `NAME=value` (also `NAME+=`,
+  `NAME[i]=`), even behind punctuation such as a quote, whose name looks like an environment
+  variable or holds a credential word in any case (`token`, `password`, `passwd`, `secret`,
+  `apikey`, `api-key`, `api_key`, `credential`, `private-key`, `private_key`), becomes
+  `<redacted>`; a value that opens a quote (`'` or `"`) is redacted through the word that
+  closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
+  `DB_PASS=<redacted> then go`). Since a prompt is prose rather than shell, the guard's comment
+  and heredoc rules do not apply; instead obvious credentials are redacted whole, even inside
+  punctuation such as quotes or brackets: `sk-`, `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`, `xox[abps]-`, `glpat-` and `eyJ` prefixes, AWS access key ids, the word after
+  `Bearer`, and opaque words of 32 or more letters and digits mixed. This is a filter, not a secret scanner. The rows keep no `input`, only the state's
+  hash.
+- **Failures** that are not Clef's (a malformed `clef_mode`, account or token, an unreadable
+  thresholds file or log, an answer that could not be logged, an invalid ruling, unreadable
+  input, a spent budget) are one `ERROR <hook>: ...` line as `systemMessage`, and the prompt
+  goes on.
+
+### `route` (D3)
+
+It asks two questions at once, the size on a second, scoped thread, so together they take at
+most one 2 s timeout:
+
+- the **phase**, a `choice` over the phases of `plugin/playbooks/route.json` (built into the
+  binary), each with its entry skill:
+
+  | Phase | Entry skill |
+  |---|---|
+  | `define` | `grill` |
+  | `specify` | `spec` |
+  | `plan` | `plan` |
+  | `build` | `build` |
+  | `diagnose` | `diagnose` |
+  | `verify` | `verify` |
+  | `ship` | none until the `ship` skill lands |
+  | `answer` | none: a question or chat that needs no workflow |
+
+  A test keeps every entry skill a shipped `plugin/skills/<name>/SKILL.md` among the bootstrap
+  index's entry skills, and every shipped entry skill the entry of exactly one phase.
+- the **size**, a `score` read as the nearest of four levels, each with a depth: `trivial`
+  (direct), `small` (light), `medium` (standard), `large` (full). The size's rule only
+  records (`record`); it never acts on its own.
+
+When the phase's probability reaches 0.60 (`hint`), the point is in enforce mode and the phase
+has an entry skill, it injects:
+
+```text
+anneal route: load the `build` skill before acting (phase build, size medium, depth standard).
+```
+
+Without a size answer the size and depth are left out.
+
+**Outcome label.** Each answered phase decision is remembered in its session's own file,
+`route-pending/<sha256 of the session id>.json` beside the decision log (the decision id, its
+top phase and the transcript's length; at most 64 files, the oldest dropped). Sessions never
+share a file, so parallel sessions lose nothing, and the next prompt claims the file by an
+atomic rename before labelling, so a decision is labelled at most once. At the session's next prompt the
+hook reads what the transcript gained since then (at most 16 MiB) and labels the decision with
+`decide label`'s row: the top phase when its entry skill was invoked through the `Skill` tool
+(`build` or `anneal:build`), else the phase of the first entry skill invoked, else, with no
+entry skill invoked, the top phase when it has no skill and `answer` otherwise. So
+`anneal calibrate` scores the label as positive exactly when the hinted skill was invoked. Not
+labelled: a session's last decision, one whose transcript was rewritten in between (it is
+shorter, or no longer ends a line where it ended) or grew past the cap, and one whose file was
+dropped as the oldest. A slash command the human types is not a `Skill` tool call and does not count.
+
+### `ruled-before` (D6)
+
+It gathers the rulings of the repository around `cwd` (its git worktree root, found within
+1 s or what the budget can spare beside Clef's timeout, whichever is less, or `cwd` outside
+one):
+
+1. every ruling in `.out-of-scope/` (`rulings::list_within`, `docs/define.md`), by id, from
+   at most 4,096 directory entries and 256 ruling files, regular files only (a symlink is not
+   followed). An invalid ruling, or a store over either bound, fails the hook with an `ERROR`
+   line naming the file or directory, and nothing is asked;
+2. then the accepted weigh-in decision atoms in `.kb/_intake/decisions/*.md`, read from their
+   frontmatter alone: `weighin_item` (the `wi-` id, the option), `status` (only `accepted`
+   counts) and `title`, else `question`, as the summary. At most 4,096 directory entries are
+   looked at and 256 atoms read, 16 KiB of each. An atom that does not read or parse is
+   skipped, as is one a ruling already cites as its `weigh_in_ref`. No weigh-in binary is
+   needed; `weighin open --all --json` as a third source arrives with #37.
+
+An id must be a decide option (1 to 64 of `A-Z a-z 0-9 _ . : -`) and not `none`. At most 31
+rulings are offered, rulings first, then atoms, each in id order, with `none` last; summaries
+are cut to 120 bytes. With no rulings nothing is asked. The state is
+`{"input": <prompt>, "rulings": [{"id", "summary"}, ...]}`.
+
+When the top option is a ruling with probability 0.70 or more (`surface`) in enforce mode, it
+injects:
+
+```text
+anneal ruled-before: this was ruled on already; do not re-open it unless the human asks to: wi-a53271 (Which licence should anneal ship under: MIT OR Apache-2.0).
+```
+
+**Outcome label: not yet.** D6's outcome is a human override ("yes, re-open it"), and nothing
+in this story observes one deterministically. The design for the follow-up: when the hook
+surfaces a ruling it remembers the decision per session, as `route` does; at the next prompt a
+ruling-specific confirmation (an `AskUserQuestion` answer, or a `/anneal:reopen <id>` command
+that records `ruling_reopened` in the ledger) labels it `none` (overridden), and any other next
+prompt labels it with the ruling's id (it held). Until then D6 is labelled only by hand with
+`anneal decide label`.

@@ -297,10 +297,45 @@ fn a_point_is_eligible_only_when_every_question_with_decisions_is() {
     });
     let with_an_unlabelled_score = report_verdict(&thresholds, &rows, Point::D3);
 
+    // Since #31 the second value is EligibleToEnforce: D3's size score has no bands, so it only
+    // records, and a bandless question no longer holds the point back even with decisions.
     assert_eq!(
         (eligible, with_an_unlabelled_score),
-        (Verdict::EligibleToEnforce, Verdict::StayShadow),
-        "a score question without decisions does not hold D3 back; one with them does"
+        (Verdict::EligibleToEnforce, Verdict::EligibleToEnforce),
+        "a bandless score question does not hold D3 back, with or without decisions"
+    );
+}
+
+#[test]
+fn unlabelled_rows_of_a_bandless_question_do_not_hold_a_passing_point_back() {
+    let thresholds = thresholds();
+    let mut rows = LogRows::default();
+    for k in 0..50 {
+        let id = format!("d1-1-{k}");
+        rows.answered.push(choice(&id, Point::D3, 1.0, "plan"));
+        rows.labels.insert(id, "plan".to_owned());
+        // Route logs a size score beside every phase choice; D3's score rule has no bands.
+        rows.answered.push(Answered {
+            question: Question::Score,
+            top: None,
+            options: Vec::new(),
+            ..choice(&format!("d1-2-{k}"), Point::D3, 0.5, "plan")
+        });
+    }
+
+    let report = report(&thresholds, &rows);
+    let d3 = point_of(&report, Point::D3);
+
+    assert_eq!(d3.verdict, Verdict::EligibleToEnforce);
+    let score = d3
+        .questions
+        .iter()
+        .find(|question| question.question == Question::Score)
+        .expect("D3 reports its score question");
+    assert_eq!(
+        (score.n, score.verdict),
+        (50, Verdict::StayShadow),
+        "the size is still reported, just not counted toward the point"
     );
 }
 

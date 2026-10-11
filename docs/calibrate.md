@@ -67,9 +67,11 @@ Each point lists every question its thresholds define (D3 has `choice` and `scor
   `proposed`, `proposed_expected_cost` and `no_proposal` (why there is none).
 - `verdict` and `reasons`.
 
-A point's `verdict` is `eligible-to-enforce` only when it has decisions and every question
-with decisions is eligible. A question with no decisions, such as D3's size score, does not
-hold the point back.
+A point's `verdict` is `eligible-to-enforce` only when it has decisions on a question whose
+rule has bands and every such question with decisions is eligible. A question with no
+decisions does not hold the point back, and neither does a bandless question, such as D3's
+size score: it only records and never acts, so its own verdict is reported but not counted
+(the same questions `decide` counts toward the 50-decision shadow period).
 
 ### Verdict
 

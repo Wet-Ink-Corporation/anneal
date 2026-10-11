@@ -131,6 +131,16 @@ pub enum RulingError {
         /// What a valid value looks like.
         reason: &'static str,
     },
+    /// The store holds more than [`list_within`] looks at.
+    #[error("{dir}: more than {limit} {what}", dir = dir.display())]
+    TooMany {
+        /// The store's directory.
+        dir: PathBuf,
+        /// The limit passed.
+        limit: usize,
+        /// What was counted: `directory entries` or `ruling files`.
+        what: &'static str,
+    },
     /// Two rulings share an id.
     #[error(
         "{second}: id `{id}` is already used by {first}",
@@ -269,7 +279,33 @@ fn valid_date(value: &str) -> bool {
 /// [`RulingError::TooLarge`] or [`RulingError::NotUtf8`] for an unreadable ruling, the errors
 /// of [`parse`] for an invalid one, and [`RulingError::DuplicateId`] when two share an id.
 pub fn list(dir: &Path) -> Result<Vec<Ruling>, RulingError> {
-    let files = ruling_files(dir)?;
+    from_files(ruling_files(dir)?)
+}
+
+/// How much of a store [`list_within`] looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListLimits {
+    /// Most directory entries read, of any kind.
+    pub max_entries: usize,
+    /// Most ruling files read.
+    pub max_files: usize,
+}
+
+/// As [`list`], within `limits`, for a caller with a time budget (a hook).
+///
+/// At most `limits.max_entries` directory entries and `limits.max_files` ruling files are
+/// looked at, and a ruling is only a regular file by its own entry (`DirEntry::file_type`), so
+/// a symlink is never followed.
+///
+/// # Errors
+/// As [`list`], and [`RulingError::TooMany`] when the store holds more entries or ruling files
+/// than `limits` allow: the list fails rather than being cut short.
+pub fn list_within(dir: &Path, limits: ListLimits) -> Result<Vec<Ruling>, RulingError> {
+    from_files(bounded_ruling_files(dir, limits)?)
+}
+
+/// The rulings in `files`, read, parsed, sorted by id and checked for duplicate ids.
+fn from_files(files: Vec<PathBuf>) -> Result<Vec<Ruling>, RulingError> {
     let mut rulings = Vec::with_capacity(files.len());
     for file in files {
         let text = read(&file)?;
@@ -312,6 +348,44 @@ fn ruling_files(dir: &Path) -> Result<Vec<PathBuf>, RulingError> {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
         if markdown && path.is_file() {
             files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// As [`ruling_files`], within `limits` and without following symlinks.
+fn bounded_ruling_files(dir: &Path, limits: ListLimits) -> Result<Vec<PathBuf>, RulingError> {
+    let io_error = |source| RulingError::Io {
+        path: dir.to_path_buf(),
+        source,
+    };
+    let too_many = |limit, what| RulingError::TooMany {
+        dir: dir.to_path_buf(),
+        limit,
+        what,
+    };
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_error(error)),
+    };
+    let mut files = Vec::new();
+    // Only the entry after the limit fails the list, so a store exactly at it still lists.
+    for (seen, entry) in entries.enumerate() {
+        if seen >= limits.max_entries {
+            return Err(too_many(limits.max_entries, "directory entries"));
+        }
+        let entry = entry.map_err(io_error)?;
+        let markdown = Path::new(&entry.file_name())
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+        // `file_type` describes the entry itself: a symlink is not a regular file.
+        if markdown && entry.file_type().map_err(io_error)?.is_file() {
+            if files.len() >= limits.max_files {
+                return Err(too_many(limits.max_files, "ruling files"));
+            }
+            files.push(entry.path());
         }
     }
     files.sort();

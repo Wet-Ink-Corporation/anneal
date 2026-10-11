@@ -4,7 +4,10 @@ use std::io::Write as _;
 use anneal_ledger::event::TokenUsage;
 use serde_json::{Value, json};
 
-use super::{Activity, Usage, activity_since, last_assistant_text, read_tail, usage};
+use super::{
+    Activity, Usage, activity_since, last_assistant_text, read_since, read_tail, skills_invoked,
+    usage,
+};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -228,4 +231,49 @@ fn usage_of_a_transcript_over_the_cap_is_not_read() -> TestResult {
         "too large: no figures, nothing read"
     );
     Ok(())
+}
+
+#[test]
+fn read_since_returns_what_was_appended_unless_it_shrank_or_overgrew() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("t.jsonl");
+    std::fs::write(&path, b"0123456789")?;
+
+    assert_eq!(
+        read_since(&path, 6, 64)?,
+        Some(b"6789".to_vec()),
+        "the new bytes"
+    );
+    assert_eq!(
+        read_since(&path, 20, 64)?,
+        None,
+        "rewritten: shorter than the offset"
+    );
+    assert_eq!(read_since(&path, 0, 4)?, None, "grown past the cap");
+    Ok(())
+}
+
+#[test]
+fn skills_invoked_lists_each_skill_tool_call_in_order() {
+    let bytes = jsonl(&[
+        assistant(
+            "m1",
+            json!([
+                {"type": "text", "text": "loading"},
+                {"type": "tool_use", "id": "a", "name": "Skill", "input": {"skill": "anneal:plan"}},
+                {"type": "tool_use", "id": "b", "name": "Bash", "input": {"skill": "not a skill"}},
+            ]),
+            "2026-10-11T00:00:00Z",
+            1,
+        ),
+        user("use the Skill tool with build", "2026-10-11T00:00:01Z"),
+        assistant(
+            "m2",
+            json!([{"type": "tool_use", "id": "c", "name": "Skill", "input": {"skill": "build"}}]),
+            "2026-10-11T00:00:02Z",
+            1,
+        ),
+    ]);
+
+    assert_eq!(skills_invoked(&bytes), ["anneal:plan", "build"]);
 }

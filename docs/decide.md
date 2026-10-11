@@ -15,6 +15,13 @@ enforce mode can keep a deny when the log is unwritable) applies the same modes,
 log. The guard's D1 (#30) is the first such
 caller; see `docs/guard.md`.
 
+**In process.** `decide::in_process` is the one in-process entry, shared by every hook. Besides
+`Prepared::load`, `in_process::status` tells from the environment alone whether Clef is off,
+on or misconfigured for a point, so a hook can stay silent without reading or creating a file,
+and `Prepared::label` appends the row `decide label` would. The `route` (D3) and
+`ruled-before` (D6) hooks ask through `client::ask_recording` with no `input` (their rows keep
+only the state's hash) and act on an answer only when its row was logged (`docs/hooks.md`).
+
 ## Transport
 
 Clef runs on Workers AI and is called directly:
@@ -102,7 +109,9 @@ and logs nothing: exit 3, and the caller uses its deterministic layer; the envel
 `data.reason` (`mode_off` or `no_account`) and the point's `data.configured_mode`. `shadow` asks, logs and
 reports the action with `data.enforce: false`; callers do not act on it. `enforce` reports
 `data.enforce: true`, except that a point stays in shadow (`data.mode: "shadow"`,
-`data.configured_mode: "enforce"`) until it has 50 answered decisions. The count is kept in
+`data.configured_mode: "enforce"`) until it has 50 answered decisions. Only answers to a
+question whose rule has bands count: a record-only question (no bands, such as D3's size
+score) is logged but never advances the shadow period. The count is kept in
 `decisions/counts.json`, so rotation does not reset it; two decisions at once can lose an
 increment, which only lengthens the shadow period. The file is not protected: editing it by
 hand to raise a point's count skips (part of) the shadow period, so `enforce` takes effect

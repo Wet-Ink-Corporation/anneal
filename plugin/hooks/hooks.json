@@ -14,6 +14,26 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "route"],
+            "timeout": 5,
+            "onFailure": "continue"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "ruled-before"],
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
     "PostToolBatch": [
       {
         "hooks": [
