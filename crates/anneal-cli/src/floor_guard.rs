@@ -28,6 +28,7 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
 use crate::paths::PathError;
+pub(crate) use detect::is_test_path;
 pub use detect::{Category, FloorFinding};
 use detect::{Detector, PostImage};
 use diff::{FileDiff, Status};

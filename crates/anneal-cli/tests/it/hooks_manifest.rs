@@ -373,6 +373,46 @@ fn the_guard_hook_runs_before_every_bash_call_and_fails_closed() -> TestResult {
 }
 
 #[test]
+fn the_preconditions_hook_runs_before_every_edit_and_write_and_fails_closed() -> TestResult {
+    let gates: Vec<Placed> = command_hooks()?
+        .into_iter()
+        .filter(|placed| {
+            placed.hook.args.get(1).map(String::as_str) == Some(HookName::Preconditions.as_str())
+        })
+        .collect();
+    let [
+        Placed {
+            event,
+            matcher,
+            hook,
+        },
+    ] = gates.as_slice()
+    else {
+        return Err(format!("one preconditions entry, got {gates:?}").into());
+    };
+    assert_eq!(*event, HookEvent::PreToolUse, "before the tool runs");
+    assert_eq!(matcher, "Edit|Write", "on every Edit and Write");
+    assert_eq!(
+        hook.args,
+        ["hook", "preconditions", "--fail-closed"],
+        "the launcher blocks when no binary is installed"
+    );
+    assert_eq!(
+        hook.on_failure,
+        OnFailure::Block,
+        "a crash, a timeout or bad output blocks"
+    );
+    assert_eq!(hook.timeout, 5, "the preconditions budget is 5 s");
+    let role = metadata()?
+        .hooks
+        .into_iter()
+        .find(|row| row.id == HookName::Preconditions.as_str())
+        .map(|row| row.role);
+    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    Ok(())
+}
+
+#[test]
 fn an_entry_blocks_on_failure_exactly_when_it_passes_fail_closed() -> TestResult {
     for Placed { hook, .. } in command_hooks()? {
         let fail_closed = hook.args.iter().any(|arg| arg == "--fail-closed");

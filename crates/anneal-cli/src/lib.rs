@@ -10,10 +10,13 @@
 //! - [`error`]: errors that stop a command, each with a global exit code.
 //! - [`envelope`]: the JSON envelope on stdout and its findings.
 //! - [`hook`]: `anneal hook <name>`, the commands `hooks.json` runs (the fail-open
-//!   `SessionStart` bootstrap and the fail-closed `PreToolUse` Bash guard), and the
-//!   one-`ERROR`-line output hooks share.
+//!   `SessionStart` bootstrap, the fail-closed `PreToolUse` Bash guard and the fail-closed
+//!   `PreToolUse` preconditions hook on Edit and Write), and the one-`ERROR`-line output
+//!   hooks share.
 //! - [`lint`]: `anneal lint skills|terms|spec|plan` and the lint finding model.
 //! - [`plan`]: `anneal plan approve|check`, a plan approval recorded in the ledger by hash.
+//! - [`mode`]: `anneal mode build|diagnose|off`, the worktree's anneal mode that the
+//!   `PreToolUse` preconditions hook (`hook preconditions`, on Edit and Write) enforces.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
 //! - [`grill`]: `anneal grill frontier|confirm` over the `grill` skill's design tree.
@@ -41,6 +44,7 @@ pub mod grill;
 pub mod hook;
 pub mod ledger;
 pub mod lint;
+pub mod mode;
 pub mod paths;
 pub mod plan;
 mod process;

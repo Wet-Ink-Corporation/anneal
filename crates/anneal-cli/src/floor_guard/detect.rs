@@ -16,7 +16,8 @@ use std::collections::BinaryHeap;
 use serde::Serialize;
 
 use super::diff::{FileDiff, Hunk, Status};
-use test_files::{is_test_marker, is_test_path};
+use test_files::is_test_marker;
+pub(crate) use test_files::is_test_path;
 use threshold::{Kind, Pair};
 
 /// Most findings kept; the rest are counted in [`Report::omitted`].

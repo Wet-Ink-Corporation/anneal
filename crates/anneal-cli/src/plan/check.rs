@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
-use anneal_ledger::Store;
+use anneal_ledger::{Recorded, Store};
 use serde::Serialize;
 
 use super::{CheckArgs, approved_hash, emit, latest, read};
@@ -18,7 +18,7 @@ use crate::paths::{self, StoreSource};
 /// Whether the plan is approved at its current content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Status {
+pub(crate) enum Status {
     /// The latest approval has the plan's hash.
     Current,
     /// No approval of the plan.
@@ -54,6 +54,15 @@ struct ApprovalData<'a> {
     ts: &'a str,
 }
 
+/// The status of a plan whose content hashes to `hash`, given its latest approval.
+pub(super) fn status_of(hash: &str, latest: Option<&Recorded>) -> Status {
+    match latest.and_then(approved_hash) {
+        None => Status::NotApproved,
+        Some(approved) if approved == hash => Status::Current,
+        Some(_) => Status::Stale,
+    }
+}
+
 /// Runs `anneal plan check`: 0 current, 3 not approved, 4 stale. Never creates a ledger.
 pub(super) fn check<O: Write>(
     args: &CheckArgs,
@@ -77,11 +86,7 @@ pub(super) fn check<O: Write>(
             ts: recorded.event.ts.as_str(),
         })
     });
-    let status = match &approved {
-        None => Status::NotApproved,
-        Some(approval) if *approval.hash == plan.hash => Status::Current,
-        Some(_) => Status::Stale,
-    };
+    let status = status_of(&plan.hash, previous.as_ref());
     let data = Checked {
         plan: &plan.id,
         hash: &plan.hash,

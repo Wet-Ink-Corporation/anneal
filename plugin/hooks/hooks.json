@@ -26,6 +26,18 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "preconditions", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
       }
     ]
   }

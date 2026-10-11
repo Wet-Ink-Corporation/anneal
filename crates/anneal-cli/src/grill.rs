@@ -267,8 +267,9 @@ fn unrecordable(error: &TagError) -> String {
 
 /// Reads the design tree at `path` (relative to `cwd`), at most one byte past
 /// [`MAX_TREE_BYTES`] so an oversized file is reported without being read whole. Anything but
-/// a regular file (a directory, a pipe) is refused before reading.
-fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
+/// a regular file (a directory, a pipe) is refused before reading. The preconditions hook
+/// hashes the tree it reads, as `confirm` does.
+pub(crate) fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
     let failed = |source: io::Error| {
         // The error owns the path it names.
         let path = path.to_path_buf();

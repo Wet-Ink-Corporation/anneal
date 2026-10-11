@@ -13,6 +13,8 @@ pub enum CommandName {
     Task,
     /// `anneal plan`
     Plan,
+    /// `anneal mode`: the anneal mode the preconditions hook enforces
+    Mode,
     /// `anneal lint`
     Lint,
     /// `anneal dag`
@@ -54,11 +56,12 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
         Self::Plan,
+        Self::Mode,
         Self::Lint,
         Self::Dag,
         Self::FloorGuard,
@@ -83,6 +86,7 @@ impl CommandName {
             Self::Grill => "grill",
             Self::Task => "task",
             Self::Plan => "plan",
+            Self::Mode => "mode",
             Self::Lint => "lint",
             Self::Dag => "dag",
             Self::FloorGuard => "floor-guard",
@@ -118,6 +122,9 @@ impl CommandName {
             }
             Self::Task => "the task's tests ran green",
             Self::Plan => "the plan is approved and current with its inputs",
+            Self::Mode => {
+                "the mode was recorded for this worktree, with whether its tree was clean"
+            }
             Self::Lint => "the checked files have no error under anneal's lint rules",
             Self::Dag => "the task graph has no cycle and no dangling dependency",
             Self::FloorGuard => "no quality floor (coverage, lint level, test count) was lowered",
@@ -144,6 +151,10 @@ impl CommandName {
             }
             Self::Task => "that the tests cover the task's acceptance criteria",
             Self::Plan => "that the plan is correct or complete",
+            Self::Mode => {
+                "that the mode's preconditions hold: the preconditions hook checks them at each \
+                 edit"
+            }
             Self::Lint => {
                 "that the content is right, or that its warnings and review items were addressed"
             }

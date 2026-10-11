@@ -101,7 +101,8 @@ pub struct EventEnvelope {
     /// The writing agent session's id, if any. Tagged `session:`.
     #[serde(default)]
     pub session_id: Option<String>,
-    /// The directory name of the writer's git worktree, if any. Tagged `worktree:`.
+    /// The writer's git worktree, if any (`anneal mode` writes a key for its top-level
+    /// directory, and `mode_set` events are selected by it). Tagged `worktree:`.
     #[serde(default)]
     pub worktree: Option<String>,
     /// The checked-out branch, if any.

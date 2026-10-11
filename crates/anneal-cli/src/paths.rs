@@ -93,6 +93,22 @@ fn git_common_dir_within(cwd: &Path, timeout: Duration) -> Result<PathBuf, PathE
     Ok(cwd.join(printed.trim_end_matches(['\r', '\n'])))
 }
 
+/// The top-level directory of the worktree containing `cwd`, as `git rev-parse
+/// --show-toplevel` prints it (`/`-separated on every platform, symlinks resolved), with git
+/// killed after `timeout`. It names the worktree in the ledger (`EventEnvelope::worktree`).
+///
+/// # Errors
+/// As [`git_common_dir`]; also [`PathError::GitFailed`] in a directory that has no working tree
+/// (a bare repository, or inside `.git`).
+pub(crate) fn worktree_root_within(cwd: &Path, timeout: Duration) -> Result<String, PathError> {
+    let output = run_git(cwd, &["rev-parse", "--show-toplevel"], timeout)?;
+    if !output.status.success() {
+        return Err(git_failure(cwd, &output.stderr));
+    }
+    let printed = String::from_utf8(output.stdout).map_err(PathError::NonUtf8Output)?;
+    Ok(printed.trim_end_matches(['\r', '\n']).to_owned())
+}
+
 /// What git says (untranslated: [`run_git`] runs it under `LC_ALL=C`) when a directory is in
 /// no repository.
 const NOT_A_REPOSITORY: &str = "not a git repository";

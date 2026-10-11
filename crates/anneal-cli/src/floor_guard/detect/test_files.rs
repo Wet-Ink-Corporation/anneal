@@ -1,8 +1,9 @@
 //! Which files are tests, and which lines declare a test.
 
 /// True for a test file: under a `tests` directory, or named `*_test.*`, `*.test.*`,
-/// `*.spec.*` or `test_*.py`.
-pub(super) fn is_test_path(path: &str) -> bool {
+/// `*.spec.*` or `test_*.py`. `path` is `/`-separated. The preconditions hook shares it, so a
+/// file floor-guard counts as a test is one the hook lets an agent edit.
+pub(crate) fn is_test_path(path: &str) -> bool {
     let mut components = path.rsplit('/');
     let name = components.next().unwrap_or(path);
     components.any(|dir| dir == "tests")

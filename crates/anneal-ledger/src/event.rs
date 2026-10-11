@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 3;
+pub const REGISTRY_VERSION: u32 = 4;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -39,11 +39,13 @@ pub enum EventKind {
     GateBlocked,
     /// `stop_blocked`
     StopBlocked,
+    /// `mode_set`
+    ModeSet,
 }
 
 impl EventKind {
     /// Every registered type, in registry order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::TestRun,
         Self::TaskDone,
         Self::PlanApproved,
@@ -53,6 +55,7 @@ impl EventKind {
         Self::RoundStarted,
         Self::GateBlocked,
         Self::StopBlocked,
+        Self::ModeSet,
     ];
 
     /// The type as stored: snake case.
@@ -68,6 +71,7 @@ impl EventKind {
             Self::RoundStarted => "round_started",
             Self::GateBlocked => "gate_blocked",
             Self::StopBlocked => "stop_blocked",
+            Self::ModeSet => "mode_set",
         }
     }
 
@@ -79,6 +83,8 @@ impl EventKind {
             Self::PlanApproved | Self::GrillConfirmed => TagKey::Plan,
             Self::VerdictSet | Self::RoundStarted => TagKey::Pr,
             Self::GateBlocked | Self::StopBlocked => TagKey::Point,
+            // The payload names no worktree: the envelope's `worktree` is the subject.
+            Self::ModeSet => TagKey::Worktree,
         }
     }
 }
@@ -132,6 +138,8 @@ pub enum LedgerEvent {
     GateBlocked(GateBlocked),
     /// The Stop hook refused to let the session stop.
     StopBlocked(StopBlocked),
+    /// A worktree entered or left an anneal mode.
+    ModeSet(ModeSet),
 }
 
 impl LedgerEvent {
@@ -148,6 +156,7 @@ impl LedgerEvent {
             Self::RoundStarted(_) => EventKind::RoundStarted,
             Self::GateBlocked(_) => EventKind::GateBlocked,
             Self::StopBlocked(_) => EventKind::StopBlocked,
+            Self::ModeSet(_) => EventKind::ModeSet,
         }
     }
 
@@ -167,6 +176,8 @@ impl LedgerEvent {
             | Self::RoundStarted(RoundStarted { pr, .. }) => Some(Cow::Owned(pr.to_string())),
             Self::GateBlocked(GateBlocked { point, .. })
             | Self::StopBlocked(StopBlocked { point, .. }) => Some(Cow::Borrowed(point)),
+            // Its subject is the envelope's `worktree`, tagged from the envelope.
+            Self::ModeSet(_) => None,
         }
     }
 }
@@ -290,9 +301,41 @@ pub struct StopBlocked {
     pub reason: String,
 }
 
+/// An anneal mode: what the preconditions hook enforces in a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// Building from an approved plan: source edits need the define work.
+    Build,
+    /// Diagnosing a failure: source edits need a red reproduction first.
+    Diagnose,
+    /// No mode: the hook enforces nothing.
+    Off,
+}
+
+/// `mode_set`: a worktree entered or left an anneal mode (registry v4). Its subject is the
+/// envelope's `worktree` (tagged `worktree:`); the latest one for a worktree is its mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeSet {
+    /// The mode entered.
+    pub mode: Mode,
+    /// Whether the working tree had no changes (untracked files included) at entry.
+    pub clean: bool,
+    /// For build mode, the plan's path relative to the worktree root, `/`-separated.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// For build mode, the design tree's path relative to the worktree root, `/`-separated.
+    #[serde(default)]
+    pub tree: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EventKind, GrillConfirmed, LedgerEvent, TestOutcome, TestRun, UnknownEventKind};
+    use super::{
+        EventKind, GrillConfirmed, LedgerEvent, Mode, ModeSet, REGISTRY_VERSION, TestOutcome,
+        TestRun, UnknownEventKind,
+    };
+    use crate::tag::TagKey;
     use serde_json::json;
 
     #[test]
@@ -391,6 +434,65 @@ mod tests {
             }),
             "the added fields default to none"
         );
+    }
+
+    #[test]
+    fn mode_set_carries_the_mode_the_clean_flag_and_the_define_artifacts() {
+        let value = json!({
+            "type": "mode_set",
+            "mode": "build",
+            "clean": true,
+            "plan": "docs/plans/x.md",
+            "tree": "design-tree.json",
+        });
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::ModeSet(ModeSet {
+                mode: Mode::Build,
+                clean: true,
+                plan: Some("docs/plans/x.md".to_owned()),
+                tree: Some("design-tree.json".to_owned()),
+            }),
+            "mode, clean, plan and tree are read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+        assert_eq!(event.kind().as_str(), "mode_set", "stored as mode_set");
+        assert_eq!(event.subject_value(), None, "no subject in the payload");
+        assert_eq!(
+            EventKind::ModeSet.subject(),
+            TagKey::Worktree,
+            "selected by the envelope's worktree tag"
+        );
+    }
+
+    #[test]
+    fn a_mode_set_without_plan_or_tree_reads_as_none() {
+        let event: LedgerEvent =
+            serde_json::from_value(json!({"type": "mode_set", "mode": "diagnose", "clean": false}))
+                .expect("plan and tree are optional");
+
+        assert_eq!(
+            event,
+            LedgerEvent::ModeSet(ModeSet {
+                mode: Mode::Diagnose,
+                clean: false,
+                plan: None,
+                tree: None,
+            }),
+            "the optional fields default to none"
+        );
+    }
+
+    #[test]
+    fn the_registry_is_version_4() {
+        assert_eq!(REGISTRY_VERSION, 4, "mode_set was added in version 4");
     }
 
     #[test]
