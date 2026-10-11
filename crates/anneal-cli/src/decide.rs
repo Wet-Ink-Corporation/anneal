@@ -20,6 +20,7 @@
 //! - [`clock`]: the wall and monotonic clocks, a port.
 //! - [`log`]: the decision log and its counts.
 //! - [`id`]: decision ids and outcome labels.
+//! - `in_process`: the same call in process, for hooks.
 
 pub mod answer;
 pub mod client;

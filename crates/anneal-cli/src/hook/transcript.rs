@@ -157,6 +157,39 @@ pub(crate) fn transcript_len(path: &Path) -> io::Result<u64> {
     file_len(path)
 }
 
+/// What the transcript at `path` gained after byte `offset`; `None` when it is shorter than
+/// `offset` (rewritten, as by compaction) or grew by more than `max` bytes.
+///
+/// # Errors
+/// The I/O error when it cannot be read, or is not a regular file.
+pub(crate) fn read_since(path: &Path, offset: u64, max: u64) -> io::Result<Option<Vec<u8>>> {
+    let len = file_len(path)?;
+    match len.checked_sub(offset) {
+        Some(grown) if grown <= max => read_from(path, offset, grown).map(Some),
+        Some(_) | None => Ok(None),
+    }
+}
+
+/// The `skill` of each `Skill` tool call in `bytes` (a transcript or part of one), in order,
+/// as written (`build`, or a plugin's `anneal:build`).
+pub(crate) fn skills_invoked(bytes: &[u8]) -> Vec<String> {
+    let mut skills = Vec::new();
+    for line in lines(bytes).filter(|line| line.kind.as_deref() == Some("assistant")) {
+        let Some(Value::Array(blocks)) = line.message.and_then(|message| message.content) else {
+            continue;
+        };
+        for block in blocks {
+            let is_skill_call = block.get("type").and_then(Value::as_str) == Some("tool_use")
+                && block.get("name").and_then(Value::as_str) == Some("Skill");
+            let skill = block.pointer("/input/skill").and_then(Value::as_str);
+            if let (true, Some(skill)) = (is_skill_call, skill) {
+                skills.push(skill.to_owned());
+            }
+        }
+    }
+    skills
+}
+
 /// Whether the transcript at `path` gained a tool call after byte `offset`. Shorter than
 /// `offset` (rewritten, as by compaction) or grown by more than `max` bytes counts as
 /// [`Activity::ToolCall`] without reading.

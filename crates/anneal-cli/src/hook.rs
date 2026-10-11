@@ -9,10 +9,15 @@
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
+#[cfg(test)]
+mod clef_fake;
 pub(crate) mod completeness;
 pub(crate) mod fast_check;
 pub(crate) mod guard;
 pub(crate) mod preconditions;
+mod prompt;
+pub(crate) mod route;
+pub(crate) mod ruled_before;
 pub(crate) mod status;
 mod stop_output;
 mod transcript;
@@ -24,6 +29,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
+
+use crate::decide::clock::SystemClock;
+use crate::decide::transport::NoHttpClient;
 
 /// Arguments of `anneal hook`.
 #[derive(Debug, Args)]
@@ -63,17 +71,25 @@ pub enum HookName {
     Completeness,
     /// `SubagentStop`: record the subagent's status block, timing and tokens; fails open
     Status,
+    /// `UserPromptSubmit`: ask Clef (D3) for the prompt's phase and size, and in enforce mode
+    /// hint the entry skill; fails open
+    Route,
+    /// `UserPromptSubmit`: ask Clef (D6) whether the prompt re-opens a ruling, and in enforce
+    /// mode surface it; fails open
+    RuledBefore,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
         Self::FastCheck,
         Self::Completeness,
         Self::Status,
+        Self::Route,
+        Self::RuledBefore,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -86,6 +102,8 @@ impl HookName {
             Self::FastCheck => "fast-check",
             Self::Completeness => "completeness",
             Self::Status => "status",
+            Self::Route => "route",
+            Self::RuledBefore => "ruled-before",
         }
     }
 
@@ -95,7 +113,12 @@ impl HookName {
         match self {
             // fast-check blocks on a lowered floor and completeness on a claim, but their own
             // failures never do.
-            Self::Bootstrap | Self::FastCheck | Self::Completeness | Self::Status => false,
+            Self::Bootstrap
+            | Self::FastCheck
+            | Self::Completeness
+            | Self::Status
+            | Self::Route
+            | Self::RuledBefore => false,
             Self::Guard | Self::Preconditions => true,
         }
     }
@@ -132,6 +155,10 @@ where
         HookName::FastCheck => fast_check::run(env, out),
         HookName::Completeness => completeness::run(env, out),
         HookName::Status => status::run(env, out),
+        // No HTTP client is a dependency yet (H-16, pending): every call is unreachable and
+        // these hooks stay silent, as `anneal decide` exits 5.
+        HookName::Route => route::run(env, &NoHttpClient, &SystemClock::new(), out),
+        HookName::RuledBefore => ruled_before::run(env, &NoHttpClient, &SystemClock::new(), out),
     }
 }
 

@@ -61,6 +61,26 @@
       "role": "scaffolding",
       "model_generation": "claude-5",
       "source": "Blueprint: Hooks (status), Feature catalog #23, platform conformance #7; story #26"
+    },
+    {
+      "id": "route",
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "fingerprint": "sha256:2b9db1a36d2934d8",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Clef decision points (D3 route); story #31"
+    },
+    {
+      "id": "ruled-before",
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "fingerprint": "sha256:eef2a74167c28b96",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Clef decision points (D6 ruled-before); story #31"
     }
   ]
 }

@@ -457,6 +457,29 @@ fn the_status_hook_runs_on_every_subagent_stop_and_fails_open() -> TestResult {
 }
 
 #[test]
+fn the_route_and_ruled_before_hooks_run_on_every_prompt_and_fail_open() -> TestResult {
+    for (name, id) in [
+        (HookName::Route, "route"),
+        (HookName::RuledBefore, "ruled-before"),
+    ] {
+        let Placed {
+            event,
+            matcher,
+            hook,
+        } = only_entry(name)?;
+        assert_eq!(event, HookEvent::UserPromptSubmit, "{id}: on every prompt");
+        assert_eq!(matcher, "", "{id}: UserPromptSubmit takes no matcher");
+        assert_eq!(hook.args, ["hook", id], "{id}: no --fail-closed");
+        assert_eq!(hook.on_failure, OnFailure::Continue, "{id}: fails open");
+        assert_eq!(
+            hook.timeout, 5,
+            "{id}: one 2 s Clef call, plus reading and logging"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn the_fast_check_hook_runs_once_per_batch_of_tool_calls_and_fails_open() -> TestResult {
     let placed = command_hooks()?;
     let fast: Vec<&Placed> = placed

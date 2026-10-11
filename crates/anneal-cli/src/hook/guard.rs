@@ -12,7 +12,7 @@
 
 mod clef;
 mod denylist;
-mod redact;
+pub(crate) mod redact;
 mod shell;
 
 use std::ffi::OsString;

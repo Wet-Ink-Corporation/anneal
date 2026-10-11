@@ -15,6 +15,13 @@ enforce mode can keep a deny when the log is unwritable) applies the same modes,
 log. The guard's D1 (#30) is the first such
 caller; see `docs/guard.md`.
 
+**In process.** `decide::in_process` is the one in-process entry, shared by every hook. Besides
+`Prepared::load`, `in_process::status` tells from the environment alone whether Clef is off,
+on or misconfigured for a point, so a hook can stay silent without reading or creating a file,
+and `Prepared::label` appends the row `decide label` would. The `route` (D3) and
+`ruled-before` (D6) hooks ask through `client::ask_recording` with no `input` (their rows keep
+only the state's hash) and act on an answer only when its row was logged (`docs/hooks.md`).
+
 ## Transport
 
 Clef runs on Workers AI and is called directly:

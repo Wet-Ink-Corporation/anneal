@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "phases": [
+    { "phase": "define", "entry_skill": "grill" },
+    { "phase": "specify", "entry_skill": "spec" },
+    { "phase": "plan", "entry_skill": "plan" },
+    { "phase": "build", "entry_skill": "build" },
+    { "phase": "diagnose", "entry_skill": "diagnose" },
+    { "phase": "verify", "entry_skill": "verify" },
+    { "phase": "ship", "entry_skill": null },
+    { "phase": "answer", "entry_skill": null }
+  ],
+  "no_skill_phase": "answer",
+  "sizes": [
+    { "size": "trivial", "depth": "direct" },
+    { "size": "small", "depth": "light" },
+    { "size": "medium", "depth": "standard" },
+    { "size": "large", "depth": "full" }
+  ]
+}
