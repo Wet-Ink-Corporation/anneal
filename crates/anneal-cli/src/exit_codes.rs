@@ -174,8 +174,19 @@ pub const PERF_KEEP: Code = Code::new(0, "keep");
 pub const PERF_REVERT: Code = Code::new(1, "revert");
 /// `brief build`: the commit range is invalid.
 pub const BRIEF_BAD_RANGE: Code = Code::new(2, "bad range");
-/// `decide`: Clef could not be reached.
-pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(5, "Clef unreachable");
+/// `decide`: Clef answered and the decision was logged; `decide label`: the label was
+/// appended.
+pub const DECIDE_DECIDED: Code = Code::new(0, "decided and logged (label: appended)");
+/// `decide`: Clef is off for the point (no account, or mode `off`); nothing was asked or
+/// logged, and callers use their deterministic layer.
+pub const DECIDE_OFF: Code = Code::new(3, "Clef off for the point; nothing asked or logged");
+/// `decide`: Clef gave no usable answer (unreachable, timed out or a bad response; the row is
+/// logged) or the configuration is malformed (nothing asked or logged); callers apply the
+/// point's fallback.
+pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(
+    5,
+    "no answer from Clef (unreachable, timeout, bad response or config); apply the fallback",
+);
 /// `eval routing`: accuracy is below its bound.
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");
 /// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted.
@@ -238,7 +249,7 @@ impl CommandCodes {
             CommandName::Rollout => ("decide", &[ROLLOUT_GO, ROLLOUT_HOLD, ROLLOUT_ROLLBACK]),
             CommandName::Perf => ("noise", &[PERF_KEEP, PERF_REVERT]),
             CommandName::Brief => ("build", &[OK, BRIEF_BAD_RANGE]),
-            CommandName::Decide => ("", &[OK, DECIDE_CLEF_UNREACHABLE]),
+            CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),

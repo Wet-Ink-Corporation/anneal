@@ -14,6 +14,9 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use crate::command::CommandName;
 use crate::dag::{self, DagArgs};
+use crate::decide::clock::SystemClock;
+use crate::decide::transport::NoHttpClient;
+use crate::decide::{self, DecideArgs, DecideEnv};
 use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
@@ -96,7 +99,7 @@ pub enum Command {
     Brief(Stub),
     /// Ask a Clef decision point and record the answer
     #[command(after_help = command_help(CommandName::Decide))]
-    Decide(Stub),
+    Decide(DecideArgs),
     /// Calibrate a decision point against its log
     #[command(after_help = command_help(CommandName::Calibrate))]
     Calibrate(Stub),
@@ -284,6 +287,7 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
             floor_guard::run(args, &cwd, out)
         }
         Command::Eval(args) => eval::run(args, out),
+        Command::Decide(args) => run_decide(args, out),
         Command::Hook(args) => {
             let env = HookEnv {
                 stdin: std::io::stdin().lock(),
@@ -300,12 +304,25 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         | Command::Rollout(_)
         | Command::Perf(_)
         | Command::Brief(_)
-        | Command::Decide(_)
         | Command::Calibrate(_)
         | Command::Statusline(_) => Err(CliError::NotImplemented {
             command: command.name(),
         }),
     }
+}
+
+/// `anneal decide` with the process's environment, the system clock and the transport.
+fn run_decide<O: Write>(args: &DecideArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    // No HTTP client is a dependency yet (H-16, pending): every call is unreachable, so
+    // `decide` exits 5 and callers apply their fallback.
+    let env = DecideEnv {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        transport: &NoHttpClient,
+        clock: &SystemClock::new(),
+    };
+    decide::run(args, &env, out)
 }
 
 /// `--help` and `--version` go to stdout and exit 0 when they are the last argument; anything

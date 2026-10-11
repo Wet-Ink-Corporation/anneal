@@ -24,7 +24,7 @@
     "clef_mode": {
       "type": "string",
       "title": "Clef mode",
-      "description": "off, shadow (log what Clef would decide) or enforce (act on it where calibration allows).",
+      "description": "off, shadow (log what Clef would decide) or enforce (act on it where calibration allows), optionally followed by per-point overrides such as shadow,D1=off,D3=enforce.",
       "default": "shadow",
       "required": false
     }

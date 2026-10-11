@@ -19,6 +19,8 @@
 //!   `PreToolUse` preconditions hook (`hook preconditions`, on Edit and Write) enforces.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
+//! - [`decide`]: `anneal decide`, one Clef question per decision point with its thresholds
+//!   applied and a row in `~/.anneal/decisions/decisions.jsonl`, and `decide label`.
 //! - [`grill`]: `anneal grill frontier|confirm` over the `grill` skill's design tree.
 //! - [`task`]: `anneal task done`, recording `task_done` only after a green test command.
 //! - [`floor_guard`]: `anneal floor-guard`, refusing a diff that lowers a quality floor.
@@ -37,6 +39,7 @@ pub mod cli;
 pub mod command;
 mod content_hash;
 pub mod dag;
+pub mod decide;
 pub mod envelope;
 pub mod error;
 mod error_chain;

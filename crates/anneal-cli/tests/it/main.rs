@@ -2,6 +2,7 @@
 
 mod cli;
 mod dag;
+mod decide;
 mod design_tree_schema;
 mod dry_run;
 mod eval_routing;
