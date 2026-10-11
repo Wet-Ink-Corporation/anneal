@@ -242,6 +242,7 @@ fn denial(output: &Output) -> Result<String, Box<dyn Error>> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn with_no_mode_an_edit_is_allowed_silently_and_no_ledger_is_created() -> TestResult {
     let repo = Repo::new()?;
 
@@ -253,6 +254,7 @@ fn with_no_mode_an_edit_is_allowed_silently_and_no_ledger_is_created() -> TestRe
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn with_a_ledger_but_no_mode_for_the_worktree_an_edit_is_allowed() -> TestResult {
     let repo = Repo::new()?;
     repo.confirm()?;
@@ -264,6 +266,7 @@ fn with_a_ledger_but_no_mode_for_the_worktree_an_edit_is_allowed() -> TestResult
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_build_records_the_mode_with_the_plan_and_tree_relative_to_the_root() -> TestResult {
     let repo = Repo::new()?;
     std::fs::create_dir(repo.path().join("src").join("sub"))?;
@@ -302,6 +305,7 @@ fn mode_build_records_the_mode_with_the_plan_and_tree_relative_to_the_root() -> 
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_build_on_a_dirty_tree_records_clean_false_with_a_finding_and_exits_0() -> TestResult {
     let repo = Repo::new()?;
     repo.write("notes.rs", "untracked\n")?;
@@ -322,6 +326,7 @@ fn mode_build_on_a_dirty_tree_records_clean_false_with_a_finding_and_exits_0() -
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_build_refuses_a_plan_that_is_not_a_file() -> TestResult {
     let repo = Repo::new()?;
 
@@ -343,6 +348,7 @@ fn mode_build_refuses_a_plan_that_is_not_a_file() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_while_the_spec_fails_its_lint_then_allows_it() -> TestResult {
     let repo = Repo::new()?;
     repo.break_spec()?;
@@ -363,6 +369,7 @@ fn build_mode_denies_a_source_edit_while_the_spec_fails_its_lint_then_allows_it(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_when_the_plan_links_no_spec_file() -> TestResult {
     let repo = Repo::new()?;
     std::fs::remove_file(repo.path().join(SPEC))?;
@@ -379,6 +386,7 @@ fn build_mode_denies_a_source_edit_when_the_plan_links_no_spec_file() -> TestRes
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_until_the_tree_is_confirmed() -> TestResult {
     let repo = Repo::new()?;
     repo.approve()?;
@@ -397,6 +405,7 @@ fn build_mode_denies_a_source_edit_until_the_tree_is_confirmed() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_when_the_tree_changed_since_its_confirmation() -> TestResult {
     let repo = Repo::new()?;
     repo.ready()?;
@@ -411,6 +420,7 @@ fn build_mode_denies_a_source_edit_when_the_tree_changed_since_its_confirmation(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_entered_on_a_dirty_tree_denies_until_entered_again_clean() -> TestResult {
     let repo = Repo::new()?;
     repo.confirm()?;
@@ -432,6 +442,7 @@ fn build_mode_entered_on_a_dirty_tree_denies_until_entered_again_clean() -> Test
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_until_the_plan_is_approved() -> TestResult {
     let repo = Repo::new()?;
     repo.confirm()?;
@@ -450,6 +461,7 @@ fn build_mode_denies_a_source_edit_until_the_plan_is_approved() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_denies_a_source_edit_when_the_plan_changed_since_its_approval() -> TestResult {
     let repo = Repo::new()?;
     repo.ready()?;
@@ -468,6 +480,7 @@ fn build_mode_denies_a_source_edit_when_the_plan_changed_since_its_approval() ->
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_denial_appends_gate_blocked_naming_the_precondition() -> TestResult {
     let repo = Repo::new()?;
     repo.confirm()?;
@@ -491,6 +504,7 @@ fn a_denial_appends_gate_blocked_naming_the_precondition() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn test_files_and_define_artifacts_are_allowed_while_every_precondition_fails() -> TestResult {
     let repo = Repo::new()?;
     repo.write("notes.rs", "untracked\n")?;
@@ -519,6 +533,7 @@ fn test_files_and_define_artifacts_are_allowed_while_every_precondition_fails() 
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn an_edit_is_judged_like_a_write() -> TestResult {
     let repo = Repo::new()?;
     repo.build()?;
@@ -530,6 +545,7 @@ fn an_edit_is_judged_like_a_write() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_path_climbing_out_of_a_test_directory_is_still_source() -> TestResult {
     let repo = Repo::new()?;
     repo.build()?;
@@ -541,6 +557,7 @@ fn a_path_climbing_out_of_a_test_directory_is_still_source() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_off_lifts_the_gate() -> TestResult {
     let repo = Repo::new()?;
     repo.build()?;
@@ -553,6 +570,7 @@ fn mode_off_lifts_the_gate() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn bad_input_is_denied() -> TestResult {
     let repo = Repo::new()?;
 
@@ -569,6 +587,7 @@ fn bad_input_is_denied() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_ledger_that_cannot_be_opened_denies_rather_than_reading_as_no_mode() -> TestResult {
     let repo = Repo::new()?;
     std::fs::create_dir_all(repo.ledger())?;
@@ -580,6 +599,7 @@ fn a_ledger_that_cannot_be_opened_denies_rather_than_reading_as_no_mode() -> Tes
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn build_mode_recorded_without_a_plan_denies_source_edits() -> TestResult {
     let repo = Repo::new()?;
     // The worktree key exactly as `anneal mode` writes it, read back from a real entry.
@@ -599,6 +619,7 @@ fn build_mode_recorded_without_a_plan_denies_source_edits() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn another_tool_is_allowed() -> TestResult {
     let repo = Repo::new()?;
     repo.build()?;
@@ -610,6 +631,7 @@ fn another_tool_is_allowed() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn diagnose_mode_denies_a_source_edit_until_a_repro_is_recorded_after_entry() -> TestResult {
     let repo = Repo::new()?;
     repo.repro()?;
@@ -626,6 +648,7 @@ fn diagnose_mode_denies_a_source_edit_until_a_repro_is_recorded_after_entry() ->
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn entering_diagnose_again_needs_a_new_repro() -> TestResult {
     let repo = Repo::new()?;
     repo.anneal(&["mode", "diagnose"], 0)?;
@@ -639,6 +662,7 @@ fn entering_diagnose_again_needs_a_new_repro() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_write_into_a_gated_worktree_from_a_cwd_outside_any_repository_is_denied() -> TestResult {
     let repo = Repo::new()?;
     repo.build()?;
@@ -651,6 +675,7 @@ fn a_write_into_a_gated_worktree_from_a_cwd_outside_any_repository_is_denied() -
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_write_into_a_gated_worktree_from_a_sibling_linked_worktree_is_denied() -> TestResult {
     let repo = Repo::new()?;
     let siblings = tempfile::tempdir()?;
@@ -674,6 +699,7 @@ fn a_write_into_a_gated_worktree_from_a_sibling_linked_worktree_is_denied() -> T
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_takes_no_store_flag_and_records_nothing_when_given_one() -> TestResult {
     let repo = Repo::new()?;
     let store = repo.path().join("elsewhere.sqlite3");
@@ -691,6 +717,7 @@ fn mode_takes_no_store_flag_and_records_nothing_when_given_one() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_spec_line_pointing_at_source_does_not_exempt_that_source() -> TestResult {
     let repo = Repo::new()?;
     repo.ready()?;
@@ -706,6 +733,7 @@ fn a_spec_line_pointing_at_source_does_not_exempt_that_source() -> TestResult {
 
 #[test]
 #[cfg(any(windows, target_os = "macos"))]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_mode_entered_through_one_letter_case_gates_edits_through_another() -> TestResult {
     let repo = Repo::new()?;
     let shouted = PathBuf::from(repo.path().to_string_lossy().to_uppercase());

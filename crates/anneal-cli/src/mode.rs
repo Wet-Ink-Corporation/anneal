@@ -2,11 +2,11 @@
 //! hook (`hook::preconditions`) enforces.
 //!
 //! Each command appends one `mode_set` event whose envelope names the worktree (its key,
-//! `scope::worktree_key` of the top-level directory git prints), so the latest `mode_set` tagged with a worktree is its mode.
-//! `build` records the plan and design tree, relative to the worktree root, and whether the
-//! working tree was clean (untracked files included); a dirty tree is still recorded, with a
-//! finding, and the hook then denies source edits until build mode is entered clean. See
-//! `docs/preconditions.md`.
+//! `scope::worktree_key` of the top-level directory git prints), so the latest `mode_set`
+//! tagged with a worktree is its mode. `build` records the plan and design tree, relative to
+//! the worktree root, and whether the working tree was clean (untracked files included); a
+//! dirty tree is still recorded, with a finding, and the hook then denies source edits until
+//! build mode is entered clean. See `docs/preconditions.md`.
 //!
 //! - `scope`: which paths the hook guards.
 
