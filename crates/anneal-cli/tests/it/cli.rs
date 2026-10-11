@@ -52,3 +52,60 @@ fn unknown_argument_exits_2_and_writes_nothing_on_stdout() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_usage_error_writes_exactly_one_error_line() -> TestResult {
+    let output = anneal().arg("frobnicate").output()?;
+
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        "ERROR unknown argument: frobnicate\n",
+        "the whole of stderr is one ERROR line, no usage dump"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stub_command_exits_64_with_one_error_line() -> TestResult {
+    let output = anneal().args(["dag", "check", "--all"]).output()?;
+
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "not implemented: {output:?}"
+    );
+    assert!(output.stdout.is_empty(), "no envelope for an error");
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        "ERROR anneal dag is not implemented yet\n",
+        "one ERROR line"
+    );
+    Ok(())
+}
+
+#[test]
+fn help_lists_every_command_with_its_exit_codes() -> TestResult {
+    let output = anneal().arg("--help").output()?;
+    let help = String::from_utf8(output.stdout)?;
+
+    assert!(output.status.success(), "--help exits 0");
+    for line in [
+        "  floor-guard         0 no floor lowered · 1 a floor was lowered · 2 tool error",
+        "  64  not implemented yet",
+    ] {
+        assert!(
+            help.lines().any(|l| l == line),
+            "missing {line:?} in:\n{help}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn arguments_after_version_are_a_usage_error() -> TestResult {
+    let output = anneal().args(["--version", "extra"]).output()?;
+
+    assert_eq!(output.status.code(), Some(2), "never 0: {output:?}");
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    Ok(())
+}

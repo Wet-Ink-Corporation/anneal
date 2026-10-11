@@ -6,7 +6,7 @@ anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks.
 
 | Crate | Layer | Purpose | Depends on |
 |---|---|---|---|
-| `crates/anneal-cli` | binary | the `anneal` command: argument parsing, JSON output, exit codes | std |
+| `crates/anneal-cli` | binary (+ internal lib) | the `anneal` command: argument parsing, JSON output, exit codes | clap, serde, serde_json, thiserror |
 
 Dependencies point inward: domain, then application, then adapters, then binaries (ARC-02). Each crate's `AGENTS.md` is its charter (ARC-08).
 
