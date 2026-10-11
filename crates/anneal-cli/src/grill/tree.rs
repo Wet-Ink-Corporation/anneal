@@ -19,6 +19,9 @@ pub const MAX_NODES: usize = 512;
 pub const MAX_TURNS: usize = 256;
 /// The longest node id, in bytes.
 pub const MAX_ID_LEN: usize = 64;
+/// The most dependencies one node may list. With [`MAX_NODES`] it bounds the findings a tree
+/// can produce: past it the node gets one finding, not one per dependency.
+pub const MAX_DEPENDENCIES: usize = 64;
 /// The `is_decision` probability from which a question goes to the human (Clef D7's
 /// threshold, #32).
 pub const ASK_AT: f64 = 0.5;
@@ -35,6 +38,12 @@ pub struct TreeFile {
     pub turns: Vec<Turn>,
     /// The questions.
     pub nodes: Vec<Node>,
+}
+
+/// Just the format version, read without rejecting unknown fields.
+#[derive(Debug, Deserialize)]
+struct VersionProbe {
+    version: u32,
 }
 
 /// One round of questions and the model's confidence in the shared understanding after it.
@@ -178,6 +187,15 @@ pub enum TreeProblem {
         /// The probability given.
         value: f64,
     },
+    /// A node lists more than [`MAX_DEPENDENCIES`] dependencies; they are not checked one by
+    /// one.
+    #[error("{id}: {count} dependencies; at most {MAX_DEPENDENCIES}")]
+    TooManyDependencies {
+        /// The node.
+        id: String,
+        /// How many it lists.
+        count: usize,
+    },
     /// A dependency names no node.
     #[error("{id}: depends on {dependency:?}, which is not a node")]
     DanglingDependency {
@@ -213,20 +231,22 @@ impl TreeProblem {
             Self::EmptyGoal => "grill/empty-goal".to_owned(),
             Self::TooManyTurns { .. } => "grill/too-many-turns".to_owned(),
             Self::TooManyNodes { .. } => "grill/too-many-nodes".to_owned(),
-            Self::TurnConfidence { turn, .. } => format!("grill/confidence:turn-{turn}"),
+            Self::TurnConfidence { turn, .. } => format!("grill/turn-confidence:{turn}"),
             Self::BadId { id } => format!("grill/bad-id:{id}"),
             Self::DuplicateId { id } => format!("grill/duplicate-id:{id}"),
             Self::EmptyQuestion { id } => format!("grill/empty-question:{id}"),
             Self::EmptyAnswer { id } => format!("grill/empty-answer:{id}"),
-            Self::NodeConfidence { id, .. } => format!("grill/confidence:{id}"),
+            Self::NodeConfidence { id, .. } => format!("grill/node-confidence:{id}"),
             Self::IsDecision { id, .. } => format!("grill/is-decision:{id}"),
+            Self::TooManyDependencies { id, .. } => format!("grill/too-many-dependencies:{id}"),
             Self::DanglingDependency { id, dependency } => {
                 format!("grill/dangling:{id}:{dependency}")
             }
             Self::DuplicateDependency { id, dependency } => {
                 format!("grill/duplicate-dependency:{id}:{dependency}")
             }
-            Self::Cycle { path } => format!("grill/cycle:{}", path.join("-")),
+            // Ids may hold `-`, so the path is joined with `->`, as `dag` does.
+            Self::Cycle { path } => format!("grill/cycle:{}", path.join("->")),
         }
     }
 }
@@ -293,6 +313,14 @@ impl DesignTree {
             return Err(vec![TreeProblem::TooLarge {
                 limit: MAX_TREE_BYTES,
             }]);
+        }
+        // The version is read leniently first, so a tree from another version is reported as
+        // such even when its other fields changed. A probe that fails (not JSON, no version)
+        // is not lost: the strict parse below fails too and reports why.
+        if let Ok(VersionProbe { version }) = serde_json::from_slice(bytes)
+            && version != FORMAT_VERSION
+        {
+            return Err(vec![TreeProblem::Version { found: version }]);
         }
         let mut file: TreeFile = serde_json::from_slice(bytes).map_err(|error| {
             vec![TreeProblem::Json {

@@ -60,9 +60,10 @@
         },
         "depends_on": {
           "type": "array",
+          "maxItems": 64,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/id" },
-          "description": "The ids of the questions whose answers this one needs first."
+          "description": "The ids of the questions whose answers this one needs first. At most 64."
         },
         "status": {
           "type": "string",

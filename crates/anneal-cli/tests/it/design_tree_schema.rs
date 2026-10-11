@@ -6,7 +6,9 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::path::Path;
 
-use anneal_cli::grill::tree::{FORMAT_VERSION, MAX_NODES, MAX_TURNS, Node, Status, TreeFile, Turn};
+use anneal_cli::grill::tree::{
+    FORMAT_VERSION, MAX_DEPENDENCIES, MAX_NODES, MAX_TURNS, Node, Status, TreeFile, Turn,
+};
 use serde_json::Value;
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -168,6 +170,10 @@ fn the_schema_bounds_agree_with_the_design_tree_checks() -> TestResult {
         (
             "/$defs/node/properties/depends_on/items/$ref",
             Value::from("#/$defs/id"),
+        ),
+        (
+            "/$defs/node/properties/depends_on/maxItems",
+            Value::from(MAX_DEPENDENCIES),
         ),
         (
             "/$defs/node/properties/depends_on/uniqueItems",

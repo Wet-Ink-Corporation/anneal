@@ -5,18 +5,13 @@
 
 use std::collections::BTreeSet;
 
-use super::{FORMAT_VERSION, MAX_ID_LEN, MAX_NODES, MAX_TURNS, Node, TreeFile, TreeProblem};
+use super::{MAX_DEPENDENCIES, MAX_ID_LEN, MAX_NODES, MAX_TURNS, Node, TreeFile, TreeProblem};
 
-/// Every problem in `file`, whose nodes are sorted by id: the format version, the goal, the
-/// bounds, then each turn, then each node with its dependencies. Past a bound nothing else is
-/// checked.
+/// Every problem in `file`, whose nodes are sorted by id and whose format version
+/// `DesignTree::parse` has checked: the goal, the bounds, then each turn, then each node with
+/// its dependencies. Past a bound nothing else is checked.
 pub(super) fn problems(file: &TreeFile) -> Vec<TreeProblem> {
     let mut problems = Vec::new();
-    if file.version != FORMAT_VERSION {
-        problems.push(TreeProblem::Version {
-            found: file.version,
-        });
-    }
     if file.goal.trim().is_empty() {
         problems.push(TreeProblem::EmptyGoal);
     }
@@ -84,6 +79,14 @@ fn node_problems(node: &Node, nodes: &[Node], problems: &mut Vec<TreeProblem>) {
             id: id(),
             value: node.is_decision,
         });
+    }
+    // Past the bound, one problem for the node rather than one per dependency (H-13).
+    if node.depends_on.len() > MAX_DEPENDENCIES {
+        problems.push(TreeProblem::TooManyDependencies {
+            id: id(),
+            count: node.depends_on.len(),
+        });
+        return;
     }
     let mut seen = BTreeSet::new();
     for dependency in &node.depends_on {

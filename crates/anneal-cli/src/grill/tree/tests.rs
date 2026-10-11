@@ -440,6 +440,72 @@ fn a_gain_resets_the_count_of_turns_without_gain() {
 }
 
 #[test]
+fn more_dependencies_than_the_bound_are_one_problem_for_the_node() {
+    let ghosts: Vec<String> = (0..=super::MAX_DEPENDENCIES)
+        .map(|n| format!("ghost{n}"))
+        .collect();
+    let ghosts: Vec<&str> = ghosts.iter().map(String::as_str).collect();
+    let bytes = tree(&[node("a", &ghosts, "open")], &[]);
+
+    assert_eq!(
+        parse(&bytes),
+        Err(vec![TreeProblem::TooManyDependencies {
+            id: "a".to_owned(),
+            count: 65,
+        }]),
+        "64 dependencies at most; past it no dependency is checked one by one"
+    );
+}
+
+#[test]
+fn a_tree_from_another_version_reports_the_version_even_with_unknown_fields() {
+    let mut value: Value = serde_json::from_slice(&tree(&[], &[])).expect("json");
+    value["version"] = json!(2);
+    value["priority"] = json!("a field version 2 might add");
+
+    assert_eq!(
+        parse(&serde_json::to_vec(&value).expect("json")),
+        Err(vec![TreeProblem::Version { found: 2 }]),
+        "the version is read before the strict parse"
+    );
+}
+
+#[test]
+fn finding_keys_of_different_problems_do_not_collide() {
+    let keys: Vec<String> = [
+        TreeProblem::TurnConfidence {
+            turn: 1,
+            value: 2.0,
+        },
+        TreeProblem::NodeConfidence {
+            id: "turn-1".to_owned(),
+            value: 2.0,
+        },
+        TreeProblem::Cycle {
+            path: vec!["a-b".to_owned(), "c".to_owned(), "a-b".to_owned()],
+        },
+        TreeProblem::TooManyDependencies {
+            id: "a".to_owned(),
+            count: 65,
+        },
+    ]
+    .iter()
+    .map(TreeProblem::key)
+    .collect();
+
+    assert_eq!(
+        keys,
+        [
+            "grill/turn-confidence:1",
+            "grill/node-confidence:turn-1",
+            "grill/cycle:a-b->c->a-b",
+            "grill/too-many-dependencies:a",
+        ],
+        "turns and nodes have their own kinds; ids may hold '-', so the path is joined with '->'"
+    );
+}
+
+#[test]
 fn a_file_over_the_byte_limit_is_rejected_before_parsing() {
     let bytes = vec![b' '; 1_048_577];
 

@@ -4,7 +4,8 @@
 //!
 //! `frontier` lists the open questions whose dependencies are all answered. `confirm` records
 //! the human's explicit confirmation as a `grill_confirmed` ledger event carrying the tree's
-//! hash and the human's words: it refuses a blank `--quote` (a usage error), an invalid tree
+//! hash and the human's words: it refuses a blank `--quote` or a `--tree`/`--session` the ledger
+//! cannot keep as a tag (usage errors, checked before a ledger is opened), an invalid tree
 //! (exit 1) and a tree with an open question (exit 3), and appends nothing in those cases. See
 //! `docs/grill.md`.
 
@@ -15,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anneal_ledger::event::GrillConfirmed;
-use anneal_ledger::{EventEnvelope, LedgerEvent, Store, Timestamp};
+use anneal_ledger::{EventEnvelope, LedgerEvent, Store, TagError, Timestamp};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -81,6 +82,12 @@ pub enum GrillError {
         /// The path as given.
         path: PathBuf,
     },
+    /// The path is not a regular file (a directory, a pipe, a device).
+    #[error("design tree {} is not a file", path.display())]
+    NotAFile {
+        /// The path as given.
+        path: PathBuf,
+    },
     /// The file could not be read.
     #[error("reading design tree {}", path.display())]
     Read {
@@ -93,11 +100,12 @@ pub enum GrillError {
 }
 
 impl GrillError {
-    /// The documented exit code: a missing file is a usage error (2), a read failure 70.
+    /// The documented exit code: a missing file or one that is not a regular file is a usage
+    /// error (2), a read failure 70.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
-            Self::Missing { .. } => exit_codes::USAGE,
+            Self::Missing { .. } | Self::NotAFile { .. } => exit_codes::USAGE,
             Self::Read { .. } => exit_codes::INTERNAL,
         }
     }
@@ -225,6 +233,13 @@ fn confirm<O: Write>(
     });
     let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
     envelope.session_id.clone_from(&args.session);
+    // The plan and session become ledger tags; check them before a ledger is opened (or
+    // created), so a path or id the store would refuse is a usage error that leaves no file.
+    if let Err(error) = envelope.tags() {
+        return Err(CliError::Usage {
+            reason: unrecordable(&error),
+        });
+    }
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
     let position = Store::open(&location.path)?.append(&envelope)?;
     let data = Confirmed {
@@ -240,8 +255,19 @@ fn confirm<O: Write>(
     )
 }
 
+/// The one-line usage reason for a `--tree` or `--session` the ledger refuses as a tag: the
+/// tag error and its cause.
+fn unrecordable(error: &TagError) -> String {
+    let prefix = "--tree and --session are recorded as ledger tags";
+    match std::error::Error::source(error) {
+        Some(cause) => format!("{prefix}: {error}: {cause}"),
+        None => format!("{prefix}: {error}"),
+    }
+}
+
 /// Reads the design tree at `path` (relative to `cwd`), at most one byte past
-/// [`MAX_TREE_BYTES`] so an oversized file is reported without being read whole.
+/// [`MAX_TREE_BYTES`] so an oversized file is reported without being read whole. Anything but
+/// a regular file (a directory, a pipe) is refused before reading.
 fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
     let failed = |source: io::Error| {
         // The error owns the path it names.
@@ -253,6 +279,12 @@ fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
         }
     };
     let file = std::fs::File::open(cwd.join(path)).map_err(failed)?;
+    if !file.metadata().map_err(failed)?.is_file() {
+        return Err(GrillError::NotAFile {
+            // The error owns the path it names.
+            path: path.to_path_buf(),
+        });
+    }
     let limit = u64::try_from(MAX_TREE_BYTES).map_or(u64::MAX, |max| max.saturating_add(1));
     let mut bytes = Vec::new();
     file.take(limit).read_to_end(&mut bytes).map_err(failed)?;

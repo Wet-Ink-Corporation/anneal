@@ -53,7 +53,7 @@ A JSON file, by convention `.anneal/grill/<topic>.json`, valid against
 | `nodes` | The questions. At most 512. |
 | `nodes[].id` | Unique; `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. |
 | `nodes[].question` | The question as it would be asked. Not blank. |
-| `nodes[].depends_on` | Ids of the questions whose answers this one needs first. Each names a node, at most once; no cycles. |
+| `nodes[].depends_on` | Ids of the questions whose answers this one needs first. Each names a node, at most once; no cycles. At most 64. |
 | `nodes[].status` | `open`, `answered` or `deferred`. |
 | `nodes[].answer` | While open, the **recommended answer** a plain "yes" accepts; once answered, the agreed answer; while deferred, the assumption carried (for an out-of-scope ruling, its id). Never blank: every question carries a recommendation. |
 | `nodes[].is_decision` | Probability from 0 to 1 that only the human can settle it. From 0.5 it is asked; below, the model looks it up. Clef D7 (#32) will write its estimate here. |
@@ -111,15 +111,24 @@ kept in the ledger so a reviewer can read it.
 | 1 | invalid design tree: a cycle, a dangling or repeated dependency, a duplicate or bad id, a blank goal, question or answer, a probability outside 0 to 1, a bound exceeded, or JSON that is not a design tree |
 | 3 | `confirm`: a question is still open |
 
-A missing `--tree` file is a usage error (2); the global codes are in
+A missing `--tree` file, or one that is not a regular file (a directory), is a usage error (2).
+So is, for `confirm`, a `--tree` path or `--session` id the ledger cannot keep as a tag (over 255
+bytes, or with a control character); it is checked before the ledger is opened, so no ledger
+file is created. The global codes are in
 [exit-codes.md](exit-codes.md).
 
 ## Finding keys
 
 `grill/json`, `grill/too-large`, `grill/version`, `grill/empty-goal`, `grill/too-many-turns`,
-`grill/too-many-nodes`, `grill/confidence:turn-<n>`, `grill/bad-id:<id>`,
+`grill/too-many-nodes`, `grill/turn-confidence:<n>`, `grill/bad-id:<id>`,
 `grill/duplicate-id:<id>`, `grill/empty-question:<id>`, `grill/empty-answer:<id>`,
-`grill/confidence:<id>`, `grill/is-decision:<id>`, `grill/dangling:<id>:<dependency>`,
-`grill/duplicate-dependency:<id>:<dependency>`, `grill/cycle:<a>-<b>-...-<a>` (one cycle, from
-its smallest id) and, for `confirm`, `grill/open:<id>`. A cycle is looked for only once the ids
-are unique and every dependency names a node.
+`grill/node-confidence:<id>`, `grill/is-decision:<id>`, `grill/too-many-dependencies:<id>`,
+`grill/dangling:<id>:<dependency>`, `grill/duplicate-dependency:<id>:<dependency>`,
+`grill/cycle:<a>-><b>->...-><a>` (one cycle, from its smallest id) and, for `confirm`,
+`grill/open:<id>`. A cycle is looked for only once the ids are unique and every dependency
+names a node.
+
+The version is read before the rest of the file, so a tree from another version reports
+`grill/version` alone, even when its other fields are not version 1's. Past a bound (turns,
+nodes, a node's dependencies) the items under it are not checked one by one, so a tree within
+1 MiB produces a bounded number of findings.

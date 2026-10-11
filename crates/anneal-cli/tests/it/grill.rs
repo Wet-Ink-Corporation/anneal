@@ -159,7 +159,7 @@ fn an_invalid_tree_exits_1_with_one_finding_per_problem_and_confirms_nothing() -
 
     for result in [&frontier, &confirm] {
         assert_eq!(result["ok"], false, "{result}");
-        assert_eq!(finding_keys(result), ["grill/cycle:a-b-a"], "{result}");
+        assert_eq!(finding_keys(result), ["grill/cycle:a->b->a"], "{result}");
     }
     assert!(!store.exists(), "no ledger was opened");
     Ok(())
@@ -311,4 +311,60 @@ fn a_missing_tree_file_is_a_usage_error() -> TestResult {
         "one ERROR line naming the file"
     );
     Ok(())
+}
+
+/// Asserts a usage error: exit 2, nothing on stdout, one `ERROR` line containing `names`.
+fn assert_usage_error(output: &Output, names: &str) -> TestResult {
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "nothing on stdout: {output:?}");
+    let stderr = std::str::from_utf8(&output.stderr)?;
+    assert!(
+        stderr.starts_with("ERROR ") && stderr.lines().count() == 1 && stderr.contains(names),
+        "one ERROR line naming {names:?}: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn confirm_with_a_tree_path_too_long_for_a_plan_tag_is_a_usage_error_and_opens_no_ledger()
+-> TestResult {
+    let dir = tempfile::tempdir()?;
+    let nested = ["a", "b", "c"].map(|letter| letter.repeat(100)).join("/");
+    std::fs::create_dir_all(dir.path().join(&nested))?;
+    write_tree(
+        &dir.path().join(&nested),
+        &[node("a", &[], "answered")],
+        &[0.9],
+    )?;
+    let tree = format!("{nested}/tree.json");
+    let store = dir.path().join("ledger.sqlite3");
+
+    let output = grill(
+        dir.path(),
+        &[
+            "confirm",
+            "--tree",
+            &tree,
+            "--quote",
+            "yes",
+            "--store",
+            "ledger.sqlite3",
+        ],
+    )?;
+
+    assert_usage_error(&output, "plan")?;
+    assert!(!store.exists(), "no ledger was opened");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_directory_as_the_tree_is_a_usage_error() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    std::fs::create_dir(dir.path().join("trees"))?;
+
+    let output = grill(dir.path(), &["frontier", "--tree", "trees"])?;
+
+    assert_usage_error(&output, "trees")
 }
