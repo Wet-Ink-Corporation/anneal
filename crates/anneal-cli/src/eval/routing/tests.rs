@@ -1,9 +1,11 @@
-use crate::eval::routing::fixture::{Fixture, parse};
-use crate::eval::routing::{Case, CaseKind, Fault, List, Outcome, Problem, Source, Top, judge};
+use crate::eval::routing::fixture::{Fixture, Owner, parse};
+use crate::eval::routing::{
+    Case, CaseKind, Fault, List, Outcome, Problem, Rival, Source, Top, judge,
+};
 use crate::exit_codes;
 use crate::lint::finding::{LintFinding, Location};
 use crate::lint::skills::checker::Checker;
-use crate::lint::skills::listing::Listing;
+use crate::lint::skills::listing::{Listing, Unparsed};
 
 fn listing(name: &str, text: &str) -> Listing {
     Listing {
@@ -29,6 +31,13 @@ fn source(skill: &str, text: &str) -> Source {
     }
 }
 
+fn rival(skill: &str, score: usize) -> Rival {
+    Rival {
+        skill: skill.to_owned(),
+        score,
+    }
+}
+
 /// `count` numbered prompts under `key`, indented for a fixture.
 fn items(count: usize, prompt: &str) -> String {
     (1..=count)
@@ -38,7 +47,7 @@ fn items(count: usize, prompt: &str) -> String {
 }
 
 /// Two skills whose triggers share no word.
-fn plan_and_spec() -> Vec<Result<Listing, LintFinding>> {
+fn plan_and_spec() -> Vec<Result<Listing, Unparsed>> {
     vec![
         Ok(listing("plan", "plan: break work into ordered tasks")),
         Ok(listing(
@@ -107,7 +116,7 @@ fn a_positive_passes_only_when_its_skill_is_the_unique_top() {
             expected: "plan".to_owned(),
             top: Top::Skill("plan".to_owned()),
             expected_score: 2,
-            rival: Some(("spec".to_owned(), 0)),
+            rival: Some(rival("spec", 0)),
             passed: true,
         }),
         "the full record of a passing positive"
@@ -145,7 +154,7 @@ fn a_near_miss_passes_when_its_owner_outscores_the_skill_it_mimics() {
                 mimics: "plan".to_owned()
             },
             "spec",
-            &Some(("plan".to_owned(), 0)),
+            &Some(rival("plan", 0)),
         )),
         "expected is the owner, the rival is the mimicked skill"
     );
@@ -192,7 +201,10 @@ fn file_level_problems_are_reported_once_per_file_and_exit_invalid() {
     );
     let mut skills = plan_and_spec();
     skills.push(Ok(user_invoked("release")));
-    skills.push(Err(broken.clone()));
+    skills.push(Err(Unparsed {
+        name: "broken".to_owned(),
+        finding: broken.clone(),
+    }));
     skills.push(Ok(listing(
         "diagnose",
         "diagnose: find the root cause of a bug",
@@ -260,6 +272,84 @@ fn count_and_owner_problems_point_at_their_lines() {
         passed(&outcome).first(),
         Some(&(2, true)),
         "valid prompts are still scored"
+    );
+    assert_eq!(outcome.code(), exit_codes::EVAL_INVALID, "exit 2");
+}
+
+#[test]
+fn every_owner_is_validated_even_without_prompts() {
+    let mut skills = plan_and_spec();
+    skills.push(Ok(user_invoked("release")));
+    let mut fixture = parse(&full_plan_fixture()).expect("the full fixture parses");
+    for (name, line) in [("ghost", 30), ("release", 31)] {
+        fixture.owners.push(Owner {
+            name: name.to_owned(),
+            line,
+        });
+    }
+    let plan = Source {
+        file: "plan.yaml".to_owned(),
+        skill: Some("plan".to_owned()),
+        parsed: Ok(fixture),
+    };
+
+    let outcome = judge(skills, vec![plan, source("spec", &full_spec_fixture())]);
+
+    let unknown = |owner: &str| Fault::UnknownOwner {
+        owner: owner.to_owned(),
+    };
+    assert_eq!(
+        outcome.problems,
+        [
+            at("plan.yaml", 30, unknown("ghost")),
+            at("plan.yaml", 31, unknown("release")),
+        ],
+        "an owner with no prompts is checked at its key"
+    );
+    assert_eq!(outcome.code(), exit_codes::EVAL_INVALID, "exit 2");
+}
+
+#[test]
+fn a_fixture_or_owner_naming_an_unparseable_skill_says_so() {
+    let broken = LintFinding::error(
+        Checker::Frontmatter,
+        Location::new("skills/broken/SKILL.md", 1),
+        "frontmatter does not parse.",
+        "fix it.",
+    );
+    let mut skills = plan_and_spec();
+    skills.push(Err(Unparsed {
+        name: "broken".to_owned(),
+        finding: broken.clone(),
+    }));
+    let plan = format!(
+        "{}  broken:\n    - fix the broken skill\n",
+        full_plan_fixture()
+    );
+
+    let outcome = judge(
+        skills,
+        vec![
+            source("broken", ""),
+            source("plan", &plan),
+            source("spec", &full_spec_fixture()),
+        ],
+    );
+
+    assert_eq!(
+        outcome.problems,
+        [
+            Problem::Skill(broken),
+            at("broken.yaml", 0, Fault::SkillUnparseable),
+            at(
+                "plan.yaml",
+                21,
+                Fault::OwnerUnparseable {
+                    owner: "broken".to_owned()
+                }
+            ),
+        ],
+        "not reported as unknown: the skill exists but its SKILL.md does not parse"
     );
     assert_eq!(outcome.code(), exit_codes::EVAL_INVALID, "exit 2");
 }

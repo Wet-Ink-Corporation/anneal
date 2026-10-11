@@ -1,4 +1,4 @@
-# Routing fixture for the `plan` test skill, failing variant: the second-to-last positive ranks `spec` first.
+# Routing fixture for the `plan` test skill, failing variant: the last positive ranks `spec` first.
 positives:
   - make an implementation plan for the agreed specification
   - split this work into small tasks with dependencies

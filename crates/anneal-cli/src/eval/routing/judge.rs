@@ -5,27 +5,34 @@ use std::collections::BTreeSet;
 use crate::eval::routing::fixture::{self, Fixture};
 use crate::eval::routing::score::Scorer;
 use crate::eval::routing::{
-    Case, CaseKind, Fault, List, MAX_PROMPTS, MIN_PROMPTS, Outcome, Problem, Source, Top,
+    Case, CaseKind, Fault, List, MAX_PROMPTS, MIN_PROMPTS, Outcome, Problem, Rival, Source, Top,
 };
-use crate::lint::finding::LintFinding;
-use crate::lint::skills::listing::Listing;
+use crate::lint::skills::listing::{Listing, Unparsed};
 
 /// Scores `sources` against the model-invoked skills among `skills`.
-pub(crate) fn judge(skills: Vec<Result<Listing, LintFinding>>, sources: Vec<Source>) -> Outcome {
+pub(crate) fn judge(skills: Vec<Result<Listing, Unparsed>>, sources: Vec<Source>) -> Outcome {
     let mut problems = Vec::new();
     let mut listed = Vec::with_capacity(skills.len());
+    let mut unparsed = BTreeSet::new();
     for skill in skills {
         match skill {
             Ok(listing) => listed.push(listing),
-            Err(finding) => problems.push(Problem::Skill(finding)),
+            Err(skill) => {
+                unparsed.insert(skill.name);
+                problems.push(Problem::Skill(skill.finding));
+            }
         }
     }
     let routable: Vec<&Listing> = listed.iter().filter(|l| l.model_invoked).collect();
-    let scorer = Scorer::new(routable.iter().map(|l| (l.name.as_str(), l.text.as_str())));
+    let roster = Roster {
+        listed: &listed,
+        unparsed: &unparsed,
+        scorer: Scorer::new(routable.iter().map(|l| (l.name.as_str(), l.text.as_str()))),
+    };
     let mut cases = Vec::new();
     let mut covered = BTreeSet::new();
     for source in sources {
-        let judged = judge_fixture(source, &listed, &scorer);
+        let judged = judge_fixture(source, &roster);
         covered.extend(judged.covers);
         cases.extend(judged.cases);
         problems.extend(judged.problems);
@@ -61,7 +68,49 @@ struct Judged {
     problems: Vec<Problem>,
 }
 
-fn judge_fixture(source: Source, skills: &[Listing], scorer: &Scorer<'_>) -> Judged {
+/// The skill set a fixture is judged against.
+#[derive(Debug)]
+struct Roster<'s> {
+    /// Every skill whose `SKILL.md` parsed.
+    listed: &'s [Listing],
+    /// The names of skills whose `SKILL.md` did not parse.
+    unparsed: &'s BTreeSet<String>,
+    /// Scores prompts against the model-invoked skills.
+    scorer: Scorer<'s>,
+}
+
+impl Roster<'_> {
+    /// Why `owner` cannot own a near miss of `skill`'s fixture, if it cannot.
+    fn owner_fault(&self, owner: &str, skill: &str) -> Option<Fault> {
+        if owner == skill {
+            Some(Fault::SelfOwned)
+        } else if self.unparsed.contains(owner) {
+            Some(Fault::OwnerUnparseable {
+                owner: owner.to_owned(),
+            })
+        } else if self.scorer.has(owner) {
+            None
+        } else {
+            Some(Fault::UnknownOwner {
+                owner: owner.to_owned(),
+            })
+        }
+    }
+
+    /// Why no fixture can route to `skill`, if none can.
+    fn skill_fault(&self, skill: &str) -> Option<Fault> {
+        if self.unparsed.contains(skill) {
+            return Some(Fault::SkillUnparseable);
+        }
+        match self.listed.iter().find(|l| l.name == skill) {
+            None => Some(Fault::UnknownSkill),
+            Some(listing) if !listing.model_invoked => Some(Fault::NotRoutable),
+            Some(_) => None,
+        }
+    }
+}
+
+fn judge_fixture(source: Source, roster: &Roster<'_>) -> Judged {
     let file = source.file.as_str();
     let problem = |line, fault| Problem::Fixture {
         file: file.to_owned(),
@@ -83,11 +132,10 @@ fn judge_fixture(source: Source, skills: &[Listing], scorer: &Scorer<'_>) -> Jud
         Err((line, fault)) => return reject(line, fault),
         Ok(fixture) => fixture,
     };
-    match skills.iter().find(|l| l.name == skill) {
-        None => return reject(0, Fault::UnknownSkill),
-        Some(listing) if !listing.model_invoked => return reject(0, Fault::NotRoutable),
-        Some(_) => {}
+    if let Some(fault) = roster.skill_fault(skill) {
+        return reject(0, fault);
     }
+    let scorer = &roster.scorer;
     let mut judged = Judged {
         covers: Some(skill.to_owned()),
         problems: counts(&fixture)
@@ -103,17 +151,21 @@ fn judge_fixture(source: Source, skills: &[Listing], scorer: &Scorer<'_>) -> Jud
     for prompt in fixture.positives {
         judged.cases.push(positive(file, skill, prompt, scorer));
     }
+    // Every owner is checked, even one that lists no prompts (the reader forbids that, but
+    // the judge does not rely on it): such an owner is reported at its key.
+    for owner in &fixture.owners {
+        let has_prompts = fixture.near_misses.iter().any(|n| n.owner == owner.name);
+        if let Some(fault) = roster
+            .owner_fault(&owner.name, skill)
+            .filter(|_| !has_prompts)
+        {
+            judged.problems.push(problem(owner.line, fault));
+        }
+    }
     for near in fixture.near_misses {
-        let line = near.prompt.line;
-        if near.owner == skill {
-            judged.problems.push(problem(line, Fault::SelfOwned));
-        } else if scorer.has(&near.owner) {
-            judged.cases.push(near_miss(file, skill, near, scorer));
-        } else {
-            let owner = near.owner;
-            judged
-                .problems
-                .push(problem(line, Fault::UnknownOwner { owner }));
+        match roster.owner_fault(&near.owner, skill) {
+            Some(fault) => judged.problems.push(problem(near.prompt.line, fault)),
+            None => judged.cases.push(near_miss(file, skill, near, scorer)),
         }
     }
     judged
@@ -159,7 +211,10 @@ fn positive(file: &str, skill: &str, prompt: fixture::Prompt, scorer: &Scorer<'_
         passed: matches!(&top, Top::Skill(name) if name == skill),
         top,
         expected_score: ranking.of(skill),
-        rival: rival.map(|(name, score)| (name.to_owned(), score)),
+        rival: rival.map(|(name, score)| Rival {
+            skill: name.to_owned(),
+            score,
+        }),
     }
 }
 
@@ -178,7 +233,10 @@ fn near_miss(file: &str, skill: &str, near: fixture::NearMiss, scorer: &Scorer<'
         expected: near.owner,
         top: ranking.top(),
         expected_score: owner_score,
-        rival: Some((skill.to_owned(), mimic_score)),
+        rival: Some(Rival {
+            skill: skill.to_owned(),
+            score: mimic_score,
+        }),
         passed: owner_score > mimic_score,
     }
 }

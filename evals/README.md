@@ -21,7 +21,7 @@ anneal eval routing [--skills plugin/skills] [--fixtures evals/routing]
 Every model-invoked skill (one without `disable-model-invocation: true`) has a fixture `evals/routing/<skill>.yaml` with 8 to 10 **positive** prompts and 8 to 10 **near-miss** prompts. Each prompt is scored against every model-invoked skill by word overlap, in the style of addyosmani's `run-evals.js`:
 
 - A skill's text is its directory name, its `name`, its trigger (the `description` up to its "Do NOT use for" clause, whose words point away from the skill) and its `when_to_use`.
-- Words are lowercased runs of letters and digits, three characters or more, minus the stopwords of the `lint skills` overlap check. Each is cut to a light stem (`plans`, `planned` and `planning` all match `plan`).
+- Words are lowercased runs of letters and digits, with apostrophes inside a word kept (`it's` is one word) and those at its ends trimmed, three characters or more, minus the stopwords of the `lint skills` overlap check. Each is cut to a light stem (`plans`, `planned` and `planning` all match `plan`).
 - A skill's score is the number of distinct stems it shares with the prompt.
 
 The merge bar is **100% rank-1**:
@@ -37,7 +37,7 @@ The merge bar is **100% rank-1**:
 |---|---|
 | 0 | every fixture is valid and every prompt passes |
 | 1 | below bound: at least one prompt misses |
-| 2 | invalid fixtures or skills: a fixture does not parse, has too few or too many prompts, names an unknown skill or owner, or a model-invoked skill has no fixture; or a `SKILL.md` does not parse |
+| 2 | invalid fixtures or skills: a fixture does not parse, has too few or too many prompts, names an unknown skill or owner (or one whose `SKILL.md` does not parse), or a model-invoked skill has no fixture; or a `SKILL.md` does not parse |
 
 A missing `--skills` or `--fixtures` directory is a usage error (2, one `ERROR` line, nothing on stdout).
 
@@ -49,7 +49,7 @@ anneal eval routing | jq -r '.data.table[]'
 
 ### Fixture schema
 
-A fixture is a small subset of YAML, read by a hand-written reader so it needs no YAML dependency. Tier 2 (#40) runs the same files under the real router, so every file the reader accepts is also valid YAML with the same meaning.
+A fixture is a small subset of YAML, read by a hand-written reader so it needs no YAML dependency. Tier 2 (#40) runs the same files under the real router, so every file the reader accepts is also valid YAML that reads as the same strings: the reader rejects, and asks you to quote or rewrite, anything a YAML parser would read differently.
 
 ```yaml
 # evals/routing/plan.yaml: prompts for the `plan` skill.
@@ -65,9 +65,10 @@ near_misses:
 
 - The file name is the skill's directory name plus `.yaml`. Other files in `evals/routing/` are ignored.
 - Two top-level keys, each at most once: `positives:` (a list of prompts) and `near_misses:` (a map from owner skill to a list of prompts). Each must hold 8 to 10 prompts in total.
-- Owners are skill names (lowercase letters, digits, hyphens), must be model-invoked skills, and cannot be the fixture's own skill.
+- Owners are skill names (lowercase letters, digits, hyphens), must be model-invoked skills whose `SKILL.md` parses, cannot be the fixture's own skill, and each lists at least one prompt.
 - Items are `- prompt`, indented with spaces (no tabs), all items of one list at the same indentation and deeper than their key.
-- Prompts are plain or quoted scalars with the frontmatter parser's rules: quote a prompt that contains `: `, ends with `:`, or starts with a YAML indicator (`` ` `` `@` `%` `*` `&` `!` `|` `>` `#` `[` `{`, or `- ` or `? `). Double quotes take `\"` and `\\` escapes; single quotes take `''`.
+- Prompts are plain or quoted scalars with the frontmatter parser's rules: quote a prompt that contains `: `, ends with `:`, or starts with a YAML indicator (`` ` `` `@` `%` `*` `&` `!` `|` `>` `#` `[` `{`, or `- ` or `? `). Double quotes take only the `\"` and `\\` escapes (any other, such as `\t` or `é`, is rejected: YAML would decode it); single quotes take `''`.
+- A plain prompt that YAML would read as something other than a string is rejected; quote it. That covers `~`, `null`, booleans (`true`, `false`, `yes`, `no`, `on`, `off`, `y`, `n`, in any case), numbers (`42`, `1_000`, `-3.5e2`, `0x1F`, `10:30`, `.inf`, `.nan`) and dates or timestamps (`2026-10-11...`). Longer phrases such as `3 tasks remain` or `null pointer crash` are plain text and need no quotes.
 - Full-line `#` comments and blank lines are ignored.
 
 ### Seed fixtures

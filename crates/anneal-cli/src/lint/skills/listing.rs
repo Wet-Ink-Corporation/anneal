@@ -37,17 +37,35 @@ impl Listing {
     }
 }
 
+/// A skill whose `SKILL.md` could not be read as frontmatter plus body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unparsed {
+    /// The skill directory's name.
+    pub(crate) name: String,
+    /// The `lint skills` finding that says why.
+    pub(crate) finding: LintFinding,
+}
+
 /// The skills under `paths`, sorted by directory: each one's listing, or the `lint skills`
 /// finding that stops its `SKILL.md` from being read.
 ///
 /// # Errors
 /// [`LintError`] when a path is missing or the wrong kind, or a file cannot be read.
-pub(crate) fn listings(paths: &[PathBuf]) -> Result<Vec<Result<Listing, LintFinding>>, LintError> {
+pub(crate) fn listings(paths: &[PathBuf]) -> Result<Vec<Result<Listing, Unparsed>>, LintError> {
     let dirs = discover(paths)?;
     let mut found = Vec::with_capacity(dirs.len());
     for dir in &dirs {
         let loaded = Loaded::read(dir)?;
-        found.push(loaded.parse().map(|skill| Listing::of(&skill)));
+        found.push(
+            loaded
+                .parse()
+                .map(|skill| Listing::of(&skill))
+                .map_err(|finding| Unparsed {
+                    // The result outlives the directory list, so it owns the name.
+                    name: dir.name.clone(),
+                    finding,
+                }),
+        );
     }
     Ok(found)
 }
@@ -84,8 +102,10 @@ mod tests {
             panic!("three skills, sorted: {found:?}");
         };
         assert_eq!(
-            broken.as_ref().map_err(|finding| finding.checker),
-            Err(Checker::Frontmatter),
+            broken
+                .as_ref()
+                .map_err(|unparsed| (unparsed.name.as_str(), unparsed.finding.checker)),
+            Err(("broken", Checker::Frontmatter)),
             "the lint finding that stops parsing"
         );
         assert_eq!(

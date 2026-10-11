@@ -99,11 +99,20 @@ pub struct Case {
     pub top: Top,
     /// The expected skill's score.
     pub expected_score: usize,
-    /// The skill it is measured against and its score: the best other skill for a positive,
-    /// the mimicked skill for a near miss. `None` when there is no other skill.
-    pub rival: Option<(String, usize)>,
+    /// The skill it is measured against: the best other skill for a positive, the mimicked
+    /// skill for a near miss. `None` when there is no other skill.
+    pub rival: Option<Rival>,
     /// Whether the case meets the bar.
     pub passed: bool,
+}
+
+/// The skill a case's expected skill is measured against, and its score.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rival {
+    /// The rival skill's name.
+    pub skill: String,
+    /// Its score for the prompt.
+    pub score: usize,
 }
 
 /// Which list of a fixture.
@@ -161,6 +170,13 @@ pub enum Fault {
     },
     /// A near miss is owned by the skill whose fixture lists it.
     SelfOwned,
+    /// The fixture's skill exists but its `SKILL.md` does not parse.
+    SkillUnparseable,
+    /// A near miss names an owner whose `SKILL.md` does not parse.
+    OwnerUnparseable {
+        /// The owner as written.
+        owner: String,
+    },
 }
 
 impl Display for Fault {
@@ -183,6 +199,13 @@ impl Display for Fault {
                 write!(f, "near-miss owner `{owner}` is not a model-invoked skill")
             }
             Self::SelfOwned => f.write_str("a near miss cannot be owned by the skill it mimics"),
+            Self::SkillUnparseable => f.write_str(
+                "the skill's SKILL.md does not parse; fix it first (see `anneal lint skills`)",
+            ),
+            Self::OwnerUnparseable { owner } => write!(
+                f,
+                "near-miss owner `{owner}`: its SKILL.md does not parse; fix it first (see `anneal lint skills`)"
+            ),
         }
     }
 }
@@ -332,5 +355,7 @@ fn read_fixtures(dir: &Path) -> Result<Vec<Source>, LintError> {
     Ok(sources)
 }
 
+#[cfg(test)]
+mod read_tests;
 #[cfg(test)]
 mod tests;

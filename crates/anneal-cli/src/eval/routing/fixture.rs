@@ -11,9 +11,12 @@
 //! ```
 //!
 //! Items are scalars with the frontmatter parser's rules (plain, `"double"` or `'single'`
-//! quoted; a plain item may not contain `: ` or start with a YAML indicator). Flow collections
-//! (`[`, `{`), tabs, and anything else are a [`ParseError`] with the line it stopped at, so a
-//! file this reader accepts reads the same under a real YAML parser (Tier 2, #40).
+//! quoted; a plain item may not contain `: ` or start with a YAML indicator). Every owner lists
+//! at least one prompt. Anything YAML would read differently is a [`ParseError`] with the line
+//! it stopped at: flow collections (`[`, `{`), tabs, double-quoted escapes other than `\"` and
+//! `\\`, and plain values YAML types (null, `~`, booleans including `yes`/`no`/`on`/`off`,
+//! numbers, dates). So a file this reader accepts reads as the same strings under a real YAML
+//! parser (Tier 2, #40).
 
 use std::collections::BTreeSet;
 
@@ -37,6 +40,15 @@ pub(crate) struct NearMiss {
     pub(crate) prompt: Prompt,
 }
 
+/// An `owner:` key under `near_misses:`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Owner {
+    /// The owner skill's name.
+    pub(crate) name: String,
+    /// 1-based line of the key.
+    pub(crate) line: usize,
+}
+
 /// A parsed routing fixture.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Fixture {
@@ -44,6 +56,8 @@ pub(crate) struct Fixture {
     pub(crate) positives: Vec<Prompt>,
     /// Prompts whose owner must outrank the fixture's skill, in file order.
     pub(crate) near_misses: Vec<NearMiss>,
+    /// Every near-miss owner key, in file order; each lists at least one prompt.
+    pub(crate) owners: Vec<Owner>,
     /// Line of the `positives:` key, or 0 when absent.
     pub(crate) positives_line: usize,
     /// Line of the `near_misses:` key, or 0 when absent.
@@ -68,6 +82,7 @@ pub(crate) fn parse(text: &str) -> Result<Fixture, ParseError> {
         let indent = line.len().saturating_sub(content.len());
         reader.line(indent, content.trim_end(), line_no)?;
     }
+    reader.close_owner()?;
     Ok(reader.fixture)
 }
 
@@ -93,6 +108,8 @@ struct Reader {
     owner_indent: Option<usize>,
     /// The current near-miss owner.
     owner: Option<String>,
+    /// How many prompts the current owner has listed so far.
+    owner_prompts: usize,
     owners: BTreeSet<String>,
 }
 
@@ -136,6 +153,8 @@ impl Reader {
             return Err(error(line, "duplicate key"));
         }
         *key_line = line;
+        self.close_owner()?;
+        self.owner = None;
         self.section = section;
         self.item_indent = None;
         Ok(())
@@ -161,6 +180,7 @@ impl Reader {
             owner,
             prompt: Prompt { text, line },
         });
+        self.owner_prompts = self.owner_prompts.saturating_add(1);
         Ok(())
     }
 
@@ -169,12 +189,28 @@ impl Reader {
             .strip_suffix(':')
             .filter(|name| is_skill_name(name))
             .ok_or_else(|| error(line, "expected `<owner-skill>:` followed by its prompts"))?;
+        self.close_owner()?;
         if !self.owners.insert(owner.to_owned()) {
             return Err(error(line, "duplicate owner"));
         }
+        self.fixture.owners.push(Owner {
+            name: owner.to_owned(),
+            line,
+        });
         self.owner = Some(owner.to_owned());
+        self.owner_prompts = 0;
         self.item_indent = None;
         Ok(())
+    }
+
+    /// Ends the current owner's list: an owner that listed no prompts is an error at its key.
+    fn close_owner(&self) -> Result<(), ParseError> {
+        match (&self.owner, self.fixture.owners.last()) {
+            (Some(_), Some(owner)) if self.owner_prompts == 0 => {
+                Err(error(owner.line, "owner lists no prompts"))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// One `- prompt` item at `indent`, which must match the list's other items.
@@ -192,12 +228,61 @@ impl Reader {
         if scalar.starts_with(['[', '{']) {
             return Err(error(line, "a flow collection is not a prompt; quote it"));
         }
+        if scalar.starts_with('"') && has_unsupported_escape(scalar) {
+            return Err(error(
+                line,
+                "only the \\\" and \\\\ escapes are supported; use single quotes",
+            ));
+        }
         let text = unquote(scalar, line)?;
         if text.trim().is_empty() {
             return Err(error(line, "empty prompt"));
         }
+        if !scalar.starts_with(['"', '\'']) && is_typed_plain(&text) {
+            return Err(error(
+                line,
+                "YAML reads this plain value as a null, boolean, number or date; quote it",
+            ));
+        }
         Ok(text)
     }
+}
+
+/// True when a double-quoted scalar holds a backslash escape other than `\"` or `\\`: YAML
+/// would decode it (`\t`, `\n`, `é`) where this reader keeps it literal.
+fn has_unsupported_escape(scalar: &str) -> bool {
+    let mut chars = scalar.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' && !matches!(chars.next(), Some('"' | '\\')) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Plain values a YAML 1.1 or 1.2 resolver types instead of reading as a string: null,
+/// booleans (including `yes`/`no`/`on`/`off`), numbers in any base or with `_` or `:`
+/// separators, infinities, NaN, and dates or timestamps.
+fn is_typed_plain(value: &str) -> bool {
+    const WORDS: [&str; 14] = [
+        "~", "null", "true", "false", "yes", "no", "on", "off", "y", "n", ".inf", "+.inf", "-.inf",
+        ".nan",
+    ];
+    let lower = value.to_ascii_lowercase();
+    let numeric = value.bytes().any(|b| b.is_ascii_digit())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b"+-._:eE".contains(&b));
+    let based = ["0x", "0o", "0b"].iter().any(|prefix| {
+        lower.strip_prefix(prefix).is_some_and(|rest| {
+            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+    });
+    let dated = matches!(
+        value.as_bytes(),
+        [a, b, c, d, b'-', ..] if [a, b, c, d].iter().all(|x| x.is_ascii_digit())
+    );
+    WORDS.contains(&lower.as_str()) || numeric || based || dated
 }
 
 /// A skill name as `lint skills` requires it: lowercase letters, digits and hyphens.
@@ -214,7 +299,7 @@ const fn error(line: usize, reason: &'static str) -> ParseError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Fixture, NearMiss, Prompt, parse};
+    use super::{Fixture, NearMiss, Owner, Prompt, parse};
     use crate::lint::skills::frontmatter::ParseError;
 
     fn prompt(text: &str, line: usize) -> Prompt {
@@ -247,6 +332,16 @@ mod tests {
                         prompt: prompt("why does it crash", 11),
                     },
                 ],
+                owners: vec![
+                    Owner {
+                        name: "spec".to_owned(),
+                        line: 7,
+                    },
+                    Owner {
+                        name: "diagnose".to_owned(),
+                        line: 10,
+                    },
+                ],
                 positives_line: 2,
                 near_misses_line: 6,
             }),
@@ -273,6 +368,25 @@ mod tests {
             ("near_misses:\n  spec:\n    - a\n  spec:\n    - b\n", 4),
             ("near_misses:\n  Spec Owner:\n    - a\n", 2),
             ("  positives:\n", 1),
+            ("near_misses:\n  ghost:\n  spec:\n    - a\n", 2),
+            ("near_misses:\n  spec:\n    - a\n  ghost:\n", 4),
+            ("near_misses:\n  ghost:\npositives:\n  - a\n", 2),
+            ("positives:\n  - a\n  - \"tab\\there\"\n", 3),
+            ("positives:\n  - \"caf\\u00e9\"\n", 2),
+            ("positives:\n  - ~\n", 2),
+            ("positives:\n  - null\n", 2),
+            ("positives:\n  - True\n", 2),
+            ("positives:\n  - false\n", 2),
+            ("positives:\n  - yes\n", 2),
+            ("positives:\n  - Off\n", 2),
+            ("positives:\n  - 42\n", 2),
+            ("positives:\n  - -3.5e2\n", 2),
+            ("positives:\n  - 1_000\n", 2),
+            ("positives:\n  - 0x1F\n", 2),
+            ("positives:\n  - .inf\n", 2),
+            ("positives:\n  - 10:30\n", 2),
+            ("positives:\n  - 2026-10-11\n", 2),
+            ("positives:\n  - 2026-10-11T09:00:00Z\n", 2),
         ];
         for (text, line) in cases {
             let result = parse(text);
@@ -308,6 +422,31 @@ mod tests {
             fixture.positives.get(1).map(|p| p.text.as_str()),
             Some("estimate the work: which tasks come first"),
             "the quoted prompt keeps its colon"
+        );
+    }
+
+    #[test]
+    fn prompts_that_only_start_like_typed_values_stay_text() {
+        let text = "positives:\n  - 3 tasks remain\n  - null pointer crash\n  - true north\n  - \"42\"\n  - 'yes'\n  - \"say \\\"hi\\\" \\\\ bye\"\n";
+
+        let prompts: Vec<String> = parse(text)
+            .expect("all are strings in YAML too")
+            .positives
+            .into_iter()
+            .map(|p| p.text)
+            .collect();
+
+        assert_eq!(
+            prompts,
+            [
+                "3 tasks remain",
+                "null pointer crash",
+                "true north",
+                "42",
+                "yes",
+                "say \"hi\" \\ bye"
+            ],
+            "quoted values and longer phrases are text"
         );
     }
 

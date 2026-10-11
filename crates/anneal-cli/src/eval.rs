@@ -118,10 +118,9 @@ fn miss_finding(case: &Case) -> Finding {
             ),
         ),
     };
-    let rival = case
-        .rival
-        .as_ref()
-        .map_or_else(String::new, |(name, score)| format!(", {name} {score}"));
+    let rival = case.rival.as_ref().map_or_else(String::new, |rival| {
+        format!(", {} {}", rival.skill, rival.score)
+    });
     Finding::new(
         format!("eval/routing/{kind}:{}:{}", case.file, case.line),
         format!(
