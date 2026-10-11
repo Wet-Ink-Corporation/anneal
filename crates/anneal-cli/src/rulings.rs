@@ -19,19 +19,47 @@ pub const STORE_DIR: &str = ".out-of-scope";
 /// The frontmatter keys a ruling may have.
 const KEYS: [&str; 4] = ["id", "ruled_at", "summary", "weigh_in_ref"];
 
-/// One ruling.
+/// One valid ruling. [`parse`] (and so [`list`]) is the only way to build one, so every
+/// `Ruling` has passed the field checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ruling {
+    id: String,
+    ruled_at: String,
+    summary: String,
+    weigh_in_ref: Option<String>,
+    file: PathBuf,
+}
+
+impl Ruling {
     /// Stable id: one word of printable ASCII, unique in the store.
-    pub id: String,
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
     /// When it was ruled: `YYYY-MM-DD`, optionally followed by `T` and a time.
-    pub ruled_at: String,
+    #[must_use]
+    pub fn ruled_at(&self) -> &str {
+        &self.ruled_at
+    }
+
     /// One line saying what is out of scope.
-    pub summary: String,
+    #[must_use]
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
     /// The weigh-in that decided it, if any.
-    pub weigh_in_ref: Option<String>,
+    #[must_use]
+    pub fn weigh_in_ref(&self) -> Option<&str> {
+        self.weigh_in_ref.as_deref()
+    }
+
     /// The file it was read from.
-    pub file: PathBuf,
+    #[must_use]
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
 }
 
 /// Why the rulings could not be read. Every variant names the file (or directory) at fault.
@@ -231,8 +259,10 @@ fn valid_date(value: &str) -> bool {
         && (rest.is_empty() || rest.starts_with('T'))
 }
 
-/// Every ruling in `dir` (normally [`STORE_DIR`]), sorted by id in byte order. Every regular
-/// `*.md` file is a ruling; other entries are not read. A missing directory has no rulings.
+/// Every ruling in `dir` (normally [`STORE_DIR`]), sorted by id in byte order.
+///
+/// Every regular `*.md` file (extension in any letter case) is a ruling; other entries are not
+/// read. A missing directory has no rulings.
 ///
 /// # Errors
 /// [`RulingError::Io`] when the directory or a ruling cannot be read,
@@ -277,7 +307,10 @@ fn ruling_files(dir: &Path) -> Result<Vec<PathBuf>, RulingError> {
     let mut files = Vec::new();
     for entry in entries {
         let path = entry.map_err(io_error)?.path();
-        if path.extension().is_some_and(|ext| ext == "md") && path.is_file() {
+        let markdown = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+        if markdown && path.is_file() {
             files.push(path);
         }
     }

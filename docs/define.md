@@ -35,9 +35,12 @@ _Avoid_: purchase, purchase order, `txn`.
   `{"glossary", "terms", "checked", "skipped": [{"file", "size"}], "hits": [{"file", "line",
   "term"}]}`. There is one hit per file, line and term, sorted by file, line and term, and
   each hit is also an envelope finding keyed `lint/terms:<file>:<line>:<term>`.
-- **Exit codes.** These are `lint`'s codes: 0 when nothing is found, 1 on any hit. A missing
-  glossary or file, a directory, or a glossary over 1 MiB is a usage error (2, one `ERROR`
-  line, nothing on stdout).
+- **Exit codes.** These are `lint`'s codes: 0 when nothing is found, 1 on any hit. No file
+  at all, a missing glossary or file, a directory, or a glossary over 1 MiB is a usage error
+  (2, one `ERROR` line, nothing on stdout).
+- **File names.** A file is shown without its `.` components and scanned once however often
+  it is named, so `a.md` and `./a.md` are one file, shown as `a.md`. Nothing else is
+  normalised: `..` and symlinks are kept as given.
 - **Large and binary files.** A file over 1 MiB is not scanned. It is listed under `skipped`
   with its size, so it is never passed over silently. A file that is not UTF-8 is read
   lossily: a replacement character is not a word character, so it never creates a hit.
@@ -57,7 +60,8 @@ files there (a `README.md`, a template) are not ADRs.
   (`0001` for the first). Numbers are never reused, so a gap left by a deleted ADR stays.
 - **Idempotent.** A title whose slug matches an existing ADR's slug (compared as slugs, so
   `0003-Use-Postgres.md` matches "use postgres") gets that ADR back, not a new number. Asking
-  twice gives the same answer, and nothing is written.
+  twice gives the same answer, and nothing is written. An existing ADR keeps its file name as
+  found, so `00012-x.md` is never renamed to `0012-x.md`.
 - **Order.** ADRs sort by number, then slug. When two branches both take `0005`, both files
   survive the merge and list in the same order everywhere. The next title gets `0006`.
 
@@ -90,7 +94,7 @@ Why it was ruled out, in prose.
 
 No other key is allowed, which catches a misspelled key early.
 
-`rulings::list(dir)` reads every regular `*.md` file in the store and returns the rulings
+`rulings::list(dir)` reads every regular `*.md` file in the store (`.MD` too) and returns the rulings
 sorted by id in byte order, so the options come out in the same order on every run (stable
 content first, for prompt caching). A missing store has no rulings. A ruling that does not
 read is an error naming its file, and the list fails rather than skipping it. Causes are a

@@ -5,11 +5,28 @@ use super::{Adr, AdrError, Placement, next, ordered, place, slug};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+/// An ADR with the canonical file name, as a new one gets.
 fn adr(number: u32, slug: &str) -> Adr {
-    Adr {
-        number,
-        slug: slug.to_owned(),
+    Adr::numbered(number, slug.to_owned())
+}
+
+#[test]
+fn a_parsed_adr_keeps_its_file_name_as_written() -> TestResult {
+    for name in [
+        "0007-use-postgres.md",
+        "00012-extra-padding.md",
+        "12345-big.md",
+        "0003-Use-Postgres.md",
+    ] {
+        let parsed = Adr::parse(name)?.map(|adr| adr.file_name().to_owned());
+
+        assert_eq!(
+            parsed.as_deref(),
+            Some(name),
+            "parse then file_name round-trips"
+        );
     }
+    Ok(())
 }
 
 #[test]

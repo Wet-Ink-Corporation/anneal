@@ -191,38 +191,64 @@ fn a_missing_or_unreadable_input_is_an_error_naming_it() -> TestResult {
     let dir = workspace(&[("a.md", "x\n")])?;
     let big = dir.path().join("big.md");
     File::create(&big)?.set_len(MAX_READ_BYTES + 1)?;
+    let missing_glossary = dir.path().join("NONE.md");
     let cases = [
-        (args(dir.path(), &["missing.md"]), "missing file"),
-        (args(dir.path(), &["."]), "a directory"),
         (
-            TermsArgs {
-                glossary: dir.path().join("NONE.md"),
-                ..args(dir.path(), &["a.md"])
-            },
-            "missing glossary",
+            args(dir.path(), &["missing.md"]),
+            Fault::Missing,
+            dir.path().join("missing.md"),
+        ),
+        (
+            args(dir.path(), &["."]),
+            Fault::WrongKind,
+            dir.path().join("."),
         ),
         (
             TermsArgs {
-                glossary: big,
+                glossary: missing_glossary.clone(),
                 ..args(dir.path(), &["a.md"])
             },
-            "oversized glossary",
+            Fault::Missing,
+            missing_glossary,
+        ),
+        (
+            TermsArgs {
+                glossary: big.clone(),
+                ..args(dir.path(), &["a.md"])
+            },
+            Fault::TooLarge,
+            big,
         ),
     ];
 
-    for (case, why) in cases {
-        let error = lint(&case).map(|o| o.hits);
-        assert!(
-            matches!(
-                error,
-                Err(LintError::MissingPath { .. }
-                    | LintError::WrongKind { .. }
-                    | LintError::TooLarge { .. })
-            ),
-            "{why}: {error:?}"
-        );
-        let code = error.err().map(|e| e.code().value());
-        assert_eq!(code, Some(2), "{why} is a usage error");
+    for (case, expected, path) in cases {
+        let result = lint(&case).map(|o| o.hits);
+        let error = result.err();
+
+        let fault = error.as_ref().map(fault_of);
+        assert_eq!(fault, Some((expected, path.as_path())), "{expected:?}");
+        let code = error.map(|e| e.code().value());
+        assert_eq!(code, Some(2), "{expected:?} is a usage error");
     }
     Ok(())
+}
+
+/// Which input error a case expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fault {
+    Missing,
+    WrongKind,
+    TooLarge,
+    Other,
+}
+
+/// The kind of `error` and the path it names.
+fn fault_of(error: &LintError) -> (Fault, &Path) {
+    match error {
+        LintError::MissingPath { path } => (Fault::Missing, path),
+        LintError::WrongKind { path, .. } => (Fault::WrongKind, path),
+        LintError::TooLarge { path, .. } => (Fault::TooLarge, path),
+        LintError::Io { path, .. } => (Fault::Other, path),
+        LintError::Cache(_) => (Fault::Other, Path::new("")),
+    }
 }

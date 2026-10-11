@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use clap::Args;
 use serde::Serialize;
@@ -25,7 +25,7 @@ pub struct TermsArgs {
     #[arg(long, value_name = "FILE", default_value = "CONTEXT.md")]
     pub glossary: PathBuf,
     /// The files to scan, such as the changed files of a branch
-    #[arg(value_name = "FILE")]
+    #[arg(value_name = "FILE", required = true)]
     pub files: Vec<PathBuf>,
 }
 
@@ -53,9 +53,11 @@ pub struct Skipped {
 
 /// Scans `args.files` for the avoided terms of `args.glossary`.
 ///
-/// A file named twice is scanned once. Files that are not UTF-8 are read lossily (a replacement character is not a word
-/// character, so it creates no hit); files over the read cap are listed in
-/// [`Outcome::skipped`].
+/// Each file is named in output with its `.` components dropped, so a file named twice
+/// (`a.md` and `./a.md`) is scanned once and shown as `a.md`; no other normalisation is done
+/// (`..` and symlinks are kept as given). Files that are not UTF-8 are read lossily (a
+/// replacement character is not a word character, so it creates no hit); files over the read
+/// cap are listed in [`Outcome::skipped`].
 ///
 /// # Errors
 /// [`LintError::MissingPath`] or [`LintError::WrongKind`] when the glossary or a file is
@@ -63,15 +65,15 @@ pub struct Skipped {
 /// [`LintError::Io`] when a file cannot be read.
 pub fn lint(args: &TermsArgs) -> Result<Outcome, LintError> {
     let glossary = match read(&args.glossary)? {
-        Read::Text(text) => Glossary::parse(&text),
-        Read::TooLarge(size) => {
+        Contents::Text(text) => Glossary::parse(&text),
+        Contents::TooLarge(size) => {
             return Err(LintError::TooLarge {
                 path: args.glossary.clone(),
                 size,
             });
         }
     };
-    let files: BTreeSet<&Path> = args.files.iter().map(PathBuf::as_path).collect();
+    let files: BTreeSet<PathBuf> = args.files.iter().map(|path| without_dots(path)).collect();
     let mut outcome = Outcome {
         hits: Vec::new(),
         terms: glossary.terms().len(),
@@ -80,12 +82,12 @@ pub fn lint(args: &TermsArgs) -> Result<Outcome, LintError> {
     };
     for path in files {
         let file = path.display().to_string();
-        match read(path)? {
-            Read::Text(text) => {
+        match read(&path)? {
+            Contents::Text(text) => {
                 outcome.hits.extend(glossary.scan(&file, &text));
                 outcome.checked = outcome.checked.saturating_add(1);
             }
-            Read::TooLarge(size) => outcome.skipped.push(Skipped { file, size }),
+            Contents::TooLarge(size) => outcome.skipped.push(Skipped { file, size }),
         }
     }
     outcome
@@ -154,20 +156,34 @@ pub(crate) fn report<O: Write>(
         .map_err(CliError::Output)
 }
 
-/// A file named on the command line, read up to the cap.
-enum Read {
+/// The contents of a file named on the command line, read up to the cap.
+enum Contents {
     /// Its text, lossily decoded.
     Text(String),
     /// Its size, over the cap.
     TooLarge(u64),
 }
 
-fn read(path: &Path) -> Result<Read, LintError> {
+fn read(path: &Path) -> Result<Contents, LintError> {
     require_file(path)?;
     let Capped { size, bytes } = read_capped(path)?;
-    Ok(bytes.map_or(Read::TooLarge(size), |bytes| {
-        Read::Text(String::from_utf8_lossy(&bytes).into_owned())
+    Ok(bytes.map_or(Contents::TooLarge(size), |bytes| {
+        Contents::Text(String::from_utf8_lossy(&bytes).into_owned())
     }))
+}
+
+/// `path` without its `.` components (`./a.md` is `a.md`), or `.` when nothing else is left.
+/// Lexical only: `..` and symlinks are kept, since resolving them could name another file.
+fn without_dots(path: &Path) -> PathBuf {
+    let kept: PathBuf = path
+        .components()
+        .filter(|part| !matches!(part, Component::CurDir))
+        .collect();
+    if kept.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        kept
+    }
 }
 
 /// One avoided term from the glossary.

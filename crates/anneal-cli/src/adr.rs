@@ -18,9 +18,12 @@ const WIDTH: usize = 4;
 /// One ADR, as named on disk.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Adr {
-    // Field order is the sort order: number, then slug.
+    // Field order is the sort order: number, then slug, then the name (which differs only in
+    // padding when number and slug are equal).
     number: u32,
     slug: String,
+    /// The file name as on disk, so `00012-x.md` is never renamed to `0012-x.md`.
+    file_name: String,
 }
 
 /// Where the ADR for a title goes.
@@ -87,7 +90,18 @@ impl Adr {
         Ok(Some(Self {
             number,
             slug: slug.to_owned(),
+            file_name: file_name.to_owned(),
         }))
+    }
+
+    /// A new ADR, named `NNNN-<slug>.md` with the number zero-padded to four digits.
+    fn numbered(number: u32, slug: String) -> Self {
+        let file_name = format!("{number:0WIDTH$}-{slug}.md");
+        Self {
+            number,
+            slug,
+            file_name,
+        }
     }
 
     /// The ADR number.
@@ -102,10 +116,10 @@ impl Adr {
         &self.slug
     }
 
-    /// The file name: `NNNN-<slug>.md`.
+    /// The file name: as found on disk for an existing ADR, `NNNN-<slug>.md` for a new one.
     #[must_use]
-    pub fn file_name(&self) -> String {
-        format!("{:0WIDTH$}-{}.md", self.number, self.slug)
+    pub fn file_name(&self) -> &str {
+        &self.file_name
     }
 }
 
@@ -178,7 +192,7 @@ pub fn next(existing: &[Adr], title: &str) -> Result<Placement, AdrError> {
         None => 1,
         Some(max) => max.checked_add(1).ok_or(AdrError::Exhausted)?,
     };
-    Ok(Placement::New(Adr { number, slug }))
+    Ok(Placement::New(Adr::numbered(number, slug)))
 }
 
 /// Where the ADR for `title` goes in `dir` (normally `docs/adr`). Reads only file names and

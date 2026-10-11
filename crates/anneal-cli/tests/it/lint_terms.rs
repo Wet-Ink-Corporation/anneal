@@ -12,6 +12,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 const GLOSSARY: &str = "**Ruling**: a scope decision.\n_Avoid_: verdict, purchase order\n";
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_hit_exits_1_with_file_line_and_term() -> TestResult {
     let dir = tempfile::tempdir()?;
     fs::write(dir.path().join("CONTEXT.md"), GLOSSARY)?;
@@ -46,6 +47,7 @@ fn a_hit_exits_1_with_file_line_and_term() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn clean_files_exit_0_and_a_named_glossary_is_read() -> TestResult {
     let dir = tempfile::tempdir()?;
     fs::write(dir.path().join("terms.md"), GLOSSARY)?;
@@ -69,6 +71,7 @@ fn clean_files_exit_0_and_a_named_glossary_is_read() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_glossary_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     let dir = tempfile::tempdir()?;
     fs::write(dir.path().join("spec.md"), "text\n")?;
@@ -83,6 +86,45 @@ fn a_missing_glossary_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
         String::from_utf8(output.stderr)?,
         "ERROR lint: no such path: CONTEXT.md\n",
         "one ERROR line naming the glossary"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_file_named_with_and_without_dot_slash_is_scanned_once() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::write(dir.path().join("CONTEXT.md"), GLOSSARY)?;
+    fs::write(dir.path().join("a.md"), "a verdict\n")?;
+
+    let output = anneal_in(dir.path())
+        .args(["lint", "terms", "a.md", "./a.md"])
+        .output()?;
+
+    let envelope: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        envelope["data"]["hits"],
+        json!([{"file": "a.md", "line": 1, "term": "verdict"}]),
+        "one file, named without its `./`"
+    );
+    assert_eq!(envelope["data"]["checked"], json!(1), "scanned once");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn no_files_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::write(dir.path().join("CONTEXT.md"), GLOSSARY)?;
+
+    let output = anneal_in(dir.path()).args(["lint", "terms"]).output()?;
+
+    assert_eq!(output.status.code(), Some(2), "usage error");
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        "ERROR the following required arguments were not provided:\n",
+        "one ERROR line, clap's first"
     );
     Ok(())
 }

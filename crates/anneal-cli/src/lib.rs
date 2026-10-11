@@ -12,7 +12,7 @@
 //! - [`hook`]: `anneal hook <name>`, the commands `hooks.json` runs (the fail-open
 //!   `SessionStart` bootstrap and the fail-closed `PreToolUse` Bash guard), and the
 //!   one-`ERROR`-line output hooks share.
-//! - [`lint`]: `anneal lint skills` and the lint finding model.
+//! - [`lint`]: `anneal lint skills`, `anneal lint terms` and the lint finding model.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
 //! - [`ledger`]: `anneal ledger append|query|tail|journal` over the `anneal-ledger` store.

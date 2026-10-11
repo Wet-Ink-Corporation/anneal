@@ -128,6 +128,18 @@ fn a_specific_fault_has_its_own_variant() {
 }
 
 #[test]
+fn an_upper_case_md_extension_is_a_ruling_too() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::write(dir.path().join("LOUD.MD"), text("loud"))?;
+
+    let rulings = list(dir.path())?;
+
+    let ids: Vec<&str> = rulings.iter().map(Ruling::id).collect();
+    assert_eq!(ids, ["loud"], "`.MD` counts, so it is never skipped");
+    Ok(())
+}
+
+#[test]
 fn the_list_is_sorted_by_id_whatever_the_file_names() -> TestResult {
     let dir = tempfile::tempdir()?;
     let store = dir.path().join(".out-of-scope");
@@ -138,7 +150,7 @@ fn the_list_is_sorted_by_id_whatever_the_file_names() -> TestResult {
     fs::write(store.join("notes.txt"), "not a ruling")?;
     fs::create_dir(store.join("drafts.md"))?;
 
-    let ids: Vec<String> = list(&store)?.into_iter().map(|r| r.id).collect();
+    let ids: Vec<String> = list(&store)?.iter().map(|r| r.id().to_owned()).collect();
 
     assert_eq!(
         ids,
