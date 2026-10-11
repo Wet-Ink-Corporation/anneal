@@ -2,7 +2,9 @@
 
 mod cli;
 mod dag;
+mod design_tree_schema;
 mod eval_routing;
+mod grill;
 mod hook_bootstrap;
 mod hook_guard;
 mod hooks_manifest;

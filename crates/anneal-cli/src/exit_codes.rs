@@ -82,6 +82,11 @@ pub const OK: Code = Code::new(0, "ok");
 
 /// `ledger`: an event does not match the ledger schema.
 pub const LEDGER_SCHEMA_ERROR: Code = Code::new(2, "schema error");
+/// `grill`: the design tree is invalid (a `depends_on` cycle, a dangling dependency, a
+/// duplicate id, a bad field or bound); nothing is recorded.
+pub const GRILL_INVALID: Code = Code::new(1, "invalid design tree");
+/// `grill confirm`: a question is still open, so nothing is recorded.
+pub const GRILL_OPEN: Code = Code::new(3, "confirm: a question is still open");
 /// `task done`: the task's tests are green.
 pub const TASK_GREEN: Code = Code::new(0, "tests green");
 /// `task done`: a test is red.
@@ -164,6 +169,7 @@ impl CommandCodes {
     pub const fn of(command: CommandName) -> Self {
         let (scope, codes): (&'static str, &'static [Code]) = match command {
             CommandName::Ledger => ("", &[OK, LEDGER_SCHEMA_ERROR]),
+            CommandName::Grill => ("", &[OK, GRILL_INVALID, GRILL_OPEN]),
             CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED]),
             CommandName::Plan => (
                 "approve|check",
