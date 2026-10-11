@@ -80,24 +80,26 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 | Tag | Carried by |
 |---|---|
 | `session:<session_id>` | every event with a `session_id` |
-| `worktree:<worktree>` | every event with a `worktree` (`mode_set` and `repro_red` are selected by it) |
+| `worktree:<worktree>` | every event with a `worktree` (`mode_set`, `repro_red` and `test_run` are selected by it) |
 | `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red` |
 | `plan:<plan>` | `plan_approved`, `grill_confirmed` |
 | `pr:<number>` | `verdict_set`, `round_started` |
 | `point:<point>` | `gate_blocked`, `stop_blocked` |
+| `agent:<agent type>` | `subagent_status` |
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 4)
+## Event registry (version 5)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
 version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `docs/task.md`);
-version 4 added `mode_set` (#23, `docs/preconditions.md`).
+version 4 added `mode_set` (#23, `docs/preconditions.md`); version 5 added `subagent_status` and
+the `agent:` tag (#26, `docs/hooks.md`).
 
 | Type | Payload | Subject tag |
 |---|---|---|
-| `test_run` | `task?` string, `command` string, `outcome` `green`/`red`, `exit?` integer (`null` when killed), `duration_ms?` integer, `timeout_secs?` integer (set only when a timeout killed the command) | `task:` |
+| `test_run` | `task?` string, `command` string, `outcome` `green`/`red`, `exit?` integer (`null` when killed), `duration_ms?` integer, `timeout_secs?` integer (set only when a timeout killed the command); `anneal task done` sets the envelope's `worktree` in a git worktree, which the Stop hook selects runs by | `task:` |
 | `task_done` | `task` string | `task:` |
 | `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`) | `plan:` |
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
@@ -106,6 +108,7 @@ version 4 added `mode_set` (#23, `docs/preconditions.md`).
 | `round_started` | `pr` number, `round` number (from 1) | `pr:` |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
+| `subagent_status` | `agent` string (the subagent's type, `unknown` when the ledger cannot tag it), `agent_id?` string, `status?` `done`/`done_with_concerns`/`needs_context`/`blocked`, `violation?` string (what is wrong with its status block, one line), `missing` string array (required sections absent; `[]` when none), `duration_ms?` integer and `tokens?` object (`input`, `output`, `cache_read`, `cache_creation`) from its transcript; written by `anneal hook status` | `agent:` |
 | `mode_set` | `mode` `build`/`diagnose`/`off`, `clean` boolean (no change, untracked files included, at entry), `plan?` string and `tree?` string (build: paths relative to the worktree root, `/`-separated); the latest one for a worktree is its mode, see [preconditions.md](preconditions.md) | `worktree:` (from the envelope) |
 
 ## Commands

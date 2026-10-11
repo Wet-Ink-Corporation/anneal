@@ -28,7 +28,7 @@ Builds one approved task test-first with a single approval up front and hard sto
 5. **Green.** Write the least code that passes. Read every `fast-check` note and block after each batch of edits. It's working if the command passes and no block is open.
 6. **Refactor.** Clean names and duplication with the tests green. It's working if the command still passes.
 7. **Gate.** In a Rust repository (a `Cargo.toml` at the root), run `temper:gate` at each task boundary. It's working if the gate is green.
-8. **Done.** Run `anneal task done <id> -- <test command>`. It's working if it exits 0 and the ledger shows `task_done`.
+8. **Done.** Run `anneal task done <id> -- <test command>`, then check the work with `verify` before you report it. It's working if it exits 0 and the ledger shows `task_done`.
 
 ## Rationalizations
 

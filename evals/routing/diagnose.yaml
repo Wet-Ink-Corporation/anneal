@@ -1,5 +1,5 @@
 # evals/routing/diagnose.yaml: prompts for the `diagnose` skill.
-# Near misses against `verify` are added when that skill lands (#26).
+# Near misses against `verify` live in verify.yaml: this file is at its 10 near misses.
 positives:
   - the login test fails unexpectedly, find out why
   - something is broken in the export command, reproduce it first

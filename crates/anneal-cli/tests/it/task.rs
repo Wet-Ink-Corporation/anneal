@@ -206,3 +206,42 @@ fn a_task_id_the_ledger_cannot_tag_is_a_usage_error_and_runs_nothing() -> TestRe
     );
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn in_a_git_worktree_both_events_are_tagged_with_its_key_and_outside_with_none() -> TestResult {
+    let repo = tempfile::tempdir()?;
+    crate::support::git(repo.path(), &["init", "-q"]);
+    let mode = anneal_in(repo.path()).args(["mode", "diagnose"]).output()?;
+    assert_eq!(mode.status.code(), Some(0), "{mode:?}");
+    let key = serde_json::from_slice::<Value>(&mode.stdout)?
+        .pointer("/data/worktree")
+        .cloned()
+        .ok_or("mode reports the worktree key")?;
+    let outside = tempfile::tempdir()?;
+
+    for dir in [repo.path(), outside.path()] {
+        let output = task_done(dir, &["T1", "--", "git", "--version"])?;
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+
+    let tagged: Vec<Value> = events(repo.path())?
+        .iter()
+        .map(|event| event["worktree"].clone())
+        .collect();
+    assert_eq!(
+        tagged,
+        [key.clone(), key],
+        "the Stop hook counts only this worktree's runs"
+    );
+    let untagged: Vec<Value> = events(outside.path())?
+        .iter()
+        .map(|event| event["worktree"].clone())
+        .collect();
+    assert_eq!(
+        untagged,
+        [Value::Null, Value::Null],
+        "no worktree outside git"
+    );
+    Ok(())
+}

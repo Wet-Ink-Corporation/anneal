@@ -27,7 +27,8 @@ use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::paths::{self, StoreSource};
+use crate::mode::scope;
+use crate::paths::{self, PathError, StoreSource};
 use crate::process::{self, WaitError};
 
 /// The default `--timeout`, in seconds: 30 minutes.
@@ -254,9 +255,14 @@ fn done<O: Write>(
         });
     };
     let command = words.join(" ");
-    // The task and session become ledger tags; check them before anything runs, so an id the
-    // store would refuse is a usage error that runs nothing and leaves no file.
-    if let Err(error) = args.stamp(args.task_done())?.tags() {
+    let worktree = worktree_of(cwd)?;
+    let stamp = Stamp {
+        args,
+        worktree: worktree.as_deref(),
+    };
+    // The task, session and worktree become ledger tags; check them before anything runs, so
+    // an id the store would refuse is a usage error that runs nothing and leaves no file.
+    if let Err(error) = stamp.stamp(args.task_done())?.tags() {
         return Err(CliError::Usage {
             reason: unrecordable(&error),
         });
@@ -264,7 +270,7 @@ fn done<O: Write>(
     let run = run_command(program, rest, cwd, Duration::from_secs(args.timeout))?;
     // Only now, with the command finished, is the ledger opened.
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
-    let events = record(args, &run, &command, &location.path)?;
+    let events = record(stamp, &run, &command, &location.path)?;
     let data = Data {
         task: &args.id,
         command: &command,
@@ -299,28 +305,60 @@ impl DoneArgs {
             task: self.id.clone(),
         })
     }
+}
 
-    /// `event` in an envelope stamped now, with this run's session.
+/// What every event of one `task done` run carries besides its payload.
+struct Stamp<'a> {
+    args: &'a DoneArgs,
+    /// The worktree key of the working directory's git worktree, if it is in one.
+    worktree: Option<&'a str>,
+}
+
+impl Stamp<'_> {
+    /// `event` in an envelope stamped now, with this run's session and worktree.
     fn stamp(&self, event: LedgerEvent) -> Result<EventEnvelope, CliError> {
         let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
-        envelope.session_id.clone_from(&self.session);
+        envelope.session_id.clone_from(&self.args.session);
+        envelope.worktree = self.worktree.map(str::to_owned);
         Ok(envelope)
+    }
+}
+
+impl<'a> From<&'a DoneArgs> for Stamp<'a> {
+    /// The stamp of a run outside any git worktree.
+    fn from(args: &'a DoneArgs) -> Self {
+        Self {
+            args,
+            worktree: None,
+        }
+    }
+}
+
+/// The worktree key (`mode::scope::worktree_key`) of the git worktree holding `cwd`, which the
+/// Stop hook selects test runs by; `None` outside one.
+fn worktree_of(cwd: &Path) -> Result<Option<String>, CliError> {
+    match paths::worktree_root_within(cwd, paths::GIT_TIMEOUT) {
+        Ok(root) => Ok(Some(scope::worktree_key(&root))),
+        Err(PathError::NotARepository { .. }) => Ok(None),
+        Err(other) => Err(CliError::Path(other)),
     }
 }
 
 /// Appends `run`'s `test_run` to the ledger at `store`, then `task_done` only when the run is
 /// green, and returns each event with its position.
-fn record(
-    args: &DoneArgs,
+fn record<'a>(
+    stamp: impl Into<Stamp<'a>>,
     run: &Run,
     command: &str,
     store: &Path,
 ) -> Result<Vec<(u64, EventEnvelope)>, CliError> {
+    let stamp = stamp.into();
     let store = Store::open(store)?;
-    let test_run = args.stamp(LedgerEvent::TestRun(run.event(&args.id, command)))?;
+    let args = stamp.args;
+    let test_run = stamp.stamp(LedgerEvent::TestRun(run.event(&args.id, command)))?;
     let mut events = vec![(store.append(&test_run)?, test_run)];
     if run.is_green() {
-        let done = args.stamp(args.task_done())?;
+        let done = stamp.stamp(args.task_done())?;
         events.push((store.append(&done)?, done));
     }
     Ok(events)

@@ -72,6 +72,16 @@ impl Timestamp {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Milliseconds since the Unix epoch (negative before it), its offset applied; `None` only
+    /// when that does not fit an `i64`.
+    #[must_use]
+    pub fn unix_millis(&self) -> Option<i64> {
+        // Parsed when it was made, so this parse succeeds; `ok()` keeps the method total.
+        let parsed = OffsetDateTime::parse(&self.0, &Rfc3339).ok()?;
+        let nanos = parsed.unix_timestamp_nanos();
+        i64::try_from(nanos.div_euclid(1_000_000)).ok()
+    }
 }
 
 impl TryFrom<String> for Timestamp {
@@ -201,6 +211,18 @@ mod tests {
 
     fn ts() -> Timestamp {
         Timestamp::try_from("2026-10-11T09:30:00Z".to_owned()).expect("a valid timestamp")
+    }
+
+    #[test]
+    fn a_timestamp_reads_as_milliseconds_since_the_unix_epoch_in_any_offset() {
+        let utc = Timestamp::try_from("1970-01-01T00:00:01.250Z".to_owned()).expect("valid");
+        let offset = Timestamp::try_from("1970-01-01T02:00:01+02:00".to_owned()).expect("valid");
+
+        assert_eq!(
+            (utc.unix_millis(), offset.unix_millis()),
+            (Some(1250), Some(1000)),
+            "fractions are kept and the offset applied"
+        );
     }
 
     fn task_done(task: &str) -> EventEnvelope {

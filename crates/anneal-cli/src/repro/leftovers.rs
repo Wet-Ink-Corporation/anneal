@@ -166,7 +166,17 @@ pub fn debug_leftovers(root: &Path) -> Result<LeftoverScan, LeftoverError> {
 
 /// [`debug_leftovers`] within `limits`.
 pub(crate) fn scan(root: &Path, limits: Limits) -> Result<LeftoverScan, LeftoverError> {
-    let listing = listing(root)?;
+    scan_within(root, limits, GIT_TIMEOUT)
+}
+
+/// [`scan`], with `git ls-files` given `git_timeout`: for a caller with a deadline, such as the
+/// Stop hook.
+pub(crate) fn scan_within(
+    root: &Path,
+    limits: Limits,
+    git_timeout: Duration,
+) -> Result<LeftoverScan, LeftoverError> {
+    let listing = listing(root, git_timeout)?;
     let mut found = LeftoverScan::default();
     let mut remaining = limits.total_bytes;
     for raw in names(&listing) {
@@ -249,7 +259,7 @@ fn path_of(raw: &[u8]) -> Option<&Path> {
 }
 
 /// The `git ls-files -z` listing of the files git knows of under `root`, relative to it.
-fn listing(root: &Path) -> Result<Vec<u8>, LeftoverError> {
+fn listing(root: &Path, git_timeout: Duration) -> Result<Vec<u8>, LeftoverError> {
     let args = [
         "ls-files",
         "--cached",
@@ -260,7 +270,7 @@ fn listing(root: &Path) -> Result<Vec<u8>, LeftoverError> {
     let output = paths::run_git_capped(
         root,
         &args,
-        GIT_TIMEOUT,
+        git_timeout,
         MAX_LISTING_BYTES.saturating_add(1),
     )
     .map_err(LeftoverError::Git)?;

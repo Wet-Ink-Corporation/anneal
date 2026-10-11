@@ -81,6 +81,13 @@ pub enum BaselineError {
         /// The version in the file.
         found: u32,
     },
+    /// Something other than a regular file (a directory, symlink or FIFO) is at the path of a
+    /// state file; it was not opened, since opening a FIFO waits for a writer.
+    #[error("{path} is not a regular file", path = path.display())]
+    NotAFile {
+        /// The path.
+        path: PathBuf,
+    },
 }
 
 impl Baseline {
@@ -257,6 +264,29 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// than [`MAX_SNAPSHOT_BYTES`].
 pub(crate) fn read_snapshot_bytes(path: &Path) -> Result<Option<Vec<u8>>, BaselineError> {
     read_capped_bytes(path, MAX_SNAPSHOT_BYTES)
+}
+
+/// Reads a hook's state file at `path` whole, as [`read_snapshot_bytes`] does, but only when
+/// it is a regular file: its `symlink_metadata` is checked before it is opened. A missing file
+/// is `Ok(None)`.
+///
+/// # Errors
+/// [`BaselineError::NotAFile`] when something else is at `path`; [`BaselineError::Io`] when
+/// its metadata or contents cannot be read; [`BaselineError::TooLarge`] when it is larger than
+/// [`MAX_SNAPSHOT_BYTES`].
+pub(crate) fn read_state_bytes(path: &Path) -> Result<Option<Vec<u8>>, BaselineError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => read_snapshot_bytes(path),
+        Ok(_other) => Err(BaselineError::NotAFile {
+            path: path.to_path_buf(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(BaselineError::Io {
+            op: "reading",
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 /// Writes `value` as pretty JSON to `path`, creating its parent directory, through

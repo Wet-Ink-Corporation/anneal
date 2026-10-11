@@ -414,6 +414,48 @@ fn the_preconditions_hook_runs_before_every_edit_and_write_and_fails_closed() ->
     Ok(())
 }
 
+/// The one hooks.json entry running `anneal hook <name>`.
+fn only_entry(name: HookName) -> Result<Placed, Box<dyn Error>> {
+    let mut found: Vec<Placed> = command_hooks()?
+        .into_iter()
+        .filter(|placed| placed.hook.args.get(1).map(String::as_str) == Some(name.as_str()))
+        .collect();
+    match (found.pop(), found.is_empty()) {
+        (Some(placed), true) => Ok(placed),
+        (last, _) => Err(format!("one {} entry, got {found:?} and {last:?}", name.as_str()).into()),
+    }
+}
+
+#[test]
+fn the_completeness_hook_runs_on_every_stop_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::Completeness)?;
+    assert_eq!(event, HookEvent::Stop, "when the main agent stops");
+    assert_eq!(matcher, "", "Stop takes no matcher");
+    assert_eq!(hook.args, ["hook", "completeness"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "fails open");
+    assert_eq!(hook.timeout, 30, "the completeness budget is 30 s");
+    Ok(())
+}
+
+#[test]
+fn the_status_hook_runs_on_every_subagent_stop_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::Status)?;
+    assert_eq!(event, HookEvent::SubagentStop, "when a subagent stops");
+    assert_eq!(matcher, "", "every agent type");
+    assert_eq!(hook.args, ["hook", "status"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "fails open");
+    assert_eq!(hook.timeout, 15, "the status budget is 15 s");
+    Ok(())
+}
+
 #[test]
 fn the_fast_check_hook_runs_once_per_batch_of_tool_calls_and_fails_open() -> TestResult {
     let placed = command_hooks()?;

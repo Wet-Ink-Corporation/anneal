@@ -1,7 +1,7 @@
 //! The tag vocabulary: `key:value` tags the store indexes events by.
 //!
 //! Every event carries `session:` and `worktree:` when its envelope names them, plus one
-//! subject tag chosen by its type (`task:`, `plan:`, `pr:` or `point:`). The keys are a closed
+//! subject tag chosen by its type (`task:`, `plan:`, `pr:`, `point:` or `agent:`). The keys are a closed
 //! set; values follow happenstance's tag rules (non-empty, no control characters, at most
 //! [`MAX_TAG_LEN`](happenstance_core::MAX_TAG_LEN) bytes with the key).
 
@@ -25,17 +25,20 @@ pub enum TagKey {
     Pr,
     /// `point:<gate or decision point>`
     Point,
+    /// `agent:<subagent type>`
+    Agent,
 }
 
 impl TagKey {
     /// Every key, in documentation order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Session,
         Self::Worktree,
         Self::Task,
         Self::Plan,
         Self::Pr,
         Self::Point,
+        Self::Agent,
     ];
 
     /// The key as stored, before the `:`.
@@ -48,6 +51,7 @@ impl TagKey {
             Self::Plan => "plan",
             Self::Pr => "pr",
             Self::Point => "point",
+            Self::Agent => "agent",
         }
     }
 }
@@ -68,7 +72,7 @@ pub enum TagError {
         text: String,
     },
     /// The key is not in the vocabulary.
-    #[error("unknown tag key {key:?}: expected session, worktree, task, plan, pr or point")]
+    #[error("unknown tag key {key:?}: expected session, worktree, task, plan, pr, point or agent")]
     UnknownKey {
         /// The key that was given.
         key: String,

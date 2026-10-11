@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 4;
+pub const REGISTRY_VERSION: u32 = 5;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -41,11 +41,13 @@ pub enum EventKind {
     StopBlocked,
     /// `mode_set`
     ModeSet,
+    /// `subagent_status`
+    SubagentStatus,
 }
 
 impl EventKind {
     /// Every registered type, in registry order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::TestRun,
         Self::TaskDone,
         Self::PlanApproved,
@@ -56,6 +58,7 @@ impl EventKind {
         Self::GateBlocked,
         Self::StopBlocked,
         Self::ModeSet,
+        Self::SubagentStatus,
     ];
 
     /// The type as stored: snake case.
@@ -72,6 +75,7 @@ impl EventKind {
             Self::GateBlocked => "gate_blocked",
             Self::StopBlocked => "stop_blocked",
             Self::ModeSet => "mode_set",
+            Self::SubagentStatus => "subagent_status",
         }
     }
 
@@ -85,6 +89,7 @@ impl EventKind {
             Self::GateBlocked | Self::StopBlocked => TagKey::Point,
             // The payload names no worktree: the envelope's `worktree` is the subject.
             Self::ModeSet => TagKey::Worktree,
+            Self::SubagentStatus => TagKey::Agent,
         }
     }
 }
@@ -140,6 +145,8 @@ pub enum LedgerEvent {
     StopBlocked(StopBlocked),
     /// A worktree entered or left an anneal mode.
     ModeSet(ModeSet),
+    /// A subagent stopped, with the status block its last message gave (or the violation).
+    SubagentStatus(SubagentStatus),
 }
 
 impl LedgerEvent {
@@ -157,6 +164,7 @@ impl LedgerEvent {
             Self::GateBlocked(_) => EventKind::GateBlocked,
             Self::StopBlocked(_) => EventKind::StopBlocked,
             Self::ModeSet(_) => EventKind::ModeSet,
+            Self::SubagentStatus(_) => EventKind::SubagentStatus,
         }
     }
 
@@ -176,6 +184,7 @@ impl LedgerEvent {
             | Self::RoundStarted(RoundStarted { pr, .. }) => Some(Cow::Owned(pr.to_string())),
             Self::GateBlocked(GateBlocked { point, .. })
             | Self::StopBlocked(StopBlocked { point, .. }) => Some(Cow::Borrowed(point)),
+            Self::SubagentStatus(SubagentStatus { agent, .. }) => Some(Cow::Borrowed(agent)),
             // Its subject is the envelope's `worktree`, tagged from the envelope.
             Self::ModeSet(_) => None,
         }
@@ -329,11 +338,67 @@ pub struct ModeSet {
     pub tree: Option<String>,
 }
 
+/// The status a subagent reports on its `Status:` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    /// `DONE`: the work is finished and verified.
+    Done,
+    /// `DONE_WITH_CONCERNS`: finished, with concerns the caller should read.
+    DoneWithConcerns,
+    /// `NEEDS_CONTEXT`: it cannot go on without more context.
+    NeedsContext,
+    /// `BLOCKED`: it needs a decision it cannot take.
+    Blocked,
+}
+
+/// Tokens a subagent used, summed over its transcript's assistant messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenUsage {
+    /// Input tokens not read from or written to the cache.
+    pub input: u64,
+    /// Output tokens.
+    pub output: u64,
+    /// Input tokens read from the prompt cache.
+    pub cache_read: u64,
+    /// Input tokens written to the prompt cache.
+    pub cache_creation: u64,
+}
+
+/// `subagent_status`: a subagent stopped (registry v5). Subject tag `agent:` (its type).
+///
+/// `status` is `None` when the last message had no valid `Status:` line; `violation` then says
+/// why, as it does when required sections are `missing`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentStatus {
+    /// The subagent's type, such as `Explore` or `temper:rust-reviewer`.
+    pub agent: String,
+    /// The subagent's id in its session.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// The status it reported, when it reported a known one.
+    #[serde(default)]
+    pub status: Option<AgentStatus>,
+    /// What is wrong with its status block, in one line, when anything is.
+    #[serde(default)]
+    pub violation: Option<String>,
+    /// The required sections its status block lacks.
+    #[serde(default)]
+    pub missing: Vec<String>,
+    /// From its transcript's first to last timestamp, in milliseconds.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// The tokens it used, from its transcript.
+    #[serde(default)]
+    pub tokens: Option<TokenUsage>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        EventKind, GrillConfirmed, LedgerEvent, Mode, ModeSet, REGISTRY_VERSION, TestOutcome,
-        TestRun, UnknownEventKind,
+        AgentStatus, EventKind, GrillConfirmed, LedgerEvent, Mode, ModeSet, REGISTRY_VERSION,
+        SubagentStatus, TestOutcome, TestRun, TokenUsage, UnknownEventKind,
     };
     use crate::tag::TagKey;
     use serde_json::json;
@@ -491,8 +556,105 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_4() {
-        assert_eq!(REGISTRY_VERSION, 4, "mode_set was added in version 4");
+    fn subagent_status_carries_the_status_missing_sections_timing_and_tokens() {
+        let value = json!({
+            "type": "subagent_status",
+            "agent": "temper:rust-implementer",
+            "agent_id": "a1",
+            "status": "done_with_concerns",
+            "violation": "missing sections: Review",
+            "missing": ["Review"],
+            "duration_ms": 61_000,
+            "tokens": {"input": 10, "output": 20, "cache_read": 30, "cache_creation": 40},
+        });
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::SubagentStatus(SubagentStatus {
+                agent: "temper:rust-implementer".to_owned(),
+                agent_id: Some("a1".to_owned()),
+                status: Some(AgentStatus::DoneWithConcerns),
+                violation: Some("missing sections: Review".to_owned()),
+                missing: vec!["Review".to_owned()],
+                duration_ms: Some(61_000),
+                tokens: Some(TokenUsage {
+                    input: 10,
+                    output: 20,
+                    cache_read: 30,
+                    cache_creation: 40,
+                }),
+            }),
+            "every field is read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+        assert_eq!(
+            (EventKind::SubagentStatus.subject(), event.subject_value()),
+            (TagKey::Agent, Some("temper:rust-implementer".into())),
+            "its subject is the agent type"
+        );
+    }
+
+    #[test]
+    fn a_subagent_status_with_only_the_agent_reads_as_a_bare_violation_record() {
+        let event: LedgerEvent =
+            serde_json::from_value(json!({"type": "subagent_status", "agent": "Explore"}))
+                .expect("only agent is required");
+
+        assert_eq!(
+            event,
+            LedgerEvent::SubagentStatus(SubagentStatus {
+                agent: "Explore".to_owned(),
+                agent_id: None,
+                status: None,
+                violation: None,
+                missing: Vec::new(),
+                duration_ms: None,
+                tokens: None,
+            }),
+            "the optional fields default to none"
+        );
+    }
+
+    #[test]
+    fn every_agent_status_has_its_stored_name() {
+        let names: Vec<String> = [
+            AgentStatus::Done,
+            AgentStatus::DoneWithConcerns,
+            AgentStatus::NeedsContext,
+            AgentStatus::Blocked,
+        ]
+        .iter()
+        .map(|status| {
+            serde_json::to_value(status)
+                .expect("serialises")
+                .to_string()
+        })
+        .collect();
+
+        assert_eq!(
+            names,
+            [
+                "\"done\"",
+                "\"done_with_concerns\"",
+                "\"needs_context\"",
+                "\"blocked\""
+            ],
+            "snake case, as the ledger's other enums"
+        );
+    }
+
+    #[test]
+    fn the_registry_is_version_5() {
+        assert_eq!(
+            REGISTRY_VERSION, 5,
+            "subagent_status was added in version 5"
+        );
     }
 
     #[test]
