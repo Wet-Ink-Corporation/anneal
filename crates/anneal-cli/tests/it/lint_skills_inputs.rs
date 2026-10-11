@@ -143,7 +143,8 @@ fn a_symlinked_skill_file_is_rechecked_when_its_target_changes() -> TestResult {
 }
 
 #[test]
-#[cfg(unix)]
+// APFS refuses non-UTF-8 file names (EILSEQ), so on macOS such a skill cannot exist.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn a_non_utf8_file_name_gives_the_same_outcome_with_and_without_the_cache() -> TestResult {
     use std::os::unix::ffi::OsStrExt;
     let (work, skills) = clean_skills()?;
