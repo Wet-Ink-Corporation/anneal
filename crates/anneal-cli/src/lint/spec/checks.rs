@@ -2,7 +2,7 @@
 //! clarification-marker cap and avoided terms. The constitution check is in `constitution`.
 
 use super::ears::{self, template};
-use super::markdown::{Line, Section, items};
+use super::markdown::{Line, Section, items, without_code_spans};
 use super::{MAX_CLARIFICATIONS, Rule, SpecFinding};
 use crate::lint::terms::TermHit;
 
@@ -108,8 +108,10 @@ fn criterion_text(item: &str) -> &str {
         text = rest.trim_start();
     }
     if let Some(rest) = text.strip_prefix("**")
-        && let Some((_, after)) = rest.split_once("**")
-        && let Some(after) = after.strip_prefix(':')
+        && let Some((label, after)) = rest.split_once("**")
+        && let Some(after) = after
+            .strip_prefix(':')
+            .or_else(|| label.ends_with(':').then_some(after))
     {
         return after.trim_start();
     }
@@ -164,19 +166,15 @@ pub(crate) fn clarifications(file: &str, lines: &[Line<'_>]) -> (usize, Option<S
 
 /// Markers in `text`, outside backtick code spans: the marker followed by `]` or `:`.
 fn markers(text: &str) -> usize {
-    text.split('`')
-        .step_by(2)
-        .map(|outside| {
+    let outside = without_code_spans(text);
+    outside
+        .match_indices(MARKER)
+        .filter(|(at, _)| {
             outside
-                .match_indices(MARKER)
-                .filter(|(at, _)| {
-                    outside
-                        .get(at.saturating_add(MARKER.len())..)
-                        .is_some_and(|rest| rest.starts_with([']', ':']))
-                })
-                .count()
+                .get(at.saturating_add(MARKER.len())..)
+                .is_some_and(|rest| rest.starts_with([']', ':']))
         })
-        .fold(0, usize::saturating_add)
+        .count()
 }
 
 /// The finding for a glossary hit.

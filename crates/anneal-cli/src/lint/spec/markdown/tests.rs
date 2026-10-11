@@ -1,4 +1,70 @@
-use super::{Document, Item, Row, Table, heading, items, tables};
+use super::{Document, Item, Row, Table, heading, items, tables, without_code_spans};
+
+fn titles(text: &str) -> Vec<String> {
+    Document::parse(text)
+        .sections()
+        .iter()
+        .map(|section| section.title.to_owned())
+        .collect()
+}
+
+#[test]
+fn a_code_span_pairs_with_the_next_run_of_as_many_backticks() {
+    assert_eq!(
+        without_code_spans("a ``b ` c`` d `e` f ``g"),
+        "a           d     f ``g",
+        "spans blanked to their length; an unmatched run stays"
+    );
+    assert_eq!(without_code_spans("plain"), "plain", "nothing to blank");
+}
+
+#[test]
+fn an_html_comment_opener_inside_inline_code_is_text() {
+    let text = "Write `<!--` to open a comment.\n## Problem\nx\n";
+
+    let doc = Document::parse(text);
+
+    assert_eq!(
+        doc.lines().first().map(|line| line.text.as_ref()),
+        Some("Write `<!--` to open a comment."),
+        "the line stays visible"
+    );
+    assert_eq!(titles(text), ["Problem"], "nothing after it is hidden");
+}
+
+#[test]
+fn a_comment_after_a_code_span_on_the_same_line_is_still_hidden() {
+    let doc = Document::parse("`x` a <!-- hidden --> b\n");
+
+    assert_eq!(
+        doc.lines().first().map(|line| line.text.as_ref()),
+        Some("`x` a  b"),
+        "the comment goes, the span stays"
+    );
+}
+
+#[test]
+fn a_line_that_is_only_an_inline_span_does_not_open_a_fence() {
+    assert_eq!(
+        titles("```x``` and more\n## Problem\n"),
+        ["Problem"],
+        "a backtick in a backtick fence's info string makes it text"
+    );
+    assert_eq!(
+        titles("    ```\n## Problem\n"),
+        ["Problem"],
+        "four spaces of indent is not a fence"
+    );
+}
+
+#[test]
+fn a_tilde_fence_may_hold_backticks_in_its_info_string() {
+    assert_eq!(
+        titles("~~~ a`b\n## Hidden\n~~~\n## Shown\n"),
+        ["Shown"],
+        "tilde fences allow backticks"
+    );
+}
 
 fn item(line: usize, text: &str) -> Item {
     Item {

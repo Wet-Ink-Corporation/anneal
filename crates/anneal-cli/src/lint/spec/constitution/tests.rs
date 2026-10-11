@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::{Constitution, Gate};
 use crate::lint::spec::tests::{CLEAN, CONSTITUTION, found};
 use crate::lint::spec::{Report, Rule, Source, check};
@@ -54,6 +56,60 @@ fn the_version_and_the_gates_are_read_with_their_lines() {
         ],
         "list items opening with [id], outside code"
     );
+}
+
+#[test]
+fn a_link_list_item_is_not_a_gate() {
+    let parsed = Constitution::parse(
+        "Version: 1\n- [Library-first](https://example.com/library-first)\n- [G1] One.\n",
+    );
+
+    assert_eq!(
+        parsed.gates,
+        [Gate {
+            id: "G1".to_owned(),
+            line: 3
+        }],
+        "`[text](url)` is a link"
+    );
+}
+
+#[test]
+fn a_constitution_with_no_gates_is_a_finding_on_the_constitution() {
+    let report = run(CLEAN, Some("**Version**: 2\n"));
+
+    assert_eq!(
+        report
+            .findings
+            .first()
+            .map(|f| (f.file.as_str(), f.line, f.subject.as_deref())),
+        Some(("constitution.md", 0, Some("gates"))),
+        "no gate to check against"
+    );
+    assert_eq!(report.gates, 0, "none read");
+}
+
+#[test]
+fn thousands_of_violated_gates_are_each_matched_to_their_row() {
+    const GATES: usize = 3000;
+    let (head, _) = CLEAN
+        .split_once("## Constitution check")
+        .expect("the clean spec has the section");
+    let mut spec = format!("{head}## Constitution check\n\nConstitution version: 2\n\n");
+    let mut constitution = String::from("Version: 2\n\n");
+    let mut table = String::from("| Gate | Violation | Justification |\n|---|---|---|\n");
+    for n in 0..GATES {
+        writeln!(constitution, "- [G{n}] Gate {n}.").expect("a String takes writes");
+        writeln!(spec, "- [G{n}] violated: reason {n}").expect("a String takes writes");
+        writeln!(table, "| G{n} | breaks {n} | needed {n} |").expect("a String takes writes");
+    }
+    spec.push('\n');
+    spec.push_str(&table);
+
+    let report = run(&spec, Some(&constitution));
+
+    assert_eq!(report.findings, [], "every violation justified");
+    assert_eq!(report.gates, GATES, "all gates read");
 }
 
 #[test]

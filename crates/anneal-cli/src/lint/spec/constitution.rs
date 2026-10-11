@@ -100,13 +100,15 @@ fn strip_prefix_any_case<'t>(text: &'t str, prefix: &str) -> Option<&'t str> {
 
 /// The gate id opening a list item (`[G1] ...`) and the text after it. An id is two or more
 /// ASCII letters, digits, `-`, `_` or `.`, starting with a letter, so a `[x]` checkbox and a
-/// `[NEEDS CLARIFICATION]` marker are not gates.
+/// `[NEEDS CLARIFICATION]` marker are not gates. Brackets followed directly by `(` are a link
+/// (`[Library-first](https://...)`), not a gate.
 fn gate_ref(text: &str) -> Option<(&str, &str)> {
     let (id, after) = text.strip_prefix('[')?.split_once(']')?;
     let mut chars = id.chars();
     let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && id.len() >= 2;
+        && id.len() >= 2
+        && !after.starts_with('(');
     valid.then_some((id, after.trim()))
 }
 
@@ -160,6 +162,16 @@ fn own(file: &str, constitution: &Constitution) -> Vec<SpecFinding> {
             format!("{file} has no version line"),
             "add a line `Version: <N>` and raise it whenever a gate changes.",
         ));
+    }
+    if constitution.gates.is_empty() {
+        findings.push(
+            at(file, 0)
+                .finding(
+                    format!("{file} lists no gate"),
+                    "list each gate as an item opening with its id, such as `- [G1] Library first.`",
+                )
+                .about("gates"),
+        );
     }
     let mut seen = BTreeSet::new();
     for gate in &constitution.gates {
@@ -264,9 +276,12 @@ fn complexity(
         .filter(is_complexity)
         .flat_map(|table| table.rows)
         .collect();
+    // Both sides as sets, so matching is O(n log n), not a scan per gate (PERF-10).
+    let row_gates: BTreeSet<&str> = rows.iter().map(row_gate).collect();
+    let violated_ids: BTreeSet<&str> = violated.iter().map(|(id, _)| id.as_str()).collect();
     let mut findings: Vec<SpecFinding> = violated
         .iter()
-        .filter(|(id, _)| !rows.iter().any(|row| row_gate(row) == id))
+        .filter(|(id, _)| !row_gates.contains(id.as_str()))
         .map(|(id, line)| {
             at(spec_file, *line)
                 .finding(
@@ -281,17 +296,13 @@ fn complexity(
         .collect();
     findings.extend(
         rows.iter()
-            .filter_map(|row| row_finding(spec_file, row, violated)),
+            .filter_map(|row| row_finding(spec_file, row, &violated_ids)),
     );
     findings
 }
 
 /// The finding for one complexity row, if any.
-fn row_finding(
-    spec_file: &str,
-    row: &Row<'_>,
-    violated: &[(String, usize)],
-) -> Option<SpecFinding> {
+fn row_finding(spec_file: &str, row: &Row<'_>, violated: &BTreeSet<&str>) -> Option<SpecFinding> {
     let gate = row_gate(row);
     let finding = |message: String, fix: String| {
         Some(at(spec_file, row.line).finding(message, fix).about(gate))
@@ -302,7 +313,7 @@ fn row_finding(
             "put the violated gate's id in the first cell.".to_owned(),
         );
     }
-    if !violated.iter().any(|(id, _)| id == gate) {
+    if !violated.contains(gate) {
         return finding(
             format!("the complexity table has a row for `{gate}`, which is not marked violated"),
             format!("remove the row, or mark the gate `[{gate}] violated: <why>`."),

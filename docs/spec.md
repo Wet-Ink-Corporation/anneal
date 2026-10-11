@@ -26,7 +26,8 @@ there is any (`lint`'s codes, `docs/exit-codes.md`).
 ## Inputs
 
 - `<FILE>` is the spec. A missing file, a directory or a file over 1 MiB is a usage error
-  (exit 2, one `ERROR` line, nothing on stdout). Text that is not UTF-8 is read lossily.
+  (exit 2, one `ERROR` line, nothing on stdout). A file that grows past 1 MiB while it is
+  read counts as over, never as truncated. Text that is not UTF-8 is read lossily.
 - `--glossary` defaults to `CONTEXT.md` and `--constitution` to `constitution.md`, both in
   the working directory. A default that does not exist is skipped, and `data` shows `null`
   for it. A file named with the flag must exist: a missing one is a usage error.
@@ -65,10 +66,16 @@ The JSON envelope, `command: "lint spec"`, with `data`:
 
 The markdown is read by hand:
 
-- **Hidden text.** Fenced code blocks (```` ``` ```` or `~~~`, closed by a fence of the same
-  character at least as long) and HTML comments (`<!-- -->`, also across lines) are not read.
-  Headings, list items, markers and gates inside them do not count. Avoided terms are the
-  exception: like `lint terms`, they are looked for in the whole file.
+- **Hidden text.** Fenced code blocks and HTML comments (`<!-- -->`, also across lines) are
+  not read. Headings, list items, markers and gates inside them do not count. Avoided terms
+  are the exception: like `lint terms`, they are looked for in the whole file.
+- **Fences** follow CommonMark: at most three spaces of indent, then three or more backticks
+  or tildes. A backtick fence's info string may not hold a backtick, so a line such as
+  ```` ```x``` and more ```` is text. A fence closes at a line of the same character, at
+  least as long, with at most three spaces of indent.
+- **Code spans.** A run of N backticks opens an inline code span that the next run of exactly
+  N backticks on the same line closes; a run with no such partner is plain text. Whichever of
+  a code span and an HTML comment starts first wins, so `` `<!--` `` is text, not a comment.
 - **Sections.** A section is a `## ` heading (closing `#`s allowed) and the lines up to the
   next `# ` or `## ` heading. Deeper headings (`### Complexity`) belong to their section.
 - **List items.** A list item is a line starting with `-`, `*` or `+`, or digits followed by
@@ -76,7 +83,7 @@ The markdown is read by hand:
   the item with a space. A blank line or any other line ends it. Nested items are items of
   their own.
 - **Markers.** A marker is `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: <question>]`,
-  in capitals, outside inline code (backticks).
+  in capitals, outside code spans (single or multiple backticks).
 
 ## EARS grammar
 
@@ -104,13 +111,14 @@ criterion := [label] [WHERE text] [WHILE text] [WHEN text | IF text THEN] THE sy
 - **`IF`** needs `THEN` after its condition. `THEN` without `IF` is an error.
 - **The main clause** is `THE`, the system (at least one word), `SHALL` and the response (at
   least one word). Anything may follow `SHALL`.
-- **A label** may come first and is skipped: a checkbox (`[ ]`, `[x]`), a bold label followed
-  by a colon (`**AC-1**:`), or a first word that holds a digit and ends with a colon (`AC-1:`).
+- **A label** may come first and is skipped: a checkbox (`[ ]`, `[x]`), a bold label with a colon
+  after or inside it (`**AC-1**:`, `**AC-1:**`), or a first word that holds a digit and ends with a colon (`AC-1:`).
 
 A criterion that does not parse is an `ears` finding naming the first problem met, left to
 right: an empty item, a first word that is not a keyword, a clause out of order or repeated,
-both `WHEN` and `IF`, a clause with no text, `IF` without `THEN`, `THEN` without `IF`, `SHALL`
-with no `THE <system>` before it, `THE` with no system, no `SHALL`, or no response. Its fix is
+both `WHEN` and `IF`, a clause with no text, `IF` without `THEN`, `THEN` without `IF`, a
+word other than `THE` after `THEN` (``expected `THE <system>` after `THEN`, found `the` ``),
+`SHALL` with no `THE <system>` before it, `THE` with no system, no `SHALL`, or no response. Its fix is
 the closest template: the clauses whose keywords, in any letter case, start the item or follow
 a comma, in EARS order, then `THE <system> SHALL <response>.` So `When the user saves, the
 editor stores it` gets `WHEN <trigger>, THE <system> SHALL <response>.`
@@ -138,7 +146,8 @@ version are found.
   the first word after the colon, up to any `|`, compared as text (`3`, `1.2.0`).
 - **Gates.** List items that open with an id in brackets. An id is two or more ASCII letters,
   digits, `-`, `_` or `.`, starting with a letter (`G1`, `I-2`), so a `[x]` checkbox is not a
-  gate. Ids are stable: never reuse one for a different gate.
+  gate, and brackets followed directly by `(` are a link (`[Library-first](https://...)`),
+  not a gate. A constitution with no gate is a finding. Ids are stable: never reuse one for a different gate.
 
 The spec's `## Constitution check` names the version and gives every gate a status, `pass`,
 `violated` (with the reason after it) or `n/a`. A violated gate needs a row in a complexity
@@ -166,6 +175,7 @@ Constitution version: 3
 | Finding | Where |
 |---|---|
 | The constitution has no version line | the constitution, line 0 |
+| The constitution lists no gate (subject `gates`) | the constitution, line 0 |
 | A gate id appears twice in the constitution | the constitution, the repeat |
 | The section names no version, or a version other than the constitution's | the section heading, or the version line |
 | A constitution gate the section does not list | the section heading |

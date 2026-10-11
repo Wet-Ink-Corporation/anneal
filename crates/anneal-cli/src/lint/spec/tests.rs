@@ -169,6 +169,30 @@ fn labels_and_checkboxes_before_a_criterion_are_not_part_of_it() {
 }
 
 #[test]
+fn a_bold_label_with_its_colon_inside_is_skipped() {
+    let text = edited("- **AC-2**: WHILE offline,", "- **AC-2:** WHILE offline,");
+
+    let report = check(spec(&text), None, Some(constitution(CONSTITUTION)));
+
+    assert_eq!(found(&report), [], "`**AC-2:**` is a label");
+}
+
+#[test]
+fn markers_inside_double_backtick_spans_do_not_count() {
+    let text = edited(
+        "- PDF export.",
+        "- PDF ``[NEEDS CLARIFICATION]`` and `` a `[NEEDS CLARIFICATION]` b ``",
+    );
+
+    let report = check(spec(&text), None, Some(constitution(CONSTITUTION)));
+
+    assert_eq!(
+        report.needs_clarification, 1,
+        "only the open question's marker"
+    );
+}
+
+#[test]
 fn acceptance_criteria_without_a_list_item_is_a_finding() {
     let text = edited(
         "- WHEN the user asks for an export, THE exporter SHALL write a CSV file.\n\

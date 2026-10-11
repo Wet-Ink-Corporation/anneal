@@ -121,6 +121,19 @@ fn an_empty_criterion_is_empty() {
 }
 
 #[test]
+fn after_then_a_lowercase_the_is_reported_as_what_was_expected() {
+    assert_eq!(
+        parse("IF the disk is full THEN the app SHALL warn."),
+        Err(EarsError::Expected {
+            after: "THEN",
+            expected: "THE <system>",
+            found: "the".to_owned(),
+        }),
+        "THEN was read; the main clause's THE was expected next"
+    );
+}
+
+#[test]
 fn if_needs_then_and_then_needs_if() {
     assert_eq!(
         parse("IF the disk is full, THE app SHALL warn."),

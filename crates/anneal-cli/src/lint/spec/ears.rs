@@ -131,6 +131,17 @@ pub enum EarsError {
     /// `THEN` with no `IF` before it.
     #[error("`THEN` without `IF`")]
     StrayThen,
+    /// After a keyword, a word other than the one the grammar needs next (such as a
+    /// lowercase `the` after `THEN`).
+    #[error("expected `{expected}` after `{after}`, found `{found}`")]
+    Expected {
+        /// The last keyword read.
+        after: &'static str,
+        /// What had to come next.
+        expected: &'static str,
+        /// The word found, as written.
+        found: String,
+    },
     /// `SHALL` reached without `THE <system>` before it.
     #[error("`SHALL` is not preceded by `THE <system>`")]
     MissingThe,
@@ -218,6 +229,18 @@ pub fn parse(text: &str) -> Result<Pattern, EarsError> {
                 return main_clause(tail).map(|()| Pattern { clauses });
             }
             [(_, Word::Shall), ..] if !clauses.is_empty() => return Err(EarsError::MissingThe),
+            [(word, Word::Text), ..] if let Some(last) = clauses.last() => {
+                // A clause's text runs to the next keyword, so text here follows `THEN`.
+                return Err(EarsError::Expected {
+                    after: if *last == Clause::If {
+                        "THEN"
+                    } else {
+                        last.keyword()
+                    },
+                    expected: "THE <system>",
+                    found: (*word).to_owned(),
+                });
+            }
             [(word, Word::Shall | Word::Text), ..] => {
                 return Err(EarsError::UnknownStart {
                     word: (*word).to_owned(),

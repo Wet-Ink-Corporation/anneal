@@ -139,26 +139,74 @@ impl Scanner {
         if !self.in_comment && !raw.contains("<!--") {
             return Cow::Borrowed(raw);
         }
+        Cow::Owned(self.strip_comments(raw))
+    }
+
+    /// `raw` without its HTML comments, read left to right as `CommonMark` does: whichever of a
+    /// code span and a comment opens first wins, and the other's markers inside it are text.
+    /// One pass: every search starts where the last one stopped (PERF-10).
+    fn strip_comments(&mut self, raw: &str) -> String {
+        const OPEN: &str = "<!--";
+        const CLOSE: &str = "-->";
+        let runs = backtick_runs(raw);
         let mut shown = String::new();
-        let mut rest = raw;
+        let mut pos = 0;
+        let mut run = 0;
+        let mut opener: Option<usize> = None;
         loop {
             if self.in_comment {
-                let Some((_, after)) = rest.split_once("-->") else {
-                    break;
+                let Some(end) = raw.get(pos..).and_then(|rest| rest.find(CLOSE)) else {
+                    return shown;
                 };
+                pos = pos.saturating_add(end).saturating_add(CLOSE.len());
                 self.in_comment = false;
-                rest = after;
-            } else if let Some((before, after)) = rest.split_once("<!--") {
-                shown.push_str(before);
-                self.in_comment = true;
-                rest = after;
-            } else {
-                shown.push_str(rest);
-                break;
+                continue;
+            }
+            let at = match opener {
+                Some(at) if at >= pos => at,
+                _ => {
+                    let Some(found) = raw.get(pos..).and_then(|rest| rest.find(OPEN)) else {
+                        shown.push_str(raw.get(pos..).unwrap_or_default());
+                        return shown;
+                    };
+                    pos.saturating_add(found)
+                }
+            };
+            opener = Some(at);
+            while runs.get(run).is_some_and(|&(start, _)| start < pos) {
+                run = run.saturating_add(1);
+            }
+            match runs.get(run) {
+                Some(&(start, len)) if start < at => {
+                    let partner = partner(&runs, run);
+                    // Without a partner the run is literal backticks.
+                    let literal_end = start.saturating_add(len);
+                    let end = partner
+                        .and_then(|index| runs.get(index))
+                        .map_or(literal_end, |&(close, _)| close.saturating_add(len));
+                    shown.push_str(raw.get(pos..end).unwrap_or_default());
+                    pos = end;
+                    run = partner.unwrap_or(run).saturating_add(1);
+                }
+                _ => {
+                    shown.push_str(raw.get(pos..at).unwrap_or_default());
+                    pos = at.saturating_add(OPEN.len());
+                    self.in_comment = true;
+                }
             }
         }
-        Cow::Owned(shown)
     }
+}
+
+/// The index of the run that closes the code span `runs[index]` opens: the next run of the
+/// same length, if any.
+fn partner(runs: &[(usize, usize)], index: usize) -> Option<usize> {
+    let &(_, len) = runs.get(index)?;
+    let after = index.saturating_add(1);
+    runs.get(after..)?
+        .iter()
+        .position(|&(_, other)| other == len)
+        .map(|offset| after.saturating_add(offset))
 }
 
 /// An open code fence: its character and length.
@@ -169,19 +217,87 @@ struct Fence {
 }
 
 impl Fence {
-    /// The fence `raw` opens: three or more backticks or tildes after any indentation.
+    /// The fence `raw` opens, as in `CommonMark`: at most three spaces of indent, then three or
+    /// more backticks or tildes; a backtick fence's info string holds no backtick (so a line
+    /// that is an inline span, such as ```` ```x``` ````, is text).
     fn opened_by(raw: &str) -> Option<Self> {
-        let trimmed = raw.trim_start();
+        let trimmed = indented_at_most_3(raw)?;
         let mark = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
         let len = trimmed.chars().take_while(|c| *c == mark).count();
-        (len >= 3).then_some(Self { mark, len })
+        let info = trimmed.get(len..)?;
+        (len >= 3 && !(mark == '`' && info.contains('`'))).then_some(Self { mark, len })
     }
 
-    /// Whether `raw` closes this fence: only the fence character, at least as many.
+    /// Whether `raw` closes this fence: at most three spaces of indent, at least as many of the
+    /// fence character, then only whitespace.
     fn is_closed_by(self, raw: &str) -> bool {
-        let trimmed = raw.trim();
-        trimmed.chars().count() >= self.len && trimmed.chars().all(|c| c == self.mark)
+        let Some(trimmed) = indented_at_most_3(raw) else {
+            return false;
+        };
+        let run = trimmed.chars().take_while(|c| *c == self.mark).count();
+        run >= self.len
+            && trimmed
+                .get(run..)
+                .is_some_and(|rest| rest.trim().is_empty())
     }
+}
+
+/// `raw` without its leading spaces, when there are at most three.
+fn indented_at_most_3(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim_start_matches(' ');
+    (raw.len().saturating_sub(trimmed.len()) <= 3).then_some(trimmed)
+}
+
+/// `text` with every inline code span, backticks included, replaced by as many spaces as it has
+/// bytes, so offsets in the result are offsets in `text`.
+///
+/// As in `CommonMark`, a run of N backticks opens a span that the next run of exactly N backticks
+/// closes; a run with no such partner is plain text. Spans are read within one line. Each run
+/// without a partner is the last run of its length, so the partner searches stay linear in
+/// practice (PERF-10).
+pub(crate) fn without_code_spans(text: &str) -> Cow<'_, str> {
+    if !text.contains('`') {
+        return Cow::Borrowed(text);
+    }
+    let runs = backtick_runs(text);
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut next = 0;
+    while let Some(&(start, len)) = runs.get(next) {
+        let Some((close_index, &(close, _))) =
+            partner(&runs, next).and_then(|index| runs.get(index).map(|run| (index, run)))
+        else {
+            next = next.saturating_add(1);
+            continue;
+        };
+        let end = close.saturating_add(len);
+        out.push_str(text.get(copied..start).unwrap_or_default());
+        out.extend(std::iter::repeat_n(' ', end.saturating_sub(start)));
+        copied = end;
+        next = close_index.saturating_add(1);
+    }
+    out.push_str(text.get(copied..).unwrap_or_default());
+    Cow::Owned(out)
+}
+
+/// The runs of backticks in `text`: byte offset and length of each.
+fn backtick_runs(text: &str) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut open: Option<usize> = None;
+    for (at, c) in text.char_indices() {
+        match (c == '`', open) {
+            (true, None) => open = Some(at),
+            (false, Some(start)) => {
+                runs.push((start, at.saturating_sub(start)));
+                open = None;
+            }
+            (true, Some(_)) | (false, None) => {}
+        }
+    }
+    if let Some(start) = open {
+        runs.push((start, text.len().saturating_sub(start)));
+    }
+    runs
 }
 
 /// The level and title of an ATX heading (`## Title`, optionally closed by `#`s).

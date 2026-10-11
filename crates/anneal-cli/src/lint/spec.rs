@@ -23,8 +23,8 @@ use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::lint::skills::discover::read_capped;
-use crate::lint::skills::{LintError, require_file};
+use crate::lint::read_whole;
+use crate::lint::skills::LintError;
 use crate::lint::terms::Glossary;
 use checks::{ACCEPTANCE_CRITERIA, CONSTITUTION_CHECK, OUT_OF_SCOPE, find};
 use constitution::Constitution;
@@ -309,20 +309,6 @@ fn named_or_present<'p>(named: Option<&'p Path>, default: &'static str) -> Optio
         let default = Path::new(default);
         default.exists().then_some(default)
     })
-}
-
-/// A file named on the command line, read whole: a missing file, a directory or one over the
-/// read cap is a usage error.
-fn read_whole(path: &Path) -> Result<String, LintError> {
-    require_file(path)?;
-    let capped = read_capped(path)?;
-    let Some(bytes) = capped.bytes else {
-        return Err(LintError::TooLarge {
-            path: path.to_path_buf(),
-            size: capped.size,
-        });
-    };
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// The envelope's `data` for `lint spec`.

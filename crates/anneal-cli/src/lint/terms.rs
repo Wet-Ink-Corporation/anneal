@@ -15,8 +15,8 @@ use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::lint::skills::discover::{Capped, read_capped};
-use crate::lint::skills::{LintError, require_file};
+use crate::lint::skills::LintError;
+use crate::lint::{Contents, read_named, read_whole};
 
 /// Arguments of `anneal lint terms`.
 #[derive(Debug, Clone, Args)]
@@ -64,15 +64,7 @@ pub struct Skipped {
 /// missing or a directory, [`LintError::TooLarge`] when the glossary is over the read cap,
 /// [`LintError::Io`] when a file cannot be read.
 pub fn lint(args: &TermsArgs) -> Result<Outcome, LintError> {
-    let glossary = match read(&args.glossary)? {
-        Contents::Text(text) => Glossary::parse(&text),
-        Contents::TooLarge(size) => {
-            return Err(LintError::TooLarge {
-                path: args.glossary.clone(),
-                size,
-            });
-        }
-    };
+    let glossary = Glossary::parse(&read_whole(&args.glossary)?);
     let files: BTreeSet<PathBuf> = args.files.iter().map(|path| without_dots(path)).collect();
     let mut outcome = Outcome {
         hits: Vec::new(),
@@ -82,7 +74,7 @@ pub fn lint(args: &TermsArgs) -> Result<Outcome, LintError> {
     };
     for path in files {
         let file = path.display().to_string();
-        match read(&path)? {
+        match read_named(&path)? {
             Contents::Text(text) => {
                 outcome.hits.extend(glossary.scan(&file, &text));
                 outcome.checked = outcome.checked.saturating_add(1);
@@ -154,22 +146,6 @@ pub(crate) fn report<O: Write>(
         .with_findings(&findings)
         .emit(out)
         .map_err(CliError::Output)
-}
-
-/// The contents of a file named on the command line, read up to the cap.
-enum Contents {
-    /// Its text, lossily decoded.
-    Text(String),
-    /// Its size, over the cap.
-    TooLarge(u64),
-}
-
-fn read(path: &Path) -> Result<Contents, LintError> {
-    require_file(path)?;
-    let Capped { size, bytes } = read_capped(path)?;
-    Ok(bytes.map_or(Contents::TooLarge(size), |bytes| {
-        Contents::Text(String::from_utf8_lossy(&bytes).into_owned())
-    }))
 }
 
 /// `path` without its `.` components (`./a.md` is `a.md`), or `.` when nothing else is left.

@@ -18,6 +18,7 @@ pub mod spec;
 pub mod terms;
 
 use std::io::Write;
+use std::path::Path;
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -29,6 +30,8 @@ use crate::error::CliError;
 use crate::exit_codes::render::command_help;
 use crate::exit_codes::{self, Code};
 use finding::{LintFinding, Severity};
+use skills::discover::{Capped, read_capped};
+use skills::{LintError, require_file};
 
 /// Arguments of `anneal lint`.
 #[derive(Debug, Args)]
@@ -162,4 +165,41 @@ pub(crate) fn report<O: Write>(
         .with_findings(&envelope_findings)
         .emit(out)
         .map_err(CliError::Output)
+}
+
+/// The contents of a file named on the command line, read up to the cap.
+#[derive(Debug)]
+pub(crate) enum Contents {
+    /// Its text, lossily decoded.
+    Text(String),
+    /// Its size, over the cap.
+    TooLarge(u64),
+}
+
+/// Reads a file named on the command line, up to the read cap. Text that is not UTF-8 is read
+/// lossily.
+///
+/// # Errors
+/// [`LintError::MissingPath`] or [`LintError::WrongKind`] when `path` is missing or a
+/// directory, [`LintError::Io`] when it cannot be read.
+pub(crate) fn read_named(path: &Path) -> Result<Contents, LintError> {
+    require_file(path)?;
+    let Capped { size, bytes } = read_capped(path)?;
+    Ok(bytes.map_or(Contents::TooLarge(size), |bytes| {
+        Contents::Text(String::from_utf8_lossy(&bytes).into_owned())
+    }))
+}
+
+/// Reads a file named on the command line that must be read whole.
+///
+/// # Errors
+/// As [`read_named`], plus [`LintError::TooLarge`] when it is over the read cap.
+pub(crate) fn read_whole(path: &Path) -> Result<String, LintError> {
+    match read_named(path)? {
+        Contents::Text(text) => Ok(text),
+        Contents::TooLarge(size) => Err(LintError::TooLarge {
+            path: path.to_path_buf(),
+            size,
+        }),
+    }
 }
