@@ -92,10 +92,10 @@ pub const PLAN_APPROVED: Code = Code::new(0, "approved and current");
 pub const PLAN_NOT_APPROVED: Code = Code::new(3, "not approved");
 /// `plan approve|check`: the plan was approved but its inputs changed since.
 pub const PLAN_STALE: Code = Code::new(4, "stale: inputs changed since approval");
-/// `lint`: no findings.
-pub const LINT_CLEAN: Code = Code::new(0, "no findings");
-/// `lint`: at least one finding.
-pub const LINT_FINDINGS: Code = Code::new(1, "findings");
+/// `lint`: no error findings (warnings and review items are listed but do not fail).
+pub const LINT_CLEAN: Code = Code::new(0, "no errors");
+/// `lint`: at least one error finding.
+pub const LINT_FINDINGS: Code = Code::new(1, "error findings");
 /// `dag check|frontier`: the graph has a cycle.
 pub const DAG_CYCLE: Code = Code::new(1, "cycle");
 /// `dag check|frontier`: a dependency names a task that does not exist.

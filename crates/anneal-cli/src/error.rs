@@ -9,6 +9,7 @@ use std::io;
 use crate::baseline::BaselineError;
 use crate::command::CommandName;
 use crate::exit_codes::{self, Code};
+use crate::lint::skills::LintError;
 use crate::paths::PathError;
 
 /// Why `anneal` could not produce a result.
@@ -32,6 +33,9 @@ pub enum CliError {
     /// Loading or saving a baseline snapshot failed.
     #[error("baseline snapshot")]
     Baseline(#[from] BaselineError),
+    /// `anneal lint` could not check its inputs.
+    #[error("lint")]
+    Lint(#[from] LintError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -45,6 +49,7 @@ impl CliError {
             Self::Usage { .. } => exit_codes::USAGE,
             Self::NotImplemented { .. } => exit_codes::NOT_IMPLEMENTED,
             Self::Path(_) | Self::Baseline(_) => exit_codes::INTERNAL,
+            Self::Lint(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

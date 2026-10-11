@@ -106,7 +106,7 @@ impl CommandName {
             Self::Ledger => "the ledger events read or written match the event schema",
             Self::Task => "the task's tests ran green",
             Self::Plan => "the plan is approved and current with its inputs",
-            Self::Lint => "the checked files pass anneal's lint rules",
+            Self::Lint => "the checked files have no error under anneal's lint rules",
             Self::Dag => "the task graph has no cycle and no dangling dependency",
             Self::FloorGuard => "no quality floor (coverage, lint level, test count) was lowered",
             Self::Verdict => "the review verdict is well-formed and backed by findings",
@@ -127,7 +127,9 @@ impl CommandName {
             Self::Ledger => "that the events are true, or that the work they record was done well",
             Self::Task => "that the tests cover the task's acceptance criteria",
             Self::Plan => "that the plan is correct or complete",
-            Self::Lint => "that the content is right; only that it is well-formed",
+            Self::Lint => {
+                "that the content is right, or that its warnings and review items were addressed"
+            }
             Self::Dag => "that the dependencies are the right ones",
             Self::FloorGuard => "that the floors are high enough",
             Self::Verdict => "that the reviewer was right",

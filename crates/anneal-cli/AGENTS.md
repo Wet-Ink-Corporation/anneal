@@ -8,13 +8,13 @@ binary. Owns process concerns: arguments, stdout and stderr, exit codes. The cod
 
 ## Allowed dependencies
 - Workspace crates: none yet.
-- Third-party: `clap` (derive; command tree and help), `serde` and `serde_json` (envelope, snapshots), `thiserror` (error enums); dev: `tempfile`. Each addition is an H-16 decision recorded below.
+- Third-party: `clap` (derive; command tree and help), `serde` and `serde_json` (envelope, snapshots), `thiserror` (error enums), `sha2` (content hashes for the lint snapshot); dev: `tempfile`. Each addition is an H-16 decision recorded below.
 - Never: anything that needs a network at build time.
 
 ## Public surface
 The contract is the command line, the JSON envelope on stdout and the exit codes in `docs/exit-codes.md`. The `anneal_cli` library is internal (`publish = false`) and not a stable API.
 
-Modules: `cli` (clap tree, `run`), `command` (closed `CommandName` set, proves / does-not-prove), `exit_codes` (the one exit-code table; `exit_codes::render` turns it into help and markdown), `error` (`CliError` and its global codes), `envelope` (`Envelope`, `Finding`), `hook` (one `ERROR` line), `baseline` (finding snapshots), `paths` (git common dir, `~/.anneal`).
+Modules: `cli` (clap tree, `run`), `command` (closed `CommandName` set, proves / does-not-prove), `exit_codes` (the one exit-code table; `exit_codes::render` turns it into help and markdown), `error` (`CliError` and its global codes), `envelope` (`Envelope`, `Finding`), `hook` (one `ERROR` line), `baseline` (finding snapshots), `paths` (git common dir, `~/.anneal`), `lint` (`lint skills`: the 21 skill design rules, one checker per rule in `lint::skills::checker`, documented in `docs/skill-rules.md`; the shared `LintFinding` model and `lint::report`).
 
 To build out a stub: replace its `Stub` in `cli::Command` with a real `clap::Args` type, give it its own arm in `cli::dispatch` that writes an `Envelope` and returns `emit`'s code, and declare any new code in `exit_codes` (then regenerate the doc with `ANNEAL_BLESS=1 cargo test -p anneal-cli exit_codes_doc`).
 
@@ -41,3 +41,7 @@ Unit tests beside the code for parsing and output; integration tests in `tests/i
 | 2026-10-11 | Add `serde`, `serde_json`, `thiserror`, dev `tempfile` (pre-approved) | H-16 | `.claude/temper.json` |
 | 2026-10-11 | Internal library target plus thin binary, so doctests and tests reach the code | ARC-07 | coordinator (#10) |
 | 2026-10-11 | Usage errors keep clap's 2 (a mis-invoked guard blocks); globals 64 not implemented, 70 internal, 74 output | OUT-06 | weigh-in wi-2415fc (default, two-way) |
+| 2026-10-11 | Add `sha2` (no default features) for `lint skills --cache` content hashes, as weigh-in does | H-16 | story #12 |
+| 2026-10-11 | `lint` exits 1 only on error findings; warnings and review items are listed and exit 0 | OUT-06 | story #12 (recommended option) |
+| 2026-10-11 | Entry skills are a constant (`ENTRY_SKILLS`) documented in `docs/skill-rules.md`, not read from `hooks.metadata.json` (#13 owns that schema) | ARC-05 | weigh-in wi-7fad93 (default, two-way) |
+| 2026-10-11 | Lint details (rule, checker, severity, fix) go in the envelope's `data.details`; `envelope::Finding` stays `{key, message}` | API-04 | weigh-in wi-37e954 (default, two-way) |

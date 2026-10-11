@@ -122,26 +122,24 @@ impl Baseline {
     /// # Errors
     /// [`BaselineError::Io`] when the directory or file cannot be written.
     pub fn save(&self, path: &Path) -> Result<(), BaselineError> {
-        let io_error = |source| BaselineError::Io {
-            op: "writing",
-            path: path.to_path_buf(),
-            source,
-        };
         let snapshot = SnapshotRef {
             version: FORMAT_VERSION,
             keys: &self.keys,
         };
-        let mut json = serde_json::to_vec_pretty(&snapshot).map_err(|e| io_error(e.into()))?;
-        json.push(b'\n');
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent).map_err(io_error)?;
-        }
-        write_atomically(path, &json).map_err(io_error)
+        write_snapshot_json(path, &snapshot)
     }
 }
 
 /// [`Baseline::load`] with the size limit as a parameter, so tests can exercise it cheaply.
 fn load_capped(path: &Path, cap: u64) -> Result<Option<Baseline>, BaselineError> {
+    let Some(bytes) = read_capped_bytes(path, cap)? else {
+        return Ok(None);
+    };
+    parse(path, &bytes).map(Some)
+}
+
+/// Reads the file at `path` whole, refusing one larger than `cap`. A missing file is `Ok(None)`.
+fn read_capped_bytes(path: &Path, cap: u64) -> Result<Option<Vec<u8>>, BaselineError> {
     let io_error = |source| BaselineError::Io {
         op: "reading",
         path: path.to_path_buf(),
@@ -161,7 +159,7 @@ fn load_capped(path: &Path, cap: u64) -> Result<Option<Baseline>, BaselineError>
             path: path.to_path_buf(),
         });
     }
-    parse(path, &bytes).map(Some)
+    Ok(Some(bytes))
 }
 
 /// Reads the version leniently first, so a snapshot from a newer build is reported as a
@@ -250,6 +248,37 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
             )),
         },
     }
+}
+
+/// Reads the snapshot file at `path` whole. A missing file is `Ok(None)`.
+///
+/// # Errors
+/// [`BaselineError::Io`] when it cannot be read; [`BaselineError::TooLarge`] when it is larger
+/// than [`MAX_SNAPSHOT_BYTES`].
+pub(crate) fn read_snapshot_bytes(path: &Path) -> Result<Option<Vec<u8>>, BaselineError> {
+    read_capped_bytes(path, MAX_SNAPSHOT_BYTES)
+}
+
+/// Writes `value` as pretty JSON to `path`, creating its parent directory, through
+/// [`write_atomically`], so a reader never sees a half-written snapshot.
+///
+/// # Errors
+/// [`BaselineError::Io`] when the directory or file cannot be written.
+pub(crate) fn write_snapshot_json<T: Serialize>(
+    path: &Path,
+    value: &T,
+) -> Result<(), BaselineError> {
+    let io_error = |source| BaselineError::Io {
+        op: "writing",
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut json = serde_json::to_vec_pretty(value).map_err(|e| io_error(e.into()))?;
+    json.push(b'\n');
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    write_atomically(path, &json).map_err(io_error)
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@
 //! - [`error`]: errors that stop a command, each with a global exit code.
 //! - [`envelope`]: the JSON envelope on stdout and its findings.
 //! - [`hook`]: silent-on-success, one-`ERROR`-line-on-failure output for hooks.
+//! - [`lint`]: `anneal lint skills` and the lint finding model.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
 //! - [`paths`]: the git common dir (ledger home) and the anneal home (`~/.anneal`).
 
@@ -20,4 +21,5 @@ pub mod envelope;
 pub mod error;
 pub mod exit_codes;
 pub mod hook;
+pub mod lint;
 pub mod paths;
