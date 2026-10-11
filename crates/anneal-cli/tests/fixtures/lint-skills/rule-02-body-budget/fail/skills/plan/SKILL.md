@@ -1,0 +1,34 @@
+---
+name: plan
+description: Use when a spec is approved and the work needs ordered tasks, even if the change looks obvious. Do NOT use for writing requirements (use `spec`).
+---
+# Plan
+
+## Overview
+
+Turns an approved spec into ordered tasks. You MUST approve the plan with `anneal plan approve` before building.
+
+filler0 filler1 filler2 filler3 filler4 filler5 filler6 filler7 filler8 filler9 filler10 filler11 filler12 filler13 filler14 filler15 filler16 filler17 filler18 filler19 filler20 filler21 filler22 filler23 filler24 filler25 filler26 filler27 filler28 filler29 filler30 filler31 filler32 filler33 filler34 filler35 filler36 filler37 filler38 filler39 filler40 filler41 filler42 filler43 filler44 filler45 filler46 filler47 filler48 filler49 filler50 filler51 filler52 filler53 filler54 filler55 filler56 filler57 filler58 filler59 filler60 filler61 filler62 filler63 filler64 filler65 filler66 filler67 filler68 filler69 filler70 filler71 filler72 filler73 filler74 filler75 filler76 filler77 filler78 filler79 filler80 filler81 filler82 filler83 filler84 filler85 filler86 filler87 filler88 filler89 filler90 filler91 filler92 filler93 filler94 filler95 filler96 filler97 filler98 filler99 filler100 filler101 filler102 filler103 filler104 filler105 filler106 filler107 filler108 filler109 filler110 filler111 filler112 filler113 filler114 filler115 filler116 filler117 filler118 filler119 filler120 filler121 filler122 filler123 filler124 filler125 filler126 filler127 filler128 filler129 filler130 filler131 filler132 filler133 filler134 filler135 filler136 filler137 filler138 filler139 filler140 filler141 filler142 filler143 filler144 filler145 filler146 filler147 filler148 filler149 filler150 filler151 filler152 filler153 filler154 filler155 filler156 filler157 filler158 filler159 filler160 filler161 filler162 filler163 filler164 filler165 filler166 filler167 filler168 filler169 filler170 filler171 filler172 filler173 filler174 filler175 filler176 filler177 filler178 filler179 filler180 filler181 filler182 filler183 filler184 filler185 filler186 filler187 filler188 filler189 filler190 filler191 filler192 filler193 filler194 filler195 filler196 filler197 filler198 filler199 filler200 filler201 filler202 filler203 filler204 filler205 filler206 filler207 filler208 filler209 filler210 filler211 filler212 filler213 filler214 filler215 filler216 filler217 filler218 filler219 filler220 filler221 filler222 filler223 filler224 filler225 filler226 filler227 filler228 filler229 filler230 filler231 filler232 filler233 filler234 filler235 filler236 filler237 filler238 filler239 filler240 filler241 filler242 filler243 filler244 filler245 filler246 filler247 filler248 filler249 filler250 filler251 filler252 filler253 filler254 filler255 filler256 filler257 filler258 filler259 filler260 filler261 filler262 filler263 filler264 filler265 filler266 filler267 filler268 filler269 filler270 filler271 filler272 filler273 filler274 filler275 filler276 filler277 filler278 filler279 filler280 filler281 filler282 filler283 filler284 filler285 filler286 filler287 filler288 filler289 filler290 filler291 filler292 filler293 filler294 filler295 filler296 filler297 filler298 filler299 filler300 filler301 filler302 filler303 filler304 filler305 filler306 filler307 filler308 filler309 filler310 filler311 filler312 filler313 filler314 filler315 filler316 filler317 filler318 filler319 filler320 filler321 filler322 filler323 filler324 filler325 filler326 filler327 filler328 filler329 filler330 filler331 filler332 filler333 filler334 filler335 filler336 filler337 filler338 filler339 filler340 filler341 filler342 filler343 filler344 filler345 filler346 filler347 filler348 filler349 filler350 filler351 filler352 filler353 filler354 filler355 filler356 filler357 filler358 filler359 filler360 filler361 filler362 filler363 filler364 filler365 filler366 filler367 filler368 filler369 filler370 filler371 filler372 filler373 filler374 filler375 filler376 filler377 filler378 filler379 filler380 filler381 filler382 filler383 filler384 filler385 filler386 filler387 filler388 filler389 filler390 filler391 filler392 filler393 filler394 filler395 filler396 filler397 filler398 filler399 filler400 filler401 filler402 filler403 filler404 filler405 filler406 filler407 filler408 filler409 filler410 filler411 filler412 filler413 filler414 filler415 filler416 filler417 filler418 filler419 filler420 filler421 filler422 filler423 filler424 filler425 filler426 filler427 filler428 filler429 filler430 filler431 filler432 filler433 filler434 filler435 filler436 filler437 filler438 filler439 filler440 filler441 filler442 filler443 filler444 filler445 filler446 filler447 filler448 filler449 filler450 filler451 filler452 filler453 filler454 filler455 filler456 filler457 filler458 filler459 filler460 filler461 filler462 filler463 filler464 filler465 filler466 filler467 filler468 filler469 filler470 filler471 filler472 filler473 filler474 filler475 filler476 filler477 filler478 filler479 filler480 filler481 filler482 filler483 filler484 filler485 filler486 filler487 filler488 filler489 filler490 filler491 filler492 filler493 filler494 filler495 filler496 filler497 filler498 filler499 filler500 filler501 filler502 filler503 filler504 filler505 filler506 filler507 filler508 filler509 filler510 filler511 filler512 filler513 filler514 filler515 filler516 filler517 filler518 filler519 filler520 filler521 filler522 filler523 filler524 filler525 filler526 filler527 filler528 filler529 filler530 filler531 filler532 filler533 filler534 filler535 filler536 filler537 filler538 filler539 filler540 filler541 filler542 filler543 filler544 filler545 filler546 filler547 filler548 filler549 filler550 filler551 filler552 filler553 filler554 filler555 filler556 filler557 filler558 filler559 filler560 filler561 filler562 filler563 filler564 filler565 filler566 filler567 filler568 filler569 filler570 filler571 filler572 filler573 filler574 filler575 filler576 filler577 filler578 filler579 filler580 filler581 filler582 filler583 filler584 filler585 filler586 filler587 filler588 filler589 filler590 filler591 filler592 filler593 filler594 filler595 filler596 filler597 filler598 filler599 filler600 filler601 filler602 filler603 filler604 filler605 filler606 filler607 filler608 filler609 filler610 filler611 filler612 filler613 filler614 filler615 filler616 filler617 filler618 filler619
+
+## When to use
+
+After the spec is approved. Not for requirements: those belong to spec.
+
+## Process
+
+1. Read the spec. It's working if every requirement has an id.
+2. Write the tasks. It's working if each task names its test.
+
+## Rationalizations
+
+| Excuse | Reality |
+|---|---|
+| "The change is small, skip the plan" | Every change gets a plan; the plan sets the order. |
+
+## Red flags
+
+- Starting code before the plan is approved.
+
+## Verification
+
+- `anneal plan check` exits 0.

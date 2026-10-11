@@ -17,6 +17,7 @@ use crate::error::CliError;
 use crate::exit_codes::render::{command_help, overview_help};
 use crate::exit_codes::{self, Code};
 use crate::hook;
+use crate::lint::{self, LintArgs};
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -50,7 +51,7 @@ pub enum Command {
     Plan(Stub),
     /// Lint skills, specs, plans and briefs
     #[command(after_help = command_help(CommandName::Lint))]
-    Lint(Stub),
+    Lint(LintArgs),
     /// Check the task graph and list its frontier
     #[command(after_help = command_help(CommandName::Dag))]
     Dag(Stub),
@@ -168,12 +169,12 @@ where
 }
 
 /// Runs one command. Each real command gets its own arm; stubs share the last one.
-fn dispatch<O: Write>(command: &Command, _out: &mut O) -> Result<Code, CliError> {
+fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> {
     match command {
+        Command::Lint(args) => lint::run(args, out),
         Command::Ledger(_)
         | Command::Task(_)
         | Command::Plan(_)
-        | Command::Lint(_)
         | Command::Dag(_)
         | Command::FloorGuard(_)
         | Command::Verdict(_)

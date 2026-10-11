@@ -56,10 +56,10 @@ A green result proves the plan is approved and current with its inputs. It does 
 
 | Code | Meaning |
 |---|---|
-| 0 | no findings |
-| 1 | findings |
+| 0 | no errors |
+| 1 | error findings |
 
-A green result proves the checked files pass anneal's lint rules. It does **not** prove that the content is right; only that it is well-formed.
+A green result proves the checked files have no error under anneal's lint rules. It does **not** prove that the content is right, or that its warnings and review items were addressed.
 
 ## `anneal dag check|frontier`
 

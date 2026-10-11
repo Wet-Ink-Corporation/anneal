@@ -25,6 +25,7 @@ authors = ["Ryan Britton <ryan.britton@wet-ink.net>"]
 clap = { version = "4.6.7", default-features = false, features = ["std", "help", "usage", "error-context"] }
 serde = { version = "1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "1.0.152", default-features = false, features = ["std"] }
+sha2 = { version = "0.10.9", default-features = false }
 tempfile = { version = "3.27.0", default-features = false }
 thiserror = { version = "2.0.21", default-features = false, features = ["std"] }
 
