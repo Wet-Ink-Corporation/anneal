@@ -368,3 +368,19 @@ fn a_directory_as_the_tree_is_a_usage_error() -> TestResult {
 
     assert_usage_error(&output, "trees")
 }
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_named_pipe_as_the_tree_is_a_usage_error_without_opening_it() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    // Nothing ever writes the pipe, so opening it for reading would block.
+    let made = std::process::Command::new("mkfifo")
+        .arg(dir.path().join("tree.fifo"))
+        .status()?;
+    assert!(made.success(), "mkfifo: {made:?}");
+
+    let output = grill(dir.path(), &["frontier", "--tree", "tree.fifo"])?;
+
+    assert_usage_error(&output, "tree.fifo")
+}

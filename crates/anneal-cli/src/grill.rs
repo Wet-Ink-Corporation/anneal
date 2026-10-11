@@ -278,12 +278,20 @@ fn read_tree(cwd: &Path, path: &Path) -> Result<Vec<u8>, GrillError> {
             GrillError::Read { path, source }
         }
     };
-    let file = std::fs::File::open(cwd.join(path)).map_err(failed)?;
+    let not_a_file = || GrillError::NotAFile {
+        // The error owns the path it names.
+        path: path.to_path_buf(),
+    };
+    let full = cwd.join(path);
+    // Checked before opening: opening a pipe blocks until a writer appears, and opening a
+    // directory fails on Windows ("Access is denied").
+    if !std::fs::metadata(&full).map_err(failed)?.is_file() {
+        return Err(not_a_file());
+    }
+    let file = std::fs::File::open(&full).map_err(failed)?;
+    // The path may have been replaced between the check and the open.
     if !file.metadata().map_err(failed)?.is_file() {
-        return Err(GrillError::NotAFile {
-            // The error owns the path it names.
-            path: path.to_path_buf(),
-        });
+        return Err(not_a_file());
     }
     let limit = u64::try_from(MAX_TREE_BYTES).map_or(u64::MAX, |max| max.saturating_add(1));
     let mut bytes = Vec::new();
