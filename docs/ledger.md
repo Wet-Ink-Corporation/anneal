@@ -34,8 +34,10 @@ Query results report the file in `data.store` and the step that chose it in `dat
 - **Refused files are left as they were.** Opening only reads until the file is known to be a
   ledger this anneal reads, or an empty database. A ledger stamped by a newer anneal, a file in
   WAL, and a SQLite database with tables that is not a ledger (say, a wrong `--store` or
-  `$ANNEAL_STORE`) are each refused with exit 70, and nothing in them changes. Only a new file
-  or an empty database is given the ledger schema.
+  `$ANNEAL_STORE`) are each refused with exit 70, and nothing in them changes. The schema
+  version and WAL are read from the file's 100-byte header before SQLite opens it, so refusing
+  a WAL file creates no `-wal` or `-shm` beside it. Only a new file or an empty database is
+  given the ledger schema.
 - **Schema version.** `PRAGMA user_version` holds the ledger schema (1: happenstance 0.3.2's
   schema under TRUNCATE), stamped in the transaction that creates the schema.
 - **Concurrent writers.** Every append is its own `BEGIN IMMEDIATE` transaction, and each

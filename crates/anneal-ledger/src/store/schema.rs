@@ -1,6 +1,8 @@
 //! Opening a ledger file: one connection under a TRUNCATE journal, happenstance's schema copied
 //! in from a template, and the ledger's schema version in `PRAGMA user_version`.
 
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
 use std::time::Duration;
 
@@ -36,17 +38,83 @@ enum Contents {
 ///
 /// The order matters: until the file is known to be this build's ledger or an empty database,
 /// the connection only reads, so a file that is refused (newer schema, WAL, not a ledger) is
-/// left exactly as it was. A new file gets its schema and stamp in one `BEGIN IMMEDIATE`.
+/// left exactly as it was. The schema version and WAL are first read from the file header,
+/// before SQLite opens the file at all. A new file gets its schema and stamp in one
+/// `BEGIN IMMEDIATE`.
 pub(super) fn open(path: &Path) -> Result<SqliteEventStore, OpenError> {
+    if let Some(header) = read_header(path)? {
+        refuse_newer(header.user_version)?;
+        if header.wal {
+            return Err(OpenError::JournalMode {
+                found: "wal".to_owned(),
+            });
+        }
+    }
     let conn = connect(path)?;
     let contents = inspect(&conn)?;
     use_truncate(&conn)?;
     if contents == Contents::Empty {
         create_schema(&conn)?;
     }
-    match user_version(&conn)? {
-        LEDGER_SCHEMA => SqliteEventStore::new(conn).map_err(OpenError::Store),
+    check_stamp(user_version(&conn)?)?;
+    SqliteEventStore::new(conn).map_err(OpenError::Store)
+}
+
+/// The stamp a ledger must carry once its schema is in place. Another process may have stamped
+/// it newer since [`inspect`] looked, which is still [`OpenError::NewerSchema`].
+fn check_stamp(found: i64) -> Result<(), OpenError> {
+    refuse_newer(found)?;
+    match found {
+        LEDGER_SCHEMA => Ok(()),
         found => Err(OpenError::UnknownSchema { found }),
+    }
+}
+
+/// The length of a SQLite file header.
+const HEADER_LEN: usize = 100;
+
+/// The first 16 bytes of every SQLite database file.
+const HEADER_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
+/// What the ledger checks in a file header before any SQLite connection touches the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Header {
+    /// `PRAGMA user_version`: the big-endian 32-bit integer at offset 60.
+    user_version: i64,
+    /// The file is in WAL: the read and write format versions (bytes 18 and 19) are both 2.
+    wal: bool,
+}
+
+impl Header {
+    /// The header in `bytes`, or `None` when they are not a SQLite header (SQLite itself
+    /// then reports what is wrong with the file).
+    fn parse(bytes: &[u8; HEADER_LEN]) -> Option<Self> {
+        if bytes.first_chunk::<16>()? != HEADER_MAGIC {
+            return None;
+        }
+        let formats = bytes.get(18..)?.first_chunk::<2>()?;
+        let user_version = bytes.get(60..)?.first_chunk::<4>()?;
+        Some(Self {
+            user_version: i64::from(i32::from_be_bytes(*user_version)),
+            wal: formats == &[2, 2],
+        })
+    }
+}
+
+/// Reads the first [`HEADER_LEN`] bytes of `path` without SQLite: probing a WAL file through
+/// a connection would create `-wal` and `-shm` beside it and could checkpoint into it. `None`
+/// for a missing file, a file shorter than a header, or one that is not a SQLite database.
+fn read_header(path: &Path) -> Result<Option<Header>, OpenError> {
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(missing) if missing.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(OpenError::Header(error)),
+    };
+    let mut bytes = [0_u8; HEADER_LEN];
+    match file.read_exact(&mut bytes) {
+        Ok(()) => Ok(Header::parse(&bytes)),
+        Err(short) if short.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(error) => Err(OpenError::Header(error)),
     }
 }
 
@@ -232,8 +300,100 @@ fn finish_transaction(conn: &Connection, body: Result<(), OpenError>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenError, copy_schema, finish_transaction, user_version};
+    use super::{
+        HEADER_LEN, HEADER_MAGIC, Header, LEDGER_SCHEMA, OpenError, check_stamp, copy_schema,
+        finish_transaction, read_header, user_version,
+    };
     use happenstance_sqlite::rusqlite::Connection;
+
+    /// A SQLite header with the given format bytes (18, 19) and `user_version` (offset 60).
+    fn header(formats: [u8; 2], user_version: i32) -> [u8; HEADER_LEN] {
+        let mut bytes = [0_u8; HEADER_LEN];
+        bytes[..16].copy_from_slice(HEADER_MAGIC);
+        bytes[18..20].copy_from_slice(&formats);
+        bytes[60..64].copy_from_slice(&user_version.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn the_header_gives_the_journal_format_and_user_version() {
+        let wal = Header::parse(&header([2, 2], 7));
+        let rollback = Header::parse(&header([1, 1], -3));
+        let mut foreign = header([2, 2], 7);
+        foreign[0] = b'X';
+
+        assert_eq!(
+            wal,
+            Some(Header {
+                user_version: 7,
+                wal: true
+            }),
+            "WAL"
+        );
+        assert_eq!(
+            rollback,
+            Some(Header {
+                user_version: -3,
+                wal: false
+            }),
+            "rollback journal, signed version"
+        );
+        assert_eq!(Header::parse(&foreign), None, "not a SQLite header");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+    fn the_header_of_a_real_wal_file_matches_what_sqlite_reports() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("wal.sqlite3");
+        let conn = Connection::open(&path).expect("opens");
+        conn.execute_batch("PRAGMA user_version = 5; PRAGMA journal_mode = wal;")
+            .expect("set up");
+        drop(conn);
+
+        let found = read_header(&path).expect("readable");
+
+        assert_eq!(
+            found,
+            Some(Header {
+                user_version: 5,
+                wal: true
+            }),
+            "WAL, version 5"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "touches the file system")]
+    fn a_missing_or_short_file_has_no_header() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let short = dir.path().join("short");
+        std::fs::write(&short, b"SQLite format 3\0").expect("write");
+
+        let missing = read_header(&dir.path().join("missing")).expect("not an error");
+        let truncated = read_header(&short).expect("not an error");
+
+        assert_eq!((missing, truncated), (None, None), "no header to check");
+    }
+
+    #[test]
+    fn the_stamp_after_opening_is_ours_newer_or_unknown() {
+        let newer = LEDGER_SCHEMA + 1;
+
+        let ours = check_stamp(LEDGER_SCHEMA);
+        let higher = check_stamp(newer);
+        let lower = check_stamp(0);
+
+        assert!(matches!(ours, Ok(())), "{ours:?}");
+        assert!(
+            matches!(higher, Err(OpenError::NewerSchema { found, supported }) if found == newer && supported == LEDGER_SCHEMA),
+            "{higher:?}"
+        );
+        assert!(
+            matches!(lower, Err(OpenError::UnknownSchema { found: 0 })),
+            "{lower:?}"
+        );
+    }
 
     /// A connection inside a transaction holding a row that breaks a deferred foreign key, so
     /// its `COMMIT` fails and leaves the transaction open.

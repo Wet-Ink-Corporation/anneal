@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::PoisonError;
 
 use happenstance_core::Event;
 use happenstance_sqlite::rusqlite::Connection;
@@ -427,27 +428,111 @@ fn every_operation_inside_an_async_runtime_is_refused() {
 
 #[test]
 #[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn a_store_dropped_inside_an_async_task_shuts_down_without_panicking() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = Store::open(&ledger_path(dir.path())).expect("opens");
+    store.append(&task_done("T1", "s1")).expect("appends");
+    assert_eq!(
+        store.query(&Filter::default()).expect("reads").len(),
+        1,
+        "the read ran on the store's runtime"
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime starts");
+
+    runtime.block_on(async move { drop(store) });
+
+    let reopened = Store::open(&ledger_path(dir.path())).expect("reopens");
+    assert_eq!(
+        reopened.query(&Filter::default()).expect("reads").len(),
+        1,
+        "kept"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn refusing_a_wal_ledger_with_a_live_writer_leaves_its_wal_and_shm_as_they_were() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    wal_ledger(&path, LEDGER_SCHEMA);
+    let writer = raw(&path);
+    writer
+        .execute_batch("PRAGMA wal_autocheckpoint = 0; PRAGMA user_version = 1;")
+        .expect("writes into the WAL");
+    let files = || {
+        ["", "-wal", "-shm"].map(|suffix| std::fs::read(sibling(&path, suffix)).expect("exists"))
+    };
+    let before = files();
+    assert!(
+        before.get(1).is_some_and(|wal| !wal.is_empty()),
+        "the WAL holds a commit"
+    );
+
+    let result = Store::open(&path);
+
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Open { source: OpenError::JournalMode { found }, .. }) if found == "wal"
+        ),
+        "{result:?}"
+    );
+    assert!(files() == before, "database, -wal and -shm are unchanged");
+    drop(writer);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn refusing_a_wal_ledger_creates_no_wal_or_shm_beside_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    wal_ledger(&path, LEDGER_SCHEMA);
+    let siblings = || ["-wal", "-shm"].map(|suffix| sibling(&path, suffix).exists());
+    assert_eq!(siblings(), [false, false], "none before");
+
+    let result = Store::open(&path);
+
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Open {
+                source: OpenError::JournalMode { .. },
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(siblings(), [false, false], "none after");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
 fn twenty_concurrent_appenders_write_twenty_events_without_corruption() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = ledger_path(dir.path());
-    // Every appender opens, then waits for the others, so the twenty appends start together. A
-    // failed open still reaches the barrier, so no thread waits forever.
-    let start = std::sync::Barrier::new(20);
+    // A start gate: this thread holds the write lock while it spawns, and every appender opens,
+    // then waits for a read lock, so the twenty appends start together. The guard is released
+    // when spawning ends, also by a panic if a spawn fails, so no appender waits forever.
+    let gate = std::sync::RwLock::new(());
 
     std::thread::scope(|scope| {
+        let closed = gate.write().expect("the gate is new");
         let handles: Vec<_> = (0..20)
             .map(|n| {
-                let (path, start) = (&path, &start);
+                let (path, gate) = (&path, &gate);
                 std::thread::Builder::new()
                     .name(format!("appender-{n}"))
                     .spawn_scoped(scope, move || {
                         let store = Store::open(path);
-                        start.wait();
+                        drop(gate.read().unwrap_or_else(PoisonError::into_inner));
                         store?.append(&task_done(&format!("T{n}"), "s1"))
                     })
                     .expect("the OS starts the thread")
             })
             .collect();
+        drop(closed);
         for handle in handles {
             handle
                 .join()

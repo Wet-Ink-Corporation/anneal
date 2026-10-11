@@ -55,6 +55,9 @@ pub enum OpenError {
     /// The ledger's directory could not be created.
     #[error("creating the ledger's directory")]
     CreateDir(#[source] std::io::Error),
+    /// The ledger file's header could not be read.
+    #[error("reading the ledger file's header")]
+    Header(#[source] std::io::Error),
     /// SQLite failed.
     #[error("SQLite failed")]
     Sqlite(#[from] rusqlite::Error),
@@ -240,14 +243,54 @@ pub struct Recorded {
 /// used from threads that have no tokio runtime context. Inside one (an async task, but also
 /// `spawn_blocking` or `block_in_place`), [`Store::open`] and every method return
 /// [`StoreError::InsideRuntime`] instead of panicking in tokio. Async code runs the ledger on a
-/// plain `std::thread`.
-///
-/// Dropping a `Store` shuts its runtime down. tokio panics when that happens inside an async
-/// task, so an open `Store` must not be moved into async code and dropped there; drop it on
-/// the thread that uses it.
+/// plain `std::thread`. A `Store` may be dropped anywhere.
 pub struct Store {
     inner: SqliteEventStore,
-    runtime: tokio::runtime::Runtime,
+    runtime: Driver,
+}
+
+/// The store's current-thread runtime, shut down without blocking when it is dropped inside
+/// another runtime's context, where tokio's blocking shutdown panics.
+struct Driver {
+    /// Always `Some` until [`Drop`] takes it.
+    runtime: Option<tokio::runtime::Runtime>,
+}
+
+impl Driver {
+    fn new() -> Result<Self, OpenError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(OpenError::Runtime)?;
+        Ok(Self {
+            runtime: Some(runtime),
+        })
+    }
+
+    /// Runs `future` to completion, unless this thread is in a tokio runtime context, where
+    /// tokio's `block_on` would panic.
+    fn block_on<F: Future>(&self, future: F) -> Result<F::Output, StoreError> {
+        refuse_inside_runtime()?;
+        match &self.runtime {
+            Some(runtime) => Ok(runtime.block_on(future)),
+            // Only `drop` empties the driver, and nothing runs on a dropped store.
+            None => Err(StoreError::InsideRuntime),
+        }
+    }
+}
+
+impl Drop for Driver {
+    fn drop(&mut self) {
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            // The store only `block_on`s, so no task of its own is left to wait for. A blocking
+            // thread a read used is idle and exits on the shutdown signal.
+            runtime.shutdown_background();
+        } else {
+            drop(runtime);
+        }
+    }
 }
 
 impl fmt::Debug for Store {
@@ -279,9 +322,7 @@ impl Store {
             std::fs::create_dir_all(dir).map_err(OpenError::CreateDir)?;
         }
         let inner = schema::open(path)?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .map_err(OpenError::Runtime)?;
+        let runtime = Driver::new()?;
         Ok(Self { inner, runtime })
     }
 
@@ -293,7 +334,8 @@ impl Store {
     /// [`StoreError::InsideRuntime`] inside a tokio runtime context.
     pub fn append(&self, event: &EventEnvelope) -> Result<u64, StoreError> {
         let stored = stored_event(event)?;
-        self.block_on(self.inner.append(&[stored], None))?
+        self.runtime
+            .block_on(self.inner.append(&[stored], None))?
             .map(u64::from)
             .map_err(StoreError::Append)
     }
@@ -311,7 +353,10 @@ impl Store {
     ) -> Result<Appended, StoreError> {
         let stored = stored_event(event)?;
         let condition = condition.to_append_condition().map_err(StoreError::Query)?;
-        match self.block_on(self.inner.append(&[stored], Some(&condition)))? {
+        match self
+            .runtime
+            .block_on(self.inner.append(&[stored], Some(&condition)))?
+        {
             Ok(position) => Ok(Appended::At(u64::from(position))),
             Err(AppendError::ConditionViolated(_)) => Ok(Appended::Conflict),
             Err(refused) => Err(StoreError::Append(refused)),
@@ -341,21 +386,15 @@ impl Store {
     fn read(&self, filter: &Filter, options: ReadOptions) -> Result<Vec<Recorded>, StoreError> {
         let query = filter.to_query().map_err(StoreError::Query)?;
         let stored = self
+            .runtime
             .block_on(collect(self.inner.read(&query, options)))?
             .map_err(StoreError::Read)?;
         stored.iter().map(decode).collect()
     }
-
-    /// Runs `future` on the store's runtime, unless this thread is in a tokio runtime context,
-    /// where tokio's `block_on` would panic.
-    fn block_on<F: Future>(&self, future: F) -> Result<F::Output, StoreError> {
-        refuse_inside_runtime()?;
-        Ok(self.runtime.block_on(future))
-    }
 }
 
-/// [`StoreError::InsideRuntime`] when this thread has a tokio runtime context. Starting (or
-/// dropping) the store's own runtime there panics.
+/// [`StoreError::InsideRuntime`] when this thread has a tokio runtime context, where blocking
+/// on the store's own runtime panics.
 fn refuse_inside_runtime() -> Result<(), StoreError> {
     if tokio::runtime::Handle::try_current().is_ok() {
         Err(StoreError::InsideRuntime)
