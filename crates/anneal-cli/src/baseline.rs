@@ -1,7 +1,7 @@
 //! Baseline snapshots: record the findings present at session start, then report only new ones.
 
 use std::collections::BTreeSet;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -187,21 +187,55 @@ fn parse(path: &Path, bytes: &[u8]) -> Result<Baseline, BaselineError> {
 /// Distinguishes concurrent writers' temporary files within one process.
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-/// Writes `bytes` to a temporary file unique to this writer (`<path>.<pid>.<n>.tmp`), syncs it,
-/// and renames it over `path`, so readers see the old file or the new one, never a mix. On
-/// failure the temporary file is removed.
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// How many fresh temporary names a save tries before giving up.
+const MAX_TEMPORARY_ATTEMPTS: u32 = 8;
+
+/// `<path>.<pid>.<n>.tmp`, beside `path`, with `n` new on every call in this process.
+fn temporary_path(path: &Path) -> PathBuf {
     // Relaxed: the counter only has to hand out distinct numbers; it orders no other memory.
     let n = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.{n}.tmp", std::process::id()));
-    let temporary = PathBuf::from(temporary);
-    let written = File::create(&temporary)
-        .and_then(|mut file| {
-            file.write_all(bytes)?;
-            file.sync_all()
-        })
-        .and_then(|()| fs::rename(&temporary, path));
+    PathBuf::from(temporary)
+}
+
+/// Creates a temporary file that did not exist before (`create_new`), so two writers can never
+/// share one; a name that is taken (say, left by a crashed process with a recycled pid) is
+/// skipped for the next. `next_name` supplies the candidates (`temporary_path` in production).
+fn create_temporary(mut next_name: impl FnMut() -> PathBuf) -> io::Result<(PathBuf, File)> {
+    for _ in 0..MAX_TEMPORARY_ATTEMPTS {
+        let temporary = next_name();
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!(
+            "no free temporary name after {MAX_TEMPORARY_ATTEMPTS} attempts; \
+             remove stale temporary files (*.tmp) beside the snapshot"
+        ),
+    ))
+}
+
+fn write_and_sync(mut file: File, bytes: &[u8]) -> io::Result<()> {
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Writes `bytes` to a temporary file unique to this writer (`<path>.<pid>.<n>.tmp`), syncs it,
+/// and renames it over `path`, so readers see the old file or the new one, never a mix. On
+/// failure the temporary file is removed.
+fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let (temporary, file) = create_temporary(|| temporary_path(path))?;
+    // `write_and_sync` consumes the file, so it is closed before the rename (Windows needs that).
+    let written = write_and_sync(file, bytes).and_then(|()| fs::rename(&temporary, path));
     match written {
         Ok(()) => Ok(()),
         Err(error) => match fs::remove_file(&temporary) {
@@ -219,168 +253,4 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Baseline, BaselineError, load_capped};
-    use crate::envelope::Finding;
-
-    const SNAPSHOT: &str = r#"{"version": 1, "keys": ["a"]}"#;
-
-    #[test]
-    fn a_snapshot_over_the_cap_is_too_large() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-        std::fs::write(&path, SNAPSHOT).expect("write");
-        let cap = u64::try_from(SNAPSHOT.len()).expect("small") - 1;
-
-        let error = load_capped(&path, cap).expect_err("one byte over the cap");
-
-        assert!(
-            matches!(error, BaselineError::TooLarge { .. }),
-            "got {error:?}"
-        );
-    }
-
-    #[test]
-    fn a_snapshot_exactly_at_the_cap_loads() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-        std::fs::write(&path, SNAPSHOT).expect("write");
-        let cap = u64::try_from(SNAPSHOT.len()).expect("small");
-
-        let loaded = load_capped(&path, cap).expect("at the cap is allowed");
-
-        assert_eq!(
-            loaded,
-            Some(Baseline::from_findings(&[finding("a")])),
-            "the snapshot loads in full"
-        );
-    }
-
-    #[test]
-    fn a_newer_version_with_a_changed_shape_is_a_version_error() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-        std::fs::write(&path, r#"{"version": 2, "entries": [{"key": "a"}]}"#).expect("write");
-
-        let error = Baseline::load(&path).expect_err("version 2 is unknown");
-
-        assert!(
-            matches!(error, BaselineError::Version { found: 2, .. }),
-            "got {error:?}"
-        );
-    }
-
-    #[test]
-    fn saving_leaves_no_temporary_files() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-
-        Baseline::from_findings(&[finding("a")])
-            .save(&path)
-            .expect("first save");
-        Baseline::from_findings(&[finding("b")])
-            .save(&path)
-            .expect("overwrite");
-
-        let names = file_names(dir.path());
-        assert_eq!(names, ["baseline.json"], "only the snapshot remains");
-    }
-
-    #[test]
-    fn a_failed_save_removes_its_temporary_file() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        // A non-empty directory where the snapshot should go makes the rename fail.
-        let path = dir.path().join("baseline.json");
-        std::fs::create_dir(&path).expect("mkdir");
-        std::fs::write(path.join("occupant"), "x").expect("write");
-
-        let error = Baseline::from_findings(&[finding("a")])
-            .save(&path)
-            .expect_err("cannot rename over a directory");
-
-        assert!(
-            matches!(error, BaselineError::Io { op: "writing", .. }),
-            "got {error:?}"
-        );
-        assert_eq!(file_names(dir.path()), ["baseline.json"], "no temp left");
-    }
-
-    fn file_names(dir: &std::path::Path) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
-            .expect("read dir")
-            .map(|entry| {
-                entry
-                    .expect("entry")
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
-        names.sort();
-        names
-    }
-
-    fn finding(key: &str) -> Finding {
-        Finding::new(key, format!("message for {key}"))
-    }
-
-    #[test]
-    fn only_findings_absent_from_the_snapshot_are_new() {
-        let baseline = Baseline::from_findings(&[finding("a"), finding("b")]);
-        let later = [finding("b"), finding("c"), finding("a"), finding("d")];
-
-        let new: Vec<&str> = baseline
-            .new_findings(&later)
-            .map(|f| f.key.as_str())
-            .collect();
-
-        assert_eq!(new, ["c", "d"], "a and b were already there");
-    }
-
-    #[test]
-    fn a_saved_snapshot_loads_back_equal() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("nested/baseline.json");
-        let baseline = Baseline::from_findings(&[finding("z"), finding("a")]);
-
-        baseline.save(&path).expect("save");
-        let loaded = Baseline::load(&path).expect("load");
-
-        assert_eq!(loaded, Some(baseline), "round trip keeps the keys");
-    }
-
-    #[test]
-    fn a_missing_snapshot_loads_as_none() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let loaded = Baseline::load(&dir.path().join("absent.json")).expect("load");
-        assert_eq!(loaded, None, "no snapshot taken yet");
-    }
-
-    #[test]
-    fn an_unknown_version_is_refused() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-        std::fs::write(&path, r#"{"version": 2, "keys": []}"#).expect("write");
-
-        let error = Baseline::load(&path).expect_err("version 2 is unknown");
-
-        assert!(
-            matches!(error, BaselineError::Version { found: 2, .. }),
-            "got {error:?}"
-        );
-    }
-
-    #[test]
-    fn garbage_is_a_format_error() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join("baseline.json");
-        std::fs::write(&path, "not json").expect("write");
-
-        let error = Baseline::load(&path).expect_err("not a snapshot");
-
-        assert!(
-            matches!(error, BaselineError::Format { .. }),
-            "got {error:?}"
-        );
-    }
-}
+mod tests;

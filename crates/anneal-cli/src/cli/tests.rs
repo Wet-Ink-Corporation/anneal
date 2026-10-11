@@ -46,14 +46,43 @@ fn no_arguments_prints_help_and_exits_0() {
 }
 
 #[test]
-fn version_prints_the_package_version() {
-    let (code, out, _) = anneal(&["--version"]);
-    assert_eq!(code, 0, "--version succeeds");
-    assert_eq!(
-        out,
-        format!("anneal {}\n", env!("CARGO_PKG_VERSION")),
-        "--version prints the manifest version"
-    );
+fn both_version_flags_print_the_package_version() {
+    for flag in ["-V", "--version"] {
+        let (code, out, err) = anneal(&[flag]);
+        assert_eq!(code, 0, "{flag} succeeds");
+        assert_eq!(
+            out,
+            format!("anneal {}\n", env!("CARGO_PKG_VERSION")),
+            "{flag} prints the manifest version"
+        );
+        assert!(err.is_empty(), "{flag}: nothing on stderr");
+    }
+}
+
+#[test]
+fn both_help_flags_print_help_and_exit_0() {
+    for flag in ["-h", "--help"] {
+        let (code, out, err) = anneal(&[flag]);
+        assert_eq!(code, 0, "{flag} succeeds");
+        assert!(
+            out.starts_with("anneal:"),
+            "{flag} help names the tool: {out}"
+        );
+        assert!(err.is_empty(), "{flag}: nothing on stderr");
+    }
+}
+
+#[test]
+fn an_argument_after_any_help_or_version_flag_is_a_usage_error() {
+    for flag in ["-h", "--help", "-V", "--version"] {
+        let (code, out, err) = anneal(&[flag, "extra"]);
+        assert_eq!(code, 2, "{flag} extra is a usage error");
+        assert!(out.is_empty(), "{flag} extra: nothing on stdout");
+        assert_eq!(
+            err, "ERROR unexpected argument after --help or --version\n",
+            "{flag} extra: exactly one ERROR line"
+        );
+    }
 }
 
 #[test]

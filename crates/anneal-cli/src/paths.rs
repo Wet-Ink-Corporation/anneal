@@ -90,6 +90,13 @@ fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathE
 /// child cannot block on a full pipe. Each stream keeps at most [`MAX_CAPTURE_BYTES`]; the rest
 /// is read and dropped. Past `timeout` the child is killed and reaped, and the error is
 /// [`PathError::GitTimeout`]. Every reader thread is joined before this returns.
+///
+/// Limit: the readers finish only when every holder of the pipes' write ends has exited. If
+/// killing the child fails, or the child started a grandchild that inherited its stdout or
+/// stderr, joining the readers blocks until those processes exit, past `timeout`. Std offers
+/// no way to abandon a blocked read without detaching the thread (H-13), so this stays a
+/// documented limit: use it only for commands, such as `git rev-parse`, that start no
+/// long-lived processes.
 fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<Output, PathError> {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -123,16 +130,19 @@ fn spawn_reader<'scope, R: Read + Send + 'scope>(
 ) -> io::Result<Reader<'scope>> {
     thread::Builder::new()
         .name(name.to_owned())
-        .spawn_scoped(scope, move || {
-            let mut kept = Vec::new();
-            if let Some(mut pipe) = pipe {
-                pipe.by_ref()
-                    .take(MAX_CAPTURE_BYTES)
-                    .read_to_end(&mut kept)?;
-                io::copy(&mut pipe, &mut io::sink())?;
-            }
-            Ok(kept)
+        .spawn_scoped(scope, move || match pipe {
+            Some(pipe) => read_capped(pipe, MAX_CAPTURE_BYTES),
+            None => Ok(Vec::new()),
         })
+}
+
+/// Reads `pipe` to its end, keeping the first `cap` bytes and discarding the rest, so the
+/// writer never blocks on a full pipe and memory stays bounded.
+fn read_capped<R: Read>(mut pipe: R, cap: u64) -> io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    pipe.by_ref().take(cap).read_to_end(&mut kept)?;
+    io::copy(&mut pipe, &mut io::sink())?;
+    Ok(kept)
 }
 
 fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, PathError> {
@@ -209,129 +219,4 @@ pub fn anneal_home_from(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Pat
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{PathError, anneal_home_from, wait_with_deadline};
-    use std::collections::HashMap;
-    use std::ffi::OsString;
-    use std::io::Write;
-    use std::path::PathBuf;
-    use std::process::{Child, Command, Stdio};
-    use std::time::Duration;
-
-    /// `git hash-object --stdin`: needs no repository and waits until stdin closes.
-    fn hash_object() -> Child {
-        Command::new("git")
-            .args(["hash-object", "--stdin"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("git runs")
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "spawns git")]
-    fn a_child_past_its_deadline_is_killed_and_reaped() {
-        // The test keeps the child's stdin open, so git never finishes on its own.
-        let mut child = hash_object();
-
-        let result = wait_with_deadline(&mut child, Duration::from_millis(50));
-
-        assert!(
-            matches!(
-                result,
-                Err(PathError::GitTimeout { timeout }) if timeout == Duration::from_millis(50)
-            ),
-            "got {result:?}"
-        );
-        assert!(
-            child.try_wait().expect("status is available").is_some(),
-            "the killed child was reaped"
-        );
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "spawns git")]
-    fn a_child_that_finishes_in_time_returns_its_output() {
-        let mut child = hash_object();
-        let mut stdin = child.stdin.take().expect("stdin is piped");
-        stdin.write_all(b"hello\n").expect("write to git");
-        drop(stdin);
-
-        let output = wait_with_deadline(&mut child, Duration::from_secs(30)).expect("finishes");
-
-        assert!(output.status.success(), "git succeeded: {output:?}");
-        assert_eq!(
-            output.stdout, b"ce013625030ba8dba906f756967f9e9ca394464a\n",
-            "the blob id of \"hello\\n\""
-        );
-    }
-
-    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
-        let map: HashMap<String, OsString> = pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), OsString::from(v)))
-            .collect();
-        move |key| map.get(key).cloned()
-    }
-
-    fn absolute(name: &str) -> PathBuf {
-        std::env::temp_dir().join(name)
-    }
-
-    #[test]
-    fn anneal_home_override_wins() {
-        let over = absolute("over");
-        let home = absolute("home");
-        let lookup = env(&[
-            ("ANNEAL_HOME", over.to_str().expect("UTF-8")),
-            ("HOME", home.to_str().expect("UTF-8")),
-        ]);
-        assert_eq!(
-            anneal_home_from(lookup).expect("resolves"),
-            over,
-            "override"
-        );
-    }
-
-    #[test]
-    fn home_then_userprofile_get_dot_anneal() {
-        let home = absolute("home");
-        let profile = absolute("profile");
-        let both = env(&[
-            ("ANNEAL_HOME", ""),
-            ("HOME", home.to_str().expect("UTF-8")),
-            ("USERPROFILE", profile.to_str().expect("UTF-8")),
-        ]);
-        let windows = env(&[("USERPROFILE", profile.to_str().expect("UTF-8"))]);
-
-        assert_eq!(
-            anneal_home_from(both).expect("resolves"),
-            home.join(".anneal"),
-            "HOME first"
-        );
-        assert_eq!(
-            anneal_home_from(windows).expect("resolves"),
-            profile.join(".anneal"),
-            "USERPROFILE when HOME is unset"
-        );
-    }
-
-    #[test]
-    fn no_home_and_relative_home_are_errors() {
-        let none = anneal_home_from(env(&[])).expect_err("nothing set");
-        let relative = anneal_home_from(env(&[("ANNEAL_HOME", "rel/dir")])).expect_err("relative");
-
-        assert!(matches!(none, PathError::NoHome), "got {none:?}");
-        assert!(
-            matches!(
-                relative,
-                PathError::RelativeHome {
-                    var: "ANNEAL_HOME",
-                    ..
-                }
-            ),
-            "got {relative:?}"
-        );
-    }
-}
+mod tests;
