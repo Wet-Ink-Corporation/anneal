@@ -293,3 +293,21 @@ fn findings_come_sorted_by_line_then_rule() {
     let lines: Vec<usize> = report.findings.iter().map(|finding| finding.line).collect();
     assert_eq!(lines, [20, 40], "Out of Scope, then the unknown gate");
 }
+
+#[test]
+fn the_marker_count_for_plan_approval_skips_code_comments_and_fences() {
+    let text = "[NEEDS CLARIFICATION] `[NEEDS CLARIFICATION]` <!-- [NEEDS CLARIFICATION] -->\n\
+                ```\n[NEEDS CLARIFICATION]\n```\n\
+                - [NEEDS CLARIFICATION: which] [NEEDS CLARIFICATIONS]\n";
+
+    assert_eq!(
+        super::needs_clarification(text),
+        2,
+        "only the visible markers"
+    );
+    assert_eq!(
+        super::needs_clarification(CLEAN),
+        1,
+        "the clean spec's one marker"
+    );
+}

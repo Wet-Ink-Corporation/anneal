@@ -22,6 +22,7 @@ use crate::grill::{self, GrillArgs};
 use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
+use crate::plan::{self, PlanArgs};
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -55,7 +56,7 @@ pub enum Command {
     Task(Stub),
     /// Approve a plan, or check that it is approved and current
     #[command(after_help = command_help(CommandName::Plan))]
-    Plan(Stub),
+    Plan(PlanArgs),
     /// Lint skills, specs, plans and briefs
     #[command(after_help = command_help(CommandName::Lint))]
     Lint(LintArgs),
@@ -243,6 +244,10 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             grill::run(args, &cwd, |var| std::env::var_os(var), out)
         }
+        Command::Plan(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            plan::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Lint(args) => lint::run(args, out),
         Command::Dag(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
@@ -260,7 +265,6 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
                 .map_err(CliError::Output)
         }
         Command::Task(_)
-        | Command::Plan(_)
         | Command::FloorGuard(_)
         | Command::Verdict(_)
         | Command::Watch(_)

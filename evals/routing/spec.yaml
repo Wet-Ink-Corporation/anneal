@@ -1,0 +1,22 @@
+# evals/routing/spec.yaml: prompts for the `spec` skill.
+positives:
+  - write the spec for the export feature now that the requirements are agreed
+  - the requirements are agreed, draft the spec
+  - write EARS acceptance criteria for the offline sync feature
+  - turn the agreed requirements into a spec with acceptance criteria
+  - add the out of scope section and the constitution check to the spec
+  - we agreed what to build; write it up as a spec
+  - check the spec against the constitution and justify the violated gates
+  - write acceptance criteria with SHALL for the login change
+  - our requirements are agreed, capture them in a written spec
+near_misses:
+  grill:
+    - I have a vague idea for an export feature, question me first
+    - this request is new and unclear, ask me questions until we agree
+    - question me in rounds with a recommended answer for each
+    - the ask is vague; grill me before we build anything
+  plan:
+    - the spec is ready, split it into tasks
+    - build a dependency graph of tasks for the approved spec
+    - get the plan approved for the export spec
+    - break the finished spec into ordered tasks

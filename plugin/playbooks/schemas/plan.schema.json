@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Wet-Ink-Corporation/anneal/plugin/playbooks/schemas/plan.schema.json",
+  "title": "anneal plan",
+  "description": "A plan as `anneal lint plan` reads it from a markdown plan written from playbooks/plan.template.md: the `data.plan` of its envelope. The markdown is the source; this is its structure.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec", "tasks"],
+  "properties": {
+    "spec": {
+      "description": "The spec the plan's `Spec:` line links, relative to the plan's directory; null when there is none (a lint finding).",
+      "type": ["string", "null"]
+    },
+    "tasks": {
+      "description": "The tasks under `## Tasks`, in file order, each id once.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/task" }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "line", "files", "test", "blocked_by"],
+      "properties": {
+        "id": {
+          "description": "The id from the `### <id>: <title>` heading.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "title": {
+          "description": "The title from the heading.",
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "description": "The heading's line, from 1.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "files": {
+          "description": "The files the task's `Files:` line names in backticks.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "test": {
+          "description": "The command the task's `Test:` line names in backticks; null when there is none (a lint finding).",
+          "type": ["string", "null"]
+        },
+        "blocked_by": {
+          "description": "The ids of the tasks this one waits for; empty for `Blocked by: none`.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }
+        }
+      }
+    }
+  }
+}

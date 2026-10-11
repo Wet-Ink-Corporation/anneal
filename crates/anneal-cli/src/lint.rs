@@ -7,12 +7,15 @@
 //! - [`spec`]: `lint spec`, a spec's sections, EARS criteria, markers, constitution check and
 //!   avoided terms; its findings are [`spec::SpecFinding`]s (a spec rule, not a skill
 //!   checker), so it writes its own envelope `data` too.
+//! - [`plan`]: `lint plan`, a plan's spec link, sections, tasks, task fields and blockers;
+//!   its findings are [`plan::PlanFinding`]s and its `data` carries the plan as read.
 //! - [`finding`]: the finding model the skill rules use, and its envelope form.
 //!
-//! `lint plan|brief` are stubs until their stories land. Each will be a module beside
-//! [`skills`] with its own `Args` type and `lint` function; [`run`] gets one more arm.
+//! `lint brief` is a stub until its story lands. It will be a module beside [`skills`] with
+//! its own `Args` type and `lint` function; [`run`] gets one more arm.
 
 pub mod finding;
+pub mod plan;
 pub mod skills;
 pub mod spec;
 pub mod terms;
@@ -54,8 +57,10 @@ pub enum LintTarget {
     /// markers, the constitution check and avoided terms
     #[command(after_help = command_help(CommandName::Lint))]
     Spec(spec::SpecArgs),
-    /// Check a plan (not implemented yet)
-    Plan(Stub),
+    /// Check a plan: the spec link, required sections, tasks with their files, test command
+    /// and blockers
+    #[command(after_help = command_help(CommandName::Lint))]
+    Plan(plan::PlanArgs),
     /// Check a brief (not implemented yet)
     Brief(Stub),
 }
@@ -84,7 +89,11 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
             let outcome = spec::lint(spec_args)?;
             spec::report(&outcome, out)
         }
-        LintTarget::Plan(_) | LintTarget::Brief(_) => Err(CliError::NotImplemented {
+        LintTarget::Plan(plan_args) => {
+            let outcome = plan::lint(plan_args)?;
+            plan::report(&outcome, out)
+        }
+        LintTarget::Brief(_) => Err(CliError::NotImplemented {
             command: CommandName::Lint,
         }),
     }
@@ -195,11 +204,19 @@ pub(crate) fn read_named(path: &Path) -> Result<Contents, LintError> {
 /// # Errors
 /// As [`read_named`], plus [`LintError::TooLarge`] when it is over the read cap.
 pub(crate) fn read_whole(path: &Path) -> Result<String, LintError> {
-    match read_named(path)? {
-        Contents::Text(text) => Ok(text),
-        Contents::TooLarge(size) => Err(LintError::TooLarge {
-            path: path.to_path_buf(),
-            size,
-        }),
-    }
+    read_whole_bytes(path).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The bytes of a file named on the command line that must be read whole, for callers that
+/// hash exactly what is on disk (`plan approve|check`).
+///
+/// # Errors
+/// As [`read_whole`].
+pub(crate) fn read_whole_bytes(path: &Path) -> Result<Vec<u8>, LintError> {
+    require_file(path)?;
+    let Capped { size, bytes } = read_capped(path)?;
+    bytes.ok_or_else(|| LintError::TooLarge {
+        path: path.to_path_buf(),
+        size,
+    })
 }
