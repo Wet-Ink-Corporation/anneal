@@ -13,6 +13,7 @@ use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use crate::command::CommandName;
+use crate::dag::{self, DagArgs};
 use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
 use crate::exit_codes::render::{command_help, overview_help};
@@ -56,7 +57,7 @@ pub enum Command {
     Lint(LintArgs),
     /// Check the task graph and list its frontier
     #[command(after_help = command_help(CommandName::Dag))]
-    Dag(Stub),
+    Dag(DagArgs),
     /// Refuse changes that lower a quality floor
     #[command(name = "floor-guard", after_help = command_help(CommandName::FloorGuard))]
     FloorGuard(Stub),
@@ -233,6 +234,10 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
             ledger::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Lint(args) => lint::run(args, out),
+        Command::Dag(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            dag::run(args, &cwd, out)
+        }
         Command::Eval(args) => eval::run(args, out),
         Command::Hook(args) => {
             let env = HookEnv {
@@ -246,7 +251,6 @@ fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> 
         }
         Command::Task(_)
         | Command::Plan(_)
-        | Command::Dag(_)
         | Command::FloorGuard(_)
         | Command::Verdict(_)
         | Command::Watch(_)

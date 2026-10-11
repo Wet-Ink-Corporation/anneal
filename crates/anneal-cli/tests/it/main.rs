@@ -1,6 +1,7 @@
 //! Integration tests for the `anneal` binary, compiled as one test binary (TST-02).
 
 mod cli;
+mod dag;
 mod eval_routing;
 mod hook_bootstrap;
 mod hook_guard;
