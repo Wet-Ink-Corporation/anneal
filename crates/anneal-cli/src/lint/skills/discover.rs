@@ -215,13 +215,12 @@ pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(OsString, EntryKind)>, LintErr
     Ok(listed)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::path::Path;
 
     use super::{MAX_READ_BYTES, read_bounded};
 
-    #[cfg(unix)]
     #[test]
     fn a_file_that_reads_past_its_reported_size_is_too_large_not_truncated() {
         // `/dev/zero` reports size 0 and never ends: the same as a file that grew after its
