@@ -1,0 +1,34 @@
+{
+  "url": "https://api.github.com/repos/octo/tickets/issues/30",
+  "repository_url": "https://api.github.com/repos/octo/tickets",
+  "html_url": "https://github.com/octo/tickets/pull/30",
+  "id": 3001000030,
+  "node_id": "I_kwDOAAAAAc4AAA030",
+  "number": 30,
+  "title": "Add the ledger",
+  "user": {
+    "login": "octo",
+    "id": 1,
+    "type": "User"
+  },
+  "labels": [],
+  "state": "closed",
+  "state_reason": null,
+  "locked": false,
+  "assignees": [],
+  "milestone": null,
+  "comments": 0,
+  "created_at": "2026-10-01T09:00:00Z",
+  "updated_at": "2026-10-02T09:00:00Z",
+  "closed_at": "2026-10-02T09:00:00Z",
+  "author_association": "OWNER",
+  "body": "Closes #11.",
+  "draft": false,
+  "pull_request": {
+    "url": "https://api.github.com/repos/octo/tickets/pulls/30",
+    "html_url": "https://github.com/octo/tickets/pull/30",
+    "diff_url": "https://github.com/octo/tickets/pull/30.diff",
+    "patch_url": "https://github.com/octo/tickets/pull/30.patch",
+    "merged_at": "2026-10-02T09:00:00Z"
+  }
+}

@@ -14,6 +14,7 @@
 //!   one-`ERROR`-line output hooks share.
 //! - [`lint`]: `anneal lint skills`, `anneal lint terms` and the lint finding model.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
+//! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
 //! - [`ledger`]: `anneal ledger append|query|tail|journal` over the `anneal-ledger` store.
 //! - [`paths`]: the ledger store (normally in the git common dir) and the anneal home
@@ -25,6 +26,7 @@ pub mod adr;
 pub mod baseline;
 pub mod cli;
 pub mod command;
+pub mod dag;
 pub mod envelope;
 pub mod error;
 pub mod eval;
@@ -33,4 +35,5 @@ pub mod hook;
 pub mod ledger;
 pub mod lint;
 pub mod paths;
+mod process;
 pub mod rulings;

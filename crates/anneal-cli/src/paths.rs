@@ -2,19 +2,19 @@
 //! `~/.anneal` (decision log).
 
 use std::ffi::OsString;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::thread::{self, Scope, ScopedJoinHandle};
-use std::time::{Duration, Instant};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::Duration;
 
 use serde::Serialize;
 
+#[cfg(test)]
+use crate::process::read_capped;
+use crate::process::{self, WaitError};
+
 /// How long a `git` call may take before it is killed (H-13).
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// How often a running `git` call is checked for completion.
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// The environment variable that overrides the anneal home directory.
 pub const ANNEAL_HOME_VAR: &str = "ANNEAL_HOME";
@@ -124,103 +124,18 @@ fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathE
     wait_with_deadline(&mut child, timeout)
 }
 
-/// Waits for `child`, draining its piped stdout and stderr on named scoped threads so a chatty
-/// child cannot block on a full pipe. Each stream keeps at most [`MAX_CAPTURE_BYTES`]; the rest
-/// is read and dropped. Past `timeout` the child is killed and reaped, and the error is
-/// [`PathError::GitTimeout`]. Every reader thread is joined before this returns.
-///
-/// Limit: the readers finish only when every holder of the pipes' write ends has exited. If
-/// killing the child fails, or the child started a grandchild that inherited its stdout or
-/// stderr, joining the readers blocks until those processes exit, past `timeout`. Std offers
-/// no way to abandon a blocked read without detaching the thread (H-13), so this stays a
-/// documented limit: use it only for commands, such as `git rev-parse`, that start no
-/// long-lived processes.
-fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<Output, PathError> {
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    thread::scope(|scope| {
-        let out_reader = match spawn_reader(scope, "git-stdout", stdout) {
-            Ok(handle) => handle,
-            Err(error) => return Err(kill_after(child, error)),
-        };
-        let err_reader = match spawn_reader(scope, "git-stderr", stderr) {
-            Ok(handle) => handle,
-            Err(error) => return Err(kill_after(child, error)),
-        };
-        let status = wait_or_kill(child, timeout)?;
-        Ok(Output {
-            status,
-            stdout: join_reader(out_reader)?,
-            stderr: join_reader(err_reader)?,
-        })
-    })
-}
-
-/// Most bytes kept from each of a child's output streams (H-13).
+/// Most bytes kept from each of git's output streams (H-13).
 const MAX_CAPTURE_BYTES: u64 = 1024 * 1024;
 
-type Reader<'scope> = ScopedJoinHandle<'scope, io::Result<Vec<u8>>>;
-
-fn spawn_reader<'scope, R: Read + Send + 'scope>(
-    scope: &'scope Scope<'scope, '_>,
-    name: &str,
-    pipe: Option<R>,
-) -> io::Result<Reader<'scope>> {
-    thread::Builder::new()
-        .name(name.to_owned())
-        .spawn_scoped(scope, move || match pipe {
-            Some(pipe) => read_capped(pipe, MAX_CAPTURE_BYTES),
-            None => Ok(Vec::new()),
-        })
-}
-
-/// Reads `pipe` to its end, keeping the first `cap` bytes and discarding the rest, so the
-/// writer never blocks on a full pipe and memory stays bounded.
-fn read_capped<R: Read>(mut pipe: R, cap: u64) -> io::Result<Vec<u8>> {
-    let mut kept = Vec::new();
-    pipe.by_ref().take(cap).read_to_end(&mut kept)?;
-    io::copy(&mut pipe, &mut io::sink())?;
-    Ok(kept)
-}
-
-fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, PathError> {
-    reader
-        .join()
-        .map_err(|_panicked| PathError::Git(io::Error::other("an output reader thread panicked")))?
-        .map_err(PathError::Git)
-}
-
-/// Polls `child` until it exits; past `timeout` kills and reaps it. The deadline is checked
-/// before each poll, so an exit first seen after the deadline is a timeout, and a zero
-/// timeout always is.
-fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, PathError> {
-    let started = Instant::now();
-    loop {
-        if started.elapsed() >= timeout {
-            child.kill().map_err(PathError::Git)?;
-            child.wait().map_err(PathError::Git)?;
-            return Err(PathError::GitTimeout { timeout });
+/// [`process::wait_with_deadline`] for git: at most [`MAX_CAPTURE_BYTES`] per stream, and a
+/// timeout is [`PathError::GitTimeout`].
+fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<Output, PathError> {
+    process::wait_with_deadline(child, timeout, MAX_CAPTURE_BYTES, "git").map_err(|error| {
+        match error {
+            WaitError::Io(source) => PathError::Git(source),
+            WaitError::Timeout => PathError::GitTimeout { timeout },
         }
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {}
-            // Kill it: the reader threads would otherwise wait on its pipes forever.
-            Err(error) => return Err(kill_after(child, error)),
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
-}
-
-/// Kills and reaps `child` after a setup failure, so no reader waits on a live pipe. A failure
-/// to kill is reported alongside the original error rather than dropped.
-fn kill_after(child: &mut Child, error: io::Error) -> PathError {
-    match child.kill().and_then(|()| child.wait().map(drop)) {
-        Ok(()) => PathError::Git(error),
-        Err(kill_error) => PathError::Git(io::Error::new(
-            error.kind(),
-            format!("{error}; killing git also failed: {kill_error}"),
-        )),
-    }
+    })
 }
 
 /// Where the ledger store was found.

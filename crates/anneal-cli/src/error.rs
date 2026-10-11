@@ -10,6 +10,7 @@ use anneal_ledger::{StoreError, TimestampError};
 
 use crate::baseline::BaselineError;
 use crate::command::CommandName;
+use crate::dag::DagError;
 use crate::eval::routing::RoutingError;
 use crate::exit_codes::{self, Code};
 use crate::lint::skills::LintError;
@@ -51,6 +52,9 @@ pub enum CliError {
     /// `anneal eval` could not read its inputs.
     #[error("eval")]
     Eval(#[from] RoutingError),
+    /// `anneal dag` could not read the tickets or build their graph.
+    #[error("dag")]
+    Dag(#[from] DagError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -67,7 +71,8 @@ impl CliError {
             | Self::Baseline(_)
             | Self::Ledger(_)
             | Self::Clock(_)
-            | Self::CurrentDir(_) => exit_codes::INTERNAL,
+            | Self::CurrentDir(_)
+            | Self::Dag(_) => exit_codes::INTERNAL,
             Self::Lint(error) => error.code(),
             Self::Eval(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
