@@ -32,7 +32,7 @@ already there.
 | `removed_test` | Across the whole diff, more test declarations were removed than added; each file that removed more than it added is reported at its first removed declaration (a line in the base). A test moved from one file to another nets to zero. Declarations: `#[test]` and `#[tokio::test` in `.rs`, `it(` and `test(` at the start of a line in JavaScript and TypeScript, `def test_` and `async def test_` in `.py`. |
 | `coverage_lowered` | A coverage floor got a lower number: `fail_under`, `fail-under`, `--fail-under`, `min_coverage`, any key ending `-fail-under` or `_fail_under` (`--cov-fail-under`), and `lines`, `branches`, `functions` and `statements` in a file whose working-tree content mentions `coverageThreshold`. |
 | `timeout_raised` | A timeout got a higher number: `timeout`, `timeout_ms`, `testTimeout`, `timeout-minutes`. |
-| `ratchet_loosened` | In a `*ratchet*.json` file, a key starting `max` got a higher number or one starting `min` a lower one. This generic rule is a placeholder: #24 defines the ratchet format and will replace it. |
+| `ratchet_loosened` | In `.anneal/ratchets.json` (see Ratchets below), a ratchet moved the wrong way since the merge base, was removed or changed direction, or the file no longer parses. In any other `*ratchet*.json` file (another tool's), a key starting `max` got a higher number or one starting `min` a lower one. |
 
 A threshold is a key followed by `=`, `:` (or a space after a `--flag`) and a number, with
 optional quotes, as in `fail_under = 80`, `"testTimeout": 5000`, `timeout-minutes: 30` and
@@ -47,6 +47,35 @@ category; the rest are counted in `data.omitted`. The cap holds while findings a
 and a changed file over 1 MiB gets no emptied-test or `coverageThreshold` check; both are
 listed in `data.skipped` with the reason, never dropped silently. `data` also holds `base`,
 `base_commit`, `merge_base`, `files` (changed files in the diff) and `untracked`.
+
+## Ratchets
+
+`.anneal/ratchets.json` holds numeric floors, such as a warnings count or coverage, that may only
+move the good way:
+
+```json
+{"version": 1, "ratchets": {
+  "warnings": {"value": 12, "direction": "down"},
+  "coverage": {"value": 81.5, "direction": "up"}}}
+```
+
+- `direction` is `down` (lower is better) or `up` (higher is better); `value` is a JSON number.
+- Names are 1 to 64 of `A-Z a-z 0-9 _ . -`; at most 256 ratchets; no other field is allowed and
+  `version` must be 1.
+- floor-guard does not compute the metrics. It guards the committed numbers: when the diff
+  touches the file, it reads the merge base's copy (`git rev-parse <merge-base>:.anneal/ratchets.json`,
+  then `git cat-file blob`, at most 1 MiB) and the working tree's.
+- Each base ratchet that rose (`down`) or fell (`up`), was removed, or changed direction is a
+  `ratchet_loosened` finding at the line that names it (no line when removed). A deleted file
+  removes every ratchet. A working-tree file that does not parse, or is over 1 MiB, is one
+  finding for the whole file: breaking the file never unblocks a floor.
+- A ratchet new since the base, or a file new since the base, is not judged. A base copy that is
+  not valid (or is over 1 MiB) leaves nothing to compare and is listed in `data.skipped`.
+- The generic `*ratchet*.json` rule above skips `.anneal/ratchets.json`, so one change is never
+  reported twice; it stays for other tools' ratchet files.
+
+The `fast-check` hook runs floor-guard after every batch of edits and blocks on a lowered floor
+(`docs/hooks.md`).
 
 ## Limits
 

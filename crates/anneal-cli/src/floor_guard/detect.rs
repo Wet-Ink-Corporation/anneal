@@ -173,6 +173,11 @@ impl Detector {
         }
     }
 
+    /// Records a finding made outside the line-by-line checks (the ratchet file's).
+    pub(crate) fn add(&mut self, finding: FloorFinding) {
+        self.keep(finding);
+    }
+
     /// Records a finding of `category` at `line` of `file`.
     fn push(&mut self, category: Category, (file, line): (&str, Option<u64>), message: String) {
         self.keep(FloorFinding {

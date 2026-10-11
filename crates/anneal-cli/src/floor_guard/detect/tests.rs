@@ -361,6 +361,22 @@ fn a_ratchet_value_moved_the_loose_way_is_a_finding() {
 }
 
 #[test]
+fn the_generic_ratchet_rule_leaves_the_anneal_ratchet_file_to_its_reader() {
+    assert_eq!(
+        detect(
+            &replacing(
+                ".anneal/ratchets.json",
+                "  \"max_warnings\": 3,",
+                "  \"max_warnings\": 4,"
+            ),
+            &[]
+        ),
+        Vec::new(),
+        "`.anneal/ratchets.json` is judged by its schema, not by key names"
+    );
+}
+
+#[test]
 fn findings_are_bounded_while_collected_and_keep_the_first_in_order() {
     let lines: Vec<String> = (0..1_005).map(|_| "#[allow(x)]".to_owned()).collect();
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();

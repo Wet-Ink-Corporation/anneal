@@ -1,0 +1,26 @@
+# evals/routing/build.yaml: prompts for the `build` skill.
+positives:
+  - the plan is approved, build the next task test-first
+  - implement task T3 red then green
+  - write the failing test for the next task, then make it pass
+  - start building the approved task
+  - build T2 now, test first
+  - the next task is small, just build it
+  - make the failing test green and mark the task done
+  - mark task T4 done with its test command
+  - implement the next approved task with a red test first
+near_misses:
+  plan:
+    - the spec is ready, split it into tasks
+    - get the plan approved for the export spec
+    - which tasks block which for this spec
+  spec:
+    - the requirements are agreed, write the spec
+    - write EARS acceptance criteria for the agreed feature
+    - draft the out of scope section and the constitution check
+  diagnose:
+    - the login test fails unexpectedly, find out why
+    - something broke after the last task, reproduce it before fixing
+  grill:
+    - this request is vague, question me first
+    - grill me on the new idea

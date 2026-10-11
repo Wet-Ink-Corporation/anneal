@@ -123,6 +123,37 @@ pub(super) fn untracked(root: &Path) -> Result<Vec<String>, FloorError> {
         .collect())
 }
 
+/// The file at `path` (relative to the root, `/`-separated) in `commit`, read up to
+/// [`MAX_FILE_BYTES`]: [`FileRead::Absent`] when the commit has no such file.
+pub(super) fn read_blob(root: &Path, commit: &str, path: &str) -> Result<FileRead, FloorError> {
+    let object = format!("{commit}:{path}");
+    let args = [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        &object,
+    ];
+    let output = git(root, &args, MAX_FILE_BYTES)?;
+    if !output.status.success() {
+        return Ok(FileRead::Absent);
+    }
+    let oid = first_line(checked(output, "rev-parse", MAX_FILE_BYTES)?)?;
+    let output = git(root, &["cat-file", "blob", &oid], MAX_FILE_BYTES)?;
+    if !output.status.success() {
+        return Err(FloorError::GitFailed {
+            what: "cat-file",
+            stderr: trimmed(&output.stderr),
+        });
+    }
+    if u64::try_from(output.stdout.len()).map_or(true, |len| len > MAX_FILE_BYTES) {
+        return Ok(FileRead::TooLarge);
+    }
+    Ok(FileRead::Text(
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
+}
+
 /// A working-tree file as read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileRead {

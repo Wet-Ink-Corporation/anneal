@@ -1,5 +1,5 @@
 # evals/routing/diagnose.yaml: prompts for the `diagnose` skill.
-# Near misses against `build` and `verify` are added when those skills land (#24, #26).
+# Near misses against `verify` are added when that skill lands (#26).
 positives:
   - the login test fails unexpectedly, find out why
   - something is broken in the export command, reproduce it first
@@ -23,3 +23,5 @@ near_misses:
     - split the bug fix spec into tasks, each with its files and test command
     - the spec for the crash fix is ready, plan the tasks and their blockers
     - get the plan for the error handling spec approved
+  build:
+    - implement the next approved task test-first

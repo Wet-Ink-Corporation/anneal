@@ -144,9 +144,9 @@ enum InputError {
     Json(#[source] serde_json::Error),
 }
 
-/// Why the ledger could not be opened.
+/// Why the ledger could not be opened. The fast-check hook shares it.
 #[derive(Debug, thiserror::Error)]
-enum LedgerError {
+pub(super) enum LedgerError {
     #[error("reading the working directory")]
     CurrentDir(#[source] io::Error),
     #[error("finding the ledger")]
@@ -365,8 +365,8 @@ fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> 
 }
 
 /// The ledger seen from `cwd` when its file exists; `None` when it does not (opening it would
-/// create it).
-fn open_existing(
+/// create it). The fast-check hook shares it.
+pub(super) fn open_existing(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Option<Store>, LedgerError> {

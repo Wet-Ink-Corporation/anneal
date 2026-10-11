@@ -4,6 +4,8 @@
 //! - `detect`: turns them into findings: suppressions added, test files deleted or emptied,
 //!   more tests removed than added, and coverage, timeout and ratchet thresholds loosened.
 //! - `git`: the git calls and working-tree reads, each bounded.
+//! - `ratchet`: the ratchet file (`.anneal/ratchets.json`), read strictly; a ratchet moved the
+//!   bad way since the merge base, removed or turned around is a lowered floor.
 //!
 //! The diff is the working tree (committed and uncommitted changes) against the merge base of
 //! `HEAD` and the base (`--base`, else `origin/main`, else `main`), plus every untracked file
@@ -16,6 +18,7 @@
 mod detect;
 mod diff;
 mod git;
+mod ratchet;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -33,6 +36,7 @@ pub use detect::{Category, FloorFinding};
 use detect::{Detector, PostImage};
 use diff::{FileDiff, Status};
 use git::FileRead;
+use ratchet::{Now, RATCHETS_PATH, Ratchets};
 
 /// `anneal floor-guard`.
 #[derive(Debug, Args)]
@@ -155,18 +159,14 @@ pub(crate) fn run<O: Write>(
         let post = post_image(&root, file, &mut skipped)?;
         detector.file(file, post.as_ref());
     }
-    let untracked = git::untracked(&root)?;
-    let untracked_count = untracked.len();
-    for path in untracked {
-        match git::read_file(&root, &path)? {
-            FileRead::Text(content) => detector.file(&FileDiff::untracked(&path, &content), None),
-            FileRead::TooLarge => skipped.push(Skipped {
-                file: path,
-                reason: "untracked and over 1 MiB: not scanned",
-            }),
-            FileRead::Absent => {}
-        }
+    match ratchets(&root, &merge_base, &files)? {
+        RatchetCheck::Findings(found) => found.into_iter().for_each(|f| detector.add(f)),
+        RatchetCheck::Skipped(reason) => skipped.push(Skipped {
+            file: RATCHETS_PATH.to_owned(),
+            reason,
+        }),
     }
+    let untracked_count = scan_untracked(&root, &mut detector, &mut skipped)?;
     let report = detector.finish();
     let code = if report.findings.is_empty() && report.omitted == 0 {
         exit_codes::FLOOR_HELD
@@ -219,6 +219,75 @@ fn resolve_base<'a>(root: &Path, base: Option<&'a str>) -> Result<(&'a str, Stri
         }
     }
     Err(FloorError::NoDefaultBase)
+}
+
+/// Checks every untracked file git does not ignore, read as all added; returns how many there
+/// are. One over the read cap is listed in `skipped`.
+fn scan_untracked(
+    root: &Path,
+    detector: &mut Detector,
+    skipped: &mut Vec<Skipped>,
+) -> Result<usize, FloorError> {
+    let untracked = git::untracked(root)?;
+    let count = untracked.len();
+    for path in untracked {
+        match git::read_file(root, &path)? {
+            FileRead::Text(content) => detector.file(&FileDiff::untracked(&path, &content), None),
+            FileRead::TooLarge => skipped.push(Skipped {
+                file: path,
+                reason: "untracked and over 1 MiB: not scanned",
+            }),
+            FileRead::Absent => {}
+        }
+    }
+    Ok(count)
+}
+
+/// Judges the ratchet file when the diff (`files`) touches it: each of the merge base's
+/// ratchets against the working tree's copy. With no base copy (or one that is not valid,
+/// which is skipped) there is no floor to lower.
+fn ratchets(
+    root: &Path,
+    merge_base: &str,
+    files: &[FileDiff<'_>],
+) -> Result<RatchetCheck, FloorError> {
+    let touched = files
+        .iter()
+        .any(|file| file.path == RATCHETS_PATH || file.old_path == RATCHETS_PATH);
+    if !touched {
+        return Ok(RatchetCheck::Findings(Vec::new()));
+    }
+    let base = match git::read_blob(root, merge_base, RATCHETS_PATH)? {
+        FileRead::Text(text) => text,
+        FileRead::Absent => return Ok(RatchetCheck::Findings(Vec::new())),
+        FileRead::TooLarge => {
+            return Ok(RatchetCheck::Skipped(
+                "over 1 MiB at the merge base: no ratchet to compare",
+            ));
+        }
+    };
+    // The reason is not kept: the base's copy is not this change's to fix, only to compare.
+    let Ok(base) = Ratchets::parse(&base) else {
+        return Ok(RatchetCheck::Skipped(
+            "not a valid ratchet file at the merge base: no ratchet to compare",
+        ));
+    };
+    let now = git::read_file(root, RATCHETS_PATH)?;
+    let now = match &now {
+        FileRead::Text(text) => Now::Text(text),
+        FileRead::TooLarge => Now::TooLarge,
+        FileRead::Absent => Now::Absent,
+    };
+    Ok(RatchetCheck::Findings(ratchet::findings(&base, now)))
+}
+
+/// What judging the ratchet file gave.
+#[derive(Debug)]
+enum RatchetCheck {
+    /// The loosened floors (none when the base has no ratchet file).
+    Findings(Vec<FloorFinding>),
+    /// Why there was nothing to compare against.
+    Skipped(&'static str),
 }
 
 /// What the detector needs of `file`'s working-tree content; `None` for a deleted file or one

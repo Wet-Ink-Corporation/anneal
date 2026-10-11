@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Use when a spec is ready, even if the work seems obvious; split it into tasks, each with its files, one test command and its blockers, then get the plan approved. Do NOT use for writing the spec (use `spec`), a new or vague request (use `grill`) or building an approved task (that is `build`).
+description: Use when a spec is ready, even if the work seems obvious; split it into tasks, each with its files, one test command and its blockers, then get the plan approved. Do NOT use for writing the spec (use `spec`), a new or vague request (use `grill`) or building an approved task (use `build`).
 ---
 
 # Plan
@@ -17,7 +17,7 @@ Turns a spec with no open questions into tasks a fresh session can build test-fi
 ## When to use
 
 - A spec passes `anneal lint spec` with `data.needs_clarification` at 0, and it has no approved plan yet.
-- Not when the request is new or vague (use `grill`), nor when the spec is unwritten (use `spec`), nor when an approved task is next (that is `build`).
+- Not when the request is new or vague (use `grill`), nor when the spec is unwritten (use `spec`), nor when an approved task is next (use `build`).
 
 ## Process
 

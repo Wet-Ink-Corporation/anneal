@@ -9,6 +9,7 @@
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
+pub(crate) mod fast_check;
 pub(crate) mod guard;
 pub(crate) mod preconditions;
 
@@ -50,11 +51,19 @@ pub enum HookName {
     /// `PreToolUse` (Edit|Write): in an anneal mode, deny source edits until its preconditions
     /// hold; fails closed
     Preconditions,
+    /// `PostToolBatch`: in an anneal mode, run the fast checks once per batch of edits; fails
+    /// open, but a lowered floor blocks
+    FastCheck,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 3] = [Self::Bootstrap, Self::Guard, Self::Preconditions];
+    pub const ALL: [Self; 4] = [
+        Self::Bootstrap,
+        Self::Guard,
+        Self::Preconditions,
+        Self::FastCheck,
+    ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
     #[must_use]
@@ -63,6 +72,7 @@ impl HookName {
             Self::Bootstrap => "bootstrap",
             Self::Guard => "guard",
             Self::Preconditions => "preconditions",
+            Self::FastCheck => "fast-check",
         }
     }
 
@@ -70,7 +80,8 @@ impl HookName {
     #[must_use]
     pub const fn is_guard(self) -> bool {
         match self {
-            Self::Bootstrap => false,
+            // fast-check blocks on a lowered floor, but its own failures never do.
+            Self::Bootstrap | Self::FastCheck => false,
             Self::Guard | Self::Preconditions => true,
         }
     }
@@ -104,6 +115,7 @@ where
         HookName::Bootstrap => bootstrap::run(env, out),
         HookName::Guard => guard::run(env, out),
         HookName::Preconditions => preconditions::run(env, out),
+        HookName::FastCheck => fast_check::run(env, out),
     }
 }
 

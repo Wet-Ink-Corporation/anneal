@@ -71,6 +71,7 @@ enum HookEvent {
     UserPromptSubmit,
     PreToolUse,
     PostToolUse,
+    PostToolBatch,
     PermissionRequest,
     Stop,
     SubagentStop,
@@ -81,12 +82,13 @@ enum HookEvent {
 }
 
 impl HookEvent {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::SessionStart,
         Self::SessionEnd,
         Self::UserPromptSubmit,
         Self::PreToolUse,
         Self::PostToolUse,
+        Self::PostToolBatch,
         Self::PermissionRequest,
         Self::Stop,
         Self::SubagentStop,
@@ -409,6 +411,43 @@ fn the_preconditions_hook_runs_before_every_edit_and_write_and_fails_closed() ->
         .find(|row| row.id == HookName::Preconditions.as_str())
         .map(|row| row.role);
     assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    Ok(())
+}
+
+#[test]
+fn the_fast_check_hook_runs_once_per_batch_of_tool_calls_and_fails_open() -> TestResult {
+    let placed = command_hooks()?;
+    let fast: Vec<&Placed> = placed
+        .iter()
+        .filter(|placed| {
+            placed.hook.args.get(1).map(String::as_str) == Some(HookName::FastCheck.as_str())
+        })
+        .collect();
+    let [
+        Placed {
+            event,
+            matcher,
+            hook,
+        },
+    ] = fast.as_slice()
+    else {
+        return Err(format!("one fast-check entry, got {fast:?}").into());
+    };
+    assert_eq!(
+        *event,
+        HookEvent::PostToolBatch,
+        "once per batch of parallel tool calls (PostToolUse would run once per call)"
+    );
+    assert_eq!(matcher, "", "PostToolBatch takes no matcher");
+    assert_eq!(hook.args, ["hook", "fast-check"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "fails open");
+    assert_eq!(hook.timeout, 15, "the fast-check budget is 15 s");
+    assert!(
+        placed
+            .iter()
+            .all(|placed| placed.event != HookEvent::PostToolUse),
+        "no per-call hook runs the checks again"
+    );
     Ok(())
 }
 

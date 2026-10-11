@@ -1,6 +1,6 @@
 ---
 name: grill
-description: Use when a request is new or vague, even if it looks clear; question the human in rounds, each with a recommended answer, until they confirm the requirements. Do NOT use for writing the spec once requirements are agreed (use `spec`) or splitting agreed work into tasks (use `plan`).
+description: Use when a request or idea is new or vague, even if it looks clear; question the human in rounds, each with a recommended answer, until they confirm the requirements. Do NOT use for writing the spec once requirements are agreed (use `spec`) or splitting agreed work into tasks (use `plan`).
 ---
 
 # Grill

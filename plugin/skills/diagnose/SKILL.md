@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Use when something is broken or a test fails unexpectedly, even if the cause looks obvious; reproduce it red, then find the root cause before fixing it. Do NOT use for a new or vague request (use `grill`), splitting a spec into tasks (use `plan`) or building an approved task (that is `build`).
+description: Use when something is broken or a test fails unexpectedly, even if the cause looks obvious; reproduce it red, then find the root cause before fixing it. Do NOT use for a new or vague request (use `grill`), splitting a spec into tasks (use `plan`) or building an approved task (use `build`).
 ---
 
 # Diagnose
@@ -16,7 +16,7 @@ Finds the root cause of a failure from evidence, starting from a loop that shows
 ## When to use
 
 - A test fails, a command errors or a behaviour is wrong, and the cause is not yet known.
-- Not for a new or vague request (use `grill`), nor for planned work on an approved task (that is `build`).
+- Not for a new or vague request (use `grill`), nor for planned work on an approved task (use `build`).
 
 ## Process
 
