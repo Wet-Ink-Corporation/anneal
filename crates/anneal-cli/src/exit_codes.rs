@@ -180,11 +180,12 @@ pub const DECIDE_DECIDED: Code = Code::new(0, "decided and logged (label: append
 /// `decide`: Clef is off for the point (no account, or mode `off`); nothing was asked or
 /// logged, and callers use their deterministic layer.
 pub const DECIDE_OFF: Code = Code::new(3, "Clef off for the point; nothing asked or logged");
-/// `decide`: Clef gave no usable answer (unreachable, timed out or a bad response); the row
-/// is logged and callers apply the point's fallback.
+/// `decide`: Clef gave no usable answer (unreachable, timed out or a bad response; the row is
+/// logged) or the configuration is malformed (nothing asked or logged); callers apply the
+/// point's fallback.
 pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(
     5,
-    "no answer from Clef (unreachable, timeout, bad response); apply the fallback",
+    "no answer from Clef (unreachable, timeout, bad response or config); apply the fallback",
 );
 /// `eval routing`: accuracy is below its bound.
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");

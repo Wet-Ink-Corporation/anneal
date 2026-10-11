@@ -1,11 +1,11 @@
 //! `anneal decide` through the built binary. The binary has no HTTP client yet (a pending
-//! dependency decision), so every configured call is unreachable: it must exit 5 well within
-//! the 2 s Clef budget, log the row as unreachable, and never show the token.
+//! dependency decision), so every configured call is unreachable: it must exit 5, log the row
+//! as unreachable, and never show the token. The 2 s budget is checked in process, with a
+//! fake clock (`decide::client::tests`), not with the wall clock here.
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -63,9 +63,8 @@ fn envelope(output: &Output) -> Result<Value, Box<dyn Error>> {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
-fn unreachable_clef_exits_5_within_2_2_s_and_logs_the_row_as_unreachable() -> TestResult {
+fn unreachable_clef_exits_5_and_logs_the_row_as_unreachable() -> TestResult {
     let home = tempfile::tempdir()?;
-    let started = Instant::now();
 
     let output = anneal(home.path())
         .args(D1)
@@ -74,11 +73,6 @@ fn unreachable_clef_exits_5_within_2_2_s_and_logs_the_row_as_unreachable() -> Te
         .env(TOKEN_VAR, SECRET)
         .output()?;
 
-    assert!(
-        started.elapsed() < Duration::from_millis(2200),
-        "{:?}",
-        started.elapsed()
-    );
     assert_eq!(output.status.code(), Some(5), "{output:?}");
     assert_eq!(envelope(&output)?["data"]["fallback"], json!("ask"));
     let rows = rows(&home.path().join("decisions").join("decisions.jsonl"))?;
@@ -112,7 +106,11 @@ fn the_token_is_never_on_stdout_stderr_or_in_the_log() -> TestResult {
         assert!(!String::from_utf8_lossy(&output.stdout).contains(SECRET));
         assert!(!String::from_utf8_lossy(&output.stderr).contains(SECRET));
     }
-    assert_eq!(refused.status.code(), Some(70), "a bad mode: {refused:?}");
+    assert_eq!(
+        refused.status.code(),
+        Some(5),
+        "a bad mode falls back: {refused:?}"
+    );
     let log = std::fs::read_to_string(home.path().join("decisions").join("decisions.jsonl"))?;
     assert!(!log.contains(SECRET), "{log}");
     Ok(())

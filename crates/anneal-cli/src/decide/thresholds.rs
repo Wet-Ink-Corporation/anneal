@@ -52,8 +52,8 @@ pub enum ThresholdsError {
         /// The alias it names.
         alias: String,
     },
-    /// A model id has a character a URL path segment should not (space, `?`, `#`, `%`), or is
-    /// empty or longer than 128 bytes.
+    /// A model id has a character a URL path segment should not (space, `?`, `#`, `%`), an
+    /// empty, `.` or `..` segment, or is empty or longer than 128 bytes.
     #[error("model {alias} has an invalid id")]
     ModelId {
         /// The alias whose id is invalid.
@@ -78,10 +78,17 @@ pub enum ThresholdsError {
     },
 }
 
-/// The validated table: every point's model and rules.
+/// The validated table: every point's model and rules, one field per point so no lookup can
+/// miss.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Thresholds {
-    points: BTreeMap<Point, PointRules>,
+    d1: PointRules,
+    d2: PointRules,
+    d3: PointRules,
+    d4: PointRules,
+    d5: PointRules,
+    d6: PointRules,
+    d7: PointRules,
 }
 
 /// One point's model, fallback and rules.
@@ -151,10 +158,18 @@ impl Thresholds {
         Self::parse(BUILT_IN.as_bytes())
     }
 
-    /// The rules of `point`. Validation guarantees every point has them.
+    /// The rules of `point`.
     #[must_use]
-    pub fn point(&self, point: Point) -> Option<&PointRules> {
-        self.points.get(&point)
+    pub const fn point(&self, point: Point) -> &PointRules {
+        match point {
+            Point::D1 => &self.d1,
+            Point::D2 => &self.d2,
+            Point::D3 => &self.d3,
+            Point::D4 => &self.d4,
+            Point::D5 => &self.d5,
+            Point::D6 => &self.d6,
+            Point::D7 => &self.d7,
+        }
     }
 }
 
@@ -254,8 +269,7 @@ impl FileDto {
             }
         }
         let mut dtos = self.points;
-        let mut points = BTreeMap::new();
-        for point in Point::ALL {
+        let mut take = |point: Point| -> Result<PointRules, ThresholdsError> {
             let dto = dtos
                 .remove(&point)
                 .ok_or(ThresholdsError::MissingPoint(point))?;
@@ -267,9 +281,17 @@ impl FileDto {
             };
             // The table keeps the id for this point; the models map stays shared.
             let model = model.clone();
-            points.insert(point, dto.validate(point, model)?);
-        }
-        Ok(Thresholds { points })
+            dto.validate(point, model)
+        };
+        Ok(Thresholds {
+            d1: take(Point::D1)?,
+            d2: take(Point::D2)?,
+            d3: take(Point::D3)?,
+            d4: take(Point::D4)?,
+            d5: take(Point::D5)?,
+            d6: take(Point::D6)?,
+            d7: take(Point::D7)?,
+        })
     }
 }
 
@@ -345,12 +367,16 @@ fn name(value: &str) -> Result<(), ThresholdsError> {
     }
 }
 
-/// A model id fit for a URL path: 1 to 128 of `[A-Za-z0-9@/._:-]`.
+/// A model id fit for a URL path: 1 to 128 of `[A-Za-z0-9@/._:-]`, with no empty, `.` or
+/// `..` segment that would change the path it is joined to.
 fn is_model_id(id: &str) -> bool {
     (1..=MAX_MODEL_ID_BYTES).contains(&id.len())
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"@/._:-".contains(&byte))
+        && id
+            .split('/')
+            .all(|segment| !matches!(segment, "" | "." | ".."))
 }
 
 #[cfg(test)]

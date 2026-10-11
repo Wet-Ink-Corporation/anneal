@@ -14,7 +14,12 @@ use crate::decide::point::{Point, Question};
 use crate::decide::transport::FailureKind;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
+use crate::error_chain;
 use crate::exit_codes::{self, Code};
+
+/// `data.error` of a call refused for a malformed configuration, beside the transport's
+/// `unreachable`, `timed_out` and `bad_response`.
+const MISCONFIGURED: &str = "misconfigured";
 
 /// `data` of an answered decision.
 #[derive(Debug, Serialize)]
@@ -50,12 +55,24 @@ struct NoAnswerData<'a> {
     log: &'a Path,
 }
 
+/// `data` of a call refused for a malformed configuration.
+#[derive(Debug, Serialize)]
+struct MisconfiguredData<'a> {
+    point: Point,
+    question: Question,
+    error: &'static str,
+    unreachable: bool,
+    fallback: &'a str,
+    reason: &'a str,
+}
+
 /// `data` when Clef is off.
 #[derive(Debug, Serialize)]
 struct OffData {
     point: Point,
     question: Question,
     mode: Mode,
+    configured_mode: Mode,
     reason: OffReason,
 }
 
@@ -79,12 +96,36 @@ pub(super) fn write_outcome<O: Write>(
                 .with_findings(&findings)
                 .emit(out)
         }
-        Outcome::Off(reason) => {
+        Outcome::Misconfigured(misconfigured) => {
+            let reason = error_chain::reason(misconfigured.problem);
+            let findings = [Finding::new(
+                format!("decide/no-answer:{}", ask.point),
+                reason.as_str(),
+            )];
+            let data = MisconfiguredData {
+                point: ask.point,
+                question: ask.question,
+                error: MISCONFIGURED,
+                unreachable: false,
+                fallback: misconfigured.fallback,
+                reason: &reason,
+            };
+            Envelope::new(
+                CommandName::Decide,
+                None,
+                exit_codes::DECIDE_CLEF_UNREACHABLE,
+                data,
+            )
+            .with_findings(&findings)
+            .emit(out)
+        }
+        Outcome::Off(off) => {
             let data = OffData {
                 point: ask.point,
                 question: ask.question,
                 mode: Mode::Off,
-                reason: *reason,
+                configured_mode: off.configured_mode,
+                reason: off.reason,
             };
             Envelope::new(CommandName::Decide, None, exit_codes::DECIDE_OFF, data).emit(out)
         }

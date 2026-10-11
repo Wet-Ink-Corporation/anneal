@@ -21,7 +21,7 @@ fn the_shipped_file_routes_d4_to_clef_and_every_other_point_to_clef_flash() {
     let thresholds = built_in();
 
     for point in Point::ALL {
-        let rules = thresholds.point(point).expect("every point is configured");
+        let rules = thresholds.point(point);
         let expected = if point == Point::D4 {
             "clef"
         } else {
@@ -38,7 +38,7 @@ fn a_model_alias_resolves_to_the_id_in_the_models_table() -> Result<(), Threshol
 
     let thresholds = parse(&value)?;
 
-    let d4 = thresholds.point(Point::D4).expect("configured");
+    let d4 = thresholds.point(Point::D4);
     assert_eq!(d4.model(), "@cf/example/clef-v2", "changed without code");
     Ok(())
 }
@@ -48,7 +48,7 @@ fn d1_bands_deny_from_090_ask_from_040_and_defer_below() {
     let thresholds = built_in();
     let rule = thresholds
         .point(Point::D1)
-        .and_then(|rules| rules.rule(Question::Noul))
+        .rule(Question::Noul)
         .expect("D1 asks noul");
 
     let applied: Vec<Applied<'_>> = [0.95, 0.9, 0.5, 0.4, 0.39]
@@ -73,7 +73,7 @@ fn d1_falls_back_to_ask_and_the_others_fail_open() {
     let thresholds = built_in();
 
     for point in Point::ALL {
-        let fallback = thresholds.point(point).expect("configured").fallback();
+        let fallback = thresholds.point(point).fallback();
         let expected = if point == Point::D1 {
             "ask"
         } else {
@@ -87,7 +87,7 @@ fn d1_falls_back_to_ask_and_the_others_fail_open() {
 fn a_question_a_point_does_not_ask_has_no_rule() {
     let thresholds = built_in();
 
-    let d1 = thresholds.point(Point::D1).expect("configured");
+    let d1 = thresholds.point(Point::D1);
 
     assert_eq!(d1.rule(Question::Choice), None, "D1 asks only noul");
 }
@@ -175,6 +175,40 @@ fn a_model_id_with_a_space_or_query_is_refused() {
             "{id:?} is refused"
         );
     }
+}
+
+#[test]
+fn a_model_id_with_an_empty_dot_or_dot_dot_segment_is_refused() {
+    for id in [
+        "@cf//clef",
+        "/@cf/clef",
+        "@cf/clef/",
+        "@cf/./clef",
+        "@cf/../clef",
+        "..",
+        ".",
+    ] {
+        let mut value = shipped_json();
+        value["models"]["clef"] = json!(id);
+
+        assert!(
+            matches!(parse(&value), Err(ThresholdsError::ModelId { .. })),
+            "{id:?} is refused"
+        );
+    }
+}
+
+#[test]
+fn a_model_id_with_dots_inside_a_segment_is_kept() -> Result<(), ThresholdsError> {
+    let mut value = shipped_json();
+    value["models"]["clef"] = json!("@cf/wet-ink/clef-1.5..b");
+
+    let thresholds = parse(&value)?;
+    assert_eq!(
+        thresholds.point(Point::D4).model(),
+        "@cf/wet-ink/clef-1.5..b"
+    );
+    Ok(())
 }
 
 #[test]

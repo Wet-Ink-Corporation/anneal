@@ -90,16 +90,21 @@ impl FromStr for OutcomeLabel {
     type Err = InvalidLabel;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let valid = (1..=MAX_BYTES).contains(&text.len())
-            && text
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b));
-        if valid {
+        if is_word(text) {
             Ok(Self(text.to_owned()))
         } else {
             Err(InvalidLabel::Outcome)
         }
     }
+}
+
+/// 1 to 64 of `[A-Za-z0-9_.:-]`: an outcome label or a choice option. None of these bytes is
+/// escaped in JSON, so a word costs in a row exactly its length.
+pub(crate) fn is_word(text: &str) -> bool {
+    (1..=MAX_BYTES).contains(&text.len())
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
 }
 
 #[cfg(test)]

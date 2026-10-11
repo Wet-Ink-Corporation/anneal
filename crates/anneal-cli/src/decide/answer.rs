@@ -4,7 +4,9 @@
 //! response is Clef's JSON, as text or as an object: `{"probabilities": {<option>: p}}` for
 //! `noul` (options `yes` and `no`) and `choice`, `{"score": v}` for `score`. The reader is
 //! tolerant: unknown fields (Clef's `confidence` among them) are ignored, and only the
-//! probabilities of the options asked are kept. A missing or out-of-range number is an error.
+//! probabilities of the options asked are kept. A missing or out-of-range number is an error,
+//! and so are noul (when `no` is given) or choice probabilities that do not sum to 1 within
+//! [`SUM_TOLERANCE`].
 
 use std::collections::BTreeMap;
 
@@ -40,7 +42,16 @@ pub enum AnswerError {
         /// The option, or `score`.
         name: String,
     },
+    /// The probabilities of the options asked sum to more than [`SUM_TOLERANCE`] away from 1.
+    #[error("the probabilities sum to {sum}, not 1 within {SUM_TOLERANCE}")]
+    Sum {
+        /// Their sum.
+        sum: f64,
+    },
 }
+
+/// How far from 1 the probabilities of a noul or choice answer may sum.
+pub const SUM_TOLERANCE: f64 = 0.05;
 
 /// Clef's answer to one question.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +105,10 @@ pub fn parse(body: &[u8], question: Question, options: &[String]) -> Result<Answ
         Question::Noul => {
             let asked: Vec<String> = NOUL_OPTIONS.iter().map(|o| (*o).to_owned()).collect();
             let probabilities = probabilities_of(&output, &asked, &["yes"])?;
+            // `no` may be left out, as 1 - `yes`; given, the two must add up.
+            if probabilities.len() == NOUL_OPTIONS.len() {
+                sums_to_one(&probabilities)?;
+            }
             let probability = number(probabilities.get("yes"), "yes")?;
             Ok(Answer {
                 probability,
@@ -104,6 +119,7 @@ pub fn parse(body: &[u8], question: Question, options: &[String]) -> Result<Answ
         Question::Choice => {
             let required: Vec<&str> = options.iter().map(String::as_str).collect();
             let probabilities = probabilities_of(&output, options, &required)?;
+            sums_to_one(&probabilities)?;
             let (top, probability) = top_of(options, &probabilities)?;
             Ok(Answer {
                 probability,
@@ -154,6 +170,16 @@ fn probabilities_of(
         kept.insert(option.clone(), in_range(value, option)?);
     }
     Ok(kept)
+}
+
+/// Checks that `probabilities` sum to 1 within [`SUM_TOLERANCE`].
+fn sums_to_one(probabilities: &BTreeMap<String, f64>) -> Result<(), AnswerError> {
+    let sum: f64 = probabilities.values().sum();
+    if (sum - 1.0).abs() <= SUM_TOLERANCE {
+        Ok(())
+    } else {
+        Err(AnswerError::Sum { sum })
+    }
 }
 
 /// The first option with the highest probability.
@@ -324,6 +350,64 @@ mod tests {
             parse(&body, Question::Noul, &[]),
             Err(AnswerError::OutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn probabilities_that_do_not_sum_to_one_within_005_are_a_bad_response() {
+        let cases = [
+            (
+                json!({"probabilities": {"yes": 0.9, "no": 0.3}}),
+                Question::Noul,
+                options(&[]),
+            ),
+            (
+                json!({"probabilities": {"yes": 0.5, "no": 0.44}}),
+                Question::Noul,
+                options(&[]),
+            ),
+            (
+                json!({"probabilities": {"a": 0.5, "b": 0.3, "c": 0.1}}),
+                Question::Choice,
+                options(&["a", "b", "c"]),
+            ),
+            (
+                json!({"probabilities": {"a": 0.9, "b": 0.9}}),
+                Question::Choice,
+                options(&["a", "b"]),
+            ),
+        ];
+        for (inner, question, asked) in cases {
+            let result = parse(&workers_ai(&inner), question, &asked);
+            assert!(
+                matches!(result, Err(AnswerError::Sum { .. })),
+                "{inner} for {question}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn probabilities_within_005_of_one_are_kept() -> Result<(), AnswerError> {
+        let cases = [
+            (
+                json!({"probabilities": {"yes": 0.5, "no": 0.46}}),
+                Question::Noul,
+                options(&[]),
+            ),
+            (
+                json!({"probabilities": {"yes": 0.97}}),
+                Question::Noul,
+                options(&[]),
+            ),
+            (
+                json!({"probabilities": {"a": 0.6, "b": 0.44, "extra": 0.9}}),
+                Question::Choice,
+                options(&["a", "b"]),
+            ),
+        ];
+        for (inner, question, asked) in cases {
+            parse(&workers_ai(&inner), question, &asked)?;
+        }
+        Ok(())
     }
 
     #[test]

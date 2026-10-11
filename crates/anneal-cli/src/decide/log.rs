@@ -178,7 +178,12 @@ impl DecisionLog {
             }
         }
         let path = self.path();
-        fs::rename(&path, self.rotated(1)).map_err(|source| io_error("rotating", &path, source))
+        match fs::rename(&path, self.rotated(1)) {
+            Ok(()) => Ok(()),
+            // Another call rotated the live file first; the append creates a new one.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(io_error("rotating", &path, source)),
+        }
     }
 
     /// The counts file.

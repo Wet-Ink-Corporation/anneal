@@ -4,13 +4,15 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
-use super::{Ask, AskError, MAX_OPTION_BYTES, MAX_OPTIONS};
+use super::{Ask, AskError, MAX_OPTIONS};
 use crate::decide::answer::NOUL_OPTIONS;
+use crate::decide::id;
 use crate::decide::point::Question;
 use crate::decide::thresholds::Rule;
 
-/// A choice has 2 to [`MAX_OPTIONS`] distinct options of 1 to [`MAX_OPTION_BYTES`] bytes;
-/// other questions have none.
+/// A choice has 2 to [`MAX_OPTIONS`] distinct options, each 1 to 64 of `[A-Za-z0-9_.:-]`
+/// (the outcome-label alphabet, which JSON never escapes, so a row's size is bounded); other
+/// questions have none.
 pub(super) fn check_options(question: Question, options: &[String]) -> Result<(), AskError> {
     let problem = match question {
         Question::Noul | Question::Score => {
@@ -26,11 +28,8 @@ fn choice_problem(options: &[String]) -> Option<&'static str> {
     if !(2..=MAX_OPTIONS).contains(&options.len()) {
         return Some("a choice needs 2 to 32 options");
     }
-    if options
-        .iter()
-        .any(|option| !(1..=MAX_OPTION_BYTES).contains(&option.len()))
-    {
-        return Some("an option must be 1 to 64 bytes");
+    if !options.iter().all(|option| id::is_word(option)) {
+        return Some("an option must be 1 to 64 of A-Z a-z 0-9 _ . : -");
     }
     let distinct: BTreeSet<&String> = options.iter().collect();
     (distinct.len() != options.len()).then_some("options must be distinct")

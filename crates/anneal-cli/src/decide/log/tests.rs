@@ -130,6 +130,20 @@ fn a_counts_file_of_another_kind_is_refused() {
 }
 
 #[test]
+fn rotating_a_live_file_another_call_already_rotated_continues() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let log = DecisionLog::in_home(home.path());
+    fs::create_dir_all(&log.dir)?;
+    fs::write(log.rotated(1), "{\"n\":1}\n")?;
+
+    log.rotate()?;
+
+    assert!(!log.path().exists(), "no live file appears");
+    assert_eq!(lines(&log.rotated(2)), [json!({"n": 1})], "older moved up");
+    Ok(())
+}
+
+#[test]
 fn a_directory_at_the_counts_path_is_refused() {
     let home = tempfile::tempdir().expect("tempdir");
     let log = DecisionLog::in_home(home.path());

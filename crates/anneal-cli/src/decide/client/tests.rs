@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use super::{Ask, AskError, OffReason, Outcome, Setup, TIMEOUT, ask};
 use crate::decide::clock::Clock;
 use crate::decide::config::{ACCOUNT_VAR, ClefConfig, MODE_VAR, TOKEN_VAR};
-use crate::decide::log::DecisionLog;
+use crate::decide::log::{DecisionLog, MAX_ROW_BYTES};
 use crate::decide::point::{Point, Question};
 use crate::decide::state::CompactState;
 use crate::decide::thresholds::Thresholds;
@@ -142,7 +142,7 @@ impl World {
     fn ask(&self, request: &Ask<'_>, endpoint: &FakeEndpoint) -> Result<Outcome<'_>, AskError> {
         let setup = Setup {
             thresholds: &self.thresholds,
-            config: &self.config,
+            config: Ok(&self.config),
             log: &self.log,
         };
         let clock = FakeClock {
@@ -344,6 +344,67 @@ fn unreachable_or_timed_out_is_no_answer_with_the_row_marked_unreachable() {
     }
 }
 
+/// A monotonic clock that only moves when something advances it.
+struct SteppedClock {
+    now: Cell<Duration>,
+}
+
+impl Clock for SteppedClock {
+    fn unix_millis(&self) -> Result<u64, SystemTimeError> {
+        Ok(1_760_000_000_000)
+    }
+
+    fn monotonic(&self) -> Duration {
+        self.now.get()
+    }
+}
+
+/// An endpoint that never answers: it uses up the request's whole timeout on the clock, then
+/// reports the timeout, as a transport bounded by that timeout would.
+struct Stalling<'c> {
+    clock: &'c SteppedClock,
+}
+
+impl Transport for Stalling<'_> {
+    fn send(&self, request: &ClefRequest<'_>) -> Result<Vec<u8>, TransportError> {
+        self.clock.now.set(self.clock.now.get() + request.timeout);
+        Err(TransportError::TimedOut {
+            after: request.timeout,
+        })
+    }
+}
+
+#[test]
+fn a_call_that_stalls_ends_at_the_2_s_budget_with_the_row_unreachable() {
+    let world = World::configured();
+    let clock = SteppedClock {
+        now: Cell::new(Duration::from_secs(7)),
+    };
+    let setup = Setup {
+        thresholds: &world.thresholds,
+        config: Ok(&world.config),
+        log: &world.log,
+    };
+
+    let outcome = ask(
+        &world.question(Point::D1, &[]),
+        &setup,
+        &Stalling { clock: &clock },
+        &clock,
+    );
+
+    let Ok(Outcome::NoAnswer(no_answer)) = outcome else {
+        panic!("no answer: {outcome:?}");
+    };
+    assert_eq!(no_answer.fallback, "ask");
+    assert_eq!(no_answer.stamp.latency_ms, 2000, "the budget, not more");
+    let rows = world.rows();
+    assert_eq!(rows.len(), 1, "one row");
+    assert_eq!(rows[0]["unreachable"], json!(true));
+    assert_eq!(rows[0]["error"], json!("timed_out"));
+    assert_eq!(rows[0]["latency_ms"], json!(2000));
+}
+
 #[test]
 fn a_response_without_the_probability_is_a_bad_response_not_unreachable() {
     let world = World::configured();
@@ -392,7 +453,7 @@ fn off_by_mode_or_without_an_account_asks_nothing_and_logs_nothing() {
         let outcome = world.ask_d1(&endpoint);
 
         assert!(
-            matches!(outcome, Outcome::Off(off) if off == reason),
+            matches!(outcome, Outcome::Off(off) if off.reason == reason),
             "{outcome:?}"
         );
         assert_eq!(endpoint.requests(), 0, "Clef is not called");
@@ -483,6 +544,67 @@ fn options_are_required_for_a_choice_and_refused_otherwise() {
             "{point} {options:?}: {result:?}"
         );
     }
+}
+
+#[test]
+fn an_option_outside_the_name_alphabet_is_refused() {
+    let world = World::configured();
+    let endpoint = FakeEndpoint::answering(&yes(0.9));
+
+    for odd in [
+        "tab\there",
+        "nul\u{0}",
+        "quo\"te",
+        "back\\slash",
+        "two words",
+        "é",
+    ] {
+        let options = ["plan".to_owned(), odd.to_owned()];
+
+        let result = world.ask(&world.question(Point::D3, &options), &endpoint);
+
+        assert!(
+            matches!(result, Err(AskError::Options { .. })),
+            "{odd:?}: {result:?}"
+        );
+    }
+    assert_eq!(endpoint.requests(), 0, "nothing is sent");
+}
+
+#[test]
+fn a_worst_case_choice_row_fits_the_row_cap() {
+    let mut value: Value =
+        serde_json::from_str(crate::decide::thresholds::BUILT_IN).expect("shipped JSON");
+    let long_name = |c: char| c.to_string().repeat(64);
+    value["models"]["clef-flash"] = json!(format!("@cf/{}", "m".repeat(124)));
+    let bands: Vec<Value> = (0..8_u8)
+        .map(|n| json!({"at_least": 0.9 - f64::from(n) * 0.1 + 1e-15, "action": long_name(char::from(b'a' + n))}))
+        .collect();
+    value["points"]["D3"]["rules"]["choice"] =
+        json!({"subject": long_name('s'), "bands": bands, "otherwise": long_name('o')});
+    let mut world = World::configured();
+    world.thresholds =
+        Thresholds::parse(value.to_string().as_bytes()).expect("worst-case thresholds parse");
+    let options: Vec<String> = (0..32)
+        .map(|n| format!("{n:02}{}", ":.-_".repeat(16).get(..62).expect("62 bytes")))
+        .collect();
+    let probabilities: serde_json::Map<String, Value> = options
+        .iter()
+        // The reply's map owns its keys; the options are asked with too.
+        .map(|option| (option.clone(), json!(0.031_250_000_000_000_014)))
+        .collect();
+    let endpoint = FakeEndpoint::answering(&json!({"probabilities": probabilities}));
+
+    let outcome = world.ask(&world.question(Point::D3, &options), &endpoint);
+
+    assert!(matches!(outcome, Ok(Outcome::Decided(_))), "{outcome:?}");
+    let log = fs::read_to_string(world.log.path()).expect("the log");
+    let row = log.lines().next().expect("one row");
+    assert!(
+        row.len() < MAX_ROW_BYTES,
+        "{} bytes with the newline",
+        row.len() + 1
+    );
 }
 
 #[test]

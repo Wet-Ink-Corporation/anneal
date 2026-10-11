@@ -186,7 +186,7 @@ A green result proves the brief was built from the given commit range. It does *
 |---|---|
 | 0 | decided and logged (label: appended) |
 | 3 | Clef off for the point; nothing asked or logged |
-| 5 | no answer from Clef (unreachable, timeout, bad response); apply the fallback |
+| 5 | no answer from Clef (unreachable, timeout, bad response or config); apply the fallback |
 
 A green result proves the decision was obtained and recorded. It does **not** prove that the decision is right.
 

@@ -26,7 +26,8 @@ The response is read tolerantly: Workers AI's `{"result": {"response": ...}}` wi
 JSON as text or as an object, holding `{"probabilities": {<option>: p}}` (noul: `yes` and `no`;
 choice: each `--option`) or `{"score": v}`. Unknown fields, Clef's `confidence` among them, are
 ignored. A missing probability, a number outside 0..=1, `success: false` or a body that is not
-JSON is a bad response.
+JSON is a bad response, and so are noul or choice probabilities that do not sum to 1 within
+0.05 (noul's `no` may be left out, as 1 - `yes`; when given, it counts).
 
 **No HTTP client yet.** Adding one is a pending dependency decision (H-16; ureq 3 with rustls is
 the recommended option), so the binary is built with a transport that reports every call as
@@ -50,13 +51,20 @@ sensitive token too:
 The token is never written anywhere: it has no `Display`, its `Debug` is `<redacted>`, and no
 error, envelope or row carries it (tested).
 
+A malformed value (an account that is not letters and digits, a token that is not printable
+ASCII without spaces, a mode that does not parse, or a variable that is not UTF-8) does not
+stop the hook with an internal error: the point takes its fallback (exit 5) with
+`data.error: "misconfigured"` and `data.reason` naming the variable, never its token value.
+Nothing is asked and nothing is logged.
+
 ## Thresholds
 
 `plugin/playbooks/clef-thresholds.json` holds each point's model alias, its fallback and, per
 question type, a subject and bands. The file is found from `--thresholds`, else
 `$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`, else the copy built into the binary; a
 file named either way must exist and be a regular file. It is read strictly (version 1, every
-point present, unknown fields refused).
+point present, unknown fields refused); a model id is 1 to 128 of `A-Z a-z 0-9 @ / . _ : -`
+with no empty, `.` or `..` path segment, so it cannot change the URL path it is joined to.
 
 A rule applies to a probability, never to `confidence`: noul uses the probability of `yes`,
 choice the top option's (the first given wins a tie), score the value. The first band whose
@@ -81,12 +89,15 @@ models are named. D5's blueprint rule, an expected level of 2.0 or more on low/m
 ## Modes
 
 The mode of a point is its override, else the global mode. `off` (or no account) asks nothing
-and logs nothing: exit 3, and the caller uses its deterministic layer. `shadow` asks, logs and
+and logs nothing: exit 3, and the caller uses its deterministic layer; the envelope gives
+`data.reason` (`mode_off` or `no_account`) and the point's `data.configured_mode`. `shadow` asks, logs and
 reports the action with `data.enforce: false`; callers do not act on it. `enforce` reports
 `data.enforce: true`, except that a point stays in shadow (`data.mode: "shadow"`,
 `data.configured_mode: "enforce"`) until it has 50 answered decisions. The count is kept in
 `decisions/counts.json`, so rotation does not reset it; two decisions at once can lose an
-increment, which only lengthens the shadow period.
+increment, which only lengthens the shadow period. The file is not protected: editing it by
+hand to raise a point's count skips (part of) the shadow period, so `enforce` takes effect
+early; deleting it only restarts the count, which lengthens the shadow period.
 
 ## State
 
@@ -104,8 +115,9 @@ by name. Every string is trimmed and cut to 1,024 characters (marked `…`); the
 | 0 | Clef answered; `data.action` is the thresholds' action (`decide label`: the label was appended) | one decision row (label row) |
 | 3 | Clef is off for the point (no account, or mode `off`) | nothing |
 | 5 | no answer: unreachable, timed out (2 s), or a bad response; `data.fallback` is the point's fallback (`ask` for D1, `fail_open` for the others) | one row with `error` and `unreachable` |
+| 5 | the account, token or mode is malformed: `data.error` is `misconfigured`, `data.reason` names the variable, `data.fallback` as above | nothing |
 | 2 | usage error: bad arguments, a state that is not a JSON object or too large, a question the point does not ask, options that do not fit, a malformed label | nothing |
-| 70 | the configuration, thresholds file, log or clock could not be read or written | nothing |
+| 70 | the thresholds file, log or clock could not be read or written | nothing |
 
 ## The decision log
 
@@ -130,7 +142,10 @@ Without an answer, `probabilities`, `probability`, `threshold` and `action` are 
 joining on `id`, never by rewriting it. A label's id must have the shape `decide` writes
 (`d<millis>-<pid>-<n>`) but is not looked up; an outcome is 1 to 64 of `A-Z a-z 0-9 _ . : -`.
 
-Bounds: a row is at most 8 KiB (choices have at most 32 options of 64 bytes); when the live
-file would pass 16 MiB it becomes `decisions.1.jsonl`, the older files move up to
-`decisions.4.jsonl` and the fifth is dropped, so the log holds at most 80 MiB. `anneal calibrate`
+Bounds: a row is at most 8 KiB: a choice has 2 to 32 distinct options, each 1 to 64 of
+`A-Z a-z 0-9 _ . : -` (the outcome-label alphabet, so any option can be a label), none of which
+JSON escapes, and a test keeps the largest such row under the cap. When the live file would
+pass 16 MiB it becomes `decisions.1.jsonl`, the older files move up to `decisions.4.jsonl` and
+the fifth is dropped, so the log holds at most 80 MiB; when two calls rotate at once, the one
+that finds the live file already gone carries on and appends to a new one. `anneal calibrate`
 (#29) has to read the rotated files as well as the live one.

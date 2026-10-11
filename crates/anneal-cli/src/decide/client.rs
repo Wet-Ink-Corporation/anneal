@@ -1,8 +1,9 @@
 //! One decision: the point's rule, the mode, the call through the [`Transport`] port, the
 //! thresholds applied, and the row appended to the log.
 //!
-//! The order: the question must be one the point asks (else nothing runs); a point whose mode
-//! is `off`, or any point without an account, is [`Outcome::Off`] and logs nothing; otherwise
+//! The order: the question must be one the point asks (else nothing runs); a malformed
+//! configuration is [`Outcome::Misconfigured`] and logs nothing; a point whose mode is `off`,
+//! or any point without an account, is [`Outcome::Off`] and logs nothing; otherwise
 //! Clef is asked within [`TIMEOUT`] and exactly one row is appended, answered or not. A point
 //! configured `enforce` runs as `shadow` until it has [`AUTO_SHADOW_DECISIONS`] answered
 //! decisions.
@@ -20,7 +21,7 @@ use serde::Serialize;
 
 use crate::decide::answer::{self, Answer};
 use crate::decide::clock::Clock;
-use crate::decide::config::{ClefConfig, Mode};
+use crate::decide::config::{ClefConfig, ConfigError, Mode};
 use crate::decide::id::DecisionId;
 use crate::decide::log::{DecisionLog, LogError};
 use crate::decide::point::{Point, Question};
@@ -40,9 +41,6 @@ pub const ACCOUNTS_URL: &str = "https://api.cloudflare.com/client/v4/accounts";
 
 /// Most options of a choice (H-13).
 pub const MAX_OPTIONS: usize = 32;
-
-/// Longest option.
-pub const MAX_OPTION_BYTES: usize = 64;
 
 /// Most characters of a failure's reason kept in a row.
 const MAX_REASON_CHARS: usize = 256;
@@ -68,8 +66,8 @@ pub struct Ask<'a> {
 pub struct Setup<'s> {
     /// The thresholds table.
     pub thresholds: &'s Thresholds,
-    /// Account, token and mode.
-    pub config: &'s ClefConfig,
+    /// Account, token and mode, or why they could not be read.
+    pub config: Result<&'s ClefConfig, &'s ConfigError>,
     /// The decision log.
     pub log: &'s DecisionLog,
 }
@@ -84,15 +82,36 @@ pub enum OffReason {
     NoAccount,
 }
 
+/// Clef was not asked: why, and the mode configured for the point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Off {
+    /// Why.
+    pub reason: OffReason,
+    /// The point's configured mode (`off` for [`OffReason::ModeOff`]).
+    pub configured_mode: Mode,
+}
+
 /// How a decision ended.
 #[derive(Debug)]
 pub enum Outcome<'s> {
     /// Clef was not asked and nothing was logged.
-    Off(OffReason),
+    Off(Off),
     /// Clef answered; the row is logged.
     Decided(Decision<'s>),
     /// Clef gave no usable answer; the row is logged and the caller applies the fallback.
     NoAnswer(NoAnswer<'s>),
+    /// The configuration is malformed, so Clef was not asked and nothing was logged; the
+    /// caller applies the fallback.
+    Misconfigured(Misconfigured<'s>),
+}
+
+/// A call refused for a malformed account, token or mode.
+#[derive(Debug)]
+pub struct Misconfigured<'s> {
+    /// What is wrong (never holds the token).
+    pub problem: &'s ConfigError,
+    /// What the caller does instead.
+    pub fallback: &'s str,
 }
 
 /// What every call that reached Clef's turn carries, answered or not.
@@ -155,9 +174,6 @@ pub enum AskError {
         /// What is wrong.
         reason: &'static str,
     },
-    /// The thresholds table has no entry for the point.
-    #[error("no thresholds for {0}")]
-    Unconfigured(Point),
     /// The system clock is before 1970.
     #[error("reading the clock")]
     Clock(#[source] SystemTimeError),
@@ -181,21 +197,33 @@ pub fn ask<'s>(
     transport: &impl Transport,
     clock: &impl Clock,
 ) -> Result<Outcome<'s>, AskError> {
-    let rules = setup
-        .thresholds
-        .point(ask.point)
-        .ok_or(AskError::Unconfigured(ask.point))?;
+    let rules = setup.thresholds.point(ask.point);
     let rule = rules.rule(ask.question).ok_or(AskError::Unsupported {
         point: ask.point,
         question: ask.question,
     })?;
     request::check_options(ask.question, ask.options)?;
-    let configured_mode = setup.config.mode(ask.point);
+    let config = match setup.config {
+        Ok(config) => config,
+        Err(problem) => {
+            return Ok(Outcome::Misconfigured(Misconfigured {
+                problem,
+                fallback: rules.fallback(),
+            }));
+        }
+    };
+    let configured_mode = config.mode(ask.point);
+    let off = |reason| {
+        Ok(Outcome::Off(Off {
+            reason,
+            configured_mode,
+        }))
+    };
     if configured_mode == Mode::Off {
-        return Ok(Outcome::Off(OffReason::ModeOff));
+        return off(OffReason::ModeOff);
     }
-    let Some(account) = setup.config.account() else {
-        return Ok(Outcome::Off(OffReason::NoAccount));
+    let Some(account) = config.account() else {
+        return off(OffReason::NoAccount);
     };
     let mode = if configured_mode == Mode::Enforce
         && setup.log.answered(ask.point)? < AUTO_SHADOW_DECISIONS
@@ -211,7 +239,7 @@ pub fn ask<'s>(
         rule,
         account,
     };
-    let (answered, latency_ms) = call.send(setup.config, transport, clock)?;
+    let (answered, latency_ms) = call.send(config, transport, clock)?;
     let stamp = Stamp {
         id: DecisionId::generate(ts_ms),
         ts_ms,

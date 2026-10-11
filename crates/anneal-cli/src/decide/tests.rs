@@ -147,6 +147,86 @@ fn clef_off_exits_3_and_logs_nothing() {
 }
 
 #[test]
+fn the_off_envelope_reports_the_configured_mode_beside_the_reason() {
+    let endpoint = Endpoint(Ok(json!({"probabilities": {"yes": 0.95}})));
+    let mode_off = [
+        CONFIGURED[0],
+        CONFIGURED[1],
+        ("CLAUDE_PLUGIN_OPTION_CLEF_MODE", "enforce,D1=off"),
+    ];
+    let no_account = [("CLAUDE_PLUGIN_OPTION_CLEF_MODE", "enforce")];
+
+    for (vars, reason, configured) in [
+        (&mode_off[..], "mode_off", "off"),
+        (&no_account[..], "no_account", "enforce"),
+    ] {
+        let (code, envelope, _) = decide(&D1, vars, &endpoint);
+
+        assert_eq!(code.ok(), Some(3), "{reason}");
+        assert_eq!(envelope["data"]["reason"], json!(reason));
+        assert_eq!(
+            envelope["data"]["configured_mode"],
+            json!(configured),
+            "{reason}"
+        );
+    }
+}
+
+#[test]
+fn a_malformed_mode_token_or_account_exits_5_with_the_fallback_and_the_reason() {
+    let endpoint = Endpoint(Ok(json!({"probabilities": {"yes": 0.95}})));
+    let bad_token = "bad token\u{7}value";
+    let cases = [
+        (
+            ("CLAUDE_PLUGIN_OPTION_CLEF_MODE", "loud"),
+            "CLAUDE_PLUGIN_OPTION_CLEF_MODE",
+        ),
+        (
+            ("CLAUDE_PLUGIN_OPTION_CF_API_TOKEN", bad_token),
+            "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN",
+        ),
+        (
+            ("CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID", "acct/../x"),
+            "CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID",
+        ),
+    ];
+    for (bad, var) in cases {
+        let vars: Vec<(&str, &str)> = CONFIGURED
+            .into_iter()
+            .filter(|(name, _)| *name != bad.0)
+            .chain([bad])
+            .collect();
+
+        let (code, envelope, log) = decide(&D1, &vars, &endpoint);
+
+        assert_eq!(code.ok(), Some(5), "{var}: {envelope}");
+        let data = &envelope["data"];
+        assert_eq!(data["fallback"], json!("ask"), "{var}");
+        assert_eq!(data["error"], json!("misconfigured"), "{var}");
+        assert_eq!(data["unreachable"], json!(false), "{var}");
+        let reason = data["reason"].as_str().unwrap_or_default();
+        assert!(reason.contains(var), "{var}: {reason}");
+        assert_eq!(envelope["findings"][0]["key"], json!("decide/no-answer:D1"));
+        assert!(!envelope.to_string().contains("bad token"), "{envelope}");
+        assert_eq!(log, "", "{var}: nothing is asked, so nothing is logged");
+    }
+}
+
+#[test]
+fn a_usage_error_still_wins_over_a_malformed_configuration() {
+    let endpoint = Endpoint(Ok(json!({})));
+    let words = ["--point", "D1", "--question", "choice", "--state", "{}"];
+
+    let (code, _, _) = decide(
+        &words,
+        &[("CLAUDE_PLUGIN_OPTION_CLEF_MODE", "loud")],
+        &endpoint,
+    );
+
+    assert_eq!(code.map_err(|error| error.code().value()), Err(2));
+}
+
+#[test]
 fn a_state_that_is_not_an_object_is_a_usage_error() {
     let endpoint = Endpoint(Ok(json!({})));
     let words = ["--point", "D1", "--question", "noul", "--state", "[1]"];

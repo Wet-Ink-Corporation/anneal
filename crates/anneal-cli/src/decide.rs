@@ -5,7 +5,9 @@
 //! [--thresholds <file>]` exits 0 with the action when Clef answered, 3 when Clef is off for
 //! the point (no account, or mode `off`; nothing is asked or logged) and 5 when Clef gave no
 //! usable answer (unreachable, timed out or a bad response; the row is logged and the
-//! envelope names the point's fallback). `decide label <id> <outcome>` appends an outcome row.
+//! envelope names the point's fallback) or the configuration is malformed (nothing is asked
+//! or logged; the envelope names the fallback and the problem). `decide label <id> <outcome>`
+//! appends an outcome row.
 //! See `docs/decide.md`.
 //!
 //! - [`point`]: the decision points and question types.
@@ -47,7 +49,7 @@ use crate::exit_codes::{self, Code};
 use crate::paths;
 use client::{Ask, AskError, Setup};
 use clock::Clock;
-use config::{ClefConfig, ConfigError};
+use config::ClefConfig;
 use id::{DecisionId, InvalidLabel, OutcomeLabel};
 use log::{DecisionLog, LogError};
 use point::{Point, Question};
@@ -103,15 +105,15 @@ pub struct LabelArgs {
 /// What `anneal decide` reads from outside: the working directory, the environment, the
 /// transport to Workers AI and the clock.
 #[derive(Debug)]
-pub struct DecideEnv<'a, L, T, C> {
+pub(crate) struct DecideEnv<'a, L, T, C> {
     /// The working directory, for a relative `--thresholds`.
-    pub cwd: &'a Path,
+    pub(crate) cwd: &'a Path,
     /// Reads one environment variable.
-    pub lookup: L,
+    pub(crate) lookup: L,
     /// The port to Workers AI.
-    pub transport: &'a T,
+    pub(crate) transport: &'a T,
     /// The clocks.
-    pub clock: &'a C,
+    pub(crate) clock: &'a C,
 }
 
 /// Why `anneal decide` could not produce a result.
@@ -126,9 +128,6 @@ pub enum DecideError {
     /// The question could not be asked or recorded.
     #[error(transparent)]
     Ask(#[from] AskError),
-    /// The plugin configuration could not be read.
-    #[error(transparent)]
-    Config(#[from] ConfigError),
     /// The thresholds file could not be read.
     #[error("reading the thresholds file")]
     ThresholdsFile(#[source] BaselineError),
@@ -166,7 +165,6 @@ impl DecideError {
                 exit_codes::USAGE
             }
             Self::Ask(_)
-            | Self::Config(_)
             | Self::ThresholdsFile(_)
             | Self::ThresholdsMissing { .. }
             | Self::Thresholds { .. }
@@ -201,7 +199,8 @@ where
     };
     let state = CompactState::parse(state).map_err(DecideError::from)?;
     let thresholds = load_thresholds(args.thresholds.as_deref(), env.cwd, &env.lookup)?;
-    let config = ClefConfig::from_env(&env.lookup).map_err(DecideError::from)?;
+    // A malformed configuration is not an internal error: the point falls back (exit 5).
+    let config = ClefConfig::from_env(&env.lookup);
     let ask = Ask {
         point,
         question,
@@ -210,7 +209,7 @@ where
     };
     let setup = Setup {
         thresholds: &thresholds,
-        config: &config,
+        config: config.as_ref(),
         log: &log,
     };
     let outcome = client::ask(&ask, &setup, env.transport, env.clock).map_err(DecideError::from)?;
