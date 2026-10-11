@@ -99,7 +99,7 @@ fn a_plain_value_with_colon_space_is_a_frontmatter_error() -> TestResult {
     assert!(
         errors
             .iter()
-            .any(|f| f.at.file.ends_with("build/SKILL.md") && f.at.line == 3),
+            .any(|f| Path::new(&f.at.file).ends_with("build/SKILL.md") && f.at.line == 3),
         "build's `description: Use when: ...` is refused at line 3: {errors:#?}"
     );
     Ok(())
@@ -116,7 +116,7 @@ fn an_oversized_skill_gets_one_budget_error_and_no_other_check() -> TestResult {
     let plan: Vec<&LintFinding> = outcome
         .findings
         .iter()
-        .filter(|f| f.at.file.ends_with("plan/SKILL.md"))
+        .filter(|f| Path::new(&f.at.file).ends_with("plan/SKILL.md"))
         .collect();
     assert_eq!(plan.len(), 1, "only the budget finding: {plan:#?}");
     assert_eq!(
