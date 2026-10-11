@@ -68,6 +68,16 @@ The context is, in order:
 3. **Notes**, one line each, for anything that failed (unreadable input, no working directory,
    the sessions file).
 
+An empty (zero-length) ledger file counts as no ledger: opening it would give it the schema.
+
+**Time budget.** The entry's `timeout` is 15 s, and when it runs out Claude Code drops the whole
+output, index included. So the live-state lookup is bounded well under it: git may take 2 s to
+find the ledger (`anneal ledger` allows 10 s), and each ledger statement waits at most 0.5 s for
+another process's lock (the store's default is 10 s per statement). Opening the ledger and
+reading its tail run about ten statements, so even a stuck writer costs about 5 s, and the worst
+case is about 7 s plus reading stdin and writing the sessions file. A lookup that runs out of
+time becomes the one-line "could not be read" note, and the index still arrives.
+
 What each session was shown is kept beside the ledger in `bootstrap-sessions.json`: a hash of
 the session id and a hash of the live state, for the 64 most recent sessions. The same session
 with an unchanged ledger gets the index alone. Claude Code gives a cleared conversation a new

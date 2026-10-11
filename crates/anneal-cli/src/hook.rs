@@ -5,7 +5,7 @@
 //! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2.
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
-pub mod bootstrap;
+pub(crate) mod bootstrap;
 
 use std::error::Error;
 use std::ffi::OsString;

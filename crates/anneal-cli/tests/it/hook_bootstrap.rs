@@ -139,20 +139,31 @@ fn live_state_comes_last_and_lists_the_ledger_tail() -> TestResult {
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn clearing_reinjects_the_index_but_not_an_unchanged_state() -> TestResult {
+    // Kept under its original name; it checks the same thing as the test below. A real `/clear`
+    // gets a new session id from Claude Code, so it does see the live state again.
+    same_session_unchanged_state_gets_the_index_alone("clear")
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn the_same_session_with_an_unchanged_ledger_gets_the_index_but_not_the_live_state() -> TestResult {
+    same_session_unchanged_state_gets_the_index_alone("compact")
+}
+
+/// A first start in session `s1` shows the live state; a second start of `source` in the same
+/// session, with the ledger unchanged, shows the index and no live state.
+fn same_session_unchanged_state_gets_the_index_alone(source: &str) -> TestResult {
     let scratch = Scratch::new()?;
     scratch.append_task_done("T1")?;
     let first = scratch.context("s1", "startup")?;
     assert!(first.contains(LIVE_STATE), "first start: {first}");
 
-    let cleared = scratch.context("s1", "clear")?;
+    let again = scratch.context("s1", source)?;
 
+    assert!(again.starts_with(INDEX_START), "the index again: {again}");
     assert!(
-        cleared.starts_with(INDEX_START),
-        "the index again: {cleared}"
-    );
-    assert!(
-        !cleared.contains(LIVE_STATE),
-        "an unchanged state is not injected again: {cleared}"
+        !again.contains(LIVE_STATE),
+        "an unchanged state is not injected again: {again}"
     );
     Ok(())
 }

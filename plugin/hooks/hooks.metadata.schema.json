@@ -7,8 +7,8 @@
   "additionalProperties": false,
   "required": ["$schema", "version", "hooks"],
   "properties": {
-    "$schema": { "const": "./hooks.metadata.schema.json" },
-    "version": { "const": 1, "description": "Format version of this file." },
+    "$schema": { "type": "string", "const": "./hooks.metadata.schema.json" },
+    "version": { "type": "integer", "const": 1, "description": "Format version of this file." },
     "hooks": {
       "type": "array",
       "items": { "$ref": "#/$defs/hook" }
@@ -35,6 +35,7 @@
           "description": "Stable id: the hooks.json entry runs `anneal hook <id>`. Skills may name it as a MUST's enforcer."
         },
         "event": {
+          "type": "string",
           "enum": [
             "SessionStart",
             "SessionEnd",
@@ -61,10 +62,12 @@
           "description": "sha256: and the first 16 hex digits of SHA-256 over `<event>\\n<matcher>\\n<the hook object as compact JSON, keys sorted>`. Changes whenever the entry does, so the row is re-read."
         },
         "on_failure": {
+          "type": "string",
           "enum": ["continue", "block"],
           "description": "The entry's onFailure: continue (fail open) or block (a guard fails closed)."
         },
         "role": {
+          "type": "string",
           "enum": ["scaffolding", "guard"],
           "description": "scaffolding helps a model generation and is re-tested, then removed, as models improve; guard enforces a gate."
         },

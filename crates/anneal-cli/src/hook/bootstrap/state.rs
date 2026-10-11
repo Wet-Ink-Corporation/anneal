@@ -5,12 +5,17 @@
 //! [`MAX_SESSIONS`] of them.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anneal_ledger::{Filter, Recorded, Store, StoreError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::baseline::{self, BaselineError};
+
+/// How long each ledger statement waits for another process's lock (the default is 10 s). The
+/// open and the tail run about ten statements, so a stuck writer costs at most about 5 s.
+const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// How many of the newest ledger events the live state shows.
 pub(crate) const TAIL_EVENTS: usize = 5;
@@ -31,15 +36,21 @@ const FORMAT_VERSION: u32 = 1;
 const HASH_HEX_DIGITS: usize = 16;
 
 /// The live state section for the ledger at `store`: its newest events, oldest first. `None`
-/// when there is no ledger file or it holds no events; the bootstrap never creates a ledger.
+/// when there is no ledger file, the file is empty (opening it would give it the schema), or it
+/// holds no events; the bootstrap never creates a ledger.
 ///
 /// # Errors
 /// [`StoreError`] when the ledger cannot be opened or read.
 pub(crate) fn live_state(store: &Path) -> Result<Option<String>, StoreError> {
-    if !store.is_file() {
+    // A file that cannot be stat'ed is treated like a missing one, as `Path::is_file` does.
+    let is_ledger = store
+        .metadata()
+        .is_ok_and(|meta| meta.is_file() && meta.len() > 0);
+    if !is_ledger {
         return Ok(None);
     }
-    let events = Store::open(store)?.tail(&Filter::default(), TAIL_EVENTS)?;
+    let events = Store::open_with_busy_timeout(store, BUSY_TIMEOUT)?
+        .tail(&Filter::default(), TAIL_EVENTS)?;
     if events.is_empty() {
         return Ok(None);
     }
@@ -235,7 +246,20 @@ fn short_hash(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SESSIONS, Sessions};
+    use super::{MAX_SESSIONS, Sessions, live_state};
+
+    #[test]
+    fn a_zero_length_ledger_file_is_no_ledger_and_is_left_untouched() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let store = dir.path().join("ledger.sqlite3");
+        std::fs::write(&store, b"").expect("an empty file");
+
+        let state = live_state(&store).expect("no error for an empty file");
+
+        assert_eq!(state, None, "no live state");
+        let len = std::fs::metadata(&store).expect("still there").len();
+        assert_eq!(len, 0, "the bootstrap does not give it a schema");
+    }
 
     #[test]
     fn a_session_that_saw_this_state_is_current() {

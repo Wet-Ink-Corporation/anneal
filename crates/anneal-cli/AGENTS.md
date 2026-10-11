@@ -34,7 +34,7 @@ Unit tests beside the code for parsing and output; integration tests in `tests/i
 
 ## Do not
 - Do not print with `println!`; write through a locked handle.
-- Do not open the ledger anywhere but through `anneal_ledger::Store`, and do not resolve its path anywhere but `paths::ledger_store`.
+- Do not open the ledger anywhere but through `anneal_ledger::Store`, and do not resolve its path anywhere but `paths::ledger_store` (or `paths::ledger_store_within`, its variant with a caller's git timeout).
 
 ## Decisions
 | Date | Decision | Rule | Decided by |
@@ -54,5 +54,7 @@ Unit tests beside the code for parsing and output; integration tests in `tests/i
 | 2026-10-11 | Tier 1 scores a skill's name, trigger (description before "Do NOT use for") and `when_to_use`, with a light stemmer; a tie is a miss | n/a (design) | implementer (#15, default, two-way) |
 | 2026-10-11 | `anneal hook` is a top-level command (`CommandName::Hook`, exit table `hook bootstrap: 0`) that fails open, also on a failed stdout flush (`cli::OnFailure::FailOpen`) | OUT-06 | implementer (#13), two-way |
 | 2026-10-11 | The bootstrap index is Rust (`hook::bootstrap::index`) with a generated, drift-tested copy in `docs/bootstrap-index.md` for `lint skills --index` | ARC-05 | implementer (#13), two-way |
-| 2026-10-11 | What each session was shown is kept as hashes in `bootstrap-sessions.json` beside the ledger, at most 64 sessions, keyed by Claude Code's session id | H-13 | implementer (#13), two-way |
-| 2026-10-11 | No Claude Code version warning: hooks receive no version (checked against 2.1.296), and `CLAUDE_CODE_VERSION`, where present, is set by the remote runner and was seen stale | OUT-01 | implementer (#13), open for a human |
+| 2026-10-11 | What each session was shown is kept as hashes in `bootstrap-sessions.json` beside the ledger, at most 64 sessions, keyed by Claude Code's session id | H-13 | implementer (#13), weigh-in wi-80dac4 (default, two-way) |
+| 2026-10-11 | After `/clear` the live state is re-injected: Claude Code gives the cleared conversation a new session id, and its context no longer holds the state | n/a (design) | weigh-in wi-6f8350 (default, two-way) |
+| 2026-10-11 | The bootstrap bounds its live-state lookup (git 2 s, 0.5 s per ledger statement, about 7 s worst case) under the hook's 15 s timeout instead of raising the timeout: with the 10 s defaults a stuck writer could cost 10 s per statement, about 100 s | H-13 | implementer (#13 review round 1), two-way |
+| 2026-10-11 | No Claude Code version warning: hooks receive no version (checked against 2.1.296), and `CLAUDE_CODE_VERSION`, where present, is set by the remote runner and was seen stale | OUT-01 | weigh-in wi-319ca0 (default, two-way) |

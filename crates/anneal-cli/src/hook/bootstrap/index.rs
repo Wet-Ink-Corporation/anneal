@@ -8,9 +8,6 @@
 
 use std::fmt::{self, Display, Formatter};
 
-/// Path of the generated copy of the index, relative to the repository root.
-pub const DOC_PATH: &str = "docs/bootstrap-index.md";
-
 /// Each entry skill and the trigger that should load it, in `ENTRY_SKILLS` order.
 const ENTRY_TRIGGERS: [(&str, &str); 7] = [
     (
@@ -80,9 +77,10 @@ The human runs these; do not start them unasked:
 
 ";
 
-/// The bootstrap index, as injected at every session start and committed as [`DOC_PATH`].
+/// The bootstrap index, as injected at every session start and committed as
+/// `docs/bootstrap-index.md`.
 #[must_use]
-pub fn index() -> String {
+pub(crate) fn index() -> String {
     format!(
         "{PREAMBLE}{}{COMMANDS_HEADING}{}",
         Bullets(&ENTRY_TRIGGERS),
@@ -104,7 +102,10 @@ impl Display for Bullets<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DOC_PATH, index};
+    use super::index;
+
+    /// Path of the generated copy of the index, relative to the repository root.
+    const DOC_PATH: &str = "docs/bootstrap-index.md";
     use crate::lint::skills::checker::ENTRY_SKILLS;
     use std::path::Path;
 

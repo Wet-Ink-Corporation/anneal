@@ -5,12 +5,13 @@
 //! state from the ledger when it changed for this session (volatile, last). Every failure
 //! becomes a one-line note in that context: the hook fails open.
 
-pub mod index;
+pub(crate) mod index;
 mod state;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,11 @@ use state::Sessions;
 
 /// The most stdin a bootstrap reads; Claude Code's `SessionStart` input is far smaller (H-13).
 pub(crate) const MAX_INPUT_BYTES: u64 = 64 * 1024;
+
+/// How long git may take to find the ledger (`anneal ledger` allows `paths::GIT_TIMEOUT`, 10 s).
+/// With the ledger's short busy timeout this keeps the hook well under its 15 s `timeout`, so
+/// the index always arrives; see `docs/hooks.md`.
+const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The fields of Claude Code's `SessionStart` input the bootstrap uses; the rest are ignored, so
 /// fields a newer Claude Code adds do not break it.
@@ -146,7 +152,7 @@ fn fresh_state(
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> (Option<String>, Option<String>) {
-    let store = match paths::ledger_store(None, lookup, cwd) {
+    let store = match paths::ledger_store_within(None, lookup, cwd, GIT_TIMEOUT) {
         Ok(location) => location.path,
         Err(error) => return (Some(state::unavailable(&reason(&error))), None),
     };

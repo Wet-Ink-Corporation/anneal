@@ -5,7 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use anneal_cli::hook::HookName;
 use serde::{Deserialize, Serialize};
@@ -187,6 +189,15 @@ fn fingerprint(event: HookEvent, matcher: &str, hook: &Value) -> Result<String, 
 
 /// Every hooks.json entry, checked to be exec form with a timeout and a failure policy.
 fn entries() -> Result<Vec<Entry>, Box<dyn Error>> {
+    Ok(declared()?.into_iter().map(|(entry, _)| entry).collect())
+}
+
+/// A hooks.json entry and the full `args` it passes to the launcher.
+type Declared = (Entry, Vec<String>);
+
+/// Every hooks.json entry with the full `args` it passes to the launcher, checked to be exec
+/// form with a timeout and a failure policy.
+fn declared() -> Result<Vec<Declared>, Box<dyn Error>> {
     let file: HooksFile = serde_json::from_value(read_json("hooks.json")?)?;
     let mut entries = Vec::new();
     for (event, groups) in file.hooks {
@@ -201,13 +212,14 @@ fn entries() -> Result<Vec<Entry>, Box<dyn Error>> {
                     return Err(format!("{raw}: args are `hook <id> ...`").into());
                 };
                 assert_eq!(verb, "hook", "{raw}: runs `anneal hook <id>`");
-                entries.push(Entry {
+                let entry = Entry {
                     id: id.clone(),
                     event,
                     fingerprint: fingerprint(event, &matcher, raw)?,
                     matcher: matcher.clone(),
                     on_failure: hook.on_failure,
-                });
+                };
+                entries.push((entry, hook.args));
             }
         }
     }
@@ -216,6 +228,27 @@ fn entries() -> Result<Vec<Entry>, Box<dyn Error>> {
 
 fn metadata() -> Result<Metadata, Box<dyn Error>> {
     Ok(serde_json::from_value(read_json("hooks.metadata.json")?)?)
+}
+
+/// Runs `anneal <args>` as Claude Code would run a hook entry: `{}` on stdin, in a scratch
+/// directory, with the ledger in that directory. Returns the exit code.
+fn run_hook_args(args: &[String]) -> Result<Option<i32>, Box<dyn Error>> {
+    let scratch = tempfile::tempdir()?;
+    let mut child = anneal_in(scratch.path())
+        .args(args)
+        .env("ANNEAL_STORE", scratch.path().join("ledger.sqlite3"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().ok_or("stdin is piped")?;
+    match stdin.write_all(b"{}") {
+        // A usage error exits before reading stdin; the exit code below still reports it.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        written => written?,
+    }
+    drop(stdin);
+    Ok(child.wait_with_output()?.status.code())
 }
 
 /// The keys of `value`, an object.
@@ -363,6 +396,37 @@ fn every_metadata_id_is_an_anneal_hook_the_binary_runs() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn every_hooks_json_entry_runs_with_its_exact_args_and_exits_0() -> TestResult {
+    for (entry, args) in declared()? {
+        assert_eq!(
+            run_hook_args(&args)?,
+            Some(0),
+            "{}: `anneal {}` exits 0 (a usage error would exit 2, a block)",
+            entry.id,
+            args.join(" ")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn an_entry_with_an_argument_the_binary_rejects_would_not_exit_0() -> TestResult {
+    // The control for the test above: running the exact args does catch a bad argument.
+    let (entry, mut args) = declared()?
+        .into_iter()
+        .next()
+        .ok_or("hooks.json declares a hook")?;
+    args.push("--no-such-flag".to_owned());
+
+    let code = run_hook_args(&args)?;
+
+    assert_eq!(code, Some(2), "{}: a usage error exits 2", entry.id);
+    Ok(())
+}
+
+#[test]
 fn the_schema_fields_agree_with_the_metadata_dto() -> TestResult {
     let schema = read_json("hooks.metadata.schema.json")?;
     let top = keys(&serde_json::to_value(Metadata {
@@ -398,6 +462,58 @@ fn the_schema_fields_agree_with_the_metadata_dto() -> TestResult {
             "{pointer}"
         );
     }
+    Ok(())
+}
+
+/// The JSON Schema `type` of a serialized value.
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(n) if n.is_u64() || n.is_i64() => "integer",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+#[test]
+fn the_schema_property_types_agree_with_the_metadata_dto() -> TestResult {
+    let schema = read_json("hooks.metadata.schema.json")?;
+    let sample = serde_json::to_value(Metadata {
+        schema: SCHEMA_REF.to_owned(),
+        version: 1,
+        hooks: vec![sample_row()],
+    })?;
+    let row = sample.pointer("/hooks/0").ok_or("a sample row")?;
+    let levels = [(&sample, "/properties"), (row, "/$defs/hook/properties")];
+    for (value, properties) in levels {
+        for (field, field_value) in value.as_object().ok_or("an object")? {
+            let pointer = format!("{properties}/{field}/type");
+            assert_eq!(
+                schema.pointer(&pointer),
+                Some(&Value::from(json_type(field_value))),
+                "{pointer} matches the DTO's {field}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_schema_constants_agree_with_the_metadata_dto() -> TestResult {
+    let schema = read_json("hooks.metadata.schema.json")?;
+    assert_eq!(
+        schema.pointer("/properties/version/const"),
+        Some(&Value::from(metadata()?.version)),
+        "the schema pins the format version the metadata carries"
+    );
+    assert_eq!(
+        schema.pointer("/$defs/hook/properties/source/minLength"),
+        Some(&Value::from(1)),
+        "source must be non-empty, as the DTO check requires"
+    );
     Ok(())
 }
 

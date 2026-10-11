@@ -80,7 +80,12 @@ pub enum PathError {
 /// for another reason; [`PathError::Git`] or [`PathError::GitTimeout`] when git cannot run;
 /// [`PathError::NonUtf8Output`] for a path that is not UTF-8.
 pub fn git_common_dir(cwd: &Path) -> Result<PathBuf, PathError> {
-    let output = run_git(cwd, &["rev-parse", "--git-common-dir"], GIT_TIMEOUT)?;
+    git_common_dir_within(cwd, GIT_TIMEOUT)
+}
+
+/// [`git_common_dir`] with git killed after `timeout`.
+fn git_common_dir_within(cwd: &Path, timeout: Duration) -> Result<PathBuf, PathError> {
+    let output = run_git(cwd, &["rev-parse", "--git-common-dir"], timeout)?;
     if !output.status.success() {
         return Err(git_failure(cwd, &output.stderr));
     }
@@ -257,6 +262,20 @@ pub fn ledger_store(
     lookup: impl Fn(&str) -> Option<OsString>,
     cwd: &Path,
 ) -> Result<StoreLocation, PathError> {
+    ledger_store_within(flag, lookup, cwd, GIT_TIMEOUT)
+}
+
+/// [`ledger_store`], with git given `git_timeout` instead of [`GIT_TIMEOUT`]: for callers with a
+/// deadline, such as a hook.
+///
+/// # Errors
+/// As [`ledger_store`]; [`PathError::GitTimeout`] carries `git_timeout`.
+pub fn ledger_store_within(
+    flag: Option<&Path>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    cwd: &Path,
+    git_timeout: Duration,
+) -> Result<StoreLocation, PathError> {
     let located = |path: PathBuf, source| StoreLocation { path, source };
     if let Some(path) = flag {
         return Ok(located(cwd.join(path), StoreSource::Flag));
@@ -264,7 +283,7 @@ pub fn ledger_store(
     if let Some(path) = lookup(ANNEAL_STORE_VAR).filter(|value| !value.is_empty()) {
         return Ok(located(cwd.join(path), StoreSource::Env));
     }
-    match git_common_dir(cwd) {
+    match git_common_dir_within(cwd, git_timeout) {
         Ok(common) => Ok(located(
             common.join("anneal").join(LEDGER_FILE),
             StoreSource::GitCommonDir,
