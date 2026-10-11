@@ -35,14 +35,20 @@ as models improve. Its JSON Schema is `plugin/hooks/hooks.metadata.schema.json`.
 `onFailure` and a timeout, every entry has exactly one row (same id, event, matcher, fingerprint
 and failure policy) and every row an entry, every id is an `anneal hook` subcommand the binary
 accepts, the metadata parses into a strict DTO (no unknown or missing field), and the schema's
-required fields, properties, enums and patterns agree with that DTO. When a test reports a new
-fingerprint after you change an entry, copy it into the row.
+required fields, properties, enums and patterns agree with that DTO. It also checks that an entry
+has `onFailure: "block"` exactly when its arguments include `--fail-closed`. When a test reports
+a new fingerprint after you change an entry, copy it into the row.
 
-## Failing open
+## Failing open, and guards failing closed
 
 Hooks fail open. `anneal hook <id>` notes its failures in its output, or in one `ERROR` line on
 stderr when stdout cannot be written, and exits 0. Only a usage error exits 2, which is why the
 manifest test runs every entry's arguments through the binary.
+
+Guards fail closed. A guard (`hook guard`, or any hook passed `--fail-closed`) denies what it
+cannot judge. When its output cannot be written it exits 2 with one `ERROR` line, which Claude
+Code reads as "block". Its entry passes `--fail-closed` and sets `onFailure: "block"`, so a crash
+or a timeout blocks too.
 
 With no binary at all, the launcher exits 0 for a hook (2 for one passed `--fail-closed`). For
 `hook bootstrap` it also prints an install hint as `SessionStart` output, so the session starts
@@ -88,3 +94,20 @@ Not yet in the live state: the phase and standing orders (nothing records them y
 gates (the ledger records `gate_blocked` but not a gate reopening; blocked gates show in the
 tail). Claude Code does not pass its version to hooks, so the bootstrap cannot warn about
 versions older than 2.1.295.
+
+## `guard` (PreToolUse)
+
+Matcher `Bash`, `timeout` 5 s, `onFailure: "block"`, arguments `hook guard --fail-closed`. It
+reads Claude Code's `PreToolUse` input on stdin (at most 1 MiB; it uses `tool_name`,
+`tool_input.command`, `session_id` and `cwd`), lexes the command the way a shell does, and
+checks it against a deterministic denylist: force pushes to protected branches, `rm -rf` outside
+the temporary and scratch directories, `git add -f`, and Bash writes to lint or hook config.
+
+An allowed command gets no output. A denied one gets
+`{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+"permissionDecisionReason": "ERROR guard <rule>: <reason>"}}` and a `gate_blocked` event in the
+ledger (`point` is `guard.<rule>`), recorded within the hook's budget (git 1 s, 500 ms per
+ledger statement). Unreadable input, and commands it cannot read or model, are denied. What
+the denylist does not decide goes to the extension point for Clef D1 (#30), which allows it for
+now. The denylist, the bypass handling and the extension point are documented in
+`docs/guard.md`.

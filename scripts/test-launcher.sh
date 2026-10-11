@@ -1,6 +1,7 @@
 #!/bin/sh
 # Smoke test for plugin/libexec/anneal. Takes the path of a built anneal binary.
-#  1. A build in libexec/<target>/ runs with nothing on PATH.
+#  1. A build in libexec/<target>/ runs with nothing on PATH, and `hook guard --fail-closed`
+#     through it denies a force push with a PreToolUse deny decision.
 #  2. With no build, the launcher falls back to an anneal on PATH.
 #  3. With neither, a hook exits 0 (fail open), `hook bootstrap` also prints the install hint as
 #     SessionStart output, a --fail-closed hook exits 2 with one ERROR line, and a plain call
@@ -34,6 +35,12 @@ done
 mkdir -p "$work/plugin/libexec/$target"
 cp "$built" "$work/plugin/libexec/$target/anneal"
 PATH="$empty" "$sh_bin" "$launcher" --help | grep -q '^anneal:' || fail "--help through libexec/$target"
+# The guard as hooks.json runs it; the ledger is named so no git is needed.
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push -f origin main"}}' \
+  | PATH="$empty" ANNEAL_STORE="$work/ledger.sqlite3" "$sh_bin" "$launcher" hook guard --fail-closed >"$work/deny" \
+  || fail "hook guard through libexec/$target must exit 0 with its decision"
+grep -q '"permissionDecision":"deny","permissionDecisionReason":"ERROR guard force-push: ' "$work/deny" \
+  || fail "hook guard through libexec/$target must deny a force push to main"
 rm -r "$work/plugin/libexec/$target"
 
 # 2. No build: falls back to anneal on PATH.

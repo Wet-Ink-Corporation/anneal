@@ -148,8 +148,15 @@ pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(5, "Clef unreachable");
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");
 /// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted.
 pub const EVAL_INVALID: Code = Code::new(2, "invalid fixtures or skills");
-/// `hook`: the hook ran, or failed open with its failure noted in its output or on stderr.
-pub const HOOK_DONE: Code = Code::new(0, "ran, or failed open with the failure noted");
+/// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
+/// failure noted in its output or on stderr.
+pub const HOOK_DONE: Code = Code::new(
+    0,
+    "ran (a guard's deny is on stdout), or failed open with the failure noted",
+);
+/// `hook`: a guard (or a hook passed `--fail-closed`) could not deliver its output, so it
+/// failed closed. Claude Code reads 2 as "block".
+pub const HOOK_BLOCKED: Code = Code::new(2, "a guard failed closed: its output was not written");
 
 impl CommandCodes {
     /// The exit-code table of `command`.
@@ -188,7 +195,7 @@ impl CommandCodes {
             CommandName::Decide => ("", &[OK, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
-            CommandName::Hook => ("bootstrap", &[HOOK_DONE]),
+            CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };
         Self {
             command,

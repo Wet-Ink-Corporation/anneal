@@ -66,6 +66,10 @@ be written, in one `ERROR` line on stderr) and still exits 0. Its usage errors s
 Claude Code reads as \"block\" on events that can block, so a test runs every `hooks.json` entry's
 arguments through the binary.
 
+A guard (`anneal hook guard`, or any hook passed `--fail-closed`) fails closed instead. It denies
+what it cannot judge with a deny decision on stdout and exit 0, and when that decision cannot be
+written it exits 2 with one `ERROR` line on stderr, so Claude Code blocks the tool call.
+
 ";
 
 /// One indented `code meaning` line per code.
