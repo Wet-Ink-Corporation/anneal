@@ -92,7 +92,7 @@ pub enum Command {
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
-/// the future syntax (`anneal ledger append ...`) gets 64, not a usage error.
+/// the future syntax (`anneal task done ...`) gets 64, not a usage error.
 #[derive(Debug, Args)]
 pub struct Stub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -170,9 +170,16 @@ where
 }
 
 /// Runs one command. Each real command gets its own arm; stubs share the last one.
+///
+/// The process's working directory and environment are read here, at the edge, and passed
+/// in; only the commands that use them read them, so `--help` and the stubs still work in a
+/// directory that no longer exists.
 fn dispatch<O: Write>(command: &Command, out: &mut O) -> Result<Code, CliError> {
     match command {
-        Command::Ledger(args) => ledger::run(args, out),
+        Command::Ledger(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            ledger::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Lint(args) => lint::run(args, out),
         Command::Task(_)
         | Command::Plan(_)

@@ -4,6 +4,7 @@
 //! this module parses the command line, resolves the store ([`paths::ledger_store`]) and
 //! writes the result. A bad event exits 2 with an envelope and nothing is written.
 
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -100,10 +101,14 @@ impl FilterArgs {
     }
 }
 
-/// Runs `anneal ledger <action>` in the process's working directory and environment.
-pub(crate) fn run<O: Write>(args: &LedgerArgs, out: &mut O) -> Result<Code, CliError> {
-    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-    let locate = || paths::ledger_store(args.store.as_deref(), |var| std::env::var_os(var), &cwd);
+/// Runs `anneal ledger <action>` in `cwd`, reading environment variables through `lookup`.
+pub(crate) fn run<O: Write>(
+    args: &LedgerArgs,
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    out: &mut O,
+) -> Result<Code, CliError> {
+    let locate = || paths::ledger_store(args.store.as_deref(), &lookup, cwd);
     match &args.action {
         LedgerAction::Append(append_args) => append(append_args, locate, out),
         LedgerAction::Query(filter) => {

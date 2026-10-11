@@ -11,14 +11,20 @@
 //! [`Store::open`] therefore never calls `SqliteEventStore::open` on the ledger. It opens its
 //! own connection and, for a new file, copies the schema happenstance builds in a template on
 //! the local temporary disk, inside one `BEGIN IMMEDIATE`, so two processes creating the same
-//! ledger cannot both write a schema.
+//! ledger cannot both write a schema. A file already in WAL is refused, not converted.
+//!
+//! # Refused files
+//!
+//! Opening only reads until the file is known to be a ledger this build reads, or an empty
+//! database. A ledger stamped by a newer build ([`OpenError::NewerSchema`]), a file in WAL
+//! ([`OpenError::JournalMode`]) and a database with tables that is not a ledger
+//! ([`OpenError::NotALedger`]) are refused and left as they were.
 //!
 //! # Schema version
 //!
 //! The ledger's schema version is `PRAGMA user_version` (1: happenstance 0.3.2's schema under
 //! TRUNCATE); happenstance keeps its own counter in `store_meta`. A new ledger is stamped in
-//! the transaction that copies its schema. A ledger stamped by a newer build is refused and
-//! left untouched.
+//! the transaction that copies its schema.
 //!
 //! # Concurrency
 //!
@@ -58,6 +64,10 @@ pub enum OpenError {
         /// The mode SQLite reported.
         found: String,
     },
+    /// The file is a SQLite database with tables, but not an anneal ledger. It is left as it
+    /// is rather than given the ledger's schema.
+    #[error("the database is not an anneal ledger; it was left unchanged")]
+    NotALedger,
     /// The ledger was stamped by a newer build.
     #[error(
         "the ledger has schema {found}, newer than this anneal reads ({supported}); upgrade anneal"
@@ -74,12 +84,21 @@ pub enum OpenError {
         /// The version in the file.
         found: i64,
     },
-    /// The temporary directory for the schema template could not be created.
-    #[error("creating a temporary directory for the schema template")]
+    /// The temporary directory for the schema template could not be created or removed.
+    #[error("creating or removing the schema template's temporary directory")]
     TempDir(#[source] std::io::Error),
     /// happenstance could not build the schema template.
     #[error("building happenstance's schema template")]
     Template(#[source] SqliteEventStoreError),
+    /// The schema template's path is not UTF-8, which SQLite's `ATTACH` needs.
+    #[error("the schema template's path {} is not UTF-8", path.display())]
+    TemplatePath {
+        /// The template file.
+        path: PathBuf,
+    },
+    /// happenstance built a schema template with nothing in it.
+    #[error("happenstance's schema template is empty")]
+    EmptyTemplate,
     /// happenstance refused the ledger's connection.
     #[error("happenstance refused the ledger")]
     Store(#[source] SqliteEventStoreError),
@@ -100,6 +119,9 @@ pub enum OpenError {
 /// Why a ledger operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    /// Called inside a tokio runtime, where driving the store's own runtime would panic.
+    #[error("the ledger is synchronous and was called inside an async runtime")]
+    InsideRuntime,
     /// The ledger could not be opened.
     #[error("opening the ledger {}", path.display())]
     Open {
@@ -130,8 +152,8 @@ pub enum StoreError {
         #[source]
         source: serde_json::Error,
     },
-    /// An event type name was refused by the store. Registered names are valid store types
-    /// (tested), so this means the registry and the store disagree.
+    /// An event type name was refused by the store. Registered names are valid store types,
+    /// so this means the registry and the store disagree.
     #[error("the store refused the event type")]
     EventType(#[source] InvalidEventType),
     /// The filter could not be turned into a store query.
@@ -211,6 +233,18 @@ pub struct Recorded {
 }
 
 /// An open ledger.
+///
+/// # Synchronous only
+///
+/// A `Store` drives happenstance's async API on its own current-thread tokio runtime, so it is
+/// used from threads that have no tokio runtime context. Inside one (an async task, but also
+/// `spawn_blocking` or `block_in_place`), [`Store::open`] and every method return
+/// [`StoreError::InsideRuntime`] instead of panicking in tokio. Async code runs the ledger on a
+/// plain `std::thread`.
+///
+/// Dropping a `Store` shuts its runtime down. tokio panics when that happens inside an async
+/// task, so an open `Store` must not be moved into async code and dropped there; drop it on
+/// the thread that uses it.
 pub struct Store {
     inner: SqliteEventStore,
     runtime: tokio::runtime::Runtime,
@@ -225,10 +259,15 @@ impl fmt::Debug for Store {
 impl Store {
     /// Opens the ledger at `path`, creating it and its directory when absent.
     ///
+    /// A file that is refused is left as it was.
+    ///
     /// # Errors
-    /// [`StoreError::Open`] when the file cannot be created or opened under TRUNCATE, or was
-    /// stamped by a newer build ([`OpenError::NewerSchema`]).
+    /// [`StoreError::InsideRuntime`] inside a tokio runtime context. [`StoreError::Open`] when
+    /// the file cannot be created or opened under TRUNCATE: among others, it was stamped by a
+    /// newer build ([`OpenError::NewerSchema`]), it is in WAL ([`OpenError::JournalMode`]), or
+    /// it is a database with tables that is not a ledger ([`OpenError::NotALedger`]).
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        refuse_inside_runtime()?;
         Self::try_open(path).map_err(|source| StoreError::Open {
             path: path.to_path_buf(),
             source,
@@ -250,11 +289,11 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::Schema`] for an invalid tag value, [`StoreError::Append`] when the store
-    /// refuses the write (including a lock held past the busy timeout).
+    /// refuses the write (including a lock held past the busy timeout),
+    /// [`StoreError::InsideRuntime`] inside a tokio runtime context.
     pub fn append(&self, event: &EventEnvelope) -> Result<u64, StoreError> {
         let stored = stored_event(event)?;
-        self.runtime
-            .block_on(self.inner.append(&[stored], None))
+        self.block_on(self.inner.append(&[stored], None))?
             .map(u64::from)
             .map_err(StoreError::Append)
     }
@@ -272,10 +311,7 @@ impl Store {
     ) -> Result<Appended, StoreError> {
         let stored = stored_event(event)?;
         let condition = condition.to_append_condition().map_err(StoreError::Query)?;
-        match self
-            .runtime
-            .block_on(self.inner.append(&[stored], Some(&condition)))
-        {
+        match self.block_on(self.inner.append(&[stored], Some(&condition)))? {
             Ok(position) => Ok(Appended::At(u64::from(position))),
             Err(AppendError::ConditionViolated(_)) => Ok(Appended::Conflict),
             Err(refused) => Err(StoreError::Append(refused)),
@@ -286,7 +322,8 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::Read`] when the store cannot be read, [`StoreError::Decode`] when a stored
-    /// event is not registered in this build.
+    /// event is not registered in this build, [`StoreError::InsideRuntime`] inside a tokio
+    /// runtime context.
     pub fn query(&self, filter: &Filter) -> Result<Vec<Recorded>, StoreError> {
         self.read(filter, ReadOptions::new())
     }
@@ -304,10 +341,26 @@ impl Store {
     fn read(&self, filter: &Filter, options: ReadOptions) -> Result<Vec<Recorded>, StoreError> {
         let query = filter.to_query().map_err(StoreError::Query)?;
         let stored = self
-            .runtime
-            .block_on(collect(self.inner.read(&query, options)))
+            .block_on(collect(self.inner.read(&query, options)))?
             .map_err(StoreError::Read)?;
         stored.iter().map(decode).collect()
+    }
+
+    /// Runs `future` on the store's runtime, unless this thread is in a tokio runtime context,
+    /// where tokio's `block_on` would panic.
+    fn block_on<F: Future>(&self, future: F) -> Result<F::Output, StoreError> {
+        refuse_inside_runtime()?;
+        Ok(self.runtime.block_on(future))
+    }
+}
+
+/// [`StoreError::InsideRuntime`] when this thread has a tokio runtime context. Starting (or
+/// dropping) the store's own runtime there panics.
+fn refuse_inside_runtime() -> Result<(), StoreError> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        Err(StoreError::InsideRuntime)
+    } else {
+        Ok(())
     }
 }
 

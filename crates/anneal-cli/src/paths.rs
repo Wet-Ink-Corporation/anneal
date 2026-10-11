@@ -45,6 +45,15 @@ pub enum PathError {
         /// What git said, trimmed.
         stderr: String,
     },
+    /// git failed in `dir` for a reason other than `dir` not being in a repository, such as a
+    /// repository owned by someone else ("dubious ownership") or a broken `.git` file.
+    #[error("git failed in {dir}: {stderr}", dir = dir.display())]
+    GitFailed {
+        /// The directory git was run in.
+        dir: PathBuf,
+        /// What git said, trimmed.
+        stderr: String,
+    },
     /// git printed a path that is not UTF-8.
     #[error("git printed a path that is not UTF-8")]
     NonUtf8Output(#[source] std::string::FromUtf8Error),
@@ -67,25 +76,40 @@ pub enum PathError {
 /// Runs `git rev-parse --git-common-dir` in `cwd` and resolves a relative answer against it.
 ///
 /// # Errors
-/// [`PathError::NotARepository`] outside a repository; [`PathError::Git`] or
-/// [`PathError::GitTimeout`] when git cannot run; [`PathError::NonUtf8Output`] for a path
-/// that is not UTF-8.
+/// [`PathError::NotARepository`] outside a repository; [`PathError::GitFailed`] when git fails
+/// for another reason; [`PathError::Git`] or [`PathError::GitTimeout`] when git cannot run;
+/// [`PathError::NonUtf8Output`] for a path that is not UTF-8.
 pub fn git_common_dir(cwd: &Path) -> Result<PathBuf, PathError> {
     let output = run_git(cwd, &["rev-parse", "--git-common-dir"], GIT_TIMEOUT)?;
     if !output.status.success() {
-        return Err(PathError::NotARepository {
-            dir: cwd.to_path_buf(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+        return Err(git_failure(cwd, &output.stderr));
     }
     let printed = String::from_utf8(output.stdout).map_err(PathError::NonUtf8Output)?;
     Ok(cwd.join(printed.trim_end_matches(['\r', '\n'])))
 }
 
-/// Runs git with a deadline, killing it if the deadline passes.
+/// What git says (untranslated: [`run_git`] runs it under `LC_ALL=C`) when a directory is in
+/// no repository.
+const NOT_A_REPOSITORY: &str = "not a git repository";
+
+/// The error for a git call in `dir` that exited non-zero, from what it wrote on stderr:
+/// [`PathError::NotARepository`] only when git says so, [`PathError::GitFailed`] otherwise.
+fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
+    let dir = dir.to_path_buf();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    if stderr.contains(NOT_A_REPOSITORY) {
+        PathError::NotARepository { dir, stderr }
+    } else {
+        PathError::GitFailed { dir, stderr }
+    }
+}
+
+/// Runs git with a deadline, killing it if the deadline passes. Its messages are not
+/// translated, so [`git_failure`] can read them.
 fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathError> {
     let mut child = Command::new("git")
         .args(args)
+        .env("LC_ALL", "C")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -224,8 +248,10 @@ pub struct StoreLocation {
 /// 5. `<cwd>/.anneal/ledger.sqlite3` outside git.
 ///
 /// # Errors
-/// [`PathError::Git`], [`PathError::GitTimeout`] or [`PathError::NonUtf8Output`] when git
-/// cannot answer. Not being in a repository is step 5, not an error.
+/// [`PathError::Git`], [`PathError::GitTimeout`], [`PathError::GitFailed`] or
+/// [`PathError::NonUtf8Output`] when git cannot answer. Only git saying `cwd` is not in a
+/// repository is step 5; any other git failure (such as "dubious ownership") is an error, so a
+/// repository git refuses never gets a second, per-folder ledger.
 pub fn ledger_store(
     flag: Option<&Path>,
     lookup: impl Fn(&str) -> Option<OsString>,

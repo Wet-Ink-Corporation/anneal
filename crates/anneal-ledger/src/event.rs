@@ -152,8 +152,8 @@ impl LedgerEvent {
     }
 
     /// The value of the event's subject tag (its key is [`EventKind::subject`]), or `None` for
-    /// a `test_run` that names no task.
-    /// Borrowed except for a pull request number, which is formatted (OWN-10).
+    /// a `test_run` that names no task. Borrowed except for a pull request number, which is
+    /// formatted.
     #[must_use]
     pub fn subject_value(&self) -> Option<Cow<'_, str>> {
         match self {

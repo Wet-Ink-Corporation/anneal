@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use happenstance_core::Event;
+use happenstance_sqlite::rusqlite::Connection;
 
 use super::schema::{LEDGER_SCHEMA, connect, user_version};
 use super::{Appended, Condition, Filter, OpenError, Recorded, Store, StoreError};
@@ -65,6 +66,30 @@ fn positions(events: &[Recorded]) -> Vec<u64> {
 
 fn tag(text: &str) -> LedgerTag {
     text.parse().expect("a vocabulary tag")
+}
+
+/// A plain SQLite connection that changes nothing on open, for setting up and inspecting files.
+fn raw(path: &Path) -> Connection {
+    Connection::open(path).expect("SQLite opens the file")
+}
+
+/// The journal mode the file at `path` is in, as SQLite reports it.
+fn journal_mode_of(path: &Path) -> String {
+    raw(path)
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("readable journal mode")
+}
+
+/// A ledger at `path` switched to WAL (as another tool, or happenstance's own `open`, would).
+fn wal_ledger(path: &Path, user_version: i64) {
+    drop(Store::open(path).expect("opens"));
+    let conn = raw(path);
+    conn.execute_batch(&format!("PRAGMA user_version = {user_version}"))
+        .expect("stamps");
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = wal", [], |row| row.get(0))
+        .expect("switches");
+    assert_eq!(mode, "wal", "set up in WAL");
 }
 
 #[test]
@@ -279,19 +304,146 @@ fn a_ledger_stamped_by_a_newer_build_is_refused_untouched() {
 
 #[test]
 #[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn a_database_that_is_not_a_ledger_is_refused_and_left_byte_identical() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("notes.sqlite3");
+    raw(&path)
+        .execute_batch("CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES ('keep me');")
+        .expect("a foreign database");
+    let before = std::fs::read(&path).expect("readable");
+
+    let result = Store::open(&path);
+
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Open {
+                source: OpenError::NotALedger,
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("readable"),
+        before,
+        "byte-identical"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn a_wal_ledger_is_refused_and_still_wal_afterwards() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    wal_ledger(&path, LEDGER_SCHEMA);
+
+    let result = Store::open(&path);
+
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Open { source: OpenError::JournalMode { found }, .. }) if found == "wal"
+        ),
+        "{result:?}"
+    );
+    assert_eq!(journal_mode_of(&path), "wal", "not converted");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn a_newer_ledger_in_wal_is_refused_as_newer_and_left_byte_identical() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    let newer = LEDGER_SCHEMA + 1;
+    wal_ledger(&path, newer);
+    let before = std::fs::read(&path).expect("readable");
+
+    let result = Store::open(&path);
+
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Open { source: OpenError::NewerSchema { found, .. }, .. }) if *found == newer
+        ),
+        "{result:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("readable"),
+        before,
+        "byte-identical"
+    );
+    assert_eq!(journal_mode_of(&path), "wal", "not converted");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn opening_inside_an_async_runtime_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = ledger_path(dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime starts");
+
+    let result = runtime.block_on(async { Store::open(&path).map(drop) });
+
+    assert!(
+        matches!(result, Err(StoreError::InsideRuntime)),
+        "{result:?}"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
+fn every_operation_inside_an_async_runtime_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let store = Store::open(&ledger_path(dir.path())).expect("opens");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime starts");
+    let anything = Condition::none_matching(Filter::default());
+
+    let results = runtime.block_on(async {
+        [
+            store.append(&task_done("T1", "s1")).map(drop),
+            store.append_if(&task_done("T1", "s1"), &anything).map(drop),
+            store.query(&Filter::default()).map(drop),
+            store.tail(&Filter::default(), 1).map(drop),
+        ]
+    });
+
+    for result in results {
+        assert!(
+            matches!(result, Err(StoreError::InsideRuntime)),
+            "{result:?}"
+        );
+    }
+    assert_eq!(
+        store.query(&Filter::default()).expect("reads").len(),
+        0,
+        "nothing was written"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens SQLite through FFI")]
 fn twenty_concurrent_appenders_write_twenty_events_without_corruption() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = ledger_path(dir.path());
+    // Every appender opens, then waits for the others, so the twenty appends start together. A
+    // failed open still reaches the barrier, so no thread waits forever.
+    let start = std::sync::Barrier::new(20);
 
     std::thread::scope(|scope| {
         let handles: Vec<_> = (0..20)
             .map(|n| {
-                let path = &path;
+                let (path, start) = (&path, &start);
                 std::thread::Builder::new()
                     .name(format!("appender-{n}"))
                     .spawn_scoped(scope, move || {
-                        let store = Store::open(path)?;
-                        store.append(&task_done(&format!("T{n}"), "s1"))
+                        let store = Store::open(path);
+                        start.wait();
+                        store?.append(&task_done(&format!("T{n}"), "s1"))
                     })
                     .expect("the OS starts the thread")
             })

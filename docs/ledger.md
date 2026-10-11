@@ -15,7 +15,10 @@ One file per repository, shared by every worktree and never committed:
 3. the anneal config file (there is none yet; the step is reserved);
 4. `<git-common-dir>/anneal/ledger.sqlite3`, the same file from the main checkout and every
    linked worktree;
-5. `<folder>/.anneal/ledger.sqlite3` outside git.
+5. `<folder>/.anneal/ledger.sqlite3` outside git: only when git says the directory is not in a
+   repository. Any other git failure (for example "detected dubious ownership", or a broken
+   `.git` file) stops the command with exit 70, so a repository git refuses never gets a
+   second, per-folder ledger.
 
 Query results report the file in `data.store` and the step that chose it in `data.source`
 (`flag`, `env`, `git_common_dir` or `folder`).
@@ -27,9 +30,14 @@ Query results report the file in `data.store` and the step that chose it in `dat
   `ledger.sqlite3-journal` beside it, emptied at each commit and never deleted. It is never
   opened through happenstance's own `SqliteEventStore::open`, which switches to WAL: anneal opens
   its own connection and copies happenstance's schema in from a template, inside one
-  `BEGIN IMMEDIATE`.
+  `BEGIN IMMEDIATE`. A file already in WAL is refused, not converted.
+- **Refused files are left as they were.** Opening only reads until the file is known to be a
+  ledger this anneal reads, or an empty database. A ledger stamped by a newer anneal, a file in
+  WAL, and a SQLite database with tables that is not a ledger (say, a wrong `--store` or
+  `$ANNEAL_STORE`) are each refused with exit 70, and nothing in them changes. Only a new file
+  or an empty database is given the ledger schema.
 - **Schema version.** `PRAGMA user_version` holds the ledger schema (1: happenstance 0.3.2's
-  schema under TRUNCATE). A ledger stamped by a newer anneal is refused and left untouched.
+  schema under TRUNCATE), stamped in the transaction that creates the schema.
 - **Concurrent writers.** Every append is its own `BEGIN IMMEDIATE` transaction, and each
   connection waits up to 10 seconds for another's lock, so concurrent hooks serialise.
 - **Conditioned appends (DCB).** `Store::append_if` writes only if no event matching a condition

@@ -30,8 +30,20 @@ Internal to the workspace (`publish = false`); the wire format (docs/ledger.md) 
 ## Invariants
 - The ledger never runs in WAL and never creates `-wal` or `-shm` files
   (`the_ledger_runs_under_truncate_and_never_creates_wal_or_shm`).
-- `PRAGMA user_version` is `LEDGER_SCHEMA`; a ledger stamped higher is refused untouched
-  (`a_ledger_stamped_by_a_newer_build_is_refused_untouched`).
+- Opening only reads until the file is known to be this build's ledger or an empty database,
+  so a refused file is left as it was:
+  - a ledger stamped higher than `LEDGER_SCHEMA` (`PRAGMA user_version`) is `NewerSchema`
+    (`a_ledger_stamped_by_a_newer_build_is_refused_untouched`,
+    `a_newer_ledger_in_wal_is_refused_as_newer_and_left_byte_identical`);
+  - a file in WAL is `JournalMode`, never converted
+    (`a_wal_ledger_is_refused_and_still_wal_afterwards`);
+  - a database with tables but no happenstance schema is `NotALedger`, never given the schema
+    (`a_database_that_is_not_a_ledger_is_refused_and_left_byte_identical`).
+- `Store` is synchronous: inside a tokio runtime context `open` and every method return
+  `StoreError::InsideRuntime` instead of panicking
+  (`opening_inside_an_async_runtime_is_refused`,
+  `every_operation_inside_an_async_runtime_is_refused`). Dropping an open `Store` inside an
+  async task panics in tokio; drop it on the thread that uses it.
 - Writes are strict (`EventEnvelope::from_value`): unregistered type, unknown key, bad `ts` or
   tag value is a `SchemaError`. Reads are lenient about keys a newer build added.
 - Concurrent appends serialise without loss or corruption
@@ -40,8 +52,9 @@ Internal to the workspace (`publish = false`); the wire format (docs/ledger.md) 
 
 ## Errors
 `SchemaError` (an event does not match the registry), `TagError`, `TimestampError`,
-`StoreError` (open, append, read, decode; `Open` wraps `OpenError` with the path). A condition
-match is `Appended::Conflict`, not an error.
+`StoreError` (open, append, read, decode, `InsideRuntime`; `Open` wraps `OpenError` with the
+path; `OpenError` includes `NewerSchema`, `JournalMode` and `NotALedger` for refused files). A
+condition match is `Appended::Conflict`, not an error.
 
 ## Test strategy
 Unit tests beside the code; store tests in `src/store/tests.rs` open real ledgers in temporary
@@ -61,4 +74,6 @@ directories. Run with `cargo test -p anneal-ledger`.
 | 2026-10-11 | Add tokio (`rt` only) to drive happenstance's async API from synchronous code | H-16 | story #11 (as weigh-in) |
 | 2026-10-11 | Add time (`formatting`, `parsing`) for RFC 3339 timestamps | H-16 | story #11 (as weigh-in) |
 | 2026-10-11 | tempfile as a normal dependency: the schema template is built on the local temporary disk (an in-memory database cannot be attached from another connection) | H-16 | `.claude/temper.json` pre-approved |
-| 2026-10-11 | No WAL-to-TRUNCATE conversion or orphan-WAL handling (weigh-in has them for its 0.1.x ledgers): anneal has no older ledgers; a WAL file is refused with `OpenError::JournalMode` | ARC | implementer (#11), open for review |
+| 2026-10-11 | No WAL-to-TRUNCATE conversion or orphan-WAL handling (weigh-in has them for its 0.1.x ledgers): anneal has no older ledgers; a WAL file is refused with `OpenError::JournalMode`, read before anything is changed | ARC | weigh-in wi-0940cf (refuse WAL); enforced in review round 1 (#54) |
+| 2026-10-11 | Only an empty database is given the ledger schema; a database with other tables is refused (`OpenError::NotALedger`), and the CLI reports it like any store that cannot be opened (exit 70) | ARC | review round 1 (#54) |
+| 2026-10-11 | `Store` stays synchronous (its own current-thread runtime); calls inside a tokio runtime context return `StoreError::InsideRuntime` | H-03 | review round 1 (#54) |

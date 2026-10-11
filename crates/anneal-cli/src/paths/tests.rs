@@ -1,5 +1,6 @@
 use super::{
-    PathError, StoreSource, anneal_home_from, ledger_store, read_capped, wait_with_deadline,
+    PathError, StoreSource, anneal_home_from, git_failure, ledger_store, read_capped,
+    wait_with_deadline,
 };
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -211,4 +212,48 @@ fn outside_git_an_empty_anneal_store_falls_through_to_the_folder() {
         "<folder>/.anneal"
     );
     assert_eq!(found.source, StoreSource::Folder, "outside git");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git in a subprocess")]
+fn a_git_failure_other_than_no_repository_is_an_error_not_the_folder() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    // A `.git` file git cannot parse: git fails here, but not with "not a git repository".
+    std::fs::write(dir.path().join(".git"), "not a gitdir line\n").expect("write");
+
+    let result = ledger_store(None, env(&[]), dir.path());
+
+    assert!(
+        matches!(&result, Err(PathError::GitFailed { stderr, .. }) if stderr.contains("invalid gitfile format")),
+        "got {result:?}"
+    );
+}
+
+#[test]
+fn only_not_a_git_repository_classifies_as_outside_git() {
+    let dir = Path::new("/work");
+    let outside = [
+        "fatal: not a git repository (or any of the parent directories): .git\n",
+        "fatal: not a git repository: /work/does-not-exist\n",
+    ];
+    let failures = [
+        "fatal: detected dubious ownership in repository at '/work'\n",
+        "fatal: invalid gitfile format: /work/.git\n",
+        "",
+    ];
+
+    for stderr in outside {
+        let error = git_failure(dir, stderr.as_bytes());
+        assert!(
+            matches!(&error, PathError::NotARepository { dir: found, stderr: said } if found == dir && said == stderr.trim()),
+            "{stderr:?} gave {error:?}"
+        );
+    }
+    for stderr in failures {
+        let error = git_failure(dir, stderr.as_bytes());
+        assert!(
+            matches!(&error, PathError::GitFailed { dir: found, stderr: said } if found == dir && said == stderr.trim()),
+            "{stderr:?} gave {error:?}"
+        );
+    }
 }
