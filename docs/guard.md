@@ -236,8 +236,18 @@ D1 runs in process through `decide`'s library API (`decide::in_process` reads th
 configuration and anneal home as `anneal decide` does, then `decide::client::ask_recording`),
 so it shares the command's thresholds (`$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`,
 else the copy built in), modes, 50-decision shadow period and decision log (`docs/decide.md`).
-The call has `decide`'s 2 s budget, inside the hook's 5 s; a Clef deny is then recorded with
-the usual 1 s for git and 500 ms per ledger statement.
+**Time budget.** The guard plans to use 4.5 s of the hook's 5 s `timeout`, measured from when
+it starts reading its input (the other 500 ms cover process start-up and writing the decision).
+Reading the input, lexing and the denylist take milliseconds; the Clef call takes at most 2 s
+(`decide`'s timeout), plus local reads and writes of the thresholds file, `counts.json` and the
+log. A deny then records `gate_blocked` with only what is left: one lock wait of 500 ms for the
+ledger, and git gets the rest up to its usual 1 s. With less than 200 ms left for git the record
+is skipped and the deny's reason ends with `(the block was not recorded in the ledger: no time
+left in the hook's budget)`; the deny itself always goes out. The fixed sum (2 s for Clef, 1 s
+for git, 500 ms of lock wait) is 3.5 s, but it leaves out the local reads and writes around the Clef call and the fact that
+the lock wait applies per ledger statement, which is why git's share is cut to what the clock
+says is left rather than assumed. A lock held past the first statement can still cost a further
+500 ms, inside the remaining margin.
 
 | D1 for the call | Guard's answer |
 |---|---|
@@ -248,7 +258,9 @@ the usual 1 s for git and 500 ms per ledger statement.
 | enforce, 0.40 or more (`ask`) | an ask decision (`"permissionDecision": "ask"`): the human confirms the call; no `gate_blocked` |
 | enforce, below 0.40 (`defer`) | no output: Claude Code's normal permission flow decides |
 | enforce, no answer (unreachable, timed out, bad response) | the point's fallback when it is `ask` (D1 ships with `ask`): an ask decision naming the failure; any other fallback allows, so a Clef failure never denies |
-| the anneal home, the plugin's thresholds file, the log or the clock fails | as without D1 (nothing to report it in: an allow has no output; `anneal decide` with the same environment shows the error) |
+| enforce, an answer whose row or count cannot be written | the band's action still stands (a deny or ask notes `the decision was not logged`), and a `defer` asks instead: a failure never lets the call through unchecked |
+| D1 cannot run (the anneal home, the plugin's thresholds file, `counts.json`, the log or the clock fails), configured `enforce` | an ask decision naming the failure (`Clef D1 could not run`) |
+| D1 cannot run, any other mode | as without D1 (nothing to report it in: an allow has no output; `anneal decide` with the same environment shows the error) |
 
 **Nothing changes for users yet.** The only transport is `NoHttpClient` (no HTTP client is a
 dependency yet, `docs/decide.md`), so a configured Clef is always unreachable; unanswered calls
@@ -257,17 +269,29 @@ denylist's. Enforcing D1 needs the HTTP client and 50 answered decisions.
 
 **Redaction** (`hook::guard::redact`). The command Clef gets (state
 `{"tool": "Bash", "input": {"command": ...}}`) and the row keeps (its `input` field) is
-redacted, then trimmed and cut to 1,024 characters (marked `…`): the value of every assignment
-in command position (`FOO=bar cmd`, also after `;`, `&&`, `|`, `(`, a newline or a keyword such
-as `then`), after `env` and its options, and after `export`, `declare`, `typeset`, `local` and
-`readonly`, and the value of every long option whose name holds `token`, `password`, `passwd`,
-`secret`, `apikey`, `api-key`, `api_key`, `credential`, `private-key` or `private_key`
-(`--token=x`, `--password x`), becomes `<redacted>`. Arguments that only look like assignments
-(`dd of=/dev/sda`, `make CC=gcc`) are kept, since they are what Clef judges. The guard's lexer
-keeps no source positions, so a small scanner with the same quoting rules finds each word's span
-and rewrites only the value; what it cannot close runs to the end of the command, redacting too
-much rather than too little. Not redacted: short options (`-p secret`), header values
-(`-H "Authorization: Bearer ..."`), URLs with credentials and heredoc bodies.
+redacted, then trimmed and cut to 1,024 characters (marked `…`). The rule does not depend on
+where a word stands, so no wrapper (`sudo`, `nohup`, `timeout`, `env -u NAME`, `command export`)
+or nested shell (`bash -c '…'`, `eval "…"`) can carry a secret past it; it redacts too much rather
+than too little:
+
+- the value of every `NAME=value` anywhere in the command (also `NAME+=`, `NAME[i]=` and the
+  array form `NAME=(…)`) when `NAME` looks like an environment variable (`[A-Z_][A-Z0-9_]*`) or
+  holds a credential word in any letter case (`token`, `password`, `passwd`, `secret`,
+  `apikey`, `api-key`, `api_key`, `credential`, `private-key`, `private_key`; so `api_token=x`
+  too). Lower-case operands such as `dd of=/dev/sda bs=1M` stay readable, since they are what
+  Clef judges; `make CC=gcc` is redacted;
+- the value of every long option whose name holds a credential word (`--token=x`,
+  `--password x`);
+- the inside of quotes and substitutions, scanned as text: `'…'`, `$'…'`, `$( )` and backticks
+  as a command, `"…"` with double-quote rules (there `'` and `$'` are plain characters);
+- an unquoted `#` comment, to the end of its line, and every heredoc body (its closing line is
+  kept);
+- from any quote, substitution or heredoc that is never closed (or nested past 32 levels), the
+  whole rest of the command.
+
+The guard's lexer keeps no source positions, so a small scanner with the same quoting rules
+finds each span and rewrites only what it redacts. Not redacted: short options (`-p secret`),
+header values (`-H "Authorization: Bearer ..."`) and URLs with credentials.
 
 **Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
 on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in

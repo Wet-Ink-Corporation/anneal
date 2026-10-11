@@ -37,12 +37,26 @@ pub(crate) fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// `anneal` run in `cwd`, isolated from the caller's repository and ledger overrides.
+/// `anneal` run in `cwd`, isolated from the caller's repository, ledger overrides, Clef
+/// configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*` Clef variables are
+/// removed, and `ANNEAL_HOME` is `.anneal-home` under `cwd` when `cwd` is a temporary
+/// directory (else under the system's temporary directory), so no test writes to `~/.anneal`.
+/// A test that needs either sets it again.
 pub(crate) fn anneal_in(cwd: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
+    let temp = std::env::temp_dir();
+    let home = if cwd.starts_with(&temp) {
+        cwd.join(".anneal-home")
+    } else {
+        temp.join(format!("anneal-it-home-{}", std::process::id()))
+    };
     command
         .current_dir(cwd)
+        .env("ANNEAL_HOME", home)
         .env_remove("ANNEAL_STORE")
+        .env_remove("CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID")
+        .env_remove("CLAUDE_PLUGIN_OPTION_CF_API_TOKEN")
+        .env_remove("CLAUDE_PLUGIN_OPTION_CLEF_MODE")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")

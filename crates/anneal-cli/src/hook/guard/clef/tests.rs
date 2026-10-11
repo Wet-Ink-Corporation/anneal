@@ -1,6 +1,6 @@
 //! D1 through the guard's own entry point, with a fake Workers AI endpoint and fixed clocks.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -87,6 +87,25 @@ impl Clock for FixedClock {
     }
 }
 
+/// Fixed wall time and a monotonic clock that moves `step` on every reading, so a call to
+/// Clef (two readings) looks slow.
+struct SteppingClock {
+    step: Duration,
+    readings: Cell<u32>,
+}
+
+impl Clock for SteppingClock {
+    fn unix_millis(&self) -> Result<u64, SystemTimeError> {
+        Ok(1_760_000_000_000)
+    }
+
+    fn monotonic(&self) -> Duration {
+        let reading = self.readings.get();
+        self.readings.set(reading + 1);
+        self.step * reading
+    }
+}
+
 /// An anneal home, a ledger path and the environment the guard sees.
 struct World {
     dir: TempDir,
@@ -139,6 +158,28 @@ impl World {
 
     /// Runs the guard on a `tool_name` call with `command`, and returns its stdout.
     fn run_tool(&self, tool: &str, command: &str, endpoint: &FakeEndpoint) -> String {
+        let ports = Ports {
+            transport: endpoint,
+            clock: &FixedClock,
+        };
+        self.run_ports(tool, command, &ports)
+    }
+
+    /// Runs the guard on a Bash call with `command`, reading time from `clock`.
+    fn run_timed(&self, command: &str, endpoint: &FakeEndpoint, clock: &impl Clock) -> String {
+        let ports = Ports {
+            transport: endpoint,
+            clock,
+        };
+        self.run_ports("Bash", command, &ports)
+    }
+
+    fn run_ports(
+        &self,
+        tool: &str,
+        command: &str,
+        ports: &Ports<'_, FakeEndpoint, impl Clock>,
+    ) -> String {
         let stdin = json!({
             "session_id": "s-d1",
             "hook_event_name": "PreToolUse",
@@ -151,12 +192,8 @@ impl World {
             current_dir: || Ok(PathBuf::from("/")),
             lookup: |var: &str| self.vars.get(var).cloned(),
         };
-        let ports = Ports {
-            transport: endpoint,
-            clock: &FixedClock,
-        };
         let mut out = Vec::new();
-        run_with(env, &ports, &mut out).expect("a Vec accepts every write");
+        run_with(env, ports, &mut out).expect("a Vec accepts every write");
         String::from_utf8(out).expect("UTF-8")
     }
 
@@ -237,6 +274,7 @@ fn every_reply() -> [FakeEndpoint; 5] {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "opens a SQLite ledger")]
 fn shadow_mode_never_changes_the_guards_verdict() {
     let commands = ["rm -r build", "git push -f origin main", "ls"];
     let off = World::off();
@@ -269,6 +307,7 @@ fn shadow_mode_never_changes_the_guards_verdict() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "opens a SQLite ledger")]
 fn enforced_d1_denies_at_0_90_and_records_gate_blocked() {
     let world = World::enforcing();
 
@@ -374,6 +413,7 @@ fn a_malformed_configuration_leaves_the_verdict_alone() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "opens a SQLite ledger")]
 fn a_denylist_denial_never_reaches_clef() {
     let world = World::enforcing();
     let endpoint = FakeEndpoint::yes(0.0);
@@ -428,4 +468,107 @@ fn the_row_and_the_state_hold_the_trimmed_command_without_secrets() {
         assert!(!log.contains(secret), "{secret} in the log");
         assert!(!state.contains(secret), "{secret} sent to Clef");
     }
+}
+
+#[test]
+fn in_enforce_mode_unreadable_counts_ask_rather_than_allow() {
+    let world = World::configured("enforce");
+    fs::create_dir_all(world.home().join("decisions").join("counts.json"))
+        .expect("a directory where counts.json goes");
+    let endpoint = FakeEndpoint::yes(0.95);
+
+    let stdout = world.guard("rm -r build", &endpoint);
+
+    let (decision, reason) = permission(&stdout);
+    assert_eq!(
+        decision, "ask",
+        "a D1 failure in enforce mode is never an allow"
+    );
+    assert!(reason.contains("could not run"), "{reason}");
+}
+
+#[test]
+fn in_shadow_mode_an_unwritable_log_leaves_the_verdict_alone() {
+    let world = World::configured("shadow");
+    fs::create_dir_all(world.home().join("decisions").join("decisions.jsonl"))
+        .expect("a directory where the log goes");
+
+    let stdout = world.guard("rm -r build", &FakeEndpoint::yes(0.95));
+
+    assert_eq!(stdout, "");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "opens a SQLite ledger")]
+fn in_enforce_mode_an_answer_that_cannot_be_logged_keeps_its_deny() {
+    let world = World::enforcing();
+    fs::create_dir_all(world.home().join("decisions").join("decisions.jsonl"))
+        .expect("a directory where the log goes");
+
+    let stdout = world.guard("rm -r build", &FakeEndpoint::yes(0.95));
+
+    let (decision, reason) = permission(&stdout);
+    assert_eq!(decision, "deny");
+    assert!(reason.contains("the decision was not logged"), "{reason}");
+}
+
+#[test]
+fn in_enforce_mode_a_deferred_answer_that_cannot_be_logged_asks() {
+    let world = World::enforcing();
+    fs::create_dir_all(world.home().join("decisions").join("decisions.jsonl"))
+        .expect("a directory where the log goes");
+
+    let stdout = world.guard("rm -r build", &FakeEndpoint::yes(0.1));
+
+    let (decision, reason) = permission(&stdout);
+    assert_eq!(decision, "ask");
+    assert!(reason.contains("the decision was not logged"), "{reason}");
+}
+
+#[test]
+fn a_band_without_a_threshold_names_none() {
+    let mut world = World::enforcing();
+    let mut thresholds: Value =
+        serde_json::from_str(crate::decide::thresholds::BUILT_IN).expect("shipped JSON");
+    thresholds["points"]["D1"]["rules"]["noul"]["otherwise"] = json!("ask");
+    let playbooks = world.dir.path().join("plugin").join("playbooks");
+    fs::create_dir_all(&playbooks).expect("the plugin's playbooks");
+    fs::write(
+        playbooks.join("clef-thresholds.json"),
+        thresholds.to_string(),
+    )
+    .expect("thresholds written");
+    let root = world.dir.path().join("plugin");
+    world
+        .vars
+        .insert("CLAUDE_PLUGIN_ROOT", root.into_os_string());
+
+    let stdout = world.guard("rm -r build", &FakeEndpoint::yes(0.1));
+
+    let (decision, reason) = permission(&stdout);
+    assert_eq!(decision, "ask");
+    assert!(reason.contains("(p 0.10)"), "{reason}");
+    assert!(!reason.contains(" from "), "{reason}");
+}
+
+#[test]
+fn a_deny_after_a_slow_clef_skips_the_ledger_record_to_stay_in_the_hook_budget() {
+    let world = World::enforcing();
+    // Start, Clef's start and end, then the deny: 4.5 s spent, nothing left to record with.
+    let clock = SteppingClock {
+        step: Duration::from_millis(1_500),
+        readings: Cell::new(0),
+    };
+
+    let stdout = world.run_timed("rm -r build", &FakeEndpoint::yes(0.95), &clock);
+
+    let (decision, reason) = permission(&stdout);
+    assert_eq!(decision, "deny");
+    assert!(
+        reason.ends_with(
+            "(the block was not recorded in the ledger: no time left in the hook's budget)"
+        ),
+        "{reason}"
+    );
+    assert!(world.blocked().is_empty(), "no ledger record was attempted");
 }

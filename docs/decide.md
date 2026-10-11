@@ -10,7 +10,9 @@ The hooks that call it (D1 in the guard, D3 and D6 on prompts, D7 in `grill`) la
 than spawning the binary: `decide::in_process::Prepared::load` reads the thresholds (the plugin
 root's file, else the copy built in), the configuration and the anneal home exactly as the
 command does, and `decide::client::ask` (or `ask_recording`, which also keeps a redacted input in
-the row) applies the same modes, shadow count and log. The guard's D1 (#30) is the first such
+the row and hands back the outcome with any failure to log it, as `client::Asked`, so a caller in
+enforce mode can keep a deny when the log is unwritable) applies the same modes, shadow count and
+log. The guard's D1 (#30) is the first such
 caller; see `docs/guard.md`.
 
 ## Transport

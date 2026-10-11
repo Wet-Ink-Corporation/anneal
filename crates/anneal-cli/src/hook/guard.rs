@@ -46,6 +46,16 @@ pub(crate) const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The preconditions hook shares it.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// What the guard plans to spend of the hook's 5 s `timeout`, measured from when it starts
+/// reading its input; the other 500 ms cover process start-up and writing the decision. Clef D1
+/// takes up to 2 s of it, so a deny after D1 can leave less than [`GIT_TIMEOUT`] plus
+/// [`BUSY_TIMEOUT`] for the ledger record, which then gets only what remains.
+const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
+
+/// The least time worth giving git to find the ledger; with less, the record is skipped and the
+/// deny says so.
+const MIN_GIT_TIMEOUT: Duration = Duration::from_millis(200);
+
 /// The `point` of the guard's `gate_blocked` events, before the rule's id.
 const POINT_PREFIX: &str = "guard.";
 
@@ -179,6 +189,8 @@ enum RecordError {
     Clock(#[source] TimestampError),
     #[error("appending gate_blocked")]
     Append(#[source] StoreError),
+    #[error("no time left in the hook's budget")]
+    NoTime,
 }
 
 /// Runs the guard: reads the input from `env.stdin`, decides (the denylist, then Clef D1 for a
@@ -221,6 +233,7 @@ where
     T: Transport,
     C: Clock,
 {
+    let started = ports.clock.monotonic();
     let input = read_input(env.stdin);
     let decision = match decide(&input, &Context::new(&env.lookup)) {
         Decision::Allow => bash_command(&input).map_or(Decision::Allow, |command| {
@@ -232,10 +245,26 @@ where
         Decision::Allow => Ok(()),
         Decision::Ask(reason) => write_ask(out, &reason),
         Decision::Deny(denial) => {
-            let recorded = record(&denial, input.ok(), env.current_dir, &env.lookup);
+            let spent = ports.clock.monotonic().saturating_sub(started);
+            let recorded = match git_budget(HOOK_BUDGET.saturating_sub(spent)) {
+                Some(git_timeout) => record(&denial, input.ok(), |cwd| {
+                    ledger_path(cwd, env.current_dir, &env.lookup, git_timeout)
+                }),
+                None => Err(RecordError::NoTime),
+            };
             write_denial(out, &denial, recorded.err().as_ref())
         }
     }
+}
+
+/// How long git may take to find the ledger when `remaining` of [`HOOK_BUDGET`] is left: what
+/// is left after one lock wait ([`BUSY_TIMEOUT`]), at most [`GIT_TIMEOUT`]; `None` when that is
+/// under [`MIN_GIT_TIMEOUT`], and the record is skipped so the deny still arrives in time.
+fn git_budget(remaining: Duration) -> Option<Duration> {
+    remaining
+        .checked_sub(BUSY_TIMEOUT)
+        .filter(|git| *git >= MIN_GIT_TIMEOUT)
+        .map(|git| git.min(GIT_TIMEOUT))
 }
 
 /// The command of a Bash call, if `input` is one.
@@ -284,21 +313,31 @@ fn bad_input(error: &InputError) -> Verdict {
     ))
 }
 
-/// Appends a `gate_blocked` event for `denial`, tagged with the input's session, to the ledger
-/// seen from the input's `cwd` (or `current_dir` when there is none).
-fn record(
-    denial: &Denial,
-    input: Option<Input>,
+/// The ledger seen from `cwd` (or `current_dir` when there is none), git given `git_timeout`.
+fn ledger_path(
+    cwd: Option<PathBuf>,
     current_dir: impl FnOnce() -> io::Result<PathBuf>,
     lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<(), RecordError> {
-    let (session_id, cwd) = input.map_or((None, None), |input| (input.session_id, input.cwd));
+    git_timeout: Duration,
+) -> Result<PathBuf, RecordError> {
     let cwd = match cwd {
         Some(cwd) => cwd,
         None => current_dir().map_err(RecordError::CurrentDir)?,
     };
-    let location =
-        paths::ledger_store_within(None, lookup, &cwd, GIT_TIMEOUT).map_err(RecordError::Locate)?;
+    paths::ledger_store_within(None, lookup, &cwd, git_timeout)
+        .map(|location| location.path)
+        .map_err(RecordError::Locate)
+}
+
+/// Appends a `gate_blocked` event for `denial`, tagged with the input's session, to the ledger
+/// `ledger` finds from the input's `cwd`.
+fn record(
+    denial: &Denial,
+    input: Option<Input>,
+    ledger: impl FnOnce(Option<PathBuf>) -> Result<PathBuf, RecordError>,
+) -> Result<(), RecordError> {
+    let (session_id, cwd) = input.map_or((None, None), |input| (input.session_id, input.cwd));
+    let path = ledger(cwd)?;
     let event = LedgerEvent::GateBlocked(GateBlocked {
         point: format!("{POINT_PREFIX}{}", denial.rule.id()),
         // The reason is duplicated: the ledger keeps one copy, the deny decision shows the other.
@@ -307,7 +346,7 @@ fn record(
     let mut envelope =
         EventEnvelope::new(event, "hook", Timestamp::now().map_err(RecordError::Clock)?);
     envelope.session_id = session_id;
-    Store::open_with_busy_timeout(&location.path, BUSY_TIMEOUT)
+    Store::open_with_busy_timeout(&path, BUSY_TIMEOUT)
         .and_then(|ledger| ledger.append(&envelope))
         .map(drop)
         .map_err(RecordError::Append)

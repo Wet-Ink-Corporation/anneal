@@ -217,22 +217,40 @@ pub fn ask<'s>(
         ask: *ask,
         input: None,
     };
-    ask_recording(&recorded, setup, transport, clock)
+    let asked = ask_recording(&recorded, setup, transport, clock)?;
+    match asked.unrecorded {
+        Some(failure) => Err(AskError::Log(failure)),
+        None => Ok(asked.outcome),
+    }
 }
 
-/// As [`ask`], keeping the caller's input in the row.
+/// How a call ended, and why its row or count could not be kept, if it could not.
+#[derive(Debug)]
+pub struct Asked<'s> {
+    /// The outcome, answered or not.
+    pub outcome: Outcome<'s>,
+    /// The failure to append the row or count the answer, after the call was made.
+    pub unrecorded: Option<LogError>,
+}
+
+/// As [`ask`], keeping the caller's input in the row and handing back the outcome with any
+/// failure to log it.
+///
+/// A row or count that could not be written is in [`Asked::unrecorded`], so the caller can
+/// still act on an answer it has.
 ///
 /// The row's `input` field holds `recorded.input` as given (the caller redacts it), cut to
 /// [`MAX_INPUT_ROW_BYTES`] of JSON. A row asked without one has no `input` field.
 ///
 /// # Errors
-/// As [`ask`].
+/// As [`ask`], except that a row or count that cannot be written after the call is in
+/// [`Asked::unrecorded`]; [`AskError::Log`] remains for the counts read before the call.
 pub fn ask_recording<'s>(
     recorded: &Recorded<'_>,
     setup: &Setup<'s>,
     transport: &impl Transport,
     clock: &impl Clock,
-) -> Result<Outcome<'s>, AskError> {
+) -> Result<Asked<'s>, AskError> {
     let Recorded { ask, input } = recorded;
     let rules = setup.thresholds.point(ask.point);
     let rule = rules.rule(ask.question).ok_or(AskError::Unsupported {
@@ -240,27 +258,14 @@ pub fn ask_recording<'s>(
         question: ask.question,
     })?;
     request::check_options(ask.question, ask.options)?;
-    let config = match setup.config {
-        Ok(config) => config,
-        Err(problem) => {
-            return Ok(Outcome::Misconfigured(Misconfigured {
-                problem,
-                fallback: rules.fallback(),
-            }));
+    let (config, account, configured_mode) = match configured(setup, ask.point, rules) {
+        Ok(configured) => configured,
+        Err(not_asked) => {
+            return Ok(Asked {
+                outcome: not_asked.into(),
+                unrecorded: None,
+            });
         }
-    };
-    let configured_mode = config.mode(ask.point);
-    let off = |reason| {
-        Ok(Outcome::Off(Off {
-            reason,
-            configured_mode,
-        }))
-    };
-    if configured_mode == Mode::Off {
-        return off(OffReason::ModeOff);
-    }
-    let Some(account) = config.account() else {
-        return off(OffReason::NoAccount);
     };
     let mode = if configured_mode == Mode::Enforce
         && setup.log.answered(ask.point)? < AUTO_SHADOW_DECISIONS
@@ -285,10 +290,54 @@ pub fn ask_recording<'s>(
         configured_mode,
         latency_ms,
     };
-    match answered {
+    Ok(match answered {
         Ok(answer) => call.decided(setup.log, stamp, answer),
         Err(failure) => call.unanswered(setup.log, stamp, failure),
+    })
+}
+
+/// Why Clef is not asked, before any call: the small outcomes of [`configured`].
+enum NotAsked<'s> {
+    /// The configuration could not be read.
+    Misconfigured(Misconfigured<'s>),
+    /// Clef is off for the point.
+    Off(Off),
+}
+
+impl<'s> From<NotAsked<'s>> for Outcome<'s> {
+    fn from(not_asked: NotAsked<'s>) -> Self {
+        match not_asked {
+            NotAsked::Misconfigured(misconfigured) => Self::Misconfigured(misconfigured),
+            NotAsked::Off(off) => Self::Off(off),
+        }
     }
+}
+
+/// The configuration, account and configured mode to ask `point` with, or why Clef is not
+/// asked: misconfigured, its mode `off`, or no account.
+fn configured<'s>(
+    setup: &Setup<'s>,
+    point: Point,
+    rules: &'s PointRules,
+) -> Result<(&'s ClefConfig, &'s str, Mode), NotAsked<'s>> {
+    let config = setup.config.map_err(|problem| {
+        NotAsked::Misconfigured(Misconfigured {
+            problem,
+            fallback: rules.fallback(),
+        })
+    })?;
+    let configured_mode = config.mode(point);
+    let off = |reason| {
+        NotAsked::Off(Off {
+            reason,
+            configured_mode,
+        })
+    };
+    if configured_mode == Mode::Off {
+        return Err(off(OffReason::ModeOff));
+    }
+    let account = config.account().ok_or_else(|| off(OffReason::NoAccount))?;
+    Ok((config, account, configured_mode))
 }
 
 /// One call's question, its point's rules and the account it goes to.
@@ -369,12 +418,7 @@ impl<'s> Call<'_, 's> {
     }
 
     /// Logs an answered decision and counts it toward the shadow period.
-    fn decided(
-        self,
-        log: &DecisionLog,
-        stamp: Stamp,
-        answer: Answer,
-    ) -> Result<Outcome<'s>, AskError> {
+    fn decided(self, log: &DecisionLog, stamp: Stamp, answer: Answer) -> Asked<'s> {
         let applied = self.rule.apply(answer.probability());
         let mut row = self.row(&stamp);
         row.probabilities = Some(answer.probabilities());
@@ -382,36 +426,41 @@ impl<'s> Call<'_, 's> {
         row.probability = Some(answer.probability());
         row.threshold = applied.threshold;
         row.action = Some(applied.action);
-        log.append(&row)?;
-        log.count_answered(self.ask.point)?;
-        Ok(Outcome::Decided(Decision {
-            stamp,
-            model: self.rules.model(),
-            answer,
-            action: applied.action,
-            threshold: applied.threshold,
-        }))
+        // The answer stands whether or not it could be kept; the caller decides what a record
+        // failure means.
+        let unrecorded = log
+            .append(&row)
+            .and_then(|()| log.count_answered(self.ask.point))
+            .err();
+        Asked {
+            outcome: Outcome::Decided(Decision {
+                stamp,
+                model: self.rules.model(),
+                answer,
+                action: applied.action,
+                threshold: applied.threshold,
+            }),
+            unrecorded,
+        }
     }
 
     /// Logs a call that got no usable answer.
-    fn unanswered(
-        self,
-        log: &DecisionLog,
-        stamp: Stamp,
-        failure: TransportError,
-    ) -> Result<Outcome<'s>, AskError> {
+    fn unanswered(self, log: &DecisionLog, stamp: Stamp, failure: TransportError) -> Asked<'s> {
         let kind = failure.kind();
         let mut row = self.row(&stamp);
         row.unreachable = matches!(kind, FailureKind::Unreachable | FailureKind::TimedOut);
         row.error = Some(kind);
         row.error_reason = Some(cut(&failure.to_string()));
-        log.append(&row)?;
-        Ok(Outcome::NoAnswer(NoAnswer {
-            stamp,
-            model: self.rules.model(),
-            failure,
-            fallback: self.rules.fallback(),
-        }))
+        let unrecorded = log.append(&row).err();
+        Asked {
+            outcome: Outcome::NoAnswer(NoAnswer {
+                stamp,
+                model: self.rules.model(),
+                failure,
+                fallback: self.rules.fallback(),
+            }),
+            unrecorded,
+        }
     }
 }
 

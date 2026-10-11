@@ -113,8 +113,10 @@ process, its command redacted: in shadow mode (the default, and the only mode in
 HTTP client lands: `NoHttpClient` makes every call unreachable, and unanswered calls do not end
 the shadow period) the would-be action is
 logged and the verdict is unchanged; in enforce mode 0.90 or more denies (rule `destructive`),
-0.40 or more asks (`"permissionDecision": "ask"`), less defers, and no answer asks. With Clef off
-nothing is asked. A denylist denial never reaches Clef. The denylist, the bypass handling and
+0.40 or more asks (`"permissionDecision": "ask"`), less defers, and no answer asks; D1 set to
+enforce that cannot run asks, and an answer that cannot be logged never becomes an allow. With
+Clef off nothing is asked. The guard measures its 4.5 s budget from its start, and a deny with too
+little time left skips the ledger record, with a note. A denylist denial never reaches Clef. The denylist, the bypass handling and
 D1 are documented in `docs/guard.md`.
 
 ## `preconditions` (PreToolUse)

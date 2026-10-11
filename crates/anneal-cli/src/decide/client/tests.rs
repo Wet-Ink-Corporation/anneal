@@ -7,11 +7,12 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 use super::{
-    Ask, AskError, MAX_INPUT_ROW_BYTES, OffReason, Outcome, Recorded, Setup, TIMEOUT, ask,
+    Ask, AskError, Asked, MAX_INPUT_ROW_BYTES, OffReason, Outcome, Recorded, Setup, TIMEOUT, ask,
     ask_recording,
 };
 use crate::decide::clock::Clock;
 use crate::decide::config::{ACCOUNT_VAR, ClefConfig, MODE_VAR, TOKEN_VAR};
+use crate::decide::log::LogError;
 use crate::decide::log::{DecisionLog, MAX_ROW_BYTES};
 use crate::decide::point::{Point, Question};
 use crate::decide::state::CompactState;
@@ -161,6 +162,17 @@ impl World {
         input: &str,
         endpoint: &FakeEndpoint,
     ) -> Result<Outcome<'_>, AskError> {
+        self.ask_keeping(request, input, endpoint)
+            .map(|asked| asked.outcome)
+    }
+
+    /// Asks `request`, keeping `input` in the row, with any record failure handed back.
+    fn ask_keeping(
+        &self,
+        request: &Ask<'_>,
+        input: &str,
+        endpoint: &FakeEndpoint,
+    ) -> Result<Asked<'_>, AskError> {
         let setup = Setup {
             thresholds: &self.thresholds,
             config: Ok(&self.config),
@@ -754,5 +766,50 @@ fn a_worst_case_choice_row_with_the_longest_input_fits_the_row_cap() {
         row.len() < MAX_ROW_BYTES,
         "{} bytes with the newline",
         row.len() + 1
+    );
+}
+
+/// Puts a directory where the live log file goes, so the row cannot be appended.
+fn block_the_log(world: &World) {
+    fs::create_dir_all(world.log.path()).expect("a directory at the log's path");
+}
+
+#[test]
+fn a_row_that_cannot_be_written_is_handed_back_with_the_answer() {
+    let world = World::configured();
+    block_the_log(&world);
+
+    let asked = world
+        .ask_keeping(
+            &world.question(Point::D1, &[]),
+            "rm -r x",
+            &FakeEndpoint::answering(&yes(0.95)),
+        )
+        .expect("asked");
+
+    let Outcome::Decided(decision) = asked.outcome else {
+        panic!("answered: {:?}", asked.outcome);
+    };
+    assert_eq!(decision.action, "deny", "the answer stands");
+    assert!(
+        matches!(asked.unrecorded, Some(LogError::NotAFile { .. })),
+        "{:?}",
+        asked.unrecorded
+    );
+}
+
+#[test]
+fn ask_still_fails_when_the_row_cannot_be_written() {
+    let world = World::configured();
+    block_the_log(&world);
+
+    let outcome = world.ask(
+        &world.question(Point::D1, &[]),
+        &FakeEndpoint::answering(&yes(0.95)),
+    );
+
+    assert!(
+        matches!(outcome, Err(AskError::Log(LogError::NotAFile { .. }))),
+        "{outcome:?}"
     );
 }

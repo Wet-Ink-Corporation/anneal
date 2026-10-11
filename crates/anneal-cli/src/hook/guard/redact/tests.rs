@@ -54,16 +54,118 @@ fn export_env_and_the_declaration_builtins_have_their_values_redacted() {
 }
 
 #[test]
-fn arguments_shaped_like_assignments_are_kept() {
+fn lowercase_operand_assignments_are_kept() {
     let cases = [
         "dd if=/dev/zero of=/dev/sda bs=1M",
-        "make CC=gcc",
-        "git commit -m \"A=b\"",
-        "echo A=b",
         "git config user.name=x",
+        "find . -name x=y",
     ];
     for command in cases {
         assert_eq!(redact(command), command, "{command:?}");
+    }
+}
+
+#[test]
+fn an_env_style_assignment_is_redacted_in_any_position() {
+    let cases = [
+        ("make CC=gcc", "make CC=<redacted>"),
+        ("echo A_1=b", "echo A_1=<redacted>"),
+        (
+            "git commit -m \"FIX=b\"",
+            "git commit -m \"FIX=<redacted>\"",
+        ),
+        ("sudo K=v", "sudo K=<redacted>"),
+        ("sudo env K=v", "sudo env K=<redacted>"),
+        ("timeout 5 env K=v", "timeout 5 env K=<redacted>"),
+        ("command export K=v", "command export K=<redacted>"),
+        ("env -u NAME K=v", "env -u NAME K=<redacted>"),
+        ("nohup K=v run", "nohup K=<redacted> run"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_shell_body_in_quotes_is_scanned_as_text() {
+    let cases = [
+        ("bash -c 'K=v cmd'", "bash -c 'K=<redacted> cmd'"),
+        ("eval \"K=v ls\"", "eval \"K=<redacted> ls\""),
+        ("sh -c \"$(echo K=v)\"", "sh -c \"$(echo K=<redacted>)\""),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_name_holding_a_credential_word_is_redacted_in_any_letter_case() {
+    let cases = [
+        ("deploy api_token=x", "deploy api_token=<redacted>"),
+        ("run Db_Password=p go", "run Db_Password=<redacted> go"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn array_and_element_assignments_are_redacted() {
+    let cases = [
+        ("K=(a b) cmd", "K=<redacted> cmd"),
+        ("K[0]=v cmd", "K[0]=<redacted> cmd"),
+        ("K+=v cmd", "K+=<redacted> cmd"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_comment_is_redacted_to_the_end_of_its_line() {
+    assert_eq!(
+        redact("# let's deploy\nAPI_KEY=sk-live-123 ./deploy.sh"),
+        "#<redacted>\nAPI_KEY=<redacted> ./deploy.sh"
+    );
+    assert_eq!(redact("ls # TOKEN is x"), "ls #<redacted>");
+}
+
+#[test]
+fn ansi_c_quoting_is_not_read_inside_double_quotes() {
+    assert_eq!(
+        redact("echo \"$'\" ; TOKEN=abc deploy"),
+        "echo \"$'\" ; TOKEN=<redacted> deploy"
+    );
+}
+
+#[test]
+fn a_heredoc_body_is_redacted_entirely() {
+    let cases = [
+        (
+            "cat <<EOF\nit's\nEOF\nTOKEN=x run",
+            "cat <<EOF\n<redacted>\nEOF\nTOKEN=<redacted> run",
+        ),
+        (
+            "cat <<-'END' > f\n\tsecret: x\n\tEND\nls",
+            "cat <<-'END' > f\n<redacted>\n\tEND\nls",
+        ),
+        ("cat <<<\"TOKEN=x\"", "cat <<<\"TOKEN=<redacted>\""),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn an_unclosed_span_anywhere_redacts_the_rest_of_the_command() {
+    let cases = [
+        ("echo 'abc TOKEN=x", "echo <redacted>"),
+        ("ls $(echo TOKEN=x", "ls <redacted>"),
+        ("echo \"a b", "echo <redacted>"),
+        ("cat <<EOF\nTOKEN=x", "cat <<EOF\n<redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
     }
 }
 
