@@ -1,0 +1,53 @@
+#!/bin/sh
+# anneal launcher: runs the prebuilt binary for this platform from libexec/<target>/.
+# Not bin/: Claude Code puts a plugin's bin/ on PATH, and claude.ai rejects hosted plugins that
+# ship one. Hooks start this launcher by path with no shell (exec form), so it must stay
+# executable; on Windows the same path resolves to libexec/anneal.exe instead.
+# Falls back to an `anneal` on PATH (cargo install --path crates/anneal-cli).
+#
+# Hook calls are `anneal hook <name> [--fail-closed] ...`. With no binary anywhere a hook exits 0
+# (fail open), except one marked --fail-closed (a guard), which prints one ERROR line and exits 2,
+# the code Claude Code reads as "block".
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ext=""
+case "$(uname -s 2>/dev/null)-$(uname -m 2>/dev/null)" in
+  Linux-x86_64)              targets="x86_64-unknown-linux-musl x86_64-unknown-linux-gnu" ;;
+  Linux-aarch64|Linux-arm64) targets="aarch64-unknown-linux-musl aarch64-unknown-linux-gnu" ;;
+  Darwin-arm64)              targets="aarch64-apple-darwin" ;;
+  Darwin-x86_64)             targets="x86_64-apple-darwin" ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT*) targets="x86_64-pc-windows-msvc x86_64-pc-windows-gnu"; ext=".exe" ;;
+  *)                         targets="" ;;
+esac
+# The first target listed wins unless a later one is a newer build: a stale native build must
+# not shadow a fresh cross-build.
+pick=""
+for t in $targets; do
+  bin="$dir/$t/anneal$ext"
+  [ -f "$bin" ] || continue
+  if [ -z "$pick" ] || [ "$bin" -nt "$pick" ]; then
+    pick="$bin"
+  fi
+done
+if [ -n "$pick" ]; then
+  [ -x "$pick" ] || chmod +x "$pick" 2>/dev/null
+  exec "$pick" "$@"
+fi
+# Fall back to an installed anneal, but never to this launcher itself (it may be on PATH).
+if [ -z "${ANNEAL_LAUNCHER:-}" ]; then
+  found=$(command -v anneal 2>/dev/null || true)
+  if [ -n "$found" ] && [ "$found" != "$dir/anneal" ]; then
+    ANNEAL_LAUNCHER=1 exec "$found" "$@"
+  fi
+fi
+why="no anneal binary for $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) under $dir and none on PATH; build one with scripts/build-plugin-bins.sh or install a release"
+if [ "${1:-}" = "hook" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "--fail-closed" ]; then
+      echo "ERROR anneal: $why" >&2
+      exit 2
+    fi
+  done
+  exit 0
+fi
+echo "anneal: $why" >&2
+exit 127

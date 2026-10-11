@@ -1,0 +1,47 @@
+{
+  "extraKnownMarketplaces": {
+    "temper": {
+      "source": {
+        "source": "github",
+        "repo": "Wet-Ink-Corporation/temper"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "temper@temper": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo nextest *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo doc *)",
+      "Bash(cargo tree *)",
+      "Bash(cargo metadata *)",
+      "Bash(git diff *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(node .claude/temper/temper.mjs baseline --check*)",
+      "Bash(node .claude/temper/temper.mjs baseline --tighten*)",
+      "Bash(node .claude/temper/temper.mjs report*)",
+      "Bash(node .claude/temper/temper.mjs gate*)"
+    ],
+    "ask": [
+      "Edit(**/clippy.toml)",
+      "Edit(**/rustfmt.toml)",
+      "Edit(/rust-toolchain.toml)",
+      "Edit(/deny.toml)",
+      "Edit(/.cargo/**)",
+      "Edit(/.github/**)",
+      "Edit(/.githooks/**)",
+      "Edit(/.claude/**)"
+    ],
+    "deny": [
+      "Bash(git commit --no-verify *)",
+      "Bash(git push --no-verify *)"
+    ]
+  }
+}

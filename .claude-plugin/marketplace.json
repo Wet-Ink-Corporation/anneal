@@ -1,0 +1,15 @@
+{
+  "name": "anneal",
+  "description": "anneal: enforced SDLC gates for Claude Code. Install anneal@anneal.",
+  "owner": {
+    "name": "Ryan Britton",
+    "email": "ryan.britton@wet-ink.net"
+  },
+  "plugins": [
+    {
+      "name": "anneal",
+      "source": "./plugin",
+      "description": "Turns prose SDLC gates into enforced checks: skills, a deterministic CLI behind hooks, and calibrated judgement calls."
+    }
+  ]
+}

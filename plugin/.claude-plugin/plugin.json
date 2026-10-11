@@ -1,0 +1,32 @@
+{
+  "name": "anneal",
+  "version": "0.0.0",
+  "description": "Enforced SDLC gates for Claude Code: skills for each phase, a deterministic CLI behind hooks, and calibrated judgement calls that run in shadow until they earn enforcement.",
+  "author": { "name": "Ryan Britton", "email": "ryan.britton@wet-ink.net" },
+  "homepage": "https://github.com/Wet-Ink-Corporation/anneal",
+  "repository": "https://github.com/Wet-Ink-Corporation/anneal",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["sdlc", "gates", "hooks", "tdd", "review"],
+  "userConfig": {
+    "cf_account_id": {
+      "type": "string",
+      "title": "Cloudflare account id",
+      "description": "Account that runs Clef on Workers AI. Leave empty to keep every Clef decision point off.",
+      "required": false
+    },
+    "cf_api_token": {
+      "type": "string",
+      "title": "Cloudflare API token",
+      "description": "Workers AI token for Clef calls. Stored as a secret.",
+      "sensitive": true,
+      "required": false
+    },
+    "clef_mode": {
+      "type": "string",
+      "title": "Clef mode",
+      "description": "off, shadow (log what Clef would decide) or enforce (act on it where calibration allows).",
+      "default": "shadow",
+      "required": false
+    }
+  }
+}
