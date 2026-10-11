@@ -3,9 +3,9 @@
 //! Supported: `key: value` scalars (plain, `"double"` or `'single'` quoted), `key: >` folded and
 //! `key: |` literal blocks (chomping indicators accepted, trailing newlines always stripped), and
 //! `key:` followed by an indented block (a nested map such as `metadata`), kept as raw text.
-//! A plain value may not contain `: `, end with `:`, or start with `` ` ``, `@` or `%` (strict
-//! YAML rejects them; quote such values). Anything else is a [`ParseError`] with the line it
-//! stopped at.
+//! A plain value may not contain `: `, end with `:`, or start with a YAML indicator (strict YAML
+//! rejects them; quote such values), except `[`, kept for `argument-hint: [path]`. Anything
+//! else is a [`ParseError`] with the line it stopped at.
 
 use std::collections::BTreeSet;
 
@@ -25,6 +25,8 @@ pub(crate) struct Field {
 pub(crate) struct Document<'a> {
     /// Top-level fields in file order.
     pub fields: Vec<Field>,
+    /// The whole text that was parsed.
+    pub source: &'a str,
     /// The body text after the closing `---` line.
     pub body: &'a str,
     /// 1-based file line of the first body line.
@@ -69,6 +71,7 @@ pub(crate) fn parse(text: &str) -> Result<Document<'_>, ParseError> {
     let fields = parse_fields(block)?;
     Ok(Document {
         fields,
+        source: text,
         body,
         body_line: closing_index.saturating_add(3),
     })
@@ -220,7 +223,9 @@ fn unquote(scalar: &str, line: usize) -> Result<String, ParseError> {
 }
 
 /// A plain (unquoted) scalar, minus any trailing ` # comment`. Strict YAML rejects `: ` inside
-/// one, a trailing `:`, and a leading `` ` ``, `@` or `%`, so they must be quoted.
+/// one, a trailing `:`, and a leading indicator (`` ` `` `@` `%` `*` `&` `!` `|` `>` `#`, or `-`
+/// or `?` followed by a space), so they must be quoted. A leading `[` is accepted on purpose:
+/// Claude Code's `argument-hint: [path]` is written unquoted, and it is kept as text.
 fn plain(scalar: &str, line: usize) -> Result<String, ParseError> {
     let value = scalar
         .split_once(" #")
@@ -229,10 +234,13 @@ fn plain(scalar: &str, line: usize) -> Result<String, ParseError> {
     if value.contains(": ") || value.ends_with(':') {
         return Err(error(line, "plain value contains `: `; quote it"));
     }
-    if value.starts_with(['`', '@', '%']) {
+    let indicator = value.starts_with(['`', '@', '%', '*', '&', '!', '|', '>', '#'])
+        || value.starts_with("- ")
+        || value.starts_with("? ");
+    if indicator {
         return Err(error(
             line,
-            "plain value starts with `` ` ``, `@` or `%`; quote it",
+            "plain value starts with a YAML indicator; quote it",
         ));
     }
     Ok(value.to_owned())
@@ -326,6 +334,14 @@ mod tests {
     }
 
     #[test]
+    fn a_bracketed_argument_hint_and_inner_dashes_stay_plain() {
+        let doc = parse("---\nargument-hint: [path] [--fix]\ndescription: -x or ?y\n---\n")
+            .expect("`[` and `-`/`?` without a space are accepted");
+        assert_eq!(doc.value("argument-hint"), "[path] [--fix]", "kept as text");
+        assert_eq!(doc.value("description"), "-x or ?y", "kept as text");
+    }
+
+    #[test]
     fn a_nested_map_is_kept_as_raw_lines() {
         let doc = parse("---\nmetadata:\n  owner: anneal\n  tier: 1\nname: x\n---\n")
             .expect("valid frontmatter");
@@ -348,6 +364,14 @@ mod tests {
             ("---\ndescription: `code` first\n---\n", 2),
             ("---\ndescription: @handle\n---\n", 2),
             ("---\ndescription: %directive\n---\n", 2),
+            ("---\ndescription: *alias\n---\n", 2),
+            ("---\ndescription: &anchor x\n---\n", 2),
+            ("---\ndescription: !tag x\n---\n", 2),
+            ("---\ndescription: | x\n---\n", 2),
+            ("---\ndescription: >x\n---\n", 2),
+            ("---\ndescription: #x\n---\n", 2),
+            ("---\ndescription: - item\n---\n", 2),
+            ("---\ndescription: ? key\n---\n", 2),
         ];
         for (text, line) in cases {
             let result = parse(text).map(|d| d.fields);

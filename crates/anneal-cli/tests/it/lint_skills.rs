@@ -353,7 +353,9 @@ fn the_cache_replays_unchanged_skills_and_rechecks_changed_ones() -> TestResult 
 
     let fresh = lint(&args)?;
     let replayed = lint(&args)?;
-    std::fs::write(skills.join("spec/notes.txt"), "changed")?;
+    // A new reference changes what the checks read (a loose file elsewhere would not).
+    std::fs::create_dir(skills.join("spec/references"))?;
+    std::fs::write(skills.join("spec/references/notes.md"), "changed")?;
     let after_change = lint(&args)?;
 
     assert_eq!(

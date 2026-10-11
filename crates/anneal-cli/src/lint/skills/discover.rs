@@ -1,5 +1,6 @@
 //! Finding skill directories under the given paths and reading their `SKILL.md`.
 
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -152,12 +153,37 @@ impl EntryKind {
     }
 }
 
-/// The entries of `dir` (names and kinds), sorted by name. A missing directory has no
-/// entries. Symlinks are reported as [`EntryKind::Symlink`] and never followed.
+/// What a skill's per-skill checks read from its directory besides `SKILL.md`. It is read once,
+/// handed to the checks, and hashed for the snapshot, so the two cannot disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Surroundings {
+    /// `scripts/` exists (rule 12's review item).
+    pub has_scripts: bool,
+    /// The `references/` entries, by real (possibly non-UTF-8) name.
+    pub references: Vec<(OsString, EntryKind)>,
+}
+
+impl Surroundings {
+    /// Reads the surroundings of `skill`.
+    ///
+    /// # Errors
+    /// [`LintError::Io`] when `references/` exists but cannot be listed.
+    pub(crate) fn read(skill: &SkillDir) -> Result<Self, LintError> {
+        Ok(Self {
+            has_scripts: skill.dir.join("scripts").is_dir(),
+            references: list_dir(&skill.dir.join("references"))?,
+        })
+    }
+}
+
+/// The entries of `dir` (real names and kinds), sorted by name. A missing directory has no
+/// entries. Symlinks are reported as [`EntryKind::Symlink`] and never followed. Names stay
+/// `OsString`, so a non-UTF-8 name still joins back to the right path; use the lossy form only
+/// for display.
 ///
 /// # Errors
 /// [`LintError::Io`] when `dir` exists but cannot be listed.
-pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(String, EntryKind)>, LintError> {
+pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(OsString, EntryKind)>, LintError> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -169,10 +195,7 @@ pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(String, EntryKind)>, LintError
         let file_type = entry
             .file_type()
             .map_err(|source| LintError::io(dir, source))?;
-        listed.push((
-            entry.file_name().to_string_lossy().into_owned(),
-            EntryKind::of(file_type),
-        ));
+        listed.push((entry.file_name(), EntryKind::of(file_type)));
     }
     listed.sort();
     Ok(listed)

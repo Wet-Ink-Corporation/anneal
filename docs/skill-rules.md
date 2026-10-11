@@ -108,9 +108,10 @@ There is no YAML library. The parser reads this subset and reports anything else
 - `---` on the first line, and a closing `---` line
 - `key: value`, with a plain, `"double"` (escapes `\"` and `\\`) or `'single'` (escape `''`)
   quoted scalar; `# comment` lines, and a trailing ` # comment` after a value. A plain
-  (unquoted) value may not contain `: `, end with `:`, or start with `` ` ``, `@` or `%`,
-  because strict YAML rejects those: quote it instead
-  (`description: "Use when: ..."`)
+  (unquoted) value may not contain `: ` or end with `:`, and may not start with a YAML
+  indicator (`` ` `` `@` `%` `*` `&` `!` `|` `>` `#`, or `-`/`?` followed by a space), because
+  strict YAML rejects or reinterprets those: quote it instead (`description: "Use when: ..."`).
+  A leading `[` is accepted and kept as text, so the usual `argument-hint: [path]` works
 - `key: >` (folded) and `key: |` (literal) blocks of indented lines; chomping indicators
   (`>-`, `|+`, ...) are accepted, and trailing newlines are always stripped
 - `key:` followed by an indented block (a nested map such as `metadata:`), kept as raw text
@@ -129,21 +130,24 @@ Put it under `metadata:` instead.
 
 ## Content-hash snapshot
 
-With `--cache FILE`, each skill's per-skill findings are stored under a SHA-256 of its
-directory, plus the source code of the checks, the anneal version and the hook ids. Every input
-is length-prefixed. Within the directory, each entry contributes its relative path and kind,
-then:
+With `--cache FILE`, each skill's per-skill findings are stored under a SHA-256 of exactly what
+the per-skill checks consume, every input length-prefixed:
 
-- a regular file: its size and its first 1 MiB
-- a symlink: its target path, never followed (so a dangling link or a link to `/dev/zero` is
-  safe)
-- a directory: its own entries, down to four levels
-- a FIFO, socket or device: nothing more
+- the `SKILL.md` bytes as loaded (through a symlink, so editing the target invalidates the
+  entry) and its size
+- the skill's name
+- whether `scripts/` exists
+- the `references/` listing: each entry's real name (non-UTF-8 names included) and kind
+- the hook ids, the anneal version, and the source code of the checks
 
-Because the checks' own source is hashed, editing a check invalidates every entry; no version
-number has to be bumped. A skill whose hash is unchanged is not checked again; its stored
-findings are replayed, so a cached run reports exactly what a fresh run would. Set-level checks
-(`listing-budget`, `description-sibling`, `overlap`, `bootstrap-index` and the once-per-run
-reviews) always run. A JSON object with a numeric `version` that is another version, or
-another shape, is stale: it is ignored and rebuilt. Any other file at that path is refused with
-exit 70 rather than overwritten. `data.cached` counts the replayed skills.
+Nothing else in the skill directory is read by a per-skill check, so nothing else is hashed, and
+no other file is opened. Because the checks' own source is hashed, editing a check invalidates
+every entry; no version number has to be bumped. A skill whose hash is unchanged is not checked
+again; its stored findings are replayed, so a cached run reports exactly what a fresh run
+would. Set-level checks (`listing-budget`, `description-sibling`, `overlap`, `bootstrap-index`
+and the once-per-run reviews) always run. `data.cached` counts the replayed skills.
+
+The snapshot is a JSON object marked `"kind": "anneal-lint-skills"` with a format `version`.
+One of ours from another format version is stale: it is ignored and rebuilt. Any other file at
+that path, such as `hooks.metadata.json`, a baseline snapshot, or one of ours that is corrupt,
+is refused with exit 70 rather than overwritten.

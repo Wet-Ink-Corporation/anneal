@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anneal_cli::lint::finding::{LintFinding, Severity};
 use anneal_cli::lint::skills::checker::Checker;
-use anneal_cli::lint::skills::{SkillsArgs, lint};
+use anneal_cli::lint::skills::{LintError, SkillsArgs, lint};
 
 use crate::support::copy_dir;
 
@@ -85,9 +85,83 @@ fn a_path_of_the_wrong_kind_is_a_usage_error() -> TestResult {
         },
     ];
     for case in &cases {
-        let code = lint(case).map_or_else(|e| e.code().value(), |_| 0);
+        let result = lint(case);
+        assert!(
+            matches!(result, Err(LintError::WrongKind { .. })),
+            "{case:?} is the wrong kind of path: {result:?}"
+        );
+        let code = result.map_or_else(|e| e.code().value(), |_| 0);
         assert_eq!(code, 2, "{case:?} is a usage error, not internal (70)");
     }
+    Ok(())
+}
+
+/// Lints `skills` without a cache, then twice with one at `cache`; returns the three outcomes'
+/// findings.
+fn fresh_and_cached(skills: &Path, cache: &Path) -> Result<[Vec<LintFinding>; 3], Box<dyn Error>> {
+    let uncached_args = args(vec![skills.to_path_buf()]);
+    let cached_args = SkillsArgs {
+        cache: Some(cache.to_path_buf()),
+        ..args(vec![skills.to_path_buf()])
+    };
+    Ok([
+        lint(&uncached_args)?.findings,
+        lint(&cached_args)?.findings,
+        lint(&cached_args)?.findings,
+    ])
+}
+
+#[test]
+#[cfg(unix)]
+fn a_symlinked_skill_file_is_rechecked_when_its_target_changes() -> TestResult {
+    let (work, skills) = clean_skills()?;
+    let target = work.path().join("plan-source.md");
+    std::fs::rename(skills.join("plan/SKILL.md"), &target)?;
+    std::os::unix::fs::symlink(&target, skills.join("plan/SKILL.md"))?;
+    let cache = work.path().join("cache.json");
+    let [before, _, _] = fresh_and_cached(&skills, &cache)?;
+    assert!(
+        errors_from(&before, Checker::ModelField).is_empty(),
+        "clean to start"
+    );
+
+    let text = std::fs::read_to_string(&target)?;
+    std::fs::write(
+        &target,
+        text.replacen("name: plan\n", "name: plan\nmodel: opus\n", 1),
+    )?;
+    let [fresh, cached, replayed] = fresh_and_cached(&skills, &cache)?;
+
+    assert_eq!(
+        errors_from(&fresh, Checker::ModelField).len(),
+        1,
+        "the edit is an error"
+    );
+    assert_eq!(cached, fresh, "the cache sees the edited target");
+    assert_eq!(replayed, fresh, "and replays it faithfully");
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn a_non_utf8_file_name_gives_the_same_outcome_with_and_without_the_cache() -> TestResult {
+    use std::os::unix::ffi::OsStrExt;
+    let (work, skills) = clean_skills()?;
+    let references = skills.join("plan/references");
+    std::fs::create_dir(&references)?;
+    let odd = std::ffi::OsStr::from_bytes(b"odd-\xff.md");
+    std::fs::write(references.join(odd), "# Odd\n")?;
+    std::fs::write(skills.join("plan").join(odd), "loose file\n")?;
+
+    let [fresh, cached, replayed] = fresh_and_cached(&skills, &work.path().join("cache.json"))?;
+
+    assert_eq!(
+        errors_from(&fresh, Checker::References).len(),
+        1,
+        "the unlinked reference"
+    );
+    assert_eq!(cached, fresh, "the cache changes nothing");
+    assert_eq!(replayed, fresh, "nor does a replay");
     Ok(())
 }
 

@@ -2,28 +2,26 @@
 //! criteria (rule 8).
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 
 use crate::lint::finding::{LintFinding, Location};
-use crate::lint::skills::LintError;
 use crate::lint::skills::checker::{
     ANATOMY, ANATOMY_EXEMPT, BODY_MAX_LINES, BODY_MAX_WORDS, COMPLETION_PHRASES, Checker,
     FILE_MAX_BYTES,
 };
-use crate::lint::skills::discover::{EntryKind, list_dir};
+use crate::lint::skills::discover::EntryKind;
 use crate::lint::skills::document::Skill;
 
 const REFERENCES: &str = "references";
 
-/// Every body check for `skill`.
-///
-/// # Errors
-/// [`LintError::Io`] when `references/` exists but cannot be listed.
-pub(crate) fn check(skill: &Skill<'_>) -> Result<Vec<LintFinding>, LintError> {
-    let mut findings = references(skill)?;
+/// Every body check for `skill`, whose `references/` holds `references` (from
+/// [`Surroundings`](crate::lint::skills::discover::Surroundings)).
+pub(crate) fn check(skill: &Skill<'_>, references: &[(OsString, EntryKind)]) -> Vec<LintFinding> {
+    let mut findings = check_references(skill, references);
     findings.extend(budget(skill));
     findings.extend(anatomy(skill));
     findings.extend(completion_criteria(skill));
-    Ok(findings)
+    findings
 }
 
 /// Rule 2: the file within 8 KB, the body within 600 words and 500 lines. One finding lists
@@ -54,25 +52,29 @@ pub(crate) fn oversized(at: Location, what: &str) -> LintFinding {
 }
 
 /// Rule 2: `references/` holds files only, each linked from the body, and every
-/// `references/...` link resolves to one of them.
-fn references(skill: &Skill<'_>) -> Result<Vec<LintFinding>, LintError> {
+/// `references/...` link resolves to one of them. A non-UTF-8 name can never be linked from
+/// the (UTF-8) body; it is shown lossily.
+fn check_references(skill: &Skill<'_>, entries: &[(OsString, EntryKind)]) -> Vec<LintFinding> {
     let dir = skill.dir.dir.join(REFERENCES);
-    let entries = list_dir(&dir)?;
     let links = linked_references(skill);
     let mut findings = Vec::new();
     let files: BTreeSet<&str> = entries
         .iter()
         .filter(|(_, kind)| *kind != EntryKind::Dir)
-        .map(|(name, _)| name.as_str())
+        .filter_map(|(name, _)| name.to_str())
         .collect();
-    for (name, kind) in &entries {
-        let at = Location::new(dir.join(name).display().to_string(), 0);
+    for (os_name, kind) in entries {
+        let at = Location::new(dir.join(os_name).display().to_string(), 0);
+        let name = os_name.to_string_lossy();
         let (message, fix) = if *kind == EntryKind::Dir {
             (
                 format!("`references/{name}/` nests references two levels deep."),
                 "flatten it: one level of `references/<topic>.md` files.",
             )
-        } else if !links.iter().any(|(target, _)| target == name) {
+        } else if !links
+            .iter()
+            .any(|(target, _)| os_name.to_str() == Some(target.as_str()))
+        {
             (
                 format!("`references/{name}` is not linked from the body."),
                 "link it from the step that needs it, or delete it.",
@@ -93,7 +95,7 @@ fn references(skill: &Skill<'_>) -> Result<Vec<LintFinding>, LintError> {
             );
         }
     }
-    Ok(findings)
+    findings
 }
 
 /// Every `references/<target>` mentioned in the body, with its line.
@@ -216,8 +218,9 @@ fn is_numbered_step(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{budget, is_numbered_step, references};
+    use super::{budget, check_references, is_numbered_step};
     use crate::lint::skills::checker::{BODY_MAX_LINES, FILE_MAX_BYTES};
+    use crate::lint::skills::discover::Surroundings;
     use crate::lint::skills::document::{test_dir, test_skill};
     use std::path::Path;
 
@@ -252,7 +255,8 @@ mod tests {
         let dir = test_dir(root.path(), "plan");
         let text = "---\nname: plan\n---\nSee references/guide.md and references/missing.md.\n";
 
-        let findings = references(&test_skill(&dir, text)).expect("references/ is listable");
+        let around = Surroundings::read(&dir).expect("references/ is listable");
+        let findings = check_references(&test_skill(&dir, text), &around.references);
 
         let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
         assert_eq!(

@@ -29,7 +29,7 @@ use crate::exit_codes::{self, Code};
 use crate::lint::finding::{LintFinding, Location};
 use cache::{Cache, content_hash};
 use checker::Checker;
-use discover::{SkillDir, discover, read_capped};
+use discover::{SkillDir, Surroundings, discover, read_capped};
 use document::Skill;
 
 /// Arguments of `anneal lint skills`.
@@ -160,28 +160,31 @@ fn per_skill(
     hook_ids: &BTreeSet<String>,
     cache: Option<&mut Cache>,
 ) -> Result<(Vec<LintFinding>, bool), LintError> {
+    let around = Surroundings::read(skill.dir)?;
     let Some(cache) = cache else {
-        return Ok((check_skill(skill, hook_ids)?, false));
+        return Ok((check_skill(skill, &around, hook_ids), false));
     };
     let key = skill.dir.dir.display().to_string();
-    let hash = content_hash(skill.dir, hook_ids)?;
+    let hash = content_hash(skill, &around, hook_ids);
     if let Some(stored) = cache.lookup(&key, &hash) {
         return Ok((stored.to_vec(), true));
     }
-    let findings = check_skill(skill, hook_ids)?;
+    let findings = check_skill(skill, &around, hook_ids);
     cache.store(key, hash, findings.clone());
     Ok((findings, false))
 }
 
+/// The per-skill checks. They read only `skill`, `around` and `hook_ids`, which is exactly what
+/// [`content_hash`] covers.
 fn check_skill(
     skill: &Skill<'_>,
+    around: &Surroundings,
     hook_ids: &BTreeSet<String>,
-) -> Result<Vec<LintFinding>, LintError> {
+) -> Vec<LintFinding> {
     let mut findings = checks_spec::check(skill);
-    findings.extend(checks_body::check(skill)?);
-    let has_scripts = skill.dir.dir.join("scripts").is_dir();
-    findings.extend(checks_prose::check(skill, hook_ids, has_scripts));
-    Ok(findings)
+    findings.extend(checks_body::check(skill, &around.references));
+    findings.extend(checks_prose::check(skill, hook_ids, around.has_scripts));
+    findings
 }
 
 fn set_level(
