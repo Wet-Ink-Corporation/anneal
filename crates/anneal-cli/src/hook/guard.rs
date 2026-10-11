@@ -5,11 +5,14 @@
 //! Code's deny decision on stdout, whose reason is one `ERROR <reason>` line, and a
 //! `gate_blocked` event in the ledger. An allowed one gets no output. Whatever the guard cannot
 //! read (input that is not `PreToolUse` JSON, over 1 MiB, a command with an unclosed quote) is
-//! denied; a failed write of the decision exits 2 (`cli` fails it closed). What the denylist
-//! leaves undecided goes to `Fallback`, the extension point for Clef D1 (#30). See
+//! denied; a failed write of the decision exits 2 (`cli` fails it closed). A Bash command the
+//! denylist leaves undecided gets `Fallback`'s answer unless Clef D1 (`clef`, #30), enforced,
+//! denies or asks; its command is redacted (`redact`) before Clef or the log see it. See
 //! `docs/guard.md`.
 
+mod clef;
 mod denylist;
+mod redact;
 mod shell;
 
 use std::ffi::OsString;
@@ -21,8 +24,11 @@ use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, StoreError, Timestamp, TimestampError};
 use serde::Deserialize;
 
-use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_deny};
+use crate::decide::clock::{Clock, SystemClock};
+use crate::decide::transport::{NoHttpClient, Transport};
+use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
 use crate::paths::{self, PathError};
+use clef::Ports;
 use denylist::{Context, Verdict};
 
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
@@ -58,6 +64,8 @@ pub(crate) enum Rule {
     Unparseable,
     /// The hook input could not be read.
     BadInput,
+    /// Clef D1, enforced, rates the command destructive or irreversible.
+    Destructive,
 }
 
 impl Rule {
@@ -70,6 +78,7 @@ impl Rule {
             Self::ConfigWrite => "config-write",
             Self::Unparseable => "unparseable",
             Self::BadInput => "bad-input",
+            Self::Destructive => "destructive",
         }
     }
 }
@@ -97,20 +106,21 @@ impl Denial {
 pub(crate) enum Decision {
     /// Let it run: no output.
     Allow,
+    /// Ask the human (Clef D1, enforced): the reason, one line.
+    Ask(String),
     /// Block it.
     Deny(Denial),
 }
 
-/// What decides a command the denylist leaves undecided.
+/// What decides a command the denylist leaves undecided, before Clef D1 is asked.
 ///
-/// **Extension point for Clef D1 (#30).** The denylist only denies or leaves a command
-/// undecided; every undecided command comes here. Clef D1 plugs in as a new variant (say
-/// `Clef`) whose `decide` asks Clef within the 2 s budget for Clef calls and maps its answer to
-/// a [`Decision`], with `Allow` staying the answer when Clef is off. The match in `decide` is
-/// exhaustive, so a new variant has to say what it does.
+/// The denylist only denies or leaves a command undecided; every undecided command comes here,
+/// and its answer stands unless D1, in enforce mode, decides otherwise (`clef`). With Clef off
+/// or in shadow it is the guard's answer. The match in `decide` is exhaustive, so a new variant
+/// has to say what it does.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Fallback {
-    /// Allow it: the only fallback until Clef D1 lands.
+    /// Allow it.
     #[default]
     Allow,
 }
@@ -171,12 +181,14 @@ enum RecordError {
     Append(#[source] StoreError),
 }
 
-/// Runs the guard: reads the input from `env.stdin`, decides, and on a denial records it in
-/// the ledger (resolved from the input's `cwd`, or `env.current_dir`, and `env.lookup`) and
-/// writes the deny decision to `out`. Pass `&mut out` to keep the writer.
+/// Runs the guard: reads the input from `env.stdin`, decides (the denylist, then Clef D1 for a
+/// Bash command it left undecided), and on a denial records it in the ledger (resolved from the
+/// input's `cwd`, or `env.current_dir`, and `env.lookup`) and writes the deny decision to
+/// `out`; an ask writes the ask decision. Clef is reached through [`NoHttpClient`], the only
+/// transport so far. Pass `&mut out` to keep the writer.
 ///
 /// # Errors
-/// Only the I/O error from writing `out`; every other failure denies.
+/// Only the I/O error from writing `out`; every failure of the denylist's input denies.
 pub(crate) fn run<R, D, L, W>(env: HookEnv<R, D, L>, out: W) -> io::Result<()>
 where
     R: Read,
@@ -184,13 +196,60 @@ where
     L: Fn(&str) -> Option<OsString>,
     W: Write,
 {
-    let input = read_input(env.stdin);
-    let decision = decide(&input, &Context::new(&env.lookup));
-    let Decision::Deny(denial) = decision else {
-        return Ok(());
+    let clock = SystemClock::new();
+    let ports = Ports {
+        transport: &NoHttpClient,
+        clock: &clock,
     };
-    let recorded = record(&denial, input.ok(), env.current_dir, &env.lookup);
-    write_denial(out, &denial, recorded.err().as_ref())
+    run_with(env, &ports, out)
+}
+
+/// [`run`], reaching Clef through `ports`.
+///
+/// # Errors
+/// As [`run`].
+pub(crate) fn run_with<R, D, L, W, T, C>(
+    env: HookEnv<R, D, L>,
+    ports: &Ports<'_, T, C>,
+    out: W,
+) -> io::Result<()>
+where
+    R: Read,
+    D: FnOnce() -> io::Result<PathBuf>,
+    L: Fn(&str) -> Option<OsString>,
+    W: Write,
+    T: Transport,
+    C: Clock,
+{
+    let input = read_input(env.stdin);
+    let decision = match decide(&input, &Context::new(&env.lookup)) {
+        Decision::Allow => bash_command(&input).map_or(Decision::Allow, |command| {
+            clef::judge(command, &env.lookup, ports)
+        }),
+        decided @ (Decision::Ask(_) | Decision::Deny(_)) => decided,
+    };
+    match decision {
+        Decision::Allow => Ok(()),
+        Decision::Ask(reason) => write_ask(out, &reason),
+        Decision::Deny(denial) => {
+            let recorded = record(&denial, input.ok(), env.current_dir, &env.lookup);
+            write_denial(out, &denial, recorded.err().as_ref())
+        }
+    }
+}
+
+/// The command of a Bash call, if `input` is one.
+fn bash_command(input: &Result<Input, InputError>) -> Option<&str> {
+    match input {
+        Ok(Input {
+            tool_name,
+            tool: ToolInput {
+                command: Some(command),
+            },
+            ..
+        }) if tool_name == "Bash" => Some(command),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// Reads and parses at most [`MAX_INPUT_BYTES`] of `stdin`.

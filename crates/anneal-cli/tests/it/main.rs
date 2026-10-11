@@ -13,6 +13,7 @@ mod hook_bootstrap;
 mod hook_completeness;
 mod hook_fast_check;
 mod hook_guard;
+mod hook_guard_d1;
 mod hook_status;
 mod hooks_manifest;
 mod ledger;

@@ -108,9 +108,14 @@ An allowed command gets no output. A denied one gets
 "permissionDecisionReason": "ERROR guard <rule>: <reason>"}}` and a `gate_blocked` event in the
 ledger (`point` is `guard.<rule>`), recorded within the hook's budget (git 1 s, 500 ms per
 ledger statement). Unreadable input, and commands it cannot read or model, are denied. What
-the denylist does not decide goes to the extension point for Clef D1 (#30), which allows it for
-now. The denylist, the bypass handling and the extension point are documented in
-`docs/guard.md`.
+the denylist does not decide is asked of Clef D1 (`noul destructive_or_irreversible`, #30) in
+process, its command redacted: in shadow mode (the default, and the only mode in effect until the
+HTTP client lands: `NoHttpClient` makes every call unreachable, and unanswered calls do not end
+the shadow period) the would-be action is
+logged and the verdict is unchanged; in enforce mode 0.90 or more denies (rule `destructive`),
+0.40 or more asks (`"permissionDecision": "ask"`), less defers, and no answer asks. With Clef off
+nothing is asked. A denylist denial never reaches Clef. The denylist, the bypass handling and
+D1 are documented in `docs/guard.md`.
 
 ## `preconditions` (PreToolUse)
 

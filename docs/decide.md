@@ -6,7 +6,12 @@ thresholds to the probability Clef returns, and appends one row to the decision 
 `anneal decide label <id> <outcome>` attaches an outcome label to a logged decision.
 
 The hooks that call it (D1 in the guard, D3 and D6 on prompts, D7 in `grill`) land with #30,
-#31 and #32; this command is the one choke point they share.
+#31 and #32; this command is the one choke point they share. A hook calls it in process rather
+than spawning the binary: `decide::in_process::Prepared::load` reads the thresholds (the plugin
+root's file, else the copy built in), the configuration and the anneal home exactly as the
+command does, and `decide::client::ask` (or `ask_recording`, which also keeps a redacted input in
+the row) applies the same modes, shadow count and log. The guard's D1 (#30) is the first such
+caller; see `docs/guard.md`.
 
 ## Transport
 
@@ -32,9 +37,11 @@ JSON is a bad response, and so are noul or choice probabilities that do not sum 
 **No HTTP client yet.** Adding one is a pending dependency decision (H-16; ureq 3 with rustls is
 the recommended option), so the binary is built with a transport that reports every call as
 unreachable ("no HTTP client configured (pending dependency decision)"). Until it lands,
-`decide` with an account always exits 5 and every caller takes its fallback. The network sits
-behind the `Transport` port (`decide::transport`), so the adapter is one new module wired in
-`cli`.
+`decide` with an account always exits 5. Every point starts in shadow and unanswered calls do
+not count toward the 50 that end it, so no caller acts on Clef yet: the guard's D1 logs an
+unreachable row and leaves its verdict unchanged. The network sits behind the `Transport` port
+(`decide::transport`), so the adapter is one new module wired in `cli` (for `decide`) and in
+`hook::guard::run` (for D1).
 
 ## Configuration
 
@@ -135,6 +142,11 @@ Rows are appended, never rewritten. A decision row:
  "latency_ms": 39, "outcome": null, "unreachable": false, "error": null, "error_reason": null}
 ```
 
+A caller that asks through `client::ask_recording` also gets an `input` field after
+`state_sha256`: the input it chose to keep, already redacted by it (the guard's D1 keeps its
+redacted, trimmed command), cut to 2 KiB of JSON and marked `…`. A row asked without one, every
+`anneal decide` row among them, has no `input` field.
+
 Without an answer, `probabilities`, `probability`, `threshold` and `action` are null, `error` is
 `unreachable`, `timed_out` or `bad_response`, `unreachable` is true for the first two, and
 `error_reason` says why (at most 256 characters). A label row is
@@ -142,7 +154,7 @@ Without an answer, `probabilities`, `probability`, `threshold` and `action` are 
 joining on `id`, never by rewriting it. A label's id must have the shape `decide` writes
 (`d<millis>-<pid>-<n>`) but is not looked up; an outcome is 1 to 64 of `A-Z a-z 0-9 _ . : -`.
 
-Bounds: a row is at most 8 KiB: a choice has 2 to 32 distinct options, each 1 to 64 of
+Bounds: a row is at most 8 KiB, its `input` at most 2 KiB of it: a choice has 2 to 32 distinct options, each 1 to 64 of
 `A-Z a-z 0-9 _ . : -` (the outcome-label alphabet, so any option can be a label), none of which
 JSON escapes, and a test keeps the largest such row under the cap. When the live file would
 pass 16 MiB it becomes `decisions.1.jsonl`, the older files move up to `decisions.4.jsonl` and

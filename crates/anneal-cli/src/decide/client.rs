@@ -45,6 +45,13 @@ pub const MAX_OPTIONS: usize = 32;
 /// Most characters of a failure's reason kept in a row.
 const MAX_REASON_CHARS: usize = 256;
 
+/// Most bytes of JSON a row's `input` takes, quotes included; a longer input is cut and ends
+/// in `…`. With the largest choice row this keeps a row under the log's 8 KiB cap.
+pub const MAX_INPUT_ROW_BYTES: usize = 2 * 1024;
+
+/// The mark a cut input ends with.
+const CUT_MARK: char = '…';
+
 /// The reason when there is an account but no token.
 const NO_TOKEN: &str = "no API token configured (cf_api_token)";
 
@@ -59,6 +66,15 @@ pub struct Ask<'a> {
     pub options: &'a [String],
     /// The compact state.
     pub state: &'a CompactState,
+}
+
+/// A question, and the input the caller keeps in its row (see [`ask_recording`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Recorded<'a> {
+    /// The question asked.
+    pub ask: Ask<'a>,
+    /// What the row's `input` field holds, already redacted by the caller; `None` for no field.
+    pub input: Option<&'a str>,
 }
 
 /// What a decision runs with.
@@ -197,6 +213,27 @@ pub fn ask<'s>(
     transport: &impl Transport,
     clock: &impl Clock,
 ) -> Result<Outcome<'s>, AskError> {
+    let recorded = Recorded {
+        ask: *ask,
+        input: None,
+    };
+    ask_recording(&recorded, setup, transport, clock)
+}
+
+/// As [`ask`], keeping the caller's input in the row.
+///
+/// The row's `input` field holds `recorded.input` as given (the caller redacts it), cut to
+/// [`MAX_INPUT_ROW_BYTES`] of JSON. A row asked without one has no `input` field.
+///
+/// # Errors
+/// As [`ask`].
+pub fn ask_recording<'s>(
+    recorded: &Recorded<'_>,
+    setup: &Setup<'s>,
+    transport: &impl Transport,
+    clock: &impl Clock,
+) -> Result<Outcome<'s>, AskError> {
+    let Recorded { ask, input } = recorded;
     let rules = setup.thresholds.point(ask.point);
     let rule = rules.rule(ask.question).ok_or(AskError::Unsupported {
         point: ask.point,
@@ -238,6 +275,7 @@ pub fn ask<'s>(
         rules,
         rule,
         account,
+        input: *input,
     };
     let (answered, latency_ms) = call.send(config, transport, clock)?;
     let stamp = Stamp {
@@ -260,6 +298,7 @@ struct Call<'a, 's> {
     rules: &'s PointRules,
     rule: &'s Rule,
     account: &'s str,
+    input: Option<&'a str>,
 }
 
 impl<'s> Call<'_, 's> {
@@ -312,6 +351,7 @@ impl<'s> Call<'_, 's> {
             subject: self.rule.subject(),
             model: self.rules.model(),
             state_sha256: self.ask.state.sha256(),
+            input: self.input.map(fit_input),
             probabilities: None,
             top: None,
             probability: None,
@@ -386,6 +426,8 @@ struct Row<'a> {
     subject: &'a str,
     model: &'a str,
     state_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input: Option<String>,
     probabilities: Option<&'a BTreeMap<String, f64>>,
     top: Option<&'a str>,
     probability: Option<f64>,
@@ -404,6 +446,38 @@ struct Row<'a> {
 /// Whole milliseconds of `duration`, saturating.
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `input` cut, at a char boundary and marked with [`CUT_MARK`], so that its JSON string takes
+/// at most [`MAX_INPUT_ROW_BYTES`].
+fn fit_input(input: &str) -> String {
+    /// The two quotes around the JSON string.
+    const QUOTES: usize = 2;
+    let room = MAX_INPUT_ROW_BYTES.saturating_sub(QUOTES + CUT_MARK.len_utf8());
+    // The JSON bytes of `input[..at]`, and the longest such prefix that leaves room for the mark.
+    let mut used = 0_usize;
+    let mut cut_at = 0;
+    for (at, c) in input.char_indices() {
+        if used <= room {
+            cut_at = at;
+        }
+        used = used.saturating_add(json_len(c));
+        if used.saturating_add(QUOTES) > MAX_INPUT_ROW_BYTES {
+            // `cut_at` is a char boundary of `input`, so the prefix exists.
+            let kept = input.get(..cut_at).unwrap_or_default();
+            return format!("{kept}{CUT_MARK}");
+        }
+    }
+    input.to_owned()
+}
+
+/// How many bytes `c` takes inside a JSON string as `serde_json` writes it.
+const fn json_len(c: char) -> usize {
+    match c {
+        '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
+        '\0'..='\u{1f}' => 6,
+        _ => c.len_utf8(),
+    }
 }
 
 /// `reason` cut to [`MAX_REASON_CHARS`] characters.

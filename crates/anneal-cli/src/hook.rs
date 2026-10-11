@@ -164,7 +164,8 @@ pub(crate) fn read_stdin<R: Read>(stdin: R, max: u64) -> Result<Vec<u8>, StdinEr
     }
 }
 
-/// `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...}}`.
+/// `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", ...}}`
+/// (or `"ask"`).
 #[derive(Debug, Serialize)]
 struct DenyOutput<'a> {
     #[serde(rename = "hookSpecificOutput")]
@@ -184,12 +185,26 @@ struct PreToolUseOutput<'a> {
 ///
 /// # Errors
 /// Returns the I/O error when `out` cannot be written.
-pub(crate) fn write_deny<W: Write>(mut out: W, line: &str) -> io::Result<()> {
+pub(crate) fn write_deny<W: Write>(out: W, line: &str) -> io::Result<()> {
+    write_permission(out, "deny", line)
+}
+
+/// Writes Claude Code's `PreToolUse` ask decision (the human confirms the call), with `line` as
+/// its reason, any line break folded into a space, then a newline.
+///
+/// # Errors
+/// Returns the I/O error when `out` cannot be written.
+pub(crate) fn write_ask<W: Write>(out: W, line: &str) -> io::Result<()> {
+    write_permission(out, "ask", line)
+}
+
+/// Writes a `PreToolUse` permission `decision` with `line`, folded to one line, as its reason.
+fn write_permission<W: Write>(mut out: W, decision: &'static str, line: &str) -> io::Result<()> {
     let line = line.replace(['\r', '\n'], " ");
     let output = DenyOutput {
         specific: PreToolUseOutput {
             hook_event_name: "PreToolUse",
-            permission_decision: "deny",
+            permission_decision: decision,
             permission_decision_reason: &line,
         },
     };

@@ -16,6 +16,8 @@ and wrappers do not get a command past it.
 ```
 
 - **Allowed:** no output and exit 0.
+- **Asked** (only Clef D1 in enforce mode, see [Clef D1](#clef-d1-destructive_or_irreversible-30)):
+  one `PreToolUse` decision with `"permissionDecision": "ask"` and a one-line reason, exit 0.
 - **Denied:** one JSON object on stdout and exit 0. Claude Code shows the reason to the model,
   and the reason is one `ERROR <reason>` line naming the rule:
 
@@ -221,15 +223,62 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - a write into a protected directory from a working directory inside it that an earlier Bash
   call moved to (`..` that climbs from inside `hooks/`).
 
-These are left undecided and go to the extension point.
+These are left undecided and go to Clef D1 (below).
 
-## Extension point: Clef D1 (#30)
+## Clef D1: `destructive_or_irreversible` (#30)
 
-The denylist only denies a command or leaves it undecided (`denylist::Verdict`). Every
-undecided command goes to `guard::Fallback`, which today has one variant, `Allow`. Clef D1
-plugs in as a new `Fallback` variant whose `decide` asks Clef, within the 2 s budget for Clef
-calls, and maps the answer to a `Decision` (allow or deny with a reason). The match is
-exhaustive, so a new variant has to say what it does. Adding a denylist entry means a module
-under `hook/guard/denylist/`, an arm in `Checker::program` (`denylist/checker.rs`), a
+The denylist only denies a command or leaves it undecided (`denylist::Verdict`). An undecided
+command gets `guard::Fallback`'s answer (`Allow`), and then, for a Bash call, Clef D1 is asked
+`noul destructive_or_irreversible` (`hook::guard::clef`). A denylist denial short-circuits:
+Clef is never asked about a command the denylist blocks, and other tools are never asked about.
+
+D1 runs in process through `decide`'s library API (`decide::in_process` reads the thresholds,
+configuration and anneal home as `anneal decide` does, then `decide::client::ask_recording`),
+so it shares the command's thresholds (`$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`,
+else the copy built in), modes, 50-decision shadow period and decision log (`docs/decide.md`).
+The call has `decide`'s 2 s budget, inside the hook's 5 s; a Clef deny is then recorded with
+the usual 1 s for git and 500 ms per ledger statement.
+
+| D1 for the call | Guard's answer |
+|---|---|
+| off: no account (`cf_account_id` empty), or `clef_mode` gives D1 `off` | as without D1: nothing is asked or logged |
+| a malformed account, token or mode | as without D1: nothing is asked or logged (the mode is unknown, so it never acts) |
+| shadow (the default, and `enforce` during its first 50 answered decisions) | as without D1, whatever Clef answers or fails to; one row logs the would-be action |
+| enforce, `yes` probability 0.90 or more (`deny`) | deny, rule `destructive` (`ERROR guard destructive: Clef D1 rates this command ...`), plus `gate_blocked` with point `guard.destructive` |
+| enforce, 0.40 or more (`ask`) | an ask decision (`"permissionDecision": "ask"`): the human confirms the call; no `gate_blocked` |
+| enforce, below 0.40 (`defer`) | no output: Claude Code's normal permission flow decides |
+| enforce, no answer (unreachable, timed out, bad response) | the point's fallback when it is `ask` (D1 ships with `ask`): an ask decision naming the failure; any other fallback allows, so a Clef failure never denies |
+| the anneal home, the plugin's thresholds file, the log or the clock fails | as without D1 (nothing to report it in: an allow has no output; `anneal decide` with the same environment shows the error) |
+
+**Nothing changes for users yet.** The only transport is `NoHttpClient` (no HTTP client is a
+dependency yet, `docs/decide.md`), so a configured Clef is always unreachable; unanswered calls
+do not count toward the shadow period, so D1 stays in shadow and the guard's verdict is the
+denylist's. Enforcing D1 needs the HTTP client and 50 answered decisions.
+
+**Redaction** (`hook::guard::redact`). The command Clef gets (state
+`{"tool": "Bash", "input": {"command": ...}}`) and the row keeps (its `input` field) is
+redacted, then trimmed and cut to 1,024 characters (marked `…`): the value of every assignment
+in command position (`FOO=bar cmd`, also after `;`, `&&`, `|`, `(`, a newline or a keyword such
+as `then`), after `env` and its options, and after `export`, `declare`, `typeset`, `local` and
+`readonly`, and the value of every long option whose name holds `token`, `password`, `passwd`,
+`secret`, `apikey`, `api-key`, `api_key`, `credential`, `private-key` or `private_key`
+(`--token=x`, `--password x`), becomes `<redacted>`. Arguments that only look like assignments
+(`dd of=/dev/sda`, `make CC=gcc`) are kept, since they are what Clef judges. The guard's lexer
+keeps no source positions, so a small scanner with the same quoting rules finds each word's span
+and rewrites only the value; what it cannot close runs to the end of the command, redacting too
+much rather than too little. Not redacted: short options (`-p secret`), header values
+(`-H "Authorization: Bearer ..."`), URLs with credentials and heredoc bodies.
+
+**Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
+on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in
+this codebase: no hook sees a Bash call after it ran (a `PostToolUse` hook on Bash would: an
+asked command whose `tool_use_id` later shows up there was approved, one that never does was
+denied or abandoned), and no hook watches reverts. In shadow mode nothing is asked, so there is
+nothing to label until D1 is enforced. Labels come from `anneal decide label` for now; automatic
+labelling is a follow-up.
+
+## Adding a denylist entry
+
+Adding a denylist entry means a module under `hook/guard/denylist/`, an arm in `Checker::program` (`denylist/checker.rs`), a
 `guard::Rule` with an id, a table test with near misses, and a row in `BASES` of
 `denylist/tests/forms.rs`, which checks it in every wrapping form.
