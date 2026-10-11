@@ -41,6 +41,26 @@
       "role": "guard",
       "model_generation": "claude-5",
       "source": "Blueprint: Hooks (fast-check), check placement by cost; story #24"
+    },
+    {
+      "id": "completeness",
+      "event": "Stop",
+      "matcher": "",
+      "fingerprint": "sha256:a79f91b8222e3cd6",
+      "on_failure": "continue",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (completeness), Feature catalog #21 and #22, skill rule 16; story #26"
+    },
+    {
+      "id": "status",
+      "event": "SubagentStop",
+      "matcher": "",
+      "fingerprint": "sha256:d90a2774a4960bac",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (status), Feature catalog #23, platform conformance #7; story #26"
     }
   ]
 }

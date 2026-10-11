@@ -172,3 +172,76 @@ Limits:
   leaves running keeps the log file open, so removing it fails: that is a note, and the file
   stays in the temporary directory. On unix the log is removed and the hook returns as soon as
   `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).
+
+## `completeness` (Stop)
+
+No matcher, `timeout` 30 s, `onFailure: "continue"`, arguments `hook completeness`. It reads
+Claude Code's `Stop` input on stdin (at most 4 MiB; it uses `session_id`, `transcript_path`,
+`cwd`, `stop_hook_active` and `last_assistant_message`, checked against Claude Code 2.1.296's
+schema; without `last_assistant_message`, the last assistant message in the transcript's final
+1 MiB) and checks the git worktree of `cwd`. Outside a repository it does nothing.
+
+**Hard gates** block with `{"decision": "block", "reason": "anneal completeness: ..."}`:
+
+| Gate | Blocks when | Point |
+|---|---|---|
+| claim | the reply claims success and a source file changed after the worktree's latest `test_run`, or that run is not green with exit 0, or there is none | `completeness.claim` |
+| leftovers | a `[DEBUG-<id>]` tag is left in a file git knows of (`repro::debug_leftovers`, the scan `anneal repro leftovers` runs) | `completeness.leftovers` |
+
+- **Success words** (`hook::completeness::claim::SUCCESS_PHRASES`): `all tests pass`, `tests
+  pass`, `works now`, `done`, `passing`, `green`, `fixed`, as whole words in any letter case.
+  Fenced code blocks, code spans and HTML comments are quoted text, not claims, and a phrase
+  with `not`, `never`, `no` or a word ending in `n't` one or two words before it is not one.
+- **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
+  (tracked changes and untracked files git does not ignore) that the preconditions hook counts
+  as source (not tests, prose documents or scratch paths). Their latest modification time is
+  compared with the `ts` of the latest `test_run` tagged with the worktree (`anneal task done`
+  tags it), to the second. There is no ledger edit event to use instead. A claim with no
+  changed source file needs nothing. Not seen: changes already committed (git no longer lists
+  them) and deleted files (they have no time); a test run that ends in the same second as an
+  edit made after it counts as fresh.
+
+**Nudges** are context only (`hookSpecificOutput.additionalContext`), from the active playbook's
+rule table (`hook::completeness::playbook::RULES`, one row per requirement, so #42 adds rows):
+
+| Mode | Requires, after the mode was entered, tagged with the worktree | When |
+|---|---|---|
+| build | a green `test_run` (`anneal task done`) | a source file changed |
+| diagnose | a `repro_red` (`anneal repro record`) | always |
+| none or `off` | nothing | |
+
+**Block cap.** It blocks at most 2 times in a row per session, stricter than Claude Code's own
+cap of 8 (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`). The count is kept in the anneal home directory
+(`$ANNEAL_HOME`, else `~/.anneal`) in `stop-blocks.json`: per session a hash of its id, its
+blocks in a row and the transcript's length at the last block, at most 64 sessions. A stop with
+no hard gate resets it, and so does a tool call: the transcript bytes written since the last
+block holding `"type":"tool_use"` (a transcript that shrank, or grew by more than 16 MiB, counts
+as one). Past the cap, and whenever the count cannot be read or saved, the gates become context
+saying why it did not block; a `stop-blocks.json` that is not a regular file (a directory,
+symlink or FIFO) is refused before it is opened. When `stop_hook_active` is true (the stop follows a block) it
+writes nothing and counts nothing, as Claude Code asks.
+
+Each block appends one `stop_blocked` per gate to the ledger when one exists; it never creates
+one. Anything it cannot check (git, the ledger, the counter, unreadable input) is one `ERROR`
+line as `systemMessage`, and the stop goes on.
+
+## `status` (SubagentStop)
+
+No matcher, `timeout` 15 s, `onFailure: "continue"`, arguments `hook status`. It reads Claude
+Code's `SubagentStop` input (at most 4 MiB; it uses `session_id`, `cwd`, `agent_id`,
+`agent_type`, `agent_transcript_path` and `last_assistant_message`) and appends one
+`subagent_status` to the ledger when one exists (it never creates one). It never blocks and
+writes nothing unless something failed (one `ERROR` line as `systemMessage`).
+
+- **Status block** (`hook::status::block`, values and sections as data): the last line whose
+  text starts `Status:` (list markers, quote markers, `*` and code-span backticks ignored; code
+  fences do not hide it, since temper's template is fenced), with `DONE`, `DONE_WITH_CONCERNS`,
+  `NEEDS_CONTEXT` or `BLOCKED`, then a line starting each of `Gate:`, `Review:`, `Changed:`,
+  `Decisions needed:` and `Not verified:` after it. No status line, an unknown value (temper's
+  `WIP` included) or a missing section is the event's `violation`, with the sections in
+  `missing`; the status, when known, is still recorded.
+- **Timing and tokens.** The input has no timing or token fields (checked against Claude Code
+  2.1.296), so they come from the subagent's transcript, read whole up to 32 MiB: `duration_ms`
+  from its first to its last `timestamp`, and `tokens` summed over its assistant messages, each
+  message's `usage` counted once although every content-block line repeats it. A longer
+  transcript is recorded without them.

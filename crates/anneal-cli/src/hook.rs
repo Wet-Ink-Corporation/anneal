@@ -9,9 +9,13 @@
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
+pub(crate) mod completeness;
 pub(crate) mod fast_check;
 pub(crate) mod guard;
 pub(crate) mod preconditions;
+pub(crate) mod status;
+mod stop_output;
+mod transcript;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -54,15 +58,22 @@ pub enum HookName {
     /// `PostToolBatch`: in an anneal mode, run the fast checks once per batch of edits; fails
     /// open, but a lowered floor blocks
     FastCheck,
+    /// `Stop`: block a success claim without a fresh green test run, and `[DEBUG-` leftovers;
+    /// nudge on the playbook's missing events; fails open
+    Completeness,
+    /// `SubagentStop`: record the subagent's status block, timing and tokens; fails open
+    Status,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
         Self::FastCheck,
+        Self::Completeness,
+        Self::Status,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -73,6 +84,8 @@ impl HookName {
             Self::Guard => "guard",
             Self::Preconditions => "preconditions",
             Self::FastCheck => "fast-check",
+            Self::Completeness => "completeness",
+            Self::Status => "status",
         }
     }
 
@@ -80,8 +93,9 @@ impl HookName {
     #[must_use]
     pub const fn is_guard(self) -> bool {
         match self {
-            // fast-check blocks on a lowered floor, but its own failures never do.
-            Self::Bootstrap | Self::FastCheck => false,
+            // fast-check blocks on a lowered floor and completeness on a claim, but their own
+            // failures never do.
+            Self::Bootstrap | Self::FastCheck | Self::Completeness | Self::Status => false,
             Self::Guard | Self::Preconditions => true,
         }
     }
@@ -116,6 +130,8 @@ where
         HookName::Guard => guard::run(env, out),
         HookName::Preconditions => preconditions::run(env, out),
         HookName::FastCheck => fast_check::run(env, out),
+        HookName::Completeness => completeness::run(env, out),
+        HookName::Status => status::run(env, out),
     }
 }
 
