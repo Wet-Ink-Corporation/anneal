@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 /// Runs `git <args>` in `dir`, isolated from the caller's repository and identity, and panics
 /// with git's stderr if it fails.
-fn git(dir: &Path, args: &[&str]) {
+pub(crate) fn git(dir: &Path, args: &[&str]) {
     let output = Command::new("git")
         .args([
             "-c",

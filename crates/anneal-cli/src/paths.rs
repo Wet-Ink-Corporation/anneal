@@ -99,7 +99,7 @@ const NOT_A_REPOSITORY: &str = "not a git repository";
 
 /// The error for a git call in `dir` that exited non-zero, from what it wrote on stderr:
 /// [`PathError::NotARepository`] only when git says so, [`PathError::GitFailed`] otherwise.
-fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
+pub(crate) fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
     let dir = dir.to_path_buf();
     let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
     if stderr.contains(NOT_A_REPOSITORY) {
@@ -112,6 +112,22 @@ fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
 /// Runs git with a deadline, killing it if the deadline passes. Its messages are not
 /// translated, so [`git_failure`] can read them.
 fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathError> {
+    run_git_capped(cwd, args, timeout, MAX_CAPTURE_BYTES)
+}
+
+/// [`run_git`] keeping at most `cap` bytes of each output stream (the rest is read and
+/// dropped). A caller that must not read a truncated answer passes one byte more than it
+/// accepts and checks the length.
+///
+/// # Errors
+/// [`PathError::Git`] when git cannot be started or waited on, [`PathError::GitTimeout`] past
+/// `timeout`. A non-zero exit is not an error here: see [`git_failure`].
+pub(crate) fn run_git_capped(
+    cwd: &Path,
+    args: &[&str],
+    timeout: Duration,
+    cap: u64,
+) -> Result<Output, PathError> {
     let mut child = Command::new("git")
         .args(args)
         .env("LC_ALL", "C")
@@ -121,7 +137,7 @@ fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathE
         .stderr(Stdio::piped())
         .spawn()
         .map_err(PathError::Git)?;
-    wait_with_deadline(&mut child, timeout)
+    wait_capped(&mut child, timeout, cap)
 }
 
 /// Most bytes kept from each of git's output streams (H-13).
@@ -129,12 +145,17 @@ const MAX_CAPTURE_BYTES: u64 = 1024 * 1024;
 
 /// [`process::wait_with_deadline`] for git: at most [`MAX_CAPTURE_BYTES`] per stream, and a
 /// timeout is [`PathError::GitTimeout`].
+#[cfg(test)]
 fn wait_with_deadline(child: &mut Child, timeout: Duration) -> Result<Output, PathError> {
-    process::wait_with_deadline(child, timeout, MAX_CAPTURE_BYTES, "git").map_err(|error| {
-        match error {
-            WaitError::Io(source) => PathError::Git(source),
-            WaitError::Timeout => PathError::GitTimeout { timeout },
-        }
+    wait_capped(child, timeout, MAX_CAPTURE_BYTES)
+}
+
+/// [`process::wait_with_deadline`] for git: at most `cap` bytes per stream, and a timeout is
+/// [`PathError::GitTimeout`].
+fn wait_capped(child: &mut Child, timeout: Duration, cap: u64) -> Result<Output, PathError> {
+    process::wait_with_deadline(child, timeout, cap, "git").map_err(|error| match error {
+        WaitError::Io(source) => PathError::Git(source),
+        WaitError::Timeout => PathError::GitTimeout { timeout },
     })
 }
 

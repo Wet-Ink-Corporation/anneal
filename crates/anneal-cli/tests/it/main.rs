@@ -5,6 +5,7 @@ mod dag;
 mod design_tree_schema;
 mod dry_run;
 mod eval_routing;
+mod floor_guard;
 mod grill;
 mod hook_bootstrap;
 mod hook_guard;
@@ -20,3 +21,4 @@ mod plan;
 mod repo_gates;
 #[cfg(test)]
 mod support;
+mod task;
