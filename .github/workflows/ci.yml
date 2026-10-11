@@ -52,6 +52,8 @@ jobs:
           findstr /b "ERROR " guard.err || exit /b 1
           call plugin\libexec\anneal.cmd --help 2>nul
           if not "%ERRORLEVEL%"=="127" exit /b 1
+          rem The step's result is the last errorlevel, which is the expected 127 here.
+          exit /b 0
 
   plugin:
     runs-on: ubuntu-latest
