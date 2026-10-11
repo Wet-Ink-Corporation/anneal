@@ -1,7 +1,11 @@
-use super::{PathError, anneal_home_from, read_capped, wait_with_deadline};
+use super::{
+    PathError, StoreSource, anneal_home_from, git_failure, ledger_store, read_capped,
+    wait_with_deadline,
+};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Cursor, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -170,4 +174,86 @@ fn no_home_and_relative_home_are_errors() {
         ),
         "got {relative:?}"
     );
+}
+
+#[test]
+fn the_store_flag_wins_over_the_environment() {
+    let cwd = absolute("work");
+    let lookup = env(&[("ANNEAL_STORE", "from-env.sqlite3")]);
+
+    let found = ledger_store(Some(Path::new("flag.sqlite3")), lookup, &cwd).expect("resolves");
+
+    assert_eq!(found.path, cwd.join("flag.sqlite3"), "relative to cwd");
+    assert_eq!(found.source, StoreSource::Flag, "the flag chose it");
+}
+
+#[test]
+fn anneal_store_is_used_relative_to_the_working_directory() {
+    let cwd = absolute("work");
+
+    let found = ledger_store(None, env(&[("ANNEAL_STORE", "l.sqlite3")]), &cwd).expect("resolves");
+
+    assert_eq!(found.path, cwd.join("l.sqlite3"), "joined to cwd");
+    assert_eq!(found.source, StoreSource::Env, "the variable chose it");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git in a subprocess")]
+fn outside_git_an_empty_anneal_store_falls_through_to_the_folder() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    // A `.git` file pointing nowhere stops git here, even inside an enclosing repository.
+    std::fs::write(dir.path().join(".git"), "gitdir: does-not-exist\n").expect("write");
+
+    let found = ledger_store(None, env(&[("ANNEAL_STORE", "")]), dir.path()).expect("resolves");
+
+    assert_eq!(
+        found.path,
+        dir.path().join(".anneal/ledger.sqlite3"),
+        "<folder>/.anneal"
+    );
+    assert_eq!(found.source, StoreSource::Folder, "outside git");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git in a subprocess")]
+fn a_git_failure_other_than_no_repository_is_an_error_not_the_folder() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    // A `.git` file git cannot parse: git fails here, but not with "not a git repository".
+    std::fs::write(dir.path().join(".git"), "not a gitdir line\n").expect("write");
+
+    let result = ledger_store(None, env(&[]), dir.path());
+
+    assert!(
+        matches!(&result, Err(PathError::GitFailed { stderr, .. }) if stderr.contains("invalid gitfile format")),
+        "got {result:?}"
+    );
+}
+
+#[test]
+fn only_not_a_git_repository_classifies_as_outside_git() {
+    let dir = Path::new("/work");
+    let outside = [
+        "fatal: not a git repository (or any of the parent directories): .git\n",
+        "fatal: not a git repository: /work/does-not-exist\n",
+    ];
+    let failures = [
+        "fatal: detected dubious ownership in repository at '/work'\n",
+        "fatal: invalid gitfile format: /work/.git\n",
+        "",
+    ];
+
+    for stderr in outside {
+        let error = git_failure(dir, stderr.as_bytes());
+        assert!(
+            matches!(&error, PathError::NotARepository { dir: found, stderr: said } if found == dir && said == stderr.trim()),
+            "{stderr:?} gave {error:?}"
+        );
+    }
+    for stderr in failures {
+        let error = git_failure(dir, stderr.as_bytes());
+        assert!(
+            matches!(&error, PathError::GitFailed { dir: found, stderr: said } if found == dir && said == stderr.trim()),
+            "{stderr:?} gave {error:?}"
+        );
+    }
 }

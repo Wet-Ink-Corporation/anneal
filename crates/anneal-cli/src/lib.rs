@@ -12,7 +12,9 @@
 //! - [`hook`]: silent-on-success, one-`ERROR`-line-on-failure output for hooks.
 //! - [`lint`]: `anneal lint skills` and the lint finding model.
 //! - [`baseline`]: snapshot findings at session start, report only new ones later.
-//! - [`paths`]: the git common dir (ledger home) and the anneal home (`~/.anneal`).
+//! - [`ledger`]: `anneal ledger append|query|tail|journal` over the `anneal-ledger` store.
+//! - [`paths`]: the ledger store (normally in the git common dir) and the anneal home
+//!   (`~/.anneal`).
 
 pub mod baseline;
 pub mod cli;
@@ -21,5 +23,6 @@ pub mod envelope;
 pub mod error;
 pub mod exit_codes;
 pub mod hook;
+pub mod ledger;
 pub mod lint;
 pub mod paths;

@@ -9,6 +9,10 @@ updates:
     schedule:
       interval: weekly
     versioning-strategy: lockfile-only
+    # happenstance stays at 0.3.2 with weigh-in: the ledger copies 0.3.2's schema, so moving it
+    # is a ledger schema migration (H-16), never a routine bump.
+    ignore:
+      - dependency-name: "happenstance-*"
     groups:
       cargo:
         patterns: ["*"]

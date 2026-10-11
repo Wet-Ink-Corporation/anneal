@@ -6,6 +6,8 @@
 
 use std::io;
 
+use anneal_ledger::{StoreError, TimestampError};
+
 use crate::baseline::BaselineError;
 use crate::command::CommandName;
 use crate::exit_codes::{self, Code};
@@ -36,6 +38,15 @@ pub enum CliError {
     /// `anneal lint` could not check its inputs.
     #[error("lint")]
     Lint(#[from] LintError),
+    /// The ledger could not be opened, written or read.
+    #[error(transparent)]
+    Ledger(#[from] StoreError),
+    /// The system clock could not be read as a timestamp.
+    #[error(transparent)]
+    Clock(#[from] TimestampError),
+    /// The working directory could not be read.
+    #[error("reading the working directory")]
+    CurrentDir(#[source] io::Error),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -48,7 +59,11 @@ impl CliError {
         match self {
             Self::Usage { .. } => exit_codes::USAGE,
             Self::NotImplemented { .. } => exit_codes::NOT_IMPLEMENTED,
-            Self::Path(_) | Self::Baseline(_) => exit_codes::INTERNAL,
+            Self::Path(_)
+            | Self::Baseline(_)
+            | Self::Ledger(_)
+            | Self::Clock(_)
+            | Self::CurrentDir(_) => exit_codes::INTERNAL,
             Self::Lint(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }

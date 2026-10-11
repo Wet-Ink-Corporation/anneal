@@ -1,4 +1,5 @@
-//! Where anneal keeps state: the git common dir (ledger home) and `~/.anneal` (decision log).
+//! Where anneal keeps state: the ledger store (normally in the git common dir) and
+//! `~/.anneal` (decision log).
 
 use std::ffi::OsString;
 use std::io::{self, Read};
@@ -6,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 /// How long a `git` call may take before it is killed (H-13).
 pub const GIT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -15,6 +18,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// The environment variable that overrides the anneal home directory.
 pub const ANNEAL_HOME_VAR: &str = "ANNEAL_HOME";
+
+/// The environment variable that overrides the ledger store's file.
+pub const ANNEAL_STORE_VAR: &str = "ANNEAL_STORE";
+
+/// The ledger file's name inside its directory.
+const LEDGER_FILE: &str = "ledger.sqlite3";
 
 /// Why a path could not be resolved.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +40,15 @@ pub enum PathError {
     /// `dir` is not inside a git repository.
     #[error("{dir} is not in a git repository: {stderr}", dir = dir.display())]
     NotARepository {
+        /// The directory git was run in.
+        dir: PathBuf,
+        /// What git said, trimmed.
+        stderr: String,
+    },
+    /// git failed in `dir` for a reason other than `dir` not being in a repository, such as a
+    /// repository owned by someone else ("dubious ownership") or a broken `.git` file.
+    #[error("git failed in {dir}: {stderr}", dir = dir.display())]
+    GitFailed {
         /// The directory git was run in.
         dir: PathBuf,
         /// What git said, trimmed.
@@ -58,25 +76,40 @@ pub enum PathError {
 /// Runs `git rev-parse --git-common-dir` in `cwd` and resolves a relative answer against it.
 ///
 /// # Errors
-/// [`PathError::NotARepository`] outside a repository; [`PathError::Git`] or
-/// [`PathError::GitTimeout`] when git cannot run; [`PathError::NonUtf8Output`] for a path
-/// that is not UTF-8.
+/// [`PathError::NotARepository`] outside a repository; [`PathError::GitFailed`] when git fails
+/// for another reason; [`PathError::Git`] or [`PathError::GitTimeout`] when git cannot run;
+/// [`PathError::NonUtf8Output`] for a path that is not UTF-8.
 pub fn git_common_dir(cwd: &Path) -> Result<PathBuf, PathError> {
     let output = run_git(cwd, &["rev-parse", "--git-common-dir"], GIT_TIMEOUT)?;
     if !output.status.success() {
-        return Err(PathError::NotARepository {
-            dir: cwd.to_path_buf(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
+        return Err(git_failure(cwd, &output.stderr));
     }
     let printed = String::from_utf8(output.stdout).map_err(PathError::NonUtf8Output)?;
     Ok(cwd.join(printed.trim_end_matches(['\r', '\n'])))
 }
 
-/// Runs git with a deadline, killing it if the deadline passes.
+/// What git says (untranslated: [`run_git`] runs it under `LC_ALL=C`) when a directory is in
+/// no repository.
+const NOT_A_REPOSITORY: &str = "not a git repository";
+
+/// The error for a git call in `dir` that exited non-zero, from what it wrote on stderr:
+/// [`PathError::NotARepository`] only when git says so, [`PathError::GitFailed`] otherwise.
+fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
+    let dir = dir.to_path_buf();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    if stderr.contains(NOT_A_REPOSITORY) {
+        PathError::NotARepository { dir, stderr }
+    } else {
+        PathError::GitFailed { dir, stderr }
+    }
+}
+
+/// Runs git with a deadline, killing it if the deadline passes. Its messages are not
+/// translated, so [`git_failure`] can read them.
 fn run_git(cwd: &Path, args: &[&str], timeout: Duration) -> Result<Output, PathError> {
     let mut child = Command::new("git")
         .args(args)
+        .env("LC_ALL", "C")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -180,6 +213,67 @@ fn kill_after(child: &mut Child, error: io::Error) -> PathError {
             error.kind(),
             format!("{error}; killing git also failed: {kill_error}"),
         )),
+    }
+}
+
+/// Where the ledger store was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreSource {
+    /// `--store <file>`.
+    Flag,
+    /// `$ANNEAL_STORE`.
+    Env,
+    /// `<git-common-dir>/anneal/ledger.sqlite3`.
+    GitCommonDir,
+    /// `<folder>/.anneal/ledger.sqlite3`, outside git.
+    Folder,
+}
+
+/// The ledger store's file and how it was chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoreLocation {
+    /// The ledger file.
+    pub path: PathBuf,
+    /// Which step of the resolution order chose it.
+    pub source: StoreSource,
+}
+
+/// The ledger store for a command run in `cwd`, in this order:
+///
+/// 1. `flag` (`--store <file>`), relative to `cwd`;
+/// 2. `$ANNEAL_STORE` (read through `lookup`; empty counts as unset), relative to `cwd`;
+/// 3. the anneal config file, once there is one (there is none yet, so this step is skipped);
+/// 4. `<git-common-dir>/anneal/ledger.sqlite3`, the same file from every worktree;
+/// 5. `<cwd>/.anneal/ledger.sqlite3` outside git.
+///
+/// # Errors
+/// [`PathError::Git`], [`PathError::GitTimeout`], [`PathError::GitFailed`] or
+/// [`PathError::NonUtf8Output`] when git cannot answer. Only git saying `cwd` is not in a
+/// repository is step 5; any other git failure (such as "dubious ownership") is an error, so a
+/// repository git refuses never gets a second, per-folder ledger.
+pub fn ledger_store(
+    flag: Option<&Path>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    cwd: &Path,
+) -> Result<StoreLocation, PathError> {
+    let located = |path: PathBuf, source| StoreLocation { path, source };
+    if let Some(path) = flag {
+        return Ok(located(cwd.join(path), StoreSource::Flag));
+    }
+    if let Some(path) = lookup(ANNEAL_STORE_VAR).filter(|value| !value.is_empty()) {
+        return Ok(located(cwd.join(path), StoreSource::Env));
+    }
+    match git_common_dir(cwd) {
+        Ok(common) => Ok(located(
+            common.join("anneal").join(LEDGER_FILE),
+            StoreSource::GitCommonDir,
+        )),
+        Err(PathError::NotARepository { .. }) => Ok(located(
+            cwd.join(".anneal").join(LEDGER_FILE),
+            StoreSource::Folder,
+        )),
+        Err(other) => Err(other),
     }
 }
 
