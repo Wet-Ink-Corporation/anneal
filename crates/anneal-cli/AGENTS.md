@@ -12,7 +12,7 @@ binary. Owns process concerns: arguments, stdout and stderr, exit codes.
 - Never: anything that needs a network at build time.
 
 ## Public surface
-None: a binary. The contract is the command line, the JSON on stdout and the documented exit codes.
+A library target (`src/lib.rs`) holds the logic so doc tests run; `src/main.rs` stays a thin binary. The contract is the command line, the JSON on stdout and the documented exit codes. The library is workspace-internal, not published.
 
 ## Invariants
 - `--help` and `--version` exit 0; a usage error exits 2 and writes nothing on stdout.
