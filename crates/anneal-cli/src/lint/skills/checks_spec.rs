@@ -194,7 +194,90 @@ fn model_invocation(skill: &Skill<'_>) -> Option<LintFinding> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_kebab_case;
+    use super::{is_kebab_case, model_invocation, name};
+    use crate::lint::finding::{LintFinding, Severity};
+    use crate::lint::skills::checker::Checker;
+    use crate::lint::skills::document::{test_dir, test_skill};
+    use std::path::Path;
+
+    /// The finding `check` gives for a skill in directory `dir_name` with `frontmatter`.
+    fn run(
+        check: fn(&super::Skill<'_>) -> Option<LintFinding>,
+        dir_name: &str,
+        frontmatter: &str,
+    ) -> Option<(Checker, Severity, usize, String)> {
+        let dir = test_dir(Path::new("skills").join(dir_name).as_path(), dir_name);
+        let text = format!("---\n{frontmatter}---\n# Body\n");
+        let skill = test_skill(&dir, &text);
+        check(&skill).map(|f| (f.checker, f.severity, f.at.line, f.message))
+    }
+
+    #[test]
+    fn name_errors_cover_missing_mismatched_non_kebab_and_reserved() {
+        let cases = [
+            ("plan", "description: x\n", 1, "no `name`"),
+            ("plan", "name: spec\n", 2, "does not match its directory"),
+            ("Plan", "name: Plan\n", 2, "not kebab-case"),
+            (
+                "claude-plan",
+                "name: claude-plan\n",
+                2,
+                "reserved prefix `claude`",
+            ),
+            (
+                "anthropic-x",
+                "name: anthropic-x\n",
+                2,
+                "reserved prefix `anthropic`",
+            ),
+        ];
+        for (dir, frontmatter, line, says) in cases {
+            let found = run(name, dir, frontmatter);
+            assert!(
+                matches!(&found, Some((Checker::Name, Severity::Error, l, m)) if *l == line && m.contains(says)),
+                "{dir} / {frontmatter:?}: expected `{says}` at line {line}, got {found:?}"
+            );
+        }
+        assert_eq!(
+            run(name, "plan", "name: plan\n"),
+            None,
+            "a good name passes"
+        );
+    }
+
+    #[test]
+    fn model_invocation_errors_cover_disabled_entry_skills_and_non_booleans() {
+        let cases = [
+            ("plan", "disable-model-invocation: true\n", "never routes"),
+            (
+                "plan",
+                "disable-model-invocation: yes\n",
+                "not `true` or `false`",
+            ),
+            (
+                "handoff",
+                "disable-model-invocation: maybe\n",
+                "not `true` or `false`",
+            ),
+            ("handoff", "name: handoff\n", "is not an entry skill"),
+        ];
+        for (dir, frontmatter, says) in cases {
+            let found = run(model_invocation, dir, frontmatter);
+            assert!(
+                matches!(&found, Some((Checker::ModelInvocation, Severity::Error, _, m)) if m.contains(says)),
+                "{dir} / {frontmatter:?}: expected `{says}`, got {found:?}"
+            );
+        }
+        assert_eq!(
+            run(
+                model_invocation,
+                "handoff",
+                "disable-model-invocation: true\n"
+            ),
+            None,
+            "a disabled non-entry skill passes"
+        );
+    }
 
     #[test]
     fn kebab_case_is_lowercase_runs_joined_by_single_hyphens() {

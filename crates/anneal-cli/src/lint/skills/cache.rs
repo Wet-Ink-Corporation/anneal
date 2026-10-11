@@ -4,26 +4,26 @@
 //! one would.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::baseline::{read_snapshot_bytes, write_snapshot_json};
+use serde::de;
+
+use crate::baseline::{BaselineError, read_snapshot_bytes, write_snapshot_json};
 use crate::lint::finding::LintFinding;
 use crate::lint::skills::LintError;
-use crate::lint::skills::discover::SkillDir;
+use crate::lint::skills::discover::{EntryKind, MAX_READ_BYTES, SkillDir, list_dir};
 
-/// Bumped whenever a check changes, so snapshots from older rules are not replayed.
-const RULES_VERSION: u32 = 1;
 const FORMAT_VERSION: u32 = 1;
 /// How deep the hash walks into a skill directory; deeper entries are hashed by name only.
 const MAX_DEPTH: usize = 4;
 
 /// Stored per-skill findings, keyed by skill directory.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Cache {
     version: u32,
     skills: BTreeMap<String, Entry>,
@@ -36,20 +36,38 @@ struct Entry {
 }
 
 impl Cache {
-    /// Loads the snapshot at `path`. A missing file, or one written by another format or rule
-    /// version, is an empty cache: every skill is checked afresh, which is always correct.
+    /// Loads the snapshot at `path`. A missing file is an empty cache. So is a JSON object with
+    /// a numeric `version` that is another version or another shape: a snapshot this build
+    /// cannot replay is stale, every skill is checked afresh, and `save` replaces it.
     ///
     /// # Errors
-    /// [`LintError::Cache`] when the file exists but cannot be read.
+    /// [`LintError::WrongKind`] when `path` is a directory. [`LintError::Cache`] when the file
+    /// cannot be read, or is not a JSON object with a numeric `version`: it may be some other
+    /// file, so it is refused rather than overwritten.
     pub(crate) fn load(path: &Path) -> Result<Self, LintError> {
+        if path.is_dir() {
+            return Err(LintError::WrongKind {
+                path: path.to_path_buf(),
+                expected: "a file",
+            });
+        }
         let Some(bytes) = read_snapshot_bytes(path)? else {
             return Ok(Self::empty());
         };
-        // A snapshot that does not parse is stale, not an error: it is rebuilt on save.
-        Ok(serde_json::from_slice::<Self>(&bytes)
-            .ok()
-            .filter(|cache| cache.version == FORMAT_VERSION)
-            .unwrap_or_else(Self::empty))
+        let format_error = |source| BaselineError::Format {
+            path: path.to_path_buf(),
+            source,
+        };
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(format_error)?;
+        let version = value
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format_error(de::Error::custom("not a versioned lint snapshot")))?;
+        if version != u64::from(FORMAT_VERSION) {
+            return Ok(Self::empty());
+        }
+        // Our version but another shape: written by an older build of the same format.
+        Ok(serde_json::from_value(value).unwrap_or_else(|_stale| Self::empty()))
     }
 
     fn empty() -> Self {
@@ -86,8 +104,21 @@ impl Cache {
     }
 }
 
-/// The hex SHA-256 of everything the per-skill checks read: the rules version, the hook ids,
-/// and each file under the skill directory (relative path and contents, in sorted order).
+/// The source of every module whose code decides per-skill findings. Hashing it means an edited
+/// check invalidates the snapshot by itself; there is no version number to forget to bump.
+const RULE_SOURCES: [&str; 8] = [
+    include_str!("checker.rs"),
+    include_str!("checks_body.rs"),
+    include_str!("checks_prose.rs"),
+    include_str!("checks_set.rs"),
+    include_str!("checks_spec.rs"),
+    include_str!("document.rs"),
+    include_str!("frontmatter.rs"),
+    include_str!("../finding.rs"),
+];
+
+/// The hex SHA-256 of everything the per-skill checks read: the rule sources, the hook ids,
+/// and each entry under the skill directory (see `hash_dir`).
 ///
 /// # Errors
 /// [`LintError::Io`] when a file cannot be read.
@@ -95,12 +126,23 @@ pub(crate) fn content_hash(
     skill: &SkillDir,
     hook_ids: &BTreeSet<String>,
 ) -> Result<String, LintError> {
+    hash_with_rules(&RULE_SOURCES, skill, hook_ids)
+}
+
+/// [`content_hash`] with the rule sources given, so a test can vary them.
+fn hash_with_rules(
+    rules: &[&str],
+    skill: &SkillDir,
+    hook_ids: &BTreeSet<String>,
+) -> Result<String, LintError> {
     let mut hasher = Sha256::new();
-    hasher.update(RULES_VERSION.to_le_bytes());
-    hasher.update(env!("CARGO_PKG_VERSION"));
+    hasher.update(FORMAT_VERSION.to_le_bytes());
+    for source in rules {
+        hash_bytes(&mut hasher, source.as_bytes());
+    }
+    hash_bytes(&mut hasher, env!("CARGO_PKG_VERSION").as_bytes());
     for id in hook_ids {
-        hasher.update(id.as_bytes());
-        hasher.update([0]);
+        hash_bytes(&mut hasher, id.as_bytes());
     }
     hash_dir(&mut hasher, &skill.dir, "", 0)?;
     let hex = hasher
@@ -112,43 +154,61 @@ pub(crate) fn content_hash(
     Ok(hex)
 }
 
+/// Hashes each entry of `dir` in name order: its relative path and kind, then a regular file's
+/// contents, a symlink's target (never followed), or a directory's entries. FIFOs, sockets and
+/// devices contribute their name and kind only, so nothing here can block or read without end.
 fn hash_dir(hasher: &mut Sha256, dir: &Path, prefix: &str, depth: usize) -> Result<(), LintError> {
-    for (name, is_dir) in super::discover::list_dir(dir)? {
+    for (name, kind) in list_dir(dir)? {
         let relative = format!("{prefix}{name}");
-        hasher.update(relative.as_bytes());
-        hasher.update([0, u8::from(is_dir)]);
+        hash_bytes(hasher, relative.as_bytes());
+        hasher.update([kind.tag()]);
         let path = dir.join(&name);
-        if is_dir && depth < MAX_DEPTH {
-            hash_dir(
-                hasher,
-                &path,
-                &format!("{relative}/"),
-                depth.saturating_add(1),
-            )?;
-        } else if !is_dir {
-            hash_file(hasher, &path)?;
+        match kind {
+            EntryKind::File => hash_file(hasher, &path)?,
+            EntryKind::Symlink => {
+                let target = fs::read_link(&path).map_err(|source| LintError::io(&path, source))?;
+                hash_bytes(hasher, target.to_string_lossy().as_bytes());
+            }
+            EntryKind::Dir if depth < MAX_DEPTH => {
+                hash_dir(
+                    hasher,
+                    &path,
+                    &format!("{relative}/"),
+                    depth.saturating_add(1),
+                )?;
+            }
+            EntryKind::Dir | EntryKind::Other => {}
         }
     }
     Ok(())
 }
 
+/// `bytes`, prefixed by their length so adjacent inputs cannot run together.
+fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    // A slice length always fits in u64 on supported targets; saturating keeps it total.
+    hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
+    hasher.update(bytes);
+}
+
+/// A regular file's size, then its first [`MAX_READ_BYTES`] bytes, length-prefixed.
 fn hash_file(hasher: &mut Sha256, path: &Path) -> Result<(), LintError> {
-    let mut file = File::open(path).map_err(|source| LintError::io(path, source))?;
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|source| LintError::io(path, source))?;
-        let Some(chunk) = buffer.get(..read).filter(|c| !c.is_empty()) else {
-            return Ok(());
-        };
-        hasher.update(chunk);
-    }
+    let io_error = |source| LintError::io(path, source);
+    let file = File::open(path).map_err(io_error)?;
+    let size = file.metadata().map_err(io_error)?.len();
+    let mut bytes = Vec::new();
+    file.take(MAX_READ_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(io_error)?;
+    hasher.update(size.to_le_bytes());
+    hash_bytes(hasher, &bytes);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Cache, content_hash};
+    use super::{Cache, RULE_SOURCES, content_hash, hash_with_rules};
+    use crate::baseline::BaselineError;
+    use crate::lint::skills::LintError;
     use crate::lint::skills::discover::SkillDir;
     use std::collections::BTreeSet;
 
@@ -187,13 +247,76 @@ mod tests {
     }
 
     #[test]
-    fn an_unparseable_snapshot_loads_as_empty() {
+    fn file_boundaries_are_part_of_the_hash() {
+        // Without each file's length, {a: "", b: "Q"} and {a: "b\0\0Q"} hash the same bytes.
+        let split = tempfile::tempdir().expect("temp dir");
+        std::fs::write(split.path().join("a"), "").expect("write");
+        std::fs::write(split.path().join("b"), "Q").expect("write");
+        let joined = tempfile::tempdir().expect("temp dir");
+        std::fs::write(joined.path().join("a"), "b\0\0Q").expect("write");
+        let none = BTreeSet::new();
+
+        assert_ne!(
+            content_hash(&skill(split.path()), &none).expect("hash"),
+            content_hash(&skill(joined.path()), &none).expect("hash"),
+            "two files never hash like one"
+        );
+    }
+
+    #[test]
+    fn the_rule_sources_are_part_of_the_hash() {
         let root = tempfile::tempdir().expect("temp dir");
-        let path = root.path().join("cache.json");
-        std::fs::write(&path, "not json").expect("write");
+        std::fs::write(root.path().join("SKILL.md"), "a").expect("write");
+        let none = BTreeSet::new();
+        let skill = skill(root.path());
 
-        let cache = Cache::load(&path).expect("stale snapshots are not errors");
+        assert_ne!(
+            hash_with_rules(&["fn check() {}"], &skill, &none).expect("hash"),
+            hash_with_rules(&["fn check() { changed }"], &skill, &none).expect("hash"),
+            "editing a check invalidates every cached entry"
+        );
+        assert!(
+            RULE_SOURCES.len() >= 8,
+            "checker, checks_*, document, frontmatter"
+        );
+    }
 
-        assert_eq!(cache.lookup("any", "hash"), None, "nothing replayed");
+    fn write(dir: &tempfile::TempDir, text: &str) -> std::path::PathBuf {
+        let path = dir.path().join("cache.json");
+        std::fs::write(&path, text).expect("write");
+        path
+    }
+
+    #[test]
+    fn a_snapshot_from_another_version_or_shape_loads_as_empty() {
+        let root = tempfile::tempdir().expect("temp dir");
+        for text in [
+            r#"{"version": 99, "skills": []}"#,
+            r#"{"version": 1, "skills": 5}"#,
+        ] {
+            let cache = Cache::load(&write(&root, text)).expect("stale, not an error");
+            assert_eq!(
+                cache.lookup("any", "hash"),
+                None,
+                "{text}: nothing replayed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_versioned_snapshot_is_a_format_error() {
+        let root = tempfile::tempdir().expect("temp dir");
+        for text in [
+            "not json",
+            "[1, 2]",
+            r#"{"skills": {}}"#,
+            r#"{"version": "1"}"#,
+        ] {
+            let result = Cache::load(&write(&root, text));
+            assert!(
+                matches!(result, Err(LintError::Cache(BaselineError::Format { .. }))),
+                "{text}: refused rather than overwritten: {result:?}"
+            );
+        }
     }
 }

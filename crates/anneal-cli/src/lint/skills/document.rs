@@ -114,11 +114,29 @@ fn index_body(body: &str, first_line: usize) -> (Vec<Line<'_>>, Vec<Section<'_>>
     (lines, sections)
 }
 
-/// Words of `text`: lowercase ASCII-alphanumeric runs (apostrophes kept inside words).
+/// Words of `text`: lowercased runs of Unicode letters and digits, with apostrophes kept inside
+/// words and trimmed from their ends.
 pub(crate) fn words(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !(c.is_alphanumeric() || c == '\''))
         .map(|w| w.trim_matches('\'').to_lowercase())
         .filter(|w| !w.is_empty())
+}
+
+/// Parses `text` as the `SKILL.md` of `dir` for a unit test.
+#[cfg(test)]
+pub(crate) fn test_skill<'a>(dir: &'a SkillDir, text: &'a str) -> Skill<'a> {
+    let doc = super::frontmatter::parse(text).expect("test SKILL.md parses");
+    let size = u64::try_from(text.len()).expect("a test file fits in u64");
+    Skill::new(dir, "SKILL.md", size, doc)
+}
+
+/// A skill directory named `name` at `dir`, for a unit test.
+#[cfg(test)]
+pub(crate) fn test_dir(dir: &std::path::Path, name: &str) -> SkillDir {
+    SkillDir {
+        dir: dir.to_path_buf(),
+        name: name.to_owned(),
+    }
 }
 
 /// True when `text` holds `word` as a whole, case-sensitive token.

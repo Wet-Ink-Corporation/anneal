@@ -3,7 +3,11 @@
 //! Supported: `key: value` scalars (plain, `"double"` or `'single'` quoted), `key: >` folded and
 //! `key: |` literal blocks (chomping indicators accepted, trailing newlines always stripped), and
 //! `key:` followed by an indented block (a nested map such as `metadata`), kept as raw text.
-//! Anything else is a [`ParseError`] with the line it stopped at.
+//! A plain value may not contain `: `, end with `:`, or start with `` ` ``, `@` or `%` (strict
+//! YAML rejects them; quote such values). Anything else is a [`ParseError`] with the line it
+//! stopped at.
+
+use std::collections::BTreeSet;
 
 /// One top-level frontmatter key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +98,7 @@ fn trim_eol(line: &str) -> &str {
 fn parse_fields(block: &str) -> Result<Vec<Field>, ParseError> {
     let lines: Vec<&str> = block.lines().map(trim_eol).collect();
     let mut fields: Vec<Field> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     let mut index = 0;
     while let Some(&line) = lines.get(index) {
         let line_no = index.saturating_add(2);
@@ -105,7 +110,7 @@ fn parse_fields(block: &str) -> Result<Vec<Field>, ParseError> {
             return Err(error(line_no, "unexpected indentation"));
         }
         let (key, rest) = split_key(line).ok_or_else(|| error(line_no, "expected `key: value`"))?;
-        if fields.iter().any(|f| f.key == key) {
+        if !seen.insert(key) {
             return Err(error(line_no, "duplicate key"));
         }
         let continuation = indented_run(lines.get(index..).unwrap_or(&[]));
@@ -188,7 +193,7 @@ fn literal(lines: &[&str]) -> String {
     let indent = lines
         .iter()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| l.len().saturating_sub(l.trim_start().len()))
+        .map(|l| l.bytes().take_while(|b| matches!(b, b' ' | b'\t')).count())
         .min()
         .unwrap_or(0);
     lines
@@ -202,8 +207,7 @@ fn literal(lines: &[&str]) -> String {
 
 fn unquote(scalar: &str, line: usize) -> Result<String, ParseError> {
     let Some(quote @ ('"' | '\'')) = scalar.chars().next() else {
-        let plain = scalar.split_once(" #").map_or(scalar, |(value, _)| value);
-        return Ok(plain.trim_end().to_owned());
+        return plain(scalar, line);
     };
     let quoted = read_quoted(scalar.get(1..).unwrap_or(""), quote);
     let (value, after) = quoted.ok_or_else(|| error(line, "unterminated quoted value"))?;
@@ -213,6 +217,25 @@ fn unquote(scalar: &str, line: usize) -> Result<String, ParseError> {
     } else {
         Err(error(line, "text after a quoted value"))
     }
+}
+
+/// A plain (unquoted) scalar, minus any trailing ` # comment`. Strict YAML rejects `: ` inside
+/// one, a trailing `:`, and a leading `` ` ``, `@` or `%`, so they must be quoted.
+fn plain(scalar: &str, line: usize) -> Result<String, ParseError> {
+    let value = scalar
+        .split_once(" #")
+        .map_or(scalar, |(value, _)| value)
+        .trim_end();
+    if value.contains(": ") || value.ends_with(':') {
+        return Err(error(line, "plain value contains `: `; quote it"));
+    }
+    if value.starts_with(['`', '@', '%']) {
+        return Err(error(
+            line,
+            "plain value starts with `` ` ``, `@` or `%`; quote it",
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 /// Reads a quoted scalar body up to its closing `quote`. Double quotes take `\"` and `\\`
@@ -280,6 +303,29 @@ mod tests {
     }
 
     #[test]
+    fn literal_block_indent_counts_only_spaces_and_tabs() {
+        let text = "---\nnotes: |\n \u{a0}a\n \u{a0}b\n---\n";
+        let doc = parse(text).expect("valid frontmatter");
+
+        assert_eq!(
+            doc.value("notes"),
+            "\u{a0}a\n\u{a0}b",
+            "a no-break space is content, not indentation"
+        );
+    }
+
+    #[test]
+    fn a_plain_value_may_hold_a_colon_without_a_following_space() {
+        let doc = parse("---\ndescription: Use at 10:30 for https://x.example\n---\n")
+            .expect("`:` without a space is plain YAML");
+        assert_eq!(
+            doc.value("description"),
+            "Use at 10:30 for https://x.example",
+            "kept whole"
+        );
+    }
+
+    #[test]
     fn a_nested_map_is_kept_as_raw_lines() {
         let doc = parse("---\nmetadata:\n  owner: anneal\n  tier: 1\nname: x\n---\n")
             .expect("valid frontmatter");
@@ -297,6 +343,11 @@ mod tests {
             ("---\nname: x\nname: y\n---\n", 3),
             ("---\ndescription: \"open\n---\n", 2),
             ("---\n  indented: x\n---\n", 2),
+            ("---\nname: x\ndescription: Use when: a spec\n---\n", 3),
+            ("---\nname: plan:\n---\n", 2),
+            ("---\ndescription: `code` first\n---\n", 2),
+            ("---\ndescription: @handle\n---\n", 2),
+            ("---\ndescription: %directive\n---\n", 2),
         ];
         for (text, line) in cases {
             let result = parse(text).map(|d| d.fields);

@@ -34,8 +34,8 @@ impl SkillDir {
 /// `SKILL.md` are ignored.
 ///
 /// # Errors
-/// [`LintError::MissingPath`] when a path does not exist; [`LintError::Io`] when a directory
-/// cannot be listed.
+/// [`LintError::MissingPath`] when a path does not exist; [`LintError::WrongKind`] when it is
+/// not a directory; [`LintError::Io`] when a directory cannot be listed.
 pub(crate) fn discover(paths: &[PathBuf]) -> Result<Vec<SkillDir>, LintError> {
     let mut skills = Vec::new();
     for path in paths {
@@ -45,6 +45,12 @@ pub(crate) fn discover(paths: &[PathBuf]) -> Result<Vec<SkillDir>, LintError> {
         if path.join(SKILL_FILE).is_file() {
             skills.push(skill_dir(path.clone()));
             continue;
+        }
+        if !path.is_dir() {
+            return Err(LintError::WrongKind {
+                path: path.clone(),
+                expected: "a skill directory or a directory of skills",
+            });
         }
         let entries = fs::read_dir(path).map_err(|source| LintError::io(path, source))?;
         for entry in entries {
@@ -109,12 +115,49 @@ pub(crate) fn read_capped(path: &Path) -> Result<Capped, LintError> {
     })
 }
 
-/// The entries of `dir` (names and whether each is a directory), sorted by name. A missing
-/// directory has no entries. Symlinks are reported as files and never followed.
+/// What a directory entry is, as `DirEntry::file_type` reports it: symlinks are never followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum EntryKind {
+    /// A regular file.
+    File,
+    /// A directory.
+    Dir,
+    /// A symbolic link, whatever it points at (or nothing).
+    Symlink,
+    /// Anything else: a FIFO, socket or device.
+    Other,
+}
+
+impl EntryKind {
+    fn of(file_type: fs::FileType) -> Self {
+        if file_type.is_symlink() {
+            Self::Symlink
+        } else if file_type.is_dir() {
+            Self::Dir
+        } else if file_type.is_file() {
+            Self::File
+        } else {
+            Self::Other
+        }
+    }
+
+    /// A stable byte for hashing.
+    pub(crate) const fn tag(self) -> u8 {
+        match self {
+            Self::File => 0,
+            Self::Dir => 1,
+            Self::Symlink => 2,
+            Self::Other => 3,
+        }
+    }
+}
+
+/// The entries of `dir` (names and kinds), sorted by name. A missing directory has no
+/// entries. Symlinks are reported as [`EntryKind::Symlink`] and never followed.
 ///
 /// # Errors
 /// [`LintError::Io`] when `dir` exists but cannot be listed.
-pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(String, bool)>, LintError> {
+pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(String, EntryKind)>, LintError> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -123,11 +166,13 @@ pub(crate) fn list_dir(dir: &Path) -> Result<Vec<(String, bool)>, LintError> {
     let mut listed = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| LintError::io(dir, source))?;
-        let is_dir = entry
+        let file_type = entry
             .file_type()
-            .map_err(|source| LintError::io(dir, source))?
-            .is_dir();
-        listed.push((entry.file_name().to_string_lossy().into_owned(), is_dir));
+            .map_err(|source| LintError::io(dir, source))?;
+        listed.push((
+            entry.file_name().to_string_lossy().into_owned(),
+            EntryKind::of(file_type),
+        ));
     }
     listed.sort();
     Ok(listed)

@@ -71,6 +71,15 @@ pub enum LintError {
         /// The path as given.
         path: PathBuf,
     },
+    /// A path given on the command line is the wrong kind (a file for a directory, or the
+    /// reverse).
+    #[error("{path} is not {expected}", path = path.display())]
+    WrongKind {
+        /// The path as given.
+        path: PathBuf,
+        /// What it should be.
+        expected: &'static str,
+    },
     /// A file or directory could not be read.
     #[error("reading {path}", path = path.display())]
     Io {
@@ -97,7 +106,7 @@ impl LintError {
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
-            Self::MissingPath { .. } => exit_codes::USAGE,
+            Self::MissingPath { .. } | Self::WrongKind { .. } => exit_codes::USAGE,
             Self::Io { .. } | Self::Cache(_) => exit_codes::INTERNAL,
         }
     }
@@ -207,15 +216,28 @@ fn set_level(
     Ok(findings)
 }
 
-/// Reads a text file given on the command line: its text, or `Err(size)` when it is larger
-/// than the read cap. A missing file is a usage error. Invalid UTF-8 is replaced, which only
-/// matters for word counts and JSON parse errors.
-fn read_text(path: &Path) -> Result<Result<String, u64>, LintError> {
+/// A file named on the command line must exist and must not be a directory; either mistake is
+/// a usage error.
+fn require_file(path: &Path) -> Result<(), LintError> {
     if !path.exists() {
         return Err(LintError::MissingPath {
             path: path.to_path_buf(),
         });
     }
+    if path.is_dir() {
+        return Err(LintError::WrongKind {
+            path: path.to_path_buf(),
+            expected: "a file",
+        });
+    }
+    Ok(())
+}
+
+/// Reads a text file given on the command line: its text, or `Err(size)` when it is larger
+/// than the read cap. A missing file is a usage error. Invalid UTF-8 is replaced, which only
+/// matters for word counts and JSON parse errors.
+fn read_text(path: &Path) -> Result<Result<String, u64>, LintError> {
+    require_file(path)?;
     let capped = read_capped(path)?;
     Ok(capped
         .bytes

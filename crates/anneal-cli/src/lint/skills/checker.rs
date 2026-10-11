@@ -179,12 +179,12 @@ impl Display for Checker {
 
 /// The model-invoked entry skills (blueprint "Packaging against the listing budget"). Every
 /// other skill must set `disable-model-invocation: true`.
-pub const ENTRY_SKILLS: [&str; 7] = [
+pub(crate) const ENTRY_SKILLS: [&str; 7] = [
     "grill", "spec", "plan", "build", "diagnose", "verify", "ship",
 ];
 
 /// Frontmatter keys from the Agent Skills spec (agentskills.io).
-pub const SPEC_FIELDS: [&str; 6] = [
+pub(crate) const SPEC_FIELDS: [&str; 6] = [
     "name",
     "description",
     "license",
@@ -198,7 +198,7 @@ pub const SPEC_FIELDS: [&str; 6] = [
 /// `when_to_use` (rule 1), `disable-model-invocation` (rule 4), `context` and `agent` (rule
 /// 20's fork), and `argument-hint` for user-invoked skills. Skills still read correctly where
 /// they are ignored.
-pub const EXTENSION_FIELDS: [&str; 5] = [
+pub(crate) const EXTENSION_FIELDS: [&str; 5] = [
     "when_to_use",
     "disable-model-invocation",
     "argument-hint",
@@ -207,24 +207,24 @@ pub const EXTENSION_FIELDS: [&str; 5] = [
 ];
 
 /// Prefixes a skill name may not start with (rule 1).
-pub const RESERVED_PREFIXES: [&str; 2] = ["claude", "anthropic"];
+pub(crate) const RESERVED_PREFIXES: [&str; 2] = ["claude", "anthropic"];
 
 /// Rule 1: `description` + `when_to_use`, in characters.
-pub const DESCRIPTION_MAX_CHARS: usize = 300;
+pub(crate) const DESCRIPTION_MAX_CHARS: usize = 300;
 /// Rule 1: all model-invoked descriptions together, in characters.
-pub const LISTING_MAX_CHARS: usize = 2_100;
+pub(crate) const LISTING_MAX_CHARS: usize = 2_100;
 /// Rule 1: the Agent Skills spec's name length ceiling.
-pub const NAME_MAX_CHARS: usize = 64;
+pub(crate) const NAME_MAX_CHARS: usize = 64;
 /// Rule 2: body words.
-pub const BODY_MAX_WORDS: usize = 600;
+pub(crate) const BODY_MAX_WORDS: usize = 600;
 /// Rule 2: body lines.
-pub const BODY_MAX_LINES: usize = 500;
+pub(crate) const BODY_MAX_LINES: usize = 500;
 /// Rule 2: the whole `SKILL.md`, in bytes (wshobson's ~8 KB cap).
-pub const FILE_MAX_BYTES: u64 = 8 * 1024;
+pub(crate) const FILE_MAX_BYTES: u64 = 8 * 1024;
 /// Rule 2: hard rules (every MUST) sit in this many first lines of the file.
-pub const HARD_RULES_MAX_LINE: usize = 20;
+pub(crate) const HARD_RULES_MAX_LINE: usize = 20;
 /// Rule 3: the sections, in order (level-2 headings, case-insensitive).
-pub const ANATOMY: [&str; 6] = [
+pub(crate) const ANATOMY: [&str; 6] = [
     "Overview",
     "When to use",
     "Process",
@@ -233,23 +233,23 @@ pub const ANATOMY: [&str; 6] = [
     "Verification",
 ];
 /// Rule 3: skills exempt from the anatomy check. Exemptions live here, never in the skill.
-pub const ANATOMY_EXEMPT: [&str; 0] = [];
+pub(crate) const ANATOMY_EXEMPT: [&str; 0] = [];
 /// Rule 4: the bootstrap index, in words.
-pub const INDEX_MAX_WORDS: usize = 200;
+pub(crate) const INDEX_MAX_WORDS: usize = 200;
 /// Rule 5: the clause that ends a description.
-pub const NOT_FOR_CLAUSE: &str = "Do NOT use for";
+pub(crate) const NOT_FOR_CLAUSE: &str = "Do NOT use for";
 /// Rule 5: siblings whose trigger words overlap at or above this percentage (Jaccard) warn.
-pub const OVERLAP_PERCENT: usize = 50;
+pub(crate) const OVERLAP_PERCENT: usize = 50;
 /// Rule 6: phrases that mark a skip-rationalization clause.
-pub const SKIP_CLAUSES: [&str; 2] = ["even if", "even when"];
+pub(crate) const SKIP_CLAUSES: [&str; 2] = ["even if", "even when"];
 /// Rule 8: the completion-criterion phrase each Process step carries.
-pub const COMPLETION_PHRASES: [&str; 2] = ["it's working if", "it\u{2019}s working if"];
+pub(crate) const COMPLETION_PHRASES: [&str; 2] = ["it's working if", "it\u{2019}s working if"];
 /// Rule 9: adjectives that stand in for a threshold.
-pub const THRESHOLD_ADJECTIVES: [&str; 10] = [
+pub(crate) const THRESHOLD_ADJECTIVES: [&str; 10] = [
     "small", "large", "big", "quick", "few", "many", "tiny", "huge", "minor", "trivial",
 ];
 /// Rule 9: words that make a line a gate.
-pub const GATE_WORDS: [&str; 19] = [
+pub(crate) const GATE_WORDS: [&str; 19] = [
     "gate",
     "gates",
     "threshold",
@@ -271,7 +271,7 @@ pub const GATE_WORDS: [&str; 19] = [
     "unless",
 ];
 /// Rule 9: sections where adjectives are quoted on purpose (the rationalizations being refuted).
-pub const QUOTING_SECTIONS: [&str; 2] = ["Rationalizations", "Red flags"];
+pub(crate) const QUOTING_SECTIONS: [&str; 2] = ["Rationalizations", "Red flags"];
 
 #[cfg(test)]
 mod tests {

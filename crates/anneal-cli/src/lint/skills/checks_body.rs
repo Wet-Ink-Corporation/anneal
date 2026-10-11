@@ -9,7 +9,7 @@ use crate::lint::skills::checker::{
     ANATOMY, ANATOMY_EXEMPT, BODY_MAX_LINES, BODY_MAX_WORDS, COMPLETION_PHRASES, Checker,
     FILE_MAX_BYTES,
 };
-use crate::lint::skills::discover::list_dir;
+use crate::lint::skills::discover::{EntryKind, list_dir};
 use crate::lint::skills::document::Skill;
 
 const REFERENCES: &str = "references";
@@ -62,12 +62,12 @@ fn references(skill: &Skill<'_>) -> Result<Vec<LintFinding>, LintError> {
     let mut findings = Vec::new();
     let files: BTreeSet<&str> = entries
         .iter()
-        .filter(|(_, is_dir)| !is_dir)
+        .filter(|(_, kind)| *kind != EntryKind::Dir)
         .map(|(name, _)| name.as_str())
         .collect();
-    for (name, is_dir) in &entries {
+    for (name, kind) in &entries {
         let at = Location::new(dir.join(name).display().to_string(), 0);
-        let (message, fix) = if *is_dir {
+        let (message, fix) = if *kind == EntryKind::Dir {
             (
                 format!("`references/{name}/` nests references two levels deep."),
                 "flatten it: one level of `references/<topic>.md` files.",
@@ -216,7 +216,63 @@ fn is_numbered_step(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_numbered_step;
+    use super::{budget, is_numbered_step, references};
+    use crate::lint::skills::checker::{BODY_MAX_LINES, FILE_MAX_BYTES};
+    use crate::lint::skills::document::{test_dir, test_skill};
+    use std::path::Path;
+
+    #[test]
+    fn the_budget_reports_too_many_lines_and_too_many_bytes() {
+        let dir = test_dir(Path::new("skills/plan"), "plan");
+        let many_lines = format!("---\nname: plan\n---\n{}", "x\n".repeat(BODY_MAX_LINES + 1));
+        let wide = format!("---\nname: plan\n---\n{}\n", "y".repeat(9 * 1024));
+
+        let by_lines = budget(&test_skill(&dir, &many_lines)).map(|f| f.message);
+        let by_bytes = budget(&test_skill(&dir, &wide)).map(|f| f.message);
+
+        assert!(
+            by_lines
+                .as_deref()
+                .is_some_and(|m| m.contains(&format!("{} lines", BODY_MAX_LINES + 1))),
+            "the line limit: {by_lines:?}"
+        );
+        assert!(
+            by_bytes
+                .as_deref()
+                .is_some_and(|m| m.contains(&format!("(max {FILE_MAX_BYTES})"))),
+            "the byte limit: {by_bytes:?}"
+        );
+    }
+
+    #[test]
+    fn references_flag_nested_directories_and_dangling_links() {
+        let root = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(root.path().join("references/deeper")).expect("mkdir");
+        std::fs::write(root.path().join("references/guide.md"), "# Guide\n").expect("write");
+        let dir = test_dir(root.path(), "plan");
+        let text = "---\nname: plan\n---\nSee references/guide.md and references/missing.md.\n";
+
+        let findings = references(&test_skill(&dir, text)).expect("references/ is listable");
+
+        let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
+        assert_eq!(
+            findings.len(),
+            2,
+            "nested dir and dangling link: {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`references/deeper/` nests")),
+            "nested: {messages:?}"
+        );
+        assert!(
+            findings.iter().any(|f| f.at.line == 4
+                && f.message
+                    .contains("`references/missing.md` does not resolve")),
+            "dangling, at its line: {messages:?}"
+        );
+    }
 
     #[test]
     fn numbered_steps_need_digits_a_marker_and_a_space() {

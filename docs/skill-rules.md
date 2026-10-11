@@ -15,8 +15,9 @@ anneal lint skills plugin/skills --cache .anneal/lint-skills.json   # skip uncha
 
 - Each `PATH` is a skill directory (it holds a `SKILL.md`) or a directory of skills. Files and
   subdirectories without a `SKILL.md` (a `README.md`, say) are ignored, so a directory with no
-  skills is clean. The default `PATH` is `plugin/skills`. A path that does not exist is a usage
-  error (exit 2).
+  skills is clean. The default `PATH` is `plugin/skills`. A path that does not exist, or that is
+  a file rather than a directory, is a usage error (exit 2). So is a directory given to
+  `--index`, `--hooks` or `--cache`.
 - `--hooks FILE` is the `hooks.metadata.json` whose hook ids count as enforcers (rule 10). It
   defaults to `<first PATH>/../hooks/hooks.metadata.json` when that file exists. Only
   `hooks[].id` is read. If the file does not parse, that is an `enforcer` error.
@@ -106,7 +107,10 @@ There is no YAML library. The parser reads this subset and reports anything else
 
 - `---` on the first line, and a closing `---` line
 - `key: value`, with a plain, `"double"` (escapes `\"` and `\\`) or `'single'` (escape `''`)
-  quoted scalar; `# comment` lines, and a trailing ` # comment` after a value
+  quoted scalar; `# comment` lines, and a trailing ` # comment` after a value. A plain
+  (unquoted) value may not contain `: `, end with `:`, or start with `` ` ``, `@` or `%`,
+  because strict YAML rejects those: quote it instead
+  (`description: "Use when: ..."`)
 - `key: >` (folded) and `key: |` (literal) blocks of indented lines; chomping indicators
   (`>-`, `|+`, ...) are accepted, and trailing newlines are always stripped
 - `key:` followed by an indented block (a nested map such as `metadata:`), kept as raw text
@@ -125,10 +129,21 @@ Put it under `metadata:` instead.
 
 ## Content-hash snapshot
 
-With `--cache FILE`, each skill's per-skill findings are stored under a SHA-256 of its directory:
-every file's relative path and contents, plus the rules version, the anneal version and the hook
-ids. A skill whose hash is unchanged is not checked again; its stored findings are replayed, so a
-cached run reports exactly what a fresh run would. Set-level checks (`listing-budget`,
-`description-sibling`, `overlap`, `bootstrap-index` and the once-per-run reviews) always run. A
-snapshot that doesn't parse, or that a different format version wrote, is ignored and rebuilt.
-`data.cached` counts the replayed skills.
+With `--cache FILE`, each skill's per-skill findings are stored under a SHA-256 of its
+directory, plus the source code of the checks, the anneal version and the hook ids. Every input
+is length-prefixed. Within the directory, each entry contributes its relative path and kind,
+then:
+
+- a regular file: its size and its first 1 MiB
+- a symlink: its target path, never followed (so a dangling link or a link to `/dev/zero` is
+  safe)
+- a directory: its own entries, down to four levels
+- a FIFO, socket or device: nothing more
+
+Because the checks' own source is hashed, editing a check invalidates every entry; no version
+number has to be bumped. A skill whose hash is unchanged is not checked again; its stored
+findings are replayed, so a cached run reports exactly what a fresh run would. Set-level checks
+(`listing-budget`, `description-sibling`, `overlap`, `bootstrap-index` and the once-per-run
+reviews) always run. A JSON object with a numeric `version` that is another version, or
+another shape, is stale: it is ignored and rebuilt. Any other file at that path is refused with
+exit 70 rather than overwritten. `data.cached` counts the replayed skills.

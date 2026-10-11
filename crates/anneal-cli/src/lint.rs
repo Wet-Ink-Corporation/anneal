@@ -6,7 +6,7 @@
 //!
 //! `lint spec|plan|brief` are stubs until their stories land. Each will be a module beside
 //! [`skills`] with its own `Args` type and `lint` function returning findings; [`run`] gets
-//! one more arm and reuses [`report`] unchanged.
+//! one more arm and reuses the crate-internal `report` unchanged.
 
 pub mod finding;
 pub mod skills;
@@ -72,17 +72,17 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
 
 /// How many inputs a run looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Counts {
+pub(crate) struct Counts {
     /// Inputs checked (skills, specs, ...).
-    pub checked: usize,
+    checked: usize,
     /// Inputs whose findings were replayed from the snapshot.
-    pub cached: usize,
+    cached: usize,
 }
 
 impl Counts {
     /// `checked` inputs, `cached` of them replayed.
     #[must_use]
-    pub const fn new(checked: usize, cached: usize) -> Self {
+    pub(crate) const fn new(checked: usize, cached: usize) -> Self {
         Self { checked, cached }
     }
 }
@@ -112,8 +112,8 @@ struct Detail<'a> {
 ///
 /// # Errors
 /// [`CliError::Output`] when `out` cannot be written.
-pub fn report<O: Write>(
-    target: &str,
+pub(crate) fn report<O: Write>(
+    target: &'static str,
     findings: &[LintFinding],
     counts: Counts,
     out: &mut O,

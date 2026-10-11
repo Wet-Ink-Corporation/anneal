@@ -2,6 +2,7 @@
 
 mod cli;
 mod lint_skills;
+mod lint_skills_inputs;
 mod paths;
 #[cfg(test)]
 mod support;
