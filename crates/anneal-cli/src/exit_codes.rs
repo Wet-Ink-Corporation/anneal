@@ -146,6 +146,8 @@ pub const BRIEF_BAD_RANGE: Code = Code::new(2, "bad range");
 pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(5, "Clef unreachable");
 /// `eval routing`: accuracy is below its bound.
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");
+/// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted.
+pub const EVAL_INVALID: Code = Code::new(2, "invalid fixtures or skills");
 
 impl CommandCodes {
     /// The exit-code table of `command`.
@@ -182,7 +184,7 @@ impl CommandCodes {
             CommandName::Perf => ("noise", &[PERF_KEEP, PERF_REVERT]),
             CommandName::Brief => ("build", &[OK, BRIEF_BAD_RANGE]),
             CommandName::Decide => ("", &[OK, DECIDE_CLEF_UNREACHABLE]),
-            CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND]),
+            CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
         };
         Self {

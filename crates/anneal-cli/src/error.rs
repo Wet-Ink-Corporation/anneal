@@ -10,6 +10,7 @@ use anneal_ledger::{StoreError, TimestampError};
 
 use crate::baseline::BaselineError;
 use crate::command::CommandName;
+use crate::eval::routing::RoutingError;
 use crate::exit_codes::{self, Code};
 use crate::lint::skills::LintError;
 use crate::paths::PathError;
@@ -47,6 +48,9 @@ pub enum CliError {
     /// The working directory could not be read.
     #[error("reading the working directory")]
     CurrentDir(#[source] io::Error),
+    /// `anneal eval` could not read its inputs.
+    #[error("eval")]
+    Eval(#[from] RoutingError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -65,6 +69,7 @@ impl CliError {
             | Self::Clock(_)
             | Self::CurrentDir(_) => exit_codes::INTERNAL,
             Self::Lint(error) => error.code(),
+            Self::Eval(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

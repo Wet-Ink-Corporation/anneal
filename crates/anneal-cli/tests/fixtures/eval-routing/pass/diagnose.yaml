@@ -1,0 +1,21 @@
+# Routing fixture for the `diagnose` test skill.
+positives:
+  - the build breaks on main
+  - this test fails intermittently, find the root cause
+  - there is a bug where the app crashes on save
+  - bisect the regression in the parser
+  - reproduce the failure from the CI log
+  - explain why the login fails
+  - an error appears and the cause is unknown
+  - the tests broke overnight; why
+near_misses:
+  plan:
+    - plan the small tasks and dependencies to fix the failing build
+    - order the bug fixes into an implementation plan
+    - estimate the tasks for the test migration
+    - break the build cleanup into small tasks with dependencies
+  spec:
+    - write acceptance criteria for the bug report feature
+    - turn the root cause analysis into a feature request with requirements
+    - list the open questions about the unknown crash
+    - draft requirements and acceptance criteria for the bug tracker
