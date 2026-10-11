@@ -18,7 +18,10 @@
 //! - [`ledger`]: `anneal ledger append|query|tail|journal` over the `anneal-ledger` store.
 //! - [`paths`]: the ledger store (normally in the git common dir) and the anneal home
 //!   (`~/.anneal`).
+//! - [`adr`]: ADR numbering, `docs/adr/NNNN-<slug>.md` with the next free number.
+//! - [`rulings`]: the out-of-scope ruling store, `.out-of-scope/<slug>.md`, listed by id.
 
+pub mod adr;
 pub mod baseline;
 pub mod cli;
 pub mod command;
@@ -30,3 +33,4 @@ pub mod hook;
 pub mod ledger;
 pub mod lint;
 pub mod paths;
+pub mod rulings;

@@ -98,18 +98,21 @@ pub(crate) struct Capped {
 /// # Errors
 /// [`LintError::Io`] when the file cannot be opened or read.
 pub(crate) fn read_capped(path: &Path) -> Result<Capped, LintError> {
-    let file = File::open(path).map_err(|source| LintError::io(path, source))?;
-    let size = file
-        .metadata()
-        .map_err(|source| LintError::io(path, source))?
-        .len();
+    read_bounded(path).map_err(|source| LintError::io(path, source))
+}
+
+/// Reads `path` up to [`MAX_READ_BYTES`], for callers with their own error type.
+///
+/// # Errors
+/// The I/O error when the file cannot be opened or read.
+pub(crate) fn read_bounded(path: &Path) -> io::Result<Capped> {
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
     if size > MAX_READ_BYTES {
         return Ok(Capped { size, bytes: None });
     }
     let mut bytes = Vec::new();
-    file.take(MAX_READ_BYTES)
-        .read_to_end(&mut bytes)
-        .map_err(|source| LintError::io(path, source))?;
+    file.take(MAX_READ_BYTES).read_to_end(&mut bytes)?;
     Ok(Capped {
         size,
         bytes: Some(bytes),
