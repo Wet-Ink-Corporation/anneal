@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{ConfidenceSummary, DesignTree, Status, TreeProblem};
+use super::{ConfidenceSummary, DesignTree, Status, TreeFile, TreeProblem};
 
 /// A node as JSON: a fact (`is_decision` 0.1) with a recommended answer and confidence 0.5.
 fn node(id: &str, depends_on: &[&str], status: &str) -> Value {
@@ -502,6 +502,44 @@ fn finding_keys_of_different_problems_do_not_collide() {
             "grill/too-many-dependencies:a",
         ],
         "turns and nodes have their own kinds; ids may hold '-', so the path is joined with '->'"
+    );
+}
+
+#[test]
+fn a_tree_file_is_read_in_file_order_and_validated_into_id_order() {
+    let bytes = tree(&[node("b", &[], "open"), node("a", &[], "open")], &[]);
+
+    let file = TreeFile::read(&bytes).expect("a well-formed file");
+    let tree = DesignTree::validate(file.clone()).expect("a valid tree");
+
+    let file_order: Vec<&str> = file.nodes.iter().map(|node| node.id.as_str()).collect();
+    let tree_order: Vec<&str> = tree.nodes().iter().map(|node| node.id.as_str()).collect();
+    assert_eq!(
+        (file_order, tree_order),
+        (vec!["b", "a"], vec!["a", "b"]),
+        "the file keeps its order; the tree sorts by id"
+    );
+}
+
+#[test]
+fn reading_a_tree_file_checks_its_size_version_and_shape_but_not_its_content() {
+    let blank_goal = serde_json::to_vec(&json!({
+        "version": 1, "goal": " ", "turns": [], "nodes": []
+    }))
+    .expect("a json! value serialises");
+    let other_version = serde_json::to_vec(&json!({"version": 2})).expect("serialises");
+
+    assert_eq!(
+        (
+            TreeFile::read(&blank_goal).map(|file| file.goal),
+            TreeFile::read(&other_version),
+            TreeFile::read(&vec![b' '; 1_048_577]),
+        ),
+        (
+            Ok(" ".to_owned()),
+            Err(vec![TreeProblem::Version { found: 2 }]),
+            Err(vec![TreeProblem::TooLarge { limit: 1_048_576 }]),
+        ),
     );
 }
 
