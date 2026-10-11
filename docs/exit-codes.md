@@ -88,7 +88,7 @@ A green result proves the mode was recorded for this worktree, with whether its 
 | 3 | record: not red, the command exited 0; nothing recorded |
 | 4 | record: timed out, killed; a hang is not a reproduction, nothing recorded |
 
-A green result proves the reproduction exited non-zero and repro_red was recorded for this worktree (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers). It does **not** prove that the command fails because of the reported bug rather than for another reason (record), or that files over 1 MiB or ignored by git are clean (leftovers).
+A green result proves the reproduction exited non-zero and repro_red was recorded for this worktree (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers). It does **not** prove that the command fails because of the reported bug rather than for another reason (record), or that files over 1 MiB, past the 64 MiB scan budget, with a non-UTF-8 name outside unix, or ignored by git are clean (leftovers).
 
 ## `anneal lint`
 

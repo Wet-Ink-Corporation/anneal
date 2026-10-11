@@ -165,8 +165,8 @@ impl CommandName {
             }
             Self::Repro => {
                 "that the command fails because of the reported bug rather than for another \
-                 reason (record), or that files over 1 MiB or ignored by git are clean \
-                 (leftovers)"
+                 reason (record), or that files over 1 MiB, past the 64 MiB scan budget, with \
+                 a non-UTF-8 name outside unix, or ignored by git are clean (leftovers)"
             }
             Self::Lint => {
                 "that the content is right, or that its warnings and review items were addressed"
