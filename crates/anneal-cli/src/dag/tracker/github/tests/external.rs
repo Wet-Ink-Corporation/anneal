@@ -3,7 +3,8 @@
 
 use super::{FakeGh, fixture, repo, summary};
 use crate::dag::ticket::Status;
-use crate::dag::tracker::github::{GhApi, GhError, GitHub, GitHubError, MAX_EXTERNAL, failure};
+use crate::dag::tracker::github::gh::failure;
+use crate::dag::tracker::github::{GhApi, GhError, GitHub, GitHubError, MAX_EXTERNAL};
 use crate::dag::tracker::{Tracker, TrackerError};
 
 /// The sub-issues of #4 (#40 by closed #11, #41 by open #12, #43 by merged pull request #30),

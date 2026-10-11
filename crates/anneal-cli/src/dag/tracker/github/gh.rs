@@ -12,15 +12,16 @@ pub const GH_TIMEOUT: Duration = Duration::from_secs(30);
 /// The most bytes kept from one `gh api` call's output (H-13).
 pub const MAX_GH_OUTPUT: u64 = 16 * 1024 * 1024;
 
-/// What `gh` prints on stderr when the API answers 404.
-const HTTP_404: &str = "(HTTP 404)";
+/// What `gh` prints on stderr when the API answers 404 Not Found or 410 Gone (a deleted
+/// issue): either way the issue is missing.
+const MISSING: [&str; 2] = ["(HTTP 404)", "(HTTP 410)"];
 
 /// Read-only access to GitHub's REST API: the port the reader depends on.
 pub trait GhApi {
     /// The response body of `GET <endpoint>` (relative to the API root, query included).
     ///
     /// # Errors
-    /// [`GhError::NotFound`] when GitHub answers 404; another [`GhError`] when the call fails
+    /// [`GhError::NotFound`] when GitHub answers 404 or 410; another [`GhError`] when the call fails
     /// or its answer is unusable.
     fn get(&self, endpoint: &str) -> Result<Vec<u8>, GhError>;
 }
@@ -48,7 +49,7 @@ pub enum GhError {
         /// The limit.
         timeout: Duration,
     },
-    /// GitHub answered 404: no such issue (or no access to it).
+    /// GitHub answered 404 or 410: no such issue, a deleted one, or one we cannot see.
     #[error("gh api {endpoint}: not found")]
     NotFound {
         /// The endpoint asked for.
@@ -123,21 +124,28 @@ impl GhApi for GhCli {
         if !output.status.success() {
             return Err(failure(endpoint, &output.stderr));
         }
-        if u64::try_from(output.stdout.len()).map_or(true, |len| len >= MAX_GH_OUTPUT) {
-            return Err(GhError::TooLarge {
-                endpoint: endpoint.to_owned(),
-            });
-        }
+        within_cap(endpoint, output.stdout.len())?;
         Ok(output.stdout)
     }
 }
 
+/// Refuses an answer of `len` bytes that reached [`MAX_GH_OUTPUT`]: the capture keeps at most
+/// that many, so a full capture may be cut short.
+pub(super) fn within_cap(endpoint: &str, len: usize) -> Result<(), GhError> {
+    if u64::try_from(len).map_or(true, |len| len >= MAX_GH_OUTPUT) {
+        return Err(GhError::TooLarge {
+            endpoint: endpoint.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// The error for a `gh api` call that exited non-zero, from its stderr: [`GhError::NotFound`]
-/// when `gh` reports HTTP 404, [`GhError::Failed`] otherwise.
+/// when `gh` reports HTTP 404 or 410, [`GhError::Failed`] otherwise.
 pub(super) fn failure(endpoint: &str, stderr: &[u8]) -> GhError {
     let endpoint = endpoint.to_owned();
     let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
-    if stderr.contains(HTTP_404) {
+    if MISSING.iter().any(|status| stderr.contains(status)) {
         GhError::NotFound { endpoint }
     } else {
         GhError::Failed { endpoint, stderr }

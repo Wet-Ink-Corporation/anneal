@@ -115,6 +115,33 @@ fn a_path_outside_the_root_costs_the_default_without_being_read() -> std::io::Re
 }
 
 #[test]
+#[cfg(unix)]
+fn a_path_through_a_symlinked_directory_leaving_the_root_is_not_sized() -> std::io::Result<()> {
+    let scratch = tempfile::tempdir()?;
+    let root = scratch.path().join("root");
+    let outside = scratch.path().join("outside");
+    fs::create_dir(&root)?;
+    fs::create_dir(&outside)?;
+    fs::write(outside.join("big.txt"), "x".repeat(40_000))?;
+    fs::write(root.join("own.txt"), "x".repeat(40))?;
+    std::os::unix::fs::symlink(&outside, root.join("link"))?;
+
+    let estimate = estimate(&ticket("", &["link/big.txt", "own.txt"]), &root);
+
+    let costs: Vec<(&str, Basis)> = estimate
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.basis))
+        .collect();
+    assert_eq!(
+        costs,
+        [("link/big.txt", Basis::Default), ("own.txt", Basis::Size)],
+        "the symlinked directory leads outside the root; a file inside is still sized"
+    );
+    Ok(())
+}
+
+#[test]
 fn at_most_max_files_are_counted() {
     let files: Vec<String> = (0..MAX_FILES + 10).map(|n| format!("f{n}.rs")).collect();
     let refs: Vec<&str> = files.iter().map(String::as_str).collect();

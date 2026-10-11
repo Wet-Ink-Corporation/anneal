@@ -10,7 +10,9 @@
 //! A blocker outside the tickets read (a story of an earlier release, a pull request) is
 //! fetched on its own (`repos/{owner}/{repo}/issues/{n}`, at most [`MAX_EXTERNAL`] of them) and
 //! becomes an external ticket: closed satisfies the blocker, open blocks. Its own blockers are
-//! not followed. One GitHub does not know (HTTP 404) stays dangling.
+//! not followed. One GitHub does not know (HTTP 404) or has deleted (HTTP 410) stays dangling.
+//! `Blocked by` counts only as a whole word (not in `Unblocked by`) and not after `no longer `
+//! or `not `.
 //!
 //! Every call goes through the [`GhApi`] port, so tests answer from recorded JSON with no
 //! process or network; [`GhCli`] runs the real `gh` with a timeout and capped output (H-13).
@@ -22,12 +24,10 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::Deserialize;
-use serde::de::IgnoredAny;
+use serde::de::{DeserializeOwned, IgnoredAny};
 
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::dag::tracker::{Tickets, Tracker, TrackerError};
-#[cfg(test)]
-use gh::failure;
 pub use gh::{GH_TIMEOUT, GhApi, GhCli, GhError, MAX_GH_OUTPUT};
 
 /// Issues asked for per page (GitHub's maximum).
@@ -205,7 +205,7 @@ impl<G: GhApi> GitHub<G> {
 }
 
 /// Decodes the JSON answer `body` of `endpoint`.
-fn decode<T: for<'de> Deserialize<'de>>(body: &[u8], endpoint: String) -> Result<T, GitHubError> {
+fn decode<T: DeserializeOwned>(body: &[u8], endpoint: String) -> Result<T, GitHubError> {
     serde_json::from_slice(body).map_err(|source| GitHubError::Json { endpoint, source })
 }
 
@@ -240,7 +240,12 @@ impl From<Issue> for Ticket {
     }
 }
 
-/// The issue numbers named after each `Blocked by` in `body`, sorted, each once.
+/// Words that, right before `blocked by`, say the issue is not blocked.
+const NEGATIONS: [&str; 2] = ["no longer ", "not "];
+
+/// The issue numbers named after each `Blocked by` in `body`, sorted, each once. The phrase
+/// counts only at the start of the body or after a character that is not a letter, digit or
+/// `_` (so not in `Unblocked by`), and not right after `no longer ` or `not `.
 fn blocked_by(body: &str) -> Vec<TicketId> {
     const PHRASE: &str = "blocked by";
     // ASCII lowercasing keeps every byte offset, so offsets in `lower` index `body` too.
@@ -248,7 +253,19 @@ fn blocked_by(body: &str) -> Vec<TicketId> {
     let mut numbers = Vec::new();
     let mut from = 0;
     while let Some(found) = lower.get(from..).and_then(|rest| rest.find(PHRASE)) {
-        from = from.saturating_add(found).saturating_add(PHRASE.len());
+        let start = from.saturating_add(found);
+        from = start.saturating_add(PHRASE.len());
+        let Some(before) = lower.get(..start) else {
+            continue;
+        };
+        let at_word_start = before
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let negated = NEGATIONS.iter().any(|negation| before.ends_with(negation));
+        if !at_word_start || negated {
+            continue;
+        }
         if let Some(rest) = body.get(from..) {
             numbers.extend(references(rest));
         }

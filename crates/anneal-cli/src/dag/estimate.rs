@@ -4,7 +4,8 @@
 //! one the tracker lists (markdown `files:`) or a backticked path in the body (`` `src/a.rs` ``,
 //! a `:line` suffix dropped). A file costs `ceil(size / 4)` tokens, at most
 //! [`MAX_FILE_TOKENS`], when it is a regular file under the root (relative, no `..`, not a
-//! symlink); any other named file costs [`UNKNOWN_FILE_TOKENS`]. At most [`MAX_FILES`] files
+//! symlink, and its canonical path inside the canonical root, so a symlinked directory cannot
+//! lead out); any other named file costs [`UNKNOWN_FILE_TOKENS`]. At most [`MAX_FILES`] files
 //! are counted, and the sum saturates. Files are only sized, never read. See `docs/dag.md`.
 
 use std::fs;
@@ -62,9 +63,12 @@ pub struct Estimate {
 pub fn estimate(ticket: &Ticket, root: &Path) -> Estimate {
     let chars = u64::try_from(ticket.body.chars().count()).unwrap_or(u64::MAX);
     let body_tokens = chars.div_ceil(CHARS_PER_TOKEN);
+    // A root that cannot be resolved (missing, unreadable) sizes nothing: by the documented
+    // rule every named file then costs the default, so the error has no other use.
+    let canonical_root = fs::canonicalize(root);
     let files: Vec<FileCost> = named_files(ticket)
         .into_iter()
-        .map(|path| file_cost(path, root))
+        .map(|path| file_cost(path, root, canonical_root.as_deref().ok()))
         .collect();
     let tokens = files
         .iter()
@@ -117,9 +121,15 @@ fn has_extension(path: &str) -> bool {
 }
 
 /// What `path` costs under `root`.
-fn file_cost(path: &str, root: &Path) -> FileCost {
-    let size = under_root(path)
-        .then(|| fs::symlink_metadata(root.join(path)))
+fn file_cost(path: &str, root: &Path, canonical_root: Option<&Path>) -> FileCost {
+    let full = root.join(path);
+    let contained = || {
+        canonical_root.is_some_and(|canonical_root| {
+            fs::canonicalize(&full).is_ok_and(|canonical| canonical.starts_with(canonical_root))
+        })
+    };
+    let size = (under_root(path) && contained())
+        .then(|| fs::symlink_metadata(&full))
         .and_then(Result::ok)
         .filter(fs::Metadata::is_file)
         .map(|metadata| metadata.len());

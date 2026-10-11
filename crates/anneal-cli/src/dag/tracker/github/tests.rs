@@ -6,6 +6,7 @@ use super::{GhApi, GhCli, GhError, GitHub, GitHubError, MAX_PAGES, PER_PAGE, Rep
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::dag::tracker::{Tracker, TrackerError};
 
+mod cli;
 mod external;
 
 /// A `gh` that answers from a function of the endpoint: no process, no network.
@@ -47,6 +48,22 @@ fn summary(tickets: &[Ticket]) -> Vec<(&str, Status, Vec<&str>)> {
             (t.id.as_str(), t.status, blockers)
         })
         .collect()
+}
+
+#[test]
+fn blocked_by_needs_a_word_boundary_and_no_negation() {
+    let cases: [(&str, &[&str]); 6] = [
+        ("Unblocked by #5", &[]),
+        ("Unblocked by #5. Blocked by #6", &["6"]),
+        ("no longer blocked by #12", &[]),
+        ("Not blocked by #13", &[]),
+        ("re_blocked by #14", &[]),
+        ("(blocked by #15)", &["15"]),
+    ];
+    for (body, expected) in cases {
+        let found: Vec<String> = blocked_by(body).iter().map(ToString::to_string).collect();
+        assert_eq!(found, expected, "{body:?}");
+    }
 }
 
 #[test]

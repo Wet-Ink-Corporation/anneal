@@ -55,7 +55,10 @@ Read-only, through `gh api --method GET` (REST). `gh` must be installed and logg
 - Its blockers are the `#n` references after `Blocked by` in the issue body. The match ignores
   case and allows an optional `:` and markdown emphasis. All of these work:
   `Blocked by #10`, `**Blocked by:** #10`, `Blocked by #1, #2 and #3`. A cross-repository
-  reference (`owner/repo#4`) is not read.
+  reference (`owner/repo#4`) is not read. `Blocked by` counts only as a whole word: at the
+  start of the body, or after a character that is not a letter, digit or `_`. So
+  `Unblocked by #5` names no blocker. It also does not count right after `no longer ` or
+  `not ` (`no longer blocked by #12`, `Not blocked by #13`).
 - A blocker outside the tickets that were read, such as a story from an earlier release or a
   pull request, is fetched on its own with `gh api repos/{owner}/{repo}/issues/{n}`. It
   becomes an **external** ticket:
@@ -63,7 +66,7 @@ Read-only, through `gh api --method GET` (REST). `gh` must be installed and logg
     satisfied.
   - **Open**: the dependant is not ready. `frontier` lists the blocker under
     `external_blockers` with the tickets it holds up.
-  - **Not found** (`gh` reports HTTP 404): the reference stays **dangling**, and the command
+  - **Not found or deleted** (`gh` reports HTTP 404 or 410): the reference stays **dangling**, and the command
     exits 2.
 
   External tickets are leaves: their own blockers are not followed. They are never counted,
@@ -172,7 +175,9 @@ tokens = ceil(body characters / 4) + the cost of each named file
   `` `src/a.rs` `` or `` `Cargo.toml:12` ``. A trailing `:line` is dropped. Options (`--x`),
   URLs and phrases are not paths. Each file counts once, and at most 64 are counted.
 - **A file's cost** is `ceil(size / 4)` tokens, capped at 25,000, when it is a regular file
-  under the working directory: a relative path with no `..`, and not a symlink. Any other named
+  under the working directory: a relative path with no `..`, not a symlink, and with its
+  canonical path inside the canonical working directory, so a symlinked directory cannot lead
+  outside it. Any other named
   file (missing, outside the root, or a directory) costs 2,000 tokens. Files are only sized,
   never read.
 - The sum saturates and does not overflow.
