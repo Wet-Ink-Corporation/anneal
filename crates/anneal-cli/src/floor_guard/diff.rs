@@ -242,8 +242,10 @@ fn start_and_count(range: &str) -> Option<(u64, u64)> {
     }
 }
 
-/// The path of a `---`/`+++` line without its `prefix`; `None` for `/dev/null`.
+/// The path of a `---`/`+++` line without its `prefix`; `None` for `/dev/null`. git appends a
+/// TAB to these lines when the path holds a space (`diff.c`), after any quoting; it is dropped.
 fn side_path<'a>(path: &'a str, prefix: &str) -> Option<Cow<'a, str>> {
+    let path = path.strip_suffix('\t').unwrap_or(path);
     (path != "/dev/null").then(|| strip_owned(unquote(path), prefix))
 }
 

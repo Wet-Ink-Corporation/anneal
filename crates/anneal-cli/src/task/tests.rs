@@ -1,8 +1,56 @@
 use std::time::Duration;
 
-use anneal_ledger::event::TestOutcome;
+use anneal_ledger::event::{TestOutcome, TestRun};
+use anneal_ledger::{Filter, LedgerEvent, Store};
 
-use super::{Ending, TaskError, run_command};
+use super::{DEFAULT_TIMEOUT_SECS, DoneArgs, Ending, Run, TaskError, record, run_command};
+
+#[test]
+#[cfg_attr(miri, ignore = "opens a SQLite ledger")]
+fn recording_a_timed_out_run_appends_one_red_test_run_and_no_task_done() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = dir.path().join("ledger.sqlite3");
+    let args = DoneArgs {
+        id: "T1".to_owned(),
+        timeout: DEFAULT_TIMEOUT_SECS,
+        session: None,
+        store: None,
+        command: vec!["cargo".into(), "test".into()],
+    };
+    let run = Run {
+        ending: Ending::TimedOut {
+            after: Duration::from_secs(5),
+        },
+        duration: Duration::from_millis(5_004),
+    };
+
+    let returned = record(&args, &run, "cargo test", &store).expect("records");
+
+    let stored: Vec<LedgerEvent> = Store::open(&store)
+        .expect("the ledger opens")
+        .query(&Filter::default())
+        .expect("the ledger reads")
+        .into_iter()
+        .map(|recorded| recorded.event.event)
+        .collect();
+    assert_eq!(
+        stored,
+        vec![LedgerEvent::TestRun(TestRun {
+            task: Some("T1".to_owned()),
+            command: "cargo test".to_owned(),
+            outcome: TestOutcome::Red,
+            exit: None,
+            duration_ms: Some(5_004),
+            timeout_secs: Some(5),
+        })],
+        "exactly one red test_run with no exit code and the timeout, and no task_done"
+    );
+    assert_eq!(
+        returned.len(),
+        1,
+        "record reports the one event it appended"
+    );
+}
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git in a subprocess")]

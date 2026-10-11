@@ -144,6 +144,23 @@ fn a_renamed_test_file_is_not_deleted() {
 }
 
 #[test]
+fn a_test_file_renamed_out_of_a_test_path_is_a_deleted_test() {
+    let diff = "diff --git a/tests/test_x.py b/old/x_py.bak\nsimilarity index 100%\nrename from tests/test_x.py\nrename to old/x_py.bak\n";
+
+    assert_eq!(
+        detect(diff, &[]),
+        vec![(Category::DeletedTest, "tests/test_x.py".to_owned(), None)]
+    );
+}
+
+#[test]
+fn a_test_file_renamed_between_test_paths_is_not_deleted() {
+    let diff = "diff --git a/tests/a.rs b/crates/x/tests/a.rs\nsimilarity index 100%\nrename from tests/a.rs\nrename to crates/x/tests/a.rs\n";
+
+    assert_eq!(detect(diff, &[]), Vec::new());
+}
+
+#[test]
 fn a_test_file_emptied_in_the_working_tree_is_a_finding() {
     let path = "web/a.test.ts";
     let diff = format!(
@@ -340,6 +357,35 @@ fn a_ratchet_value_moved_the_loose_way_is_a_finding() {
         ),
         Vec::new(),
         "only *ratchet*.json files"
+    );
+}
+
+#[test]
+fn findings_are_bounded_while_collected_and_keep_the_first_in_order() {
+    let lines: Vec<String> = (0..1_005).map(|_| "#[allow(x)]".to_owned()).collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let diff = format!(
+        "{}{}",
+        adding("b.rs", &refs),
+        adding("a.rs", &["#[allow(y)]"])
+    );
+
+    let mut detector = Detector::default();
+    for file in parse(&diff) {
+        detector.file(&file, None);
+        assert!(
+            detector.findings.len() <= super::MAX_FINDINGS,
+            "never more than the cap held: {}",
+            detector.findings.len()
+        );
+    }
+    let report = detector.finish();
+
+    let last = report.findings.last().expect("findings");
+    assert_eq!(
+        (last.file.as_str(), last.line, report.omitted),
+        ("b.rs", Some(999), 6),
+        "the first 1,000 in (file, line, category) order are kept, the rest counted"
     );
 }
 

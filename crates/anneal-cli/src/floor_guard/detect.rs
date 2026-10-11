@@ -11,6 +11,8 @@ mod suppression;
 mod test_files;
 mod threshold;
 
+use std::collections::BinaryHeap;
+
 use serde::Serialize;
 
 use super::diff::{FileDiff, Hunk, Status};
@@ -116,11 +118,43 @@ struct Tally {
     reported: bool,
 }
 
-/// Collects findings file by file; removed tests are judged across the whole diff in
-/// [`Detector::finish`].
+/// A finding ordered by `(file, line, category, message)`, the order findings are reported in,
+/// so the heap of kept findings can drop the last one first.
+#[derive(Debug, PartialEq, Eq)]
+struct Ranked(FloorFinding);
+
+impl Ranked {
+    fn rank(&self) -> (&str, Option<u64>, Category, &str) {
+        let finding = &self.0;
+        (
+            &finding.file,
+            finding.line,
+            finding.category,
+            &finding.message,
+        )
+    }
+}
+
+impl Ord for Ranked {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Collects findings file by file, keeping at most [`MAX_FINDINGS`] (the first in report
+/// order) while it goes and counting the rest; removed tests are judged across the whole diff
+/// in [`Detector::finish`].
 #[derive(Debug, Default)]
 pub(crate) struct Detector {
-    findings: Vec<FloorFinding>,
+    /// A max-heap: the last kept finding in report order is on top, to be evicted first.
+    findings: BinaryHeap<Ranked>,
+    omitted: usize,
     tallies: Vec<Tally>,
 }
 
@@ -140,13 +174,30 @@ impl Detector {
 
     /// Records a finding of `category` at `line` of `file`.
     fn push(&mut self, category: Category, (file, line): (&str, Option<u64>), message: String) {
-        self.findings.push(FloorFinding {
+        self.keep(FloorFinding {
             category,
             // The finding owns the path it reports.
             file: file.to_owned(),
             line,
             message,
         });
+    }
+
+    /// Keeps `finding` if it is among the first [`MAX_FINDINGS`] in report order, evicting the
+    /// last kept one when full; every finding past the cap is counted in `omitted`.
+    fn keep(&mut self, finding: FloorFinding) {
+        let ranked = Ranked(finding);
+        if self.findings.len() < MAX_FINDINGS {
+            self.findings.push(ranked);
+            return;
+        }
+        self.omitted = self.omitted.saturating_add(1);
+        if let Some(mut last) = self.findings.peek_mut()
+            && ranked < *last
+        {
+            // Dropping the `PeekMut` restores the heap order.
+            *last = ranked;
+        }
     }
 
     fn suppressions(&mut self, diff: &FileDiff<'_>) {
@@ -162,13 +213,22 @@ impl Detector {
         }
     }
 
-    /// Reports a deleted or emptied test file; true when it did.
+    /// Reports a deleted or emptied test file, or one renamed out of the test paths (which no
+    /// longer runs as a test); true when it did.
     fn test_file(&mut self, diff: &FileDiff<'_>, post: Option<&PostImage>) -> bool {
         if diff.status == Status::Deleted {
             if !is_test_path(&diff.old_path) {
                 return false;
             }
             let message = "deletes a test file".to_owned();
+            self.push(Category::DeletedTest, (&diff.old_path, None), message);
+            return true;
+        }
+        if diff.status == Status::Renamed
+            && is_test_path(&diff.old_path)
+            && !is_test_path(&diff.path)
+        {
+            let message = format!("moves a test file out of the test paths, to {}", diff.path);
             self.push(Category::DeletedTest, (&diff.old_path, None), message);
             return true;
         }
@@ -263,7 +323,7 @@ impl Detector {
                     "removes {} test(s) and adds {} here; the diff has {net} fewer test(s)",
                     tally.removed, tally.added
                 );
-                self.findings.push(FloorFinding {
+                self.keep(FloorFinding {
                     category: Category::RemovedTest,
                     file: tally.file,
                     line: tally.first_removed,
@@ -271,11 +331,16 @@ impl Detector {
                 });
             }
         }
-        let mut findings = self.findings;
-        findings.sort_by(|a, b| (&a.file, a.line, a.category).cmp(&(&b.file, b.line, b.category)));
-        let omitted = findings.len().saturating_sub(MAX_FINDINGS);
-        findings.truncate(MAX_FINDINGS);
-        Report { findings, omitted }
+        let findings = self
+            .findings
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Ranked(finding)| finding)
+            .collect();
+        Report {
+            findings,
+            omitted: self.omitted,
+        }
     }
 }
 

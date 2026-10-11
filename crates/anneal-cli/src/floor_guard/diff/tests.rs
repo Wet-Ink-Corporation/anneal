@@ -151,6 +151,25 @@ index e69de29..0000000
 }
 
 #[test]
+fn the_tab_git_appends_to_a_side_path_with_a_space_is_dropped() {
+    // diff.c appends a TAB to `---`/`+++` paths that contain a space.
+    let diff = "\
+diff --git a/my tests/x_test.py b/my tests/x_test.py
+--- a/my tests/x_test.py\t
++++ b/my tests/x_test.py\t
+@@ -3 +2,0 @@
+-def test_a():
+";
+    let files = parse(diff);
+    let file = only(&files);
+
+    assert_eq!(
+        (file.old_path.as_ref(), file.path.as_ref(), file.status),
+        ("my tests/x_test.py", "my tests/x_test.py", Status::Modified)
+    );
+}
+
+#[test]
 fn an_untracked_file_is_one_hunk_of_added_lines() {
     let file = FileDiff::untracked("new.py", "import os  # noqa\n\nx = 1\n");
 

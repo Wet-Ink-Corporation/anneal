@@ -1,5 +1,7 @@
 //! Running a child process to completion within a deadline and with capped output (H-13),
-//! shared by `git` (`paths`) and `gh` (`dag::tracker::github`).
+//! shared by `git` (`paths`, and `floor_guard` through `paths::run_git_capped`), `gh`
+//! (`dag::tracker::github`) and the test command of `task done` (`task::run_command`, which
+//! pipes nothing: its child writes straight to anneal's stderr).
 
 use std::io::{self, Read};
 use std::process::{Child, ExitStatus, Output};
@@ -31,7 +33,9 @@ pub(crate) enum WaitError {
 /// stderr, joining the readers blocks until those processes exit, past `timeout`. Std offers
 /// no way to abandon a blocked read without detaching the thread (H-13), so this stays a
 /// documented limit: use it only for commands, such as `git rev-parse` or `gh api`, that start
-/// no long-lived processes.
+/// no long-lived processes. The limit does not apply when nothing is piped (as for `task
+/// done`'s test command): there are no readers to join, so a timeout returns once the child
+/// itself is killed and reaped, even if a grandchild lives on.
 pub(crate) fn wait_with_deadline(
     child: &mut Child,
     timeout: Duration,

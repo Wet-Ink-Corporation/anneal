@@ -166,6 +166,47 @@ fn a_removed_test_function_is_lowered() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_test_removed_from_a_path_with_a_space_is_lowered() -> TestResult {
+    // git writes `--- a/<path>\t` for a path with a space; the TAB must not stick to it.
+    let dir = repo(&[(
+        "my tests/test_y z.py",
+        "def test_one():\n    pass\ndef test_two():\n    pass\n",
+    )])?;
+    write(
+        dir.path(),
+        &[("my tests/test_y z.py", "def test_one():\n    pass\n")],
+    )?;
+
+    assert_lowered(
+        dir.path(),
+        ("removed_test", "my tests/test_y z.py", json!(3)),
+    )
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_test_file_emptied_at_a_path_with_a_space_is_lowered() -> TestResult {
+    let dir = repo(&[("tests/my test.rs", "fn helper() {}\n")])?;
+    write(dir.path(), &[("tests/my test.rs", "")])?;
+
+    assert_lowered(
+        dir.path(),
+        ("emptied_test", "tests/my test.rs", Value::Null),
+    )
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_test_file_renamed_out_of_a_test_path_is_a_deleted_test() -> TestResult {
+    let dir = repo(&[("tests/test_x.py", "def test_x():\n    pass\n")])?;
+    std::fs::create_dir_all(dir.path().join("old"))?;
+    git(dir.path(), &["mv", "tests/test_x.py", "old/x_py.bak"]);
+
+    assert_lowered(dir.path(), ("deleted_test", "tests/test_x.py", Value::Null))
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_lowered_coverage_floor_is_lowered() -> TestResult {
     let dir = repo(&[(
         "pyproject.toml",

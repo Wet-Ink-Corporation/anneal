@@ -27,7 +27,7 @@ already there.
 | Category | Hit |
 |---|---|
 | `suppression` | An added line holds `#[allow(` or `#![allow(`, `#[ignore]` (or `#[ignore = ...]`), `// eslint-disable` or `/* eslint-disable` (any variant), `# noqa` (any case), `.skip(` on `it`, `test`, `describe`, `context`, `suite`, `pytest`, `unittest` or `mark` (so an iterator's `.skip(1)` is not one), or `xit(` as a whole word (so `exit(` is not one). Prose files (`.md`, `.markdown`, `.rst`, `.txt`, `.adoc`) are skipped. `#[expect(` is not flagged: temper judges it. |
-| `deleted_test` | A test file was deleted. A test file is one under a `tests/` directory, or named `*_test.*`, `*.test.*`, `*.spec.*` or `test_*.py`. A rename (git's `-M`) is not a deletion. |
+| `deleted_test` | A test file was deleted. A test file is one under a `tests/` directory, or named `*_test.*`, `*.test.*`, `*.spec.*` or `test_*.py`. A rename (git's `-M`) to another test path is not a deletion; a rename out of the test paths (`tests/test_x.py` to `old/x_py.bak`) is, reported at the old path. |
 | `emptied_test` | A test file that had lines removed is blank (empty or whitespace) in the working tree. |
 | `removed_test` | Across the whole diff, more test declarations were removed than added; each file that removed more than it added is reported at its first removed declaration (a line in the base). A test moved from one file to another nets to zero. Declarations: `#[test]` and `#[tokio::test` in `.rs`, `it(` and `test(` at the start of a line in JavaScript and TypeScript, `def test_` and `async def test_` in `.py`. |
 | `coverage_lowered` | A coverage floor got a lower number: `fail_under`, `fail-under`, `--fail-under`, `min_coverage`, any key ending `-fail-under` or `_fail_under` (`--cov-fail-under`), and `lines`, `branches`, `functions` and `statements` in a file whose working-tree content mentions `coverageThreshold`. |
@@ -43,7 +43,7 @@ Each finding in `data.findings` is `{key, category, file, line, message}`; `line
 for a whole file (`deleted_test`, `emptied_test`), and the `key`
 (`floor/<category>:<file>[:<line>]`) is stable across runs. The envelope's `findings` carry
 the same keys and messages. At most 1,000 findings are listed, sorted by file, line and
-category; the rest are counted in `data.omitted`. An untracked file over 1 MiB is not scanned,
+category; the rest are counted in `data.omitted`. The cap holds while findings are collected, so memory stays bounded however large the diff. An untracked file over 1 MiB is not scanned,
 and a changed file over 1 MiB gets no emptied-test or `coverageThreshold` check; both are
 listed in `data.skipped` with the reason, never dropped silently. `data` also holds `base`,
 `base_commit`, `merge_base`, `files` (changed files in the diff) and `untracked`.
@@ -52,7 +52,7 @@ listed in `data.skipped` with the reason, never dropped silently. `data` also ho
 
 - It reads text, not syntax: a pattern inside a string literal or a comment counts, so code
   that names the patterns (a linter, or this command's own tests) is reported.
-- Paths are read with `core.quotePath=false`; the diff is `-U0` with `a/` and `b/` prefixes,
+- Paths are read with `core.quotePath=false`, and the TAB git appends to a `---`/`+++` path with a space is dropped; the diff is `-U0` with `a/` and `b/` prefixes,
   no external diff and no text conversion, so user diff settings do not change what it reads.
 
 ## Floor guard and temper

@@ -155,12 +155,12 @@ pub(crate) fn run<O: Write>(
         detector.file(file, post.as_ref());
     }
     let untracked = git::untracked(&root)?;
-    for path in &untracked {
-        match git::read_file(&root, path)? {
-            FileRead::Text(content) => detector.file(&FileDiff::untracked(path, &content), None),
+    let untracked_count = untracked.len();
+    for path in untracked {
+        match git::read_file(&root, &path)? {
+            FileRead::Text(content) => detector.file(&FileDiff::untracked(&path, &content), None),
             FileRead::TooLarge => skipped.push(Skipped {
-                // The listing owns the paths it reports.
-                file: path.clone(),
+                file: path,
                 reason: "untracked and over 1 MiB: not scanned",
             }),
             FileRead::Absent => {}
@@ -177,7 +177,7 @@ pub(crate) fn run<O: Write>(
         base_commit: &base_commit,
         merge_base: &merge_base,
         files: files.len(),
-        untracked: untracked.len(),
+        untracked: untracked_count,
         findings: report
             .findings
             .iter()
