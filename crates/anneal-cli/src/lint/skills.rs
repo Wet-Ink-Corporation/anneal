@@ -30,7 +30,7 @@ use crate::exit_codes::{self, Code};
 use crate::lint::finding::{LintFinding, Location};
 use cache::{Cache, content_hash};
 use checker::Checker;
-use discover::{SkillDir, Surroundings, discover, read_capped};
+use discover::{MAX_READ_BYTES, SkillDir, Surroundings, discover, read_capped};
 use document::Skill;
 
 pub(crate) use checks_set::vocabulary;
@@ -65,7 +65,7 @@ pub struct Outcome {
     pub cached: usize,
 }
 
-/// Why `lint skills` could not run.
+/// Why `lint skills` or `lint terms` could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum LintError {
     /// A path given on the command line does not exist.
@@ -82,6 +82,15 @@ pub enum LintError {
         path: PathBuf,
         /// What it should be.
         expected: &'static str,
+    },
+    /// A file given on the command line that must be read whole (the `lint terms` glossary)
+    /// is larger than the read cap.
+    #[error("{path} is {size} bytes, over the {MAX_READ_BYTES}-byte read cap", path = path.display())]
+    TooLarge {
+        /// The path as given.
+        path: PathBuf,
+        /// Its size in bytes.
+        size: u64,
     },
     /// A file or directory could not be read.
     #[error("reading {path}", path = path.display())]
@@ -109,7 +118,9 @@ impl LintError {
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
-            Self::MissingPath { .. } | Self::WrongKind { .. } => exit_codes::USAGE,
+            Self::MissingPath { .. } | Self::WrongKind { .. } | Self::TooLarge { .. } => {
+                exit_codes::USAGE
+            }
             Self::Io { .. } | Self::Cache(_) => exit_codes::INTERNAL,
         }
     }
@@ -224,7 +235,7 @@ fn set_level(
 
 /// A file named on the command line must exist and must not be a directory; either mistake is
 /// a usage error.
-fn require_file(path: &Path) -> Result<(), LintError> {
+pub(crate) fn require_file(path: &Path) -> Result<(), LintError> {
     if !path.exists() {
         return Err(LintError::MissingPath {
             path: path.to_path_buf(),

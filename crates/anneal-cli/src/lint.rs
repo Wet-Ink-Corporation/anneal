@@ -2,7 +2,9 @@
 //! a fix string.
 //!
 //! - [`skills`]: `lint skills`, the 21 skill design rules.
-//! - [`finding`]: the finding model every target shares, and its envelope form.
+//! - [`terms`]: `lint terms`, uses of the glossary's avoided terms; its hits are
+//!   `{file, line, term}`, not rule findings, so it writes its own envelope `data`.
+//! - [`finding`]: the finding model the rule targets share, and its envelope form.
 //!
 //! `lint spec|plan|brief` are stubs until their stories land. Each will be a module beside
 //! [`skills`] with its own `Args` type and `lint` function returning findings; [`run`] gets
@@ -10,6 +12,7 @@
 
 pub mod finding;
 pub mod skills;
+pub mod terms;
 
 use std::io::Write;
 
@@ -38,6 +41,9 @@ pub enum LintTarget {
     /// Check skill directories against the 21 skill design rules
     #[command(after_help = command_help(CommandName::Lint))]
     Skills(skills::SkillsArgs),
+    /// Find the glossary's avoided terms (`_Avoid_:` lines) in files
+    #[command(after_help = command_help(CommandName::Lint))]
+    Terms(terms::TermsArgs),
     /// Check a spec (not implemented yet)
     Spec(Stub),
     /// Check a plan (not implemented yet)
@@ -61,6 +67,10 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
                 Counts::new(outcome.skills, outcome.cached),
                 out,
             )
+        }
+        LintTarget::Terms(terms_args) => {
+            let outcome = terms::lint(terms_args)?;
+            terms::report(&terms_args.glossary, &outcome, out)
         }
         LintTarget::Spec(_) | LintTarget::Plan(_) | LintTarget::Brief(_) => {
             Err(CliError::NotImplemented {

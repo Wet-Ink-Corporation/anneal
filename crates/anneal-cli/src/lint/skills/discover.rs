@@ -10,8 +10,9 @@ use crate::lint::skills::LintError;
 /// The file every skill directory holds.
 pub(crate) const SKILL_FILE: &str = "SKILL.md";
 
-/// Files read whole (`SKILL.md`, hooks metadata, the index) larger than this are not read past
-/// it (H-13). Anything near it already breaks the 8 KB budget.
+/// Files read whole (`SKILL.md`, hooks metadata, the index, the `lint terms` glossary and
+/// scanned files, rulings) larger than this are not read past it (H-13). For a skill, anything
+/// near it already breaks the 8 KB budget.
 pub(crate) const MAX_READ_BYTES: u64 = 1024 * 1024;
 
 /// A directory holding a `SKILL.md`.
@@ -98,18 +99,21 @@ pub(crate) struct Capped {
 /// # Errors
 /// [`LintError::Io`] when the file cannot be opened or read.
 pub(crate) fn read_capped(path: &Path) -> Result<Capped, LintError> {
-    let file = File::open(path).map_err(|source| LintError::io(path, source))?;
-    let size = file
-        .metadata()
-        .map_err(|source| LintError::io(path, source))?
-        .len();
+    read_bounded(path).map_err(|source| LintError::io(path, source))
+}
+
+/// Reads `path` up to [`MAX_READ_BYTES`], for callers with their own error type.
+///
+/// # Errors
+/// The I/O error when the file cannot be opened or read.
+pub(crate) fn read_bounded(path: &Path) -> io::Result<Capped> {
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
     if size > MAX_READ_BYTES {
         return Ok(Capped { size, bytes: None });
     }
     let mut bytes = Vec::new();
-    file.take(MAX_READ_BYTES)
-        .read_to_end(&mut bytes)
-        .map_err(|source| LintError::io(path, source))?;
+    file.take(MAX_READ_BYTES).read_to_end(&mut bytes)?;
     Ok(Capped {
         size,
         bytes: Some(bytes),
