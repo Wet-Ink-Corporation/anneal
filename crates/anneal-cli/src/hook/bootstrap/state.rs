@@ -159,10 +159,11 @@ impl Sessions {
     /// Loads the sessions file at `path`; a missing file is no sessions.
     ///
     /// # Errors
-    /// [`SessionsError`] when the file cannot be read, does not parse, or is another kind or
-    /// version of file.
+    /// [`SessionsError`] when something other than a regular file is at `path` (it is not
+    /// opened), or the file cannot be read, does not parse, or is another kind or version of
+    /// file.
     pub(crate) fn load(path: &Path) -> Result<Self, SessionsError> {
-        let Some(bytes) = baseline::read_snapshot_bytes(path)? else {
+        let Some(bytes) = baseline::read_state_bytes(path)? else {
             return Ok(Self::default());
         };
         let file: SessionsFile =
@@ -246,7 +247,7 @@ fn short_hash(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SESSIONS, Sessions, live_state};
+    use super::{BaselineError, MAX_SESSIONS, Sessions, SessionsError, live_state};
 
     #[test]
     fn a_zero_length_ledger_file_is_no_ledger_and_is_left_untouched() {
@@ -289,5 +290,22 @@ mod tests {
         assert!(!sessions.is_current("s0", "tail"), "the oldest was dropped");
         assert!(sessions.is_current("s1", "tail"), "re-recorded, so newest");
         assert_eq!(sessions.len(), MAX_SESSIONS, "never more than the cap");
+    }
+
+    #[test]
+    fn a_directory_at_the_sessions_path_is_refused_without_being_opened() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("bootstrap-sessions.json");
+        std::fs::create_dir(&path).expect("a directory where the file goes");
+
+        let loaded = Sessions::load(&path);
+
+        assert!(
+            matches!(
+                &loaded,
+                Err(SessionsError::File(BaselineError::NotAFile { path: refused })) if *refused == path
+            ),
+            "a directory is not a sessions file: {loaded:?}"
+        );
     }
 }

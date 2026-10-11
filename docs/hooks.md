@@ -179,27 +179,44 @@ No matcher, `timeout` 30 s, `onFailure: "continue"`, arguments `hook completenes
 Claude Code's `Stop` input on stdin (at most 4 MiB; it uses `session_id`, `transcript_path`,
 `cwd`, `stop_hook_active` and `last_assistant_message`, checked against Claude Code 2.1.296's
 schema; without `last_assistant_message`, the last assistant message in the transcript's final
-1 MiB) and checks the git worktree of `cwd`. Outside a repository it does nothing.
+1 MiB) and checks the git worktree of `cwd`. Outside a repository it does nothing. Only the
+final assistant message is judged: a claim made in an earlier message of the same turn, before
+more tool calls, is not seen.
 
 **Hard gates** block with `{"decision": "block", "reason": "anneal completeness: ..."}`:
 
 | Gate | Blocks when | Point |
 |---|---|---|
-| claim | the reply claims success and a source file changed after the worktree's latest `test_run`, or that run is not green with exit 0, or there is none | `completeness.claim` |
+| claim | the reply claims success and a source file changed after the worktree's latest `test_run` started, or that run is not green with exit 0, or has no `duration_ms`, or there is none | `completeness.claim` |
 | leftovers | a `[DEBUG-<id>]` tag is left in a file git knows of (`repro::debug_leftovers`, the scan `anneal repro leftovers` runs) | `completeness.leftovers` |
 
-- **Success words** (`hook::completeness::claim::SUCCESS_PHRASES`): `all tests pass`, `tests
-  pass`, `works now`, `done`, `passing`, `green`, `fixed`, as whole words in any letter case.
-  Fenced code blocks, code spans and HTML comments are quoted text, not claims, and a phrase
-  with `not`, `never`, `no` or a word ending in `n't` one or two words before it is not one.
+A file the leftover scan could not read (over 1 MiB, past the 64 MiB budget, or a name it cannot
+open) is a nudge naming how many were skipped and pointing at `anneal repro leftovers`.
+
+- **Success words** (`hook::completeness::claim::CLAIMS`): `all tests pass`, `tests pass`
+  (`test` or `tests`, and `pass`, `passes`, `passed` or `passing`), `works now`, `all green`,
+  `done`, `passes`, `passed`, `passing`, `green`, `fixed`, `complete`, `completed`, `finished`,
+  `succeeded` and `succeeds`, as whole words in one clause, in any letter case. Fenced code
+  blocks, code spans and HTML comments are quoted text, not claims, and a claim with `not`,
+  `never`, `no` or a word ending in `n't` one or two words before it in the same clause is not
+  one. Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so "No failures.
+  Done." claims. Some false positives ("done reading the logs") are accepted: the block cap
+  bounds them.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
-  as source (not tests, prose documents or scratch paths). Their latest modification time is
-  compared with the `ts` of the latest `test_run` tagged with the worktree (`anneal task done`
-  tags it), to the second. There is no ledger edit event to use instead. A claim with no
-  changed source file needs nothing. Not seen: changes already committed (git no longer lists
-  them) and deleted files (they have no time); a test run that ends in the same second as an
-  edit made after it counts as fresh.
+  as source (not tests, prose documents or scratch paths). Their latest modification time, in
+  milliseconds, must be earlier than the start of the latest `test_run` tagged with the worktree
+  (`anneal task done` tags it): its `ts` minus its `duration_ms`. `task done` stamps `ts` after
+  the command ends, truncated to the second, so the computed start is never later than the real
+  one and up to a second earlier: an edit made while the tests ran always counts as untested,
+  and one made in the second before they started may too (a block, never a pass). Runs stamped
+  more than 60 s in the future are passed over (of the latest 16). There is no ledger edit event
+  to use instead. A claim with no changed source file needs nothing. Not seen: changes already
+  committed (git no longer lists them) and deleted files (they have no time). Not checked: what
+  the run's command was (any command `task done` ran green counts, `git --version` included),
+  and whether the run was recorded by `task done` at all: `anneal ledger append` can write a
+  green `test_run` by hand. The gate keeps an honest agent honest; it is not a defence against
+  one that forges evidence.
 
 **Nudges** are context only (`hookSpecificOutput.additionalContext`), from the active playbook's
 rule table (`hook::completeness::playbook::RULES`, one row per requirement, so #42 adds rows):

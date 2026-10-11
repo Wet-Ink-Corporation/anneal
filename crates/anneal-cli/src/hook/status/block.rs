@@ -26,6 +26,9 @@ pub(crate) const SECTIONS: [&str; 5] = [
     "Not verified",
 ];
 
+/// How many characters of an unknown status the violation shows.
+const SHOWN_CHARS: usize = 64;
+
 /// The status block as read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Parsed {
@@ -67,7 +70,8 @@ pub(crate) fn parse(message: &str) -> Parsed {
                 .map(|(_, status)| *status);
             if known.is_none() {
                 let expected = "expected DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED";
-                problems.push(format!("unknown status {word:?}; {expected}"));
+                let shown = shortened(word);
+                problems.push(format!("unknown status {shown:?}; {expected}"));
             }
             known
         }
@@ -97,6 +101,17 @@ fn value<'l>(line: &'l str, key: &str) -> Option<&'l str> {
         return None;
     }
     line.get(key.len()..)?.strip_prefix(':')
+}
+
+/// `word`'s first [`SHOWN_CHARS`] characters, with `…` when it is longer, so a violation stays
+/// short.
+fn shortened(word: &str) -> String {
+    let mut chars = word.chars();
+    let mut shown: String = chars.by_ref().take(SHOWN_CHARS).collect();
+    if chars.next().is_some() {
+        shown.push('…');
+    }
+    shown
 }
 
 /// The first word of `text`, without trailing punctuation.
@@ -178,6 +193,17 @@ Not verified: none";
             },
             "the status is kept, the gap recorded"
         );
+    }
+
+    #[test]
+    fn a_long_unknown_status_is_cut_to_64_characters_on_a_char_boundary() {
+        let word = format!("{}{}", "é".repeat(63), "x".repeat(500));
+
+        let parsed = parse(&format!("Status: {word}\n{FULL}"));
+
+        let violation = parsed.violation.unwrap_or_default();
+        let shown = format!("unknown status \"{}…\";", "é".repeat(63) + "x");
+        assert!(violation.starts_with(&shown), "{violation}");
     }
 
     #[test]

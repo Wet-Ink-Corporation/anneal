@@ -7,8 +7,6 @@
 //! [`MAX_SESSIONS`] of them. The platform's own cap is 8 (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`);
 //! this one is stricter.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -96,22 +94,6 @@ pub(crate) enum CounterError {
         /// Its `version`.
         version: u32,
     },
-    /// Something other than a regular file is at the path (a directory, symlink or FIFO); it is
-    /// not opened, since opening a FIFO waits for a writer.
-    #[error("{path} is not a regular file", path = path.display())]
-    NotAFile {
-        /// The path.
-        path: PathBuf,
-    },
-    /// The path's metadata could not be read.
-    #[error("cannot read the metadata of {path}", path = path.display())]
-    Metadata {
-        /// The path.
-        path: PathBuf,
-        /// Why.
-        #[source]
-        source: io::Error,
-    },
 }
 
 impl Counter {
@@ -121,22 +103,7 @@ impl Counter {
     /// [`CounterError`] when something other than a regular file is at `path`, or the file
     /// cannot be read, does not parse, or is another kind or version of file.
     pub(crate) fn load(path: &Path) -> Result<Self, CounterError> {
-        match fs::symlink_metadata(path) {
-            Ok(metadata) if !metadata.is_file() => {
-                return Err(CounterError::NotAFile {
-                    path: path.to_path_buf(),
-                });
-            }
-            Ok(_regular) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(source) => {
-                return Err(CounterError::Metadata {
-                    path: path.to_path_buf(),
-                    source,
-                });
-            }
-        }
-        let Some(bytes) = baseline::read_snapshot_bytes(path)? else {
+        let Some(bytes) = baseline::read_state_bytes(path)? else {
             return Ok(Self::default());
         };
         let file: CounterFile =
@@ -229,7 +196,9 @@ fn key(session: &str) -> String {
 mod tests {
     use std::error::Error;
 
-    use super::{Counter, CounterError, MAX_CONSECUTIVE_BLOCKS, MAX_SESSIONS, counter_path};
+    use super::{
+        BaselineError, Counter, CounterError, MAX_CONSECUTIVE_BLOCKS, MAX_SESSIONS, counter_path,
+    };
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -316,7 +285,10 @@ mod tests {
         let loaded = Counter::load(&path);
 
         assert!(
-            matches!(&loaded, Err(CounterError::NotAFile { path: refused }) if *refused == path),
+            matches!(
+                &loaded,
+                Err(CounterError::File(BaselineError::NotAFile { path: refused })) if *refused == path
+            ),
             "a directory is not a counter file: {loaded:?}"
         );
         Ok(())

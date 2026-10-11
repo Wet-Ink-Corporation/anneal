@@ -80,6 +80,31 @@ impl Session {
         Ok(())
     }
 
+    /// Appends a green `test_run` stamped `ts` that ran for `duration_ms`, tagged with this
+    /// worktree, as `anneal ledger append` lets anyone do.
+    fn green_run_at(&self, ts: &str, duration_ms: u64) -> TestResult {
+        let off = anneal_in(self.root()).args(["mode", "off"]).output()?;
+        let entered: Value = serde_json::from_slice(&off.stdout)?;
+        let worktree = entered
+            .pointer("/data/worktree")
+            .cloned()
+            .ok_or("mode reports its worktree")?;
+        let run = json!({
+            "type": "test_run",
+            "command": "cargo test",
+            "outcome": "green",
+            "exit": 0,
+            "duration_ms": duration_ms,
+            "ts": ts,
+            "worktree": worktree,
+        });
+        let appended = anneal_in(self.root())
+            .args(["ledger", "append", &run.to_string()])
+            .output()?;
+        assert_eq!(appended.status.code(), Some(0), "{appended:?}");
+        Ok(())
+    }
+
     /// Appends a line holding a tool call to the transcript.
     fn tool_call(&self) -> TestResult {
         let mut file = File::options().append(true).open(&self.transcript)?;
@@ -268,6 +293,73 @@ fn a_third_consecutive_block_is_impossible_until_a_tool_call() -> TestResult {
         session.stop("All tests pass.")?.block.is_some(),
         "a tool call resets the count"
     );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn an_inflected_claim_with_a_stale_edit_blocks() -> TestResult {
+    let session = Session::new()?;
+    session.edit(PAST)?;
+
+    let reason = session
+        .stop("All tests passed.")?
+        .block
+        .ok_or("no test run at all: blocked")?;
+
+    assert!(reason.contains("\"all tests passed\""), "{reason}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn an_edit_made_while_the_tests_ran_is_untested_and_one_before_they_started_is_tested() -> TestResult
+{
+    let session = Session::new()?;
+    // Ran from 2020-01-01T00:00:00Z (1_577_836_800 s) to 00:10:00Z.
+    session.green_run_at("2020-01-01T00:10:00Z", 600_000)?;
+
+    // 00:05:01, while it ran.
+    session.edit(Duration::from_secs(1_577_837_101))?;
+    let during = session.stop("All tests pass.")?;
+    // 2019-12-31T23:55:01, before it started.
+    session.edit(Duration::from_secs(1_577_836_501))?;
+    let before = session.stop("All tests pass.")?;
+
+    assert!(during.block.is_some(), "edited mid-run: {during:?}");
+    assert!(before.is_silent(), "edited before the run: {before:?}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_run_stamped_in_the_future_does_not_satisfy_a_claim() -> TestResult {
+    let session = Session::new()?;
+    session.edit(PAST)?;
+    session.green_run_at("2099-01-01T00:00:00Z", 1_000)?;
+
+    let decision = session.stop("All tests pass.")?;
+
+    assert!(
+        decision.block.is_some(),
+        "a future stamp is not believed: {decision:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_file_the_leftover_scan_skipped_is_a_nudge() -> TestResult {
+    let session = Session::new()?;
+    let big = vec![b'a'; 1024 * 1024 + 1];
+    std::fs::write(session.root().join("big.txt"), big)?;
+
+    let decision = session.stop("Still looking.")?;
+
+    assert_eq!(decision.block, None, "a skipped file is not a leftover");
+    let context = decision.context.ok_or("a nudge")?;
+    assert!(context.contains("skipped 1 file"), "{context}");
+    assert!(context.contains("`anneal repro leftovers`"), "{context}");
     Ok(())
 }
 

@@ -2,11 +2,12 @@
 //!
 //! It reads Claude Code's `Stop` input on stdin (at most 4 MiB; it uses `session_id`,
 //! `transcript_path`, `cwd`, `stop_hook_active` and `last_assistant_message`, or the
-//! transcript's last assistant message when that is absent) and checks the worktree of `cwd`:
+//! transcript's last assistant message when that is absent; only that final message is judged)
+//! and checks the worktree of `cwd`:
 //!
 //! - **hard gates**, which block (`decision: block`): a success claim in the reply ("done",
-//!   "all tests pass", ...: `claim`) while a source file changed after the worktree's latest
-//!   green `test_run` (`edits`), and a `[DEBUG-<id>]` tag left in the worktree;
+//!   "all tests passed", ...: `claim`) while a source file changed after the worktree's latest
+//!   green `test_run` started (`edits`), and a `[DEBUG-<id>]` tag left in the worktree;
 //! - **nudges**, which are only context (`additionalContext`): the events the active playbook
 //!   requires and the ledger lacks (`playbook`).
 //!

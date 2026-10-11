@@ -1,46 +1,72 @@
 //! Success claims in a reply: the words that say the work is finished or the tests pass.
 //!
-//! A claim is one of [`SUCCESS_PHRASES`] as whole words, in any letter case, outside fenced
-//! code blocks, code spans and HTML comments (quoted output is not a claim), and not right
-//! after a negation (`not`, `never`, `no`, or a word ending in `n't`, one or two words before).
+//! A claim is one of [`CLAIMS`], each word in one of its listed forms (`pass`, `passes`,
+//! `passed`, `passing`), as whole words in one clause, in any letter case, outside fenced code
+//! blocks, code spans and HTML comments (quoted output is not a claim), and not right after a
+//! negation (`not`, `never`, `no`, or a word ending in `n't`, one or two words before in the
+//! same clause). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so in
+//! "No failures. Done." the "No" does not reach "Done". False positives ("done reading the
+//! file") are expected; the hook's block cap bounds what they cost.
 
 use crate::lint::spec::markdown::{Document, without_code_spans};
 
-/// The phrases that claim success, as lowercase words, longest first so the most specific one
-/// is reported.
-pub(crate) const SUCCESS_PHRASES: [&str; 7] = [
-    "all tests pass",
-    "tests pass",
-    "works now",
-    "done",
-    "passing",
-    "green",
-    "fixed",
+/// The forms one word of a claim may take, lowercase.
+type Forms = &'static [&'static str];
+
+/// `pass` in every form, after `tests`.
+const PASS: Forms = &["pass", "passes", "passed", "passing"];
+
+/// `test` or `tests`.
+const TESTS: Forms = &["tests", "test"];
+
+/// The claims, longest first so the most specific one is reported.
+const CLAIMS: [&[Forms]; 11] = [
+    &[&["all"], TESTS, PASS],
+    &[TESTS, PASS],
+    &[&["works", "work"], &["now"]],
+    &[&["all"], &["green"]],
+    &[&["done"]],
+    // Bare `pass` is left out: "pass the flag" is not a claim.
+    &[&["passes", "passed", "passing"]],
+    &[&["green"]],
+    &[&["fixed"]],
+    &[&["complete", "completed"]],
+    &[&["finished"]],
+    &[&["succeeded", "succeeds"]],
 ];
 
-/// Words that negate a phrase that follows within two words.
+/// Words that negate a claim that follows within two words.
 const NEGATIONS: [&str; 3] = ["not", "never", "no"];
 
-/// The first of [`SUCCESS_PHRASES`] that `reply` claims, if any.
-pub(crate) fn success_claim(reply: &str) -> Option<&'static str> {
+/// Characters that end a clause.
+const CLAUSE_ENDS: [char; 9] = ['.', '!', '?', ';', ':', ',', '-', '\u{2013}', '\u{2014}'];
+
+/// The first of [`CLAIMS`] that `reply` makes, as written there (lowercase), if any.
+pub(crate) fn success_claim(reply: &str) -> Option<String> {
     let document = Document::parse(reply);
-    let words: Vec<String> = document
+    let clauses: Vec<Vec<String>> = document
         .lines()
         .iter()
-        .flat_map(|line| words(&without_code_spans(&line.text)))
+        .flat_map(|line| clauses(&without_code_spans(&line.text)))
         .collect();
-    SUCCESS_PHRASES
+    CLAIMS
         .into_iter()
-        .find(|phrase| claims(&words, phrase))
+        .find_map(|claim| clauses.iter().find_map(|words| made(words, claim)))
 }
 
-/// True when `phrase` appears in `words` as whole words, not negated.
-fn claims(words: &[String], phrase: &str) -> bool {
-    let wanted: Vec<&str> = phrase.split(' ').collect();
+/// The words of `claim` in `words`, joined, when they are there and not negated.
+fn made(words: &[String], claim: &[Forms]) -> Option<String> {
     words
-        .windows(wanted.len())
+        .windows(claim.len())
         .enumerate()
-        .any(|(start, window)| window.iter().eq(wanted.iter()) && !negated(words, start))
+        .find(|(start, window)| {
+            window
+                .iter()
+                .zip(claim)
+                .all(|(word, forms)| forms.contains(&word.as_str()))
+                && !negated(words, *start)
+        })
+        .map(|(_, window)| window.join(" "))
 }
 
 /// True when one of the two words before `start` is a negation.
@@ -53,9 +79,11 @@ fn negated(words: &[String], start: usize) -> bool {
     })
 }
 
-/// The lowercase words of `text`: runs of letters and digits, with an apostrophe (`'` or `’`,
-/// read as `'`) kept inside a word, so `isn't` is one word.
-fn words(text: &str) -> Vec<String> {
+/// The clauses of `text`, each its lowercase words: runs of letters and digits, with an
+/// apostrophe (`'` or `’`, read as `'`) kept inside a word, so `isn't` is one word. Empty
+/// clauses are dropped.
+fn clauses(text: &str) -> Vec<Vec<String>> {
+    let mut clauses = Vec::new();
     let mut words = Vec::new();
     let mut word = String::new();
     for c in text.chars() {
@@ -63,14 +91,22 @@ fn words(text: &str) -> Vec<String> {
             word.extend(c.to_lowercase());
         } else if matches!(c, '\'' | '\u{2019}') && !word.is_empty() {
             word.push('\'');
-        } else if !word.is_empty() {
-            words.push(finished(std::mem::take(&mut word)));
+        } else {
+            if !word.is_empty() {
+                words.push(finished(std::mem::take(&mut word)));
+            }
+            if CLAUSE_ENDS.contains(&c) && !words.is_empty() {
+                clauses.push(std::mem::take(&mut words));
+            }
         }
     }
     if !word.is_empty() {
         words.push(finished(word));
     }
-    words
+    if !words.is_empty() {
+        clauses.push(words);
+    }
+    clauses
 }
 
 /// `word` without the apostrophes at its end (a closing quote, not part of the word).
@@ -97,7 +133,27 @@ mod tests {
             ("Fixed the parser.", "fixed"),
         ];
         for (reply, phrase) in replies {
-            assert_eq!(success_claim(reply), Some(phrase), "{reply:?}");
+            assert_eq!(success_claim(reply).as_deref(), Some(phrase), "{reply:?}");
+        }
+    }
+
+    #[test]
+    fn inflections_and_other_finishing_words_are_claims_as_written() {
+        let replies = [
+            ("All tests passed.", "all tests passed"),
+            ("the tests passed", "tests passed"),
+            ("Everything passes.", "passes"),
+            ("Tests: 40 passed, 0 failed.", "passed"),
+            ("The implementation is complete.", "complete"),
+            ("Migration completed", "completed"),
+            ("Finished: everything works.", "finished"),
+            ("The build succeeded.", "succeeded"),
+            ("It succeeds on every target.", "succeeds"),
+            ("All green.", "all green"),
+            ("The test passes now", "test passes"),
+        ];
+        for (reply, claim) in replies {
+            assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
         }
     }
 
@@ -108,8 +164,26 @@ mod tests {
             "the greenfield rewrite",
             "a prefixed name",
             "undone work",
-            "the tests passed",
+            "an incomplete list",
+            "a password and a passport",
         ] {
+            assert_eq!(success_claim(reply), None, "{reply:?}");
+        }
+    }
+
+    #[test]
+    fn a_negation_reaches_only_within_its_clause() {
+        for reply in [
+            "No failures. Done.",
+            "No warnings, no failures. Done.",
+            "Nothing is left to change; done",
+            "Not much changed: all tests pass",
+            "It was not hard - fixed",
+            "Never mind that\nDone",
+        ] {
+            assert!(success_claim(reply).is_some(), "{reply:?}");
+        }
+        for reply in ["not done", "It isn't fixed.", "The tests have not passed"] {
             assert_eq!(success_claim(reply), None, "{reply:?}");
         }
     }
@@ -137,7 +211,7 @@ mod tests {
     #[test]
     fn the_longest_phrase_is_reported() {
         assert_eq!(
-            success_claim("ok, all tests pass and it works now"),
+            success_claim("ok, all tests pass and it works now").as_deref(),
             Some("all tests pass"),
             "the first phrase in list order"
         );

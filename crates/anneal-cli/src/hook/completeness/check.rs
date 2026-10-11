@@ -3,7 +3,10 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use anneal_ledger::{EventKind, Filter, LedgerTag, Store, TagKey};
+use anneal_ledger::event::TestRun;
+use anneal_ledger::{
+    EventKind, Filter, LedgerEvent, LedgerTag, Store, StoreError, TagKey, Timestamp,
+};
 
 use crate::error_chain::reason;
 use crate::existing_ledger;
@@ -17,6 +20,12 @@ use crate::repro::leftovers::{self, LeftoverScan};
 
 /// How many leftover lines a block names; the rest are counted.
 const LISTED_LEFTOVERS: usize = 5;
+
+/// How many of the worktree's latest `test_run`s are read to find a believable one.
+const RUNS_READ: usize = 16;
+
+/// How far past now a `test_run` may be stamped and still be believed (clock skew).
+const FUTURE_SLACK_MS: i64 = 60_000;
 
 /// A hard gate: blocks the stop, until the cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +101,7 @@ pub(crate) fn run(
     let tag = worktree_tag(&key);
     found.worktree = Some(key);
     if let (Some(claim), Some(Some(edit))) = (reply.and_then(success_claim), &edit) {
-        check_claim(claim, edit, tag.as_ref(), &mut found);
+        check_claim(&claim, edit, tag.as_ref(), &mut found);
     }
     let edited = matches!(edit, Some(Some(_)));
     check_playbook(&root, tag.as_ref(), edited, &mut found);
@@ -111,11 +120,17 @@ fn check_leftovers(root: &Path, found: &mut Findings) {
         Ok(scan) => scan,
         Err(error) => return found.note("the [DEBUG- scan failed", &error),
     };
-    if scan.over_budget() {
+    let skipped = scan.skipped().len();
+    if skipped > 0 {
+        let why = if scan.over_budget() {
+            "ran out of its read budget"
+        } else {
+            "could not read every file"
+        };
+        let files = if skipped == 1 { "file" } else { "files" };
         found.nudges.push(format!(
-            "the [DEBUG- leftover scan ran out of its read budget and skipped {} files; run \
-             `anneal repro leftovers` to see them",
-            scan.skipped().len()
+            "the [DEBUG- leftover scan {why} and skipped {skipped} {files}; run `anneal repro \
+             leftovers` to see them"
         ));
     }
     if !scan.is_clean() {
@@ -141,25 +156,18 @@ fn leftovers_line(scan: &LeftoverScan) -> String {
     )
 }
 
-/// Adds the claim gate unless the worktree's latest `test_run` is green and no older than
-/// `edit`.
+/// Adds the claim gate unless the worktree's latest believable `test_run` is green and started
+/// after `edit`.
 fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Findings) {
     let fresh = match (&found.store, tag) {
         (Some(store), Some(tag)) => {
-            let runs = Filter {
-                types: vec![EventKind::TestRun],
-                // The filter owns its tags.
-                tags: vec![tag.clone()],
+            let now_ms = match Timestamp::now() {
+                Ok(now) => now.unix_millis(),
+                Err(error) => return found.note("the clock could not be read", &error),
             };
-            match store.tail(&runs, 1) {
-                Ok(latest) => latest.last().is_some_and(|run| {
-                    playbook::is_green_run(&run.event.event)
-                        && run
-                            .event
-                            .ts
-                            .unix_millis()
-                            .is_some_and(|ts| ts >= edit.at_ms)
-                }),
+            match latest_green_start(store, tag, now_ms) {
+                // Strictly before: an edit in the start's own millisecond may be untested.
+                Ok(start) => start.is_some_and(|start| edit.at_ms < start),
                 Err(error) => return found.note("the test runs could not be read", &error),
             }
         }
@@ -176,6 +184,47 @@ fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Fi
             ),
         ));
     }
+}
+
+/// When the worktree's latest believable `test_run` started, in Unix ms, if it is green and
+/// says how long it ran; `None` otherwise.
+///
+/// A run is believable when it is stamped no later than `now_ms` plus [`FUTURE_SLACK_MS`]: a
+/// later stamp is a clock from elsewhere or a forged event, and is passed over (of the last
+/// [`RUNS_READ`] runs). The start is the stamp minus the run's `duration_ms`. `task done` stamps
+/// after the run ends, to the second, so the start is never later than the real one: an edit
+/// made while the tests ran always counts as untested.
+fn latest_green_start(
+    store: &Store,
+    tag: &LedgerTag,
+    now_ms: Option<i64>,
+) -> Result<Option<i64>, StoreError> {
+    let runs = Filter {
+        types: vec![EventKind::TestRun],
+        // The filter owns its tags.
+        tags: vec![tag.clone()],
+    };
+    let latest = store.tail(&runs, RUNS_READ)?;
+    let horizon = now_ms.map(|now| now.saturating_add(FUTURE_SLACK_MS));
+    let believable = latest.iter().rev().find_map(|run| {
+        let stamped = run.event.ts.unix_millis()?;
+        horizon
+            .is_none_or(|horizon| stamped <= horizon)
+            .then_some((run, stamped))
+    });
+    Ok(
+        believable.and_then(|(run, stamped)| match &run.event.event {
+            event @ LedgerEvent::TestRun(TestRun {
+                duration_ms: Some(duration),
+                ..
+            }) if playbook::is_green_run(event) => {
+                // A duration past i64 saturates the start to the far past: no edit is before it.
+                let duration = i64::try_from(*duration).unwrap_or(i64::MAX);
+                Some(stamped.saturating_sub(duration))
+            }
+            _ => None,
+        }),
+    )
 }
 
 /// Adds the nudges of the worktree's playbook, from its anneal mode.
