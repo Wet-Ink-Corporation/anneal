@@ -232,9 +232,7 @@ fn finish_transaction(conn: &Connection, body: Result<(), OpenError>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use super::{OpenError, attach_name, copy_schema, finish_transaction, user_version};
+    use super::{OpenError, copy_schema, finish_transaction, user_version};
     use happenstance_sqlite::rusqlite::Connection;
 
     /// A connection inside a transaction holding a row that breaks a deferred foreign key, so
@@ -288,6 +286,9 @@ mod tests {
     #[cfg(unix)]
     fn a_template_path_that_is_not_utf8_is_an_error() {
         use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
+
+        use super::attach_name;
         let path = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/template-\xff.sqlite3"));
 
         let result = attach_name(path);
