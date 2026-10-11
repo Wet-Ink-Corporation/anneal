@@ -8,7 +8,7 @@ use anneal_ledger::event::ReproRed;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Timestamp};
 use serde_json::Value;
 
-use super::{Attempt, Outcome, finish, verdict};
+use super::{Attempt, finish};
 use crate::paths::{PathError, StoreLocation};
 use crate::task::{Ending, Run};
 
@@ -24,6 +24,8 @@ fn envelope() -> EventEnvelope {
 #[test]
 fn a_run_killed_by_a_signal_is_red_and_recorded() {
     use std::os::unix::process::ExitStatusExt;
+
+    use super::{Outcome, verdict};
 
     // The wait status of a process killed by SIGKILL: no exit code.
     let killed = std::process::ExitStatus::from_raw(9);
