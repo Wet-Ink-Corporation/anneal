@@ -75,7 +75,7 @@ fn widen(repo: &PrRepo) -> TestResult {
 fn merge_is_denied_with_no_verdict_and_no_ledger_is_created() -> TestResult {
     let repo = PrRepo::new()?;
 
-    let output = repo.merge_gate("gh pr merge 7 --squash")?;
+    let output = repo.merge_pinned("gh pr merge 7 --squash")?;
 
     let reason = deny_reason(&output)?;
     assert!(
@@ -92,7 +92,7 @@ fn merge_of_a_pull_request_without_verdicts_is_denied_and_recorded() -> TestResu
     let repo = PrRepo::new()?;
     repo.set_verdict("tests-verified", "local")?;
 
-    let output = repo.merge_gate("gh pr merge 9")?;
+    let output = repo.merge_pinned("gh pr merge 9")?;
 
     let reason = deny_reason(&output)?;
     assert!(reason.contains("#9"), "{reason}");
@@ -107,7 +107,7 @@ fn merge_is_denied_with_a_stale_verdict_after_a_real_code_change() -> TestResult
     repo.set_verdict("tests-verified", "local")?;
     repo.change_code()?;
 
-    let output = repo.merge_gate("gh pr merge 7")?;
+    let output = repo.merge_pinned("gh pr merge 7")?;
 
     let reason = deny_reason(&output)?;
     assert!(
@@ -125,7 +125,7 @@ fn merge_is_allowed_after_a_rebase_only_change() -> TestResult {
     repo.set_verdict("tests-verified", "local")?;
     repo.rebase()?;
 
-    let output = repo.merge_gate("gh pr merge 7 --squash --delete-branch")?;
+    let output = repo.merge_pinned("gh pr merge 7 --squash --delete-branch")?;
 
     assert_allowed(&output);
     Ok(())
@@ -138,7 +138,7 @@ fn a_change_the_skip_rule_does_not_skip_needs_a_review_verdict() -> TestResult {
     widen(&repo)?;
     repo.set_verdict("tests-verified", "local")?;
 
-    let output = repo.merge_gate("gh pr merge 7")?;
+    let output = repo.merge_pinned("gh pr merge 7")?;
 
     let reason = deny_reason(&output)?;
     assert!(reason.contains("review"), "{reason}");
@@ -154,17 +154,17 @@ fn a_human_approval_counts_as_the_review_only_while_require_plugin_is_false() ->
     repo.set_verdict("tests-verified", "local")?;
     repo.set_verdict("approved", "human")?;
 
-    assert_allowed(&repo.merge_gate("gh pr merge 7")?);
+    assert_allowed(&repo.merge_pinned("gh pr merge 7")?);
 
     repo.write(
         ".anneal/config.json",
         r#"{"review": {"require_plugin": true}}"#,
     )?;
-    let reason = deny_reason(&repo.merge_gate("gh pr merge 7")?)?;
+    let reason = deny_reason(&repo.merge_pinned("gh pr merge 7")?)?;
     assert!(reason.contains("review-plugin"), "{reason}");
 
     repo.set_verdict("reviewed", "review-plugin")?;
-    assert_allowed(&repo.merge_gate("gh pr merge 7")?);
+    assert_allowed(&repo.merge_pinned("gh pr merge 7")?);
     Ok(())
 }
 
@@ -174,7 +174,7 @@ fn a_review_without_a_tests_verified_verdict_is_not_enough() -> TestResult {
     let repo = PrRepo::new()?;
     append_verdict(&repo, "noise_only")?;
 
-    let reason = deny_reason(&repo.merge_gate("gh pr merge 7")?)?;
+    let reason = deny_reason(&repo.merge_pinned("gh pr merge 7")?)?;
 
     assert!(reason.contains("tests-verified"), "{reason}");
     assert_eq!(blocked_points(&repo)?, ["merge-gate.tests"]);
@@ -188,7 +188,7 @@ fn a_later_changes_requested_verdict_voids_the_tests_verified_one() -> TestResul
     repo.set_verdict("tests-verified", "local")?;
     append_verdict(&repo, "changes_requested")?;
 
-    let reason = deny_reason(&repo.merge_gate("gh pr merge 7")?)?;
+    let reason = deny_reason(&repo.merge_pinned("gh pr merge 7")?)?;
 
     assert!(reason.contains("requests changes"), "{reason}");
     assert_eq!(blocked_points(&repo)?, ["merge-gate.changes-requested"]);
@@ -248,5 +248,62 @@ fn unreadable_input_and_commands_are_denied() -> TestResult {
     assert!(reason.contains("input"), "{reason}");
     let reason = deny_reason(&repo.merge_gate("gh pr merge 7 'unclosed")?)?;
     assert!(reason.contains("merge-gate"), "{reason}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_without_a_full_head_commit_pin_is_denied_naming_the_command() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let short = head.get(..7).ok_or("a full id")?;
+    let command = format!("gh pr merge 7 --match-head-commit {head}");
+
+    for unpinned in [
+        "gh pr merge 7".to_owned(),
+        format!("gh pr merge 7 --match-head-commit {short}"),
+    ] {
+        let reason = deny_reason(&repo.merge_gate(&unpinned)?)?;
+        assert!(reason.contains(&command), "{unpinned}: {reason}");
+    }
+    assert_eq!(
+        blocked_points(&repo)?,
+        ["merge-gate.head", "merge-gate.head"]
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_pull_request_url_counts_only_for_the_origin_repository() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.git(&["remote", "add", "origin", "git@github.com:Owner/Repo.git"])?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    let ours = repo.merge_pinned("gh pr merge https://github.com/owner/repo/pull/7")?;
+    let theirs = repo.merge_pinned("gh pr merge https://github.com/other/repo/pull/7")?;
+
+    assert_allowed(&ours);
+    let reason = deny_reason(&theirs)?;
+    assert!(reason.contains("other/repo"), "{reason}");
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.repo"]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_gh_repository_or_host_set_in_the_command_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    for command in [
+        "GH_REPO=o/x gh pr merge 7",
+        "env GH_HOST=ghe.example gh pr merge 7",
+    ] {
+        let reason = deny_reason(&repo.merge_pinned(command)?)?;
+        assert!(reason.contains("GH_"), "{command}: {reason}");
+    }
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.env", "merge-gate.env"]);
     Ok(())
 }

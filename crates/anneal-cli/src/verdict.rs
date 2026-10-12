@@ -3,7 +3,7 @@
 //! `set --pr <n> --sha <rev> --level <tests-verified|reviewed|approved> --source
 //! <local|review-plugin|human> [--base <ref>] [--session <id>]` appends one `verdict_set` with
 //! the full commit `--sha` names, the base (`--base`, else `origin/main`, else `main`) and the
-//! `git patch-id --stable` of `git diff <base>...<sha>`. It has no `--store`: the verdict goes
+//! `git patch-id --verbatim` of `git diff <base>...<sha>`. It has no `--store`: the verdict goes
 //! to the ledger the merge gate reads.
 //!
 //! `valid --pr <n> [--head <rev>] [--base <ref>]` judges the pull request's verdicts against

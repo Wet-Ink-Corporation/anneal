@@ -31,7 +31,7 @@ pub(crate) struct Head<'a> {
     /// The base the patch id is taken from, as given; `None` when there is none, and then no
     /// verdict is fresh by patch id.
     pub(crate) base: Option<&'a str>,
-    /// `git patch-id --stable` of `git diff <base>...<sha>`; `None` when the diff is empty or
+    /// `git patch-id --verbatim` of `git diff <base>...<sha>`; `None` when the diff is empty or
     /// the patch id was not needed ([`needs_patch_id`]).
     pub(crate) patch_id: Option<&'a str>,
 }

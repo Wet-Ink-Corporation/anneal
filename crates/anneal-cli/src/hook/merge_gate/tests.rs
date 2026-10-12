@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::PathBuf;
 
-use super::{Check, pull, run};
+use super::pull::{Pull, origin_repo, pull};
+use super::{Check, run};
 use crate::hook::HookEnv;
 use crate::hook::guard::{PrMerge, Target};
 
@@ -11,6 +12,8 @@ fn merge(target: Target, repo: Option<&str>, match_head: Option<&str>) -> PrMerg
         target,
         repo: repo.map(str::to_owned),
         match_head: match_head.map(str::to_owned),
+        url_repo: None,
+        env: None,
     }
 }
 
@@ -34,7 +37,47 @@ fn gate(stdin: &[u8]) -> String {
 fn a_numbered_merge_gives_its_number_and_pinned_head() {
     let pinned = merge(Target::Number(7), None, Some("abc"));
 
-    assert_eq!(pull(&pinned), Ok((7, Some("abc"))));
+    assert_eq!(
+        pull(&pinned),
+        Ok(Pull {
+            pr: 7,
+            pin: Some("abc"),
+            url_repo: None
+        })
+    );
+}
+
+#[test]
+fn a_merge_whose_command_sets_gh_repo_or_host_is_denied() {
+    let mut set = merge(Target::Number(7), None, None);
+    set.env = Some("GH_REPO".to_owned());
+
+    let denial = pull(&set).expect_err("denied");
+
+    assert_eq!(denial.check, Check::Env, "{denial:?}");
+}
+
+#[test]
+fn an_origin_url_reads_as_host_owner_and_repository() {
+    let rows = [
+        (
+            "git@github.com:Owner/Repo.git\n",
+            Some("github.com/owner/repo"),
+        ),
+        ("https://github.com/o/r", Some("github.com/o/r")),
+        (
+            "https://user@github.com:443/o/r.git/",
+            Some("github.com/o/r"),
+        ),
+        ("ssh://git@ghe.example:22/o/r.git", Some("ghe.example/o/r")),
+        ("/srv/git/r.git", None),
+        ("https://github.com/o", None),
+        ("https://github.com/o/r/extra", None),
+    ];
+
+    for (url, expected) in rows {
+        assert_eq!(origin_repo(url).as_deref(), expected, "{url}");
+    }
 }
 
 #[test]
@@ -59,6 +102,8 @@ fn every_check_has_its_own_id() {
         Check::Unreadable,
         Check::Target,
         Check::Repo,
+        Check::Env,
+        Check::Head,
         Check::NoVerdict,
         Check::Stale,
         Check::ChangesRequested,

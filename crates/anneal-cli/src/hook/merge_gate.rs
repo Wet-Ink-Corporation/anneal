@@ -3,9 +3,11 @@
 //! It reads Claude Code's `PreToolUse` input on stdin and finds every `gh pr merge` the Bash
 //! command runs, read as the guard reads commands (`guard::find_pr_merge`: wrappers, `bash -c`,
 //! `eval`, scripts on stdin, variables). A call that runs none, and any other tool, is allowed
-//! silently. Each merge must name its pull request by number (`7`, `#7` or a `.../pull/7` URL)
-//! and no other repository (`-R`/`--repo`), and then needs, for its head
-//! (`--match-head-commit`, else the worktree's `HEAD`):
+//! silently. Each merge must name its pull request by number (`7`, `#7`, or an
+//! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), name no other
+//! repository (`-R`/`--repo`, or `GH_REPO`/`GH_HOST` set in the command), and pin its head with
+//! a full `--match-head-commit` (the denial names the command with the worktree's `HEAD`); then
+//! it needs, for that head (`pull` holds these checks):
 //!
 //! - a fresh `tests_verified`-or-better verdict after the latest fresh `changes_requested`
 //!   (fresh: recorded for the head's commit, or for the same patch id from the same base, so a
@@ -18,6 +20,8 @@
 //! the gate never creates a ledger (none means no verdict). Input or a command it cannot read,
 //! and a ledger, git or setting it cannot read, deny. git and the ledger get [`GIT_BUDGET`]
 //! from the hook's start, each git call at most [`GIT_TIMEOUT`]. See `docs/verdict.md`.
+
+mod pull;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -32,7 +36,7 @@ use serde::Deserialize;
 use crate::error_chain::reason;
 use crate::existing_ledger::{self, LedgerError};
 use crate::hook::guard::{
-    BUSY_TIMEOUT, Context, GIT_TIMEOUT, MAX_INPUT_BYTES, MergeScan, PrMerge, Target, find_pr_merge,
+    BUSY_TIMEOUT, Context, GIT_TIMEOUT, MAX_INPUT_BYTES, MergeScan, PrMerge, find_pr_merge,
 };
 use crate::hook::{HookEnv, StdinError, read_stdin, write_deny};
 use crate::paths::{self, PathError};
@@ -42,10 +46,12 @@ use crate::ship::skip_rule::{self, Sensitive};
 use crate::ship::{self, Change};
 use crate::verdict::assess::{Invalid, Outcome};
 use crate::verdict::pull_request::{self, PullRequest, Query};
+use pull::Pull;
 
-/// What git and the ledger reads may take, from the hook's start: the 5 s hook `timeout` less
-/// the record's one lock wait ([`BUSY_TIMEOUT`]) and process start-up.
-const GIT_BUDGET: Duration = Duration::from_millis(4_000);
+/// What git and the ledger reads may start within, from the hook's start: the 5 s hook
+/// `timeout` less one ledger read's lock wait begun at the end of it, the record's lock wait
+/// ([`BUSY_TIMEOUT`] each) and process start-up.
+const GIT_BUDGET: Duration = Duration::from_millis(3_500);
 
 /// The `point` of the gate's `gate_blocked` events, before the check's id.
 const POINT_PREFIX: &str = "merge-gate.";
@@ -59,8 +65,12 @@ pub(crate) enum Check {
     Unreadable,
     /// The merge names no pull request by number.
     Target,
-    /// The merge names another repository.
+    /// The merge names another repository (`-R`, or a URL not of `origin`).
     Repo,
+    /// The command sets `GH_REPO` or `GH_HOST`.
+    Env,
+    /// The merge does not pin its head with a full `--match-head-commit`.
+    Head,
     /// The pull request has no verdict.
     NoVerdict,
     /// Every verdict is for other code.
@@ -83,6 +93,8 @@ impl Check {
             Self::Unreadable => "unreadable",
             Self::Target => "target",
             Self::Repo => "repo",
+            Self::Env => "env",
+            Self::Head => "head",
             Self::NoVerdict => "no-verdict",
             Self::Stale => "stale",
             Self::ChangesRequested => "changes-requested",
@@ -193,7 +205,7 @@ where
             let session = input.session_id.take();
             (judge(input, current_dir, &lookup, budget), session)
         }
-        Err(error) => (Some(bad_input(&error, current_dir, &lookup)), None),
+        Err(error) => (Some(bad_input(&error, current_dir, &lookup, budget)), None),
     };
     let Some((denial, ledger)) = judged else {
         return Ok(());
@@ -225,6 +237,7 @@ fn bad_input(
     error: &InputError,
     current_dir: impl FnOnce() -> io::Result<PathBuf>,
     lookup: impl Fn(&str) -> Option<OsString>,
+    budget: Budget,
 ) -> (Denial, Ledger) {
     let denial = Denial::new(
         Check::BadInput,
@@ -232,7 +245,7 @@ fn bad_input(
     );
     let ledger = current_dir()
         .map_err(LedgerError::CurrentDir)
-        .and_then(|cwd| open_existing(&cwd, lookup));
+        .and_then(|cwd| open_existing(&cwd, lookup, budget));
     (denial, ledger)
 }
 
@@ -258,7 +271,7 @@ fn judge(
             Check::BadInput,
             "the hook input cannot be read: the Bash input has no command",
         );
-        return Some((denial, open_existing(&cwd, lookup)));
+        return Some((denial, open_existing(&cwd, lookup, budget)));
     };
     let merges = match find_pr_merge(&command, &Context::new(&lookup)) {
         MergeScan::Merges(merges) if merges.is_empty() => return None,
@@ -271,10 +284,10 @@ fn judge(
                     denial.reason
                 ),
             );
-            return Some((denial, open_existing(&cwd, lookup)));
+            return Some((denial, open_existing(&cwd, lookup, budget)));
         }
     };
-    let ledger = open_existing(&cwd, lookup);
+    let ledger = open_existing(&cwd, lookup, budget);
     let denial = match &ledger {
         Ok(store) => judge_merges(&merges, store.as_ref(), &cwd, budget),
         Err(error) => Some(unjudged("the ledger cannot be read", error)),
@@ -282,9 +295,16 @@ fn judge(
     Some((denial, ledger))
 }
 
-/// The ledger seen from `cwd` when its file exists, within the hook's limits.
-fn open_existing(cwd: &Path, lookup: impl Fn(&str) -> Option<OsString>) -> Ledger {
-    existing_ledger::open_existing(cwd, lookup, GIT_TIMEOUT, BUSY_TIMEOUT)
+/// The ledger seen from `cwd` when its file exists: git to find it and each later statement's
+/// lock wait both within what is left of `budget` (and at most [`GIT_TIMEOUT`] and
+/// [`BUSY_TIMEOUT`]).
+fn open_existing(cwd: &Path, lookup: impl Fn(&str) -> Option<OsString>, budget: Budget) -> Ledger {
+    existing_ledger::open_existing(
+        cwd,
+        lookup,
+        budget.cap(GIT_TIMEOUT),
+        budget.cap(BUSY_TIMEOUT),
+    )
 }
 
 /// The first denial among `merges` run from `cwd`, with the verdicts in `store`.
@@ -294,7 +314,7 @@ fn judge_merges(
     cwd: &Path,
     budget: Budget,
 ) -> Option<Denial> {
-    let pulls = match merges.iter().map(pull).collect::<Result<Vec<_>, _>>() {
+    let pulls = match merges.iter().map(pull::pull).collect::<Result<Vec<_>, _>>() {
         Ok(pulls) => pulls,
         Err(denial) => return Some(denial),
     };
@@ -325,35 +345,7 @@ fn judge_merges(
         rules: &rules,
         budget,
     };
-    pulls
-        .into_iter()
-        .find_map(|(pr, match_head)| gate.judge(pr, match_head))
-}
-
-/// The pull request number and pinned head of `merge`, or why it cannot be judged.
-fn pull(merge: &PrMerge) -> Result<(u64, Option<&str>), Denial> {
-    if let Some(repo) = &merge.repo {
-        return Err(Denial::new(
-            Check::Repo,
-            &format!(
-                "gh pr merge --repo {repo} merges in another repository, whose verdicts are \
-                 not in this ledger; run it without --repo from that repository's worktree"
-            ),
-        ));
-    }
-    match merge.target {
-        Target::Number(pr) => Ok((pr, merge.match_head.as_deref())),
-        Target::Missing => Err(Denial::new(
-            Check::Target,
-            "gh pr merge with no pull request merges the current branch's, which the gate \
-             cannot name; name it by number: gh pr merge <number>",
-        )),
-        Target::Unnumbered => Err(Denial::new(
-            Check::Target,
-            "gh pr merge names its pull request by branch, or by a word known only at run \
-             time; name it by number: gh pr merge <number>",
-        )),
-    }
+    pulls.into_iter().find_map(|pull| gate.judge(pull))
 }
 
 /// What one merge is judged with.
@@ -366,12 +358,30 @@ struct Gate<'a> {
 }
 
 impl Gate<'_> {
-    /// The denial for merging pull request `pr` at `match_head` (else `HEAD`), if any.
-    fn judge(&self, pr: u64, match_head: Option<&str>) -> Option<Denial> {
+    /// The denial for merging `pull`, if any.
+    fn judge(&self, pull: Pull<'_>) -> Option<Denial> {
+        if let Some(url_repo) = pull.url_repo {
+            let denial = match self.budget.next() {
+                Ok(timeout) => pull::check_origin(url_repo, self.root, timeout),
+                Err(error) => Some(unjudged("no time is left for git", &error)),
+            };
+            if denial.is_some() {
+                return denial;
+            }
+        }
+        let pinned = match self.budget.next() {
+            Ok(timeout) => pull::pinned_head(pull, self.root, timeout),
+            Err(error) => Err(unjudged("no time is left for git", &error)),
+        };
+        let head = match pinned {
+            Ok(head) => head,
+            Err(denial) => return Some(denial),
+        };
+        let pr = pull.pr;
         let query = Query {
             root: self.root,
             pr,
-            head: match_head.map_or(("head", "HEAD"), |sha| ("--match-head-commit", sha)),
+            head: ("--match-head-commit", head),
             base: None,
             budget: self.budget,
         };

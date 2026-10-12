@@ -295,8 +295,8 @@ pub enum VerdictSource {
 /// `verdict_set`: a review verdict was set on a pull request. Subject tag `pr:`.
 ///
 /// `sha`, `patch_id` and `base` say what the verdict is for: it is fresh for a head whose commit
-/// is `sha`, or whose `git patch-id --stable` of the diff from `base` is `patch_id` (a rebase
-/// that changed nothing else).
+/// is `sha`, or whose `git patch-id --verbatim` of the diff from `base` is `patch_id` (a
+/// rebase that changed nothing else).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerdictSet {
     /// The pull request number.
@@ -309,7 +309,7 @@ pub struct VerdictSet {
     /// The full commit id of the head it was set for (registry v6).
     #[serde(default)]
     pub sha: Option<String>,
-    /// `git patch-id --stable` of `git diff <base>...<sha>`; `None` for an empty diff
+    /// `git patch-id --verbatim` of `git diff <base>...<sha>`; `None` for an empty diff
     /// (registry v6).
     #[serde(default)]
     pub patch_id: Option<String>,

@@ -1,13 +1,14 @@
 //! The diff a pull request makes, `git diff <base>...<head>`.
 //!
 //! It is taken from the merge base, so commits the base gained since do not count, and read by
-//! the bounded git calls `verdict`, `ship` and the merge gate share: commit resolution, the default base, the diff's `git patch-id --stable`
-//! and its `--numstat`. Each call takes a timeout and caps what it keeps (H-13).
+//! the bounded git calls `verdict`, `ship` and the merge gate share: commit resolution, the
+//! default base, the diff's `git patch-id --verbatim` and its `--numstat`. Each call takes a
+//! timeout and caps what it keeps (H-13).
 //!
 //! The diff's options are fixed so the same change always gives the same patch id: no colour,
-//! external diff, text conversion or rename detection, three lines of context, `a/` and `b/`
-//! prefixes, and `--binary` so a binary file's content is hashed rather than one
-//! "Binary files differ" line.
+//! external diff, text conversion or rename detection, every submodule change shown whatever
+//! `diff.ignoreSubmodules` says, three lines of context, `a/` and `b/` prefixes, and `--binary`
+//! so a binary file's content is hashed rather than one "Binary files differ" line.
 
 use std::io;
 use std::path::Path;
@@ -31,12 +32,13 @@ const SMALL_OUTPUT_BYTES: u64 = 64 * 1024;
 pub(crate) const MAX_NUMSTAT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The options of every diff read here.
-const DIFF_OPTIONS: [&str; 10] = [
+const DIFF_OPTIONS: [&str; 11] = [
     "diff",
     "--no-color",
     "--no-ext-diff",
     "--no-textconv",
     "--no-renames",
+    "--ignore-submodules=none",
     "--binary",
     "-U3",
     "--src-prefix=a/",
@@ -178,6 +180,15 @@ impl Budget {
         }
     }
 
+    /// `limit`, or what is left of the budget when that is less (zero once it is spent): the
+    /// longest a wait that is not a git call (a ledger lock) may take.
+    pub(crate) fn cap(&self, limit: Duration) -> Duration {
+        match self.deadline {
+            Some((started, budget)) => limit.min(budget.saturating_sub(started.elapsed())),
+            None => limit,
+        }
+    }
+
     /// The timeout for the next git call.
     ///
     /// # Errors
@@ -246,7 +257,7 @@ pub(crate) fn default_base(
     Ok(None)
 }
 
-/// `git patch-id --stable` of `git diff <base>...<head>`; `None` for an empty diff. The diff
+/// `git patch-id --verbatim` of `git diff <base>...<head>`; `None` for an empty diff. The diff
 /// streams from one git into the other through an OS pipe, so nothing is buffered here; both
 /// are killed when `timeout` passes.
 ///
@@ -294,10 +305,12 @@ pub(crate) fn patch_id(
     read_patch_id(&output)
 }
 
-/// Runs `git patch-id --stable` on `input` within `timeout`.
+/// Runs `git patch-id --verbatim` on `input` within `timeout`: whitespace is hashed as written
+/// (it is code in Python, YAML and Makefiles). `--verbatim` implies `--stable`, and git refuses
+/// the two together.
 fn hash(root: &Path, input: Stdio, timeout: Duration) -> Result<Output, DiffError> {
     let mut patch = git(root)
-        .args(["patch-id", "--stable"])
+        .args(["patch-id", "--verbatim"])
         .stdin(input)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -352,6 +365,7 @@ pub(crate) fn numstat(
         "--no-ext-diff",
         "--no-textconv",
         "--no-renames",
+        "--ignore-submodules=none",
         "--end-of-options",
         &range,
         "--",

@@ -60,6 +60,24 @@ fn a_sensitive_path_needs_a_full_review_however_small() {
 }
 
 #[test]
+fn a_file_inside_a_sensitive_directory_is_sensitive_like_the_directory() {
+    let inside = [
+        "src/password/reset.rs",
+        "lib/credentials/store.go",
+        "app/invoices/pdf.py",
+        "web/checkout/cart.ts",
+        "vendor/stripe/client.rb",
+    ];
+
+    let missed: Vec<&str> = inside
+        .into_iter()
+        .filter(|path| reasons(&[change(path, 1)]).is_empty())
+        .collect();
+
+    assert_eq!(missed, Vec::<&str>::new(), "each has a `/**` variant");
+}
+
+#[test]
 fn each_default_category_catches_a_typical_path() {
     let rules = sensitive_rules(Vec::new()).expect("the defaults compile");
     let typical = [

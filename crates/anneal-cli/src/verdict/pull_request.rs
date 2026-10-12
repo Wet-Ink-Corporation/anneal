@@ -97,7 +97,12 @@ pub(crate) fn read(store: Option<&Store>, query: &Query<'_>) -> Result<PullReque
                 rev: rev.to_owned(),
             })?;
     let verdicts = match store {
-        Some(store) => verdicts(store, query.pr)?,
+        Some(store) => {
+            // The read waits on a lock for at most the store's busy timeout; it starts only
+            // while the budget has time left.
+            query.budget.next().map_err(PrError::from)?;
+            verdicts(store, query.pr)?
+        }
         None => Vec::new(),
     };
     // The pull request owns its base; the verdicts keep theirs.

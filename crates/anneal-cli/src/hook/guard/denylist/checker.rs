@@ -52,7 +52,13 @@ pub(super) struct Checker<'c> {
     cwd: Cwd,
     variables: Variables,
     merges: Vec<PrMerge>,
+    /// The first of [`GH_TARGET_VARIABLES`] a word of the command sets or names.
+    gh_env: Option<&'static str>,
 }
+
+/// The variables that point gh at another repository or host; the probe notes a command that
+/// sets or names one (`GH_REPO=o/x gh ...`, `env`, `export`), wherever it does.
+const GH_TARGET_VARIABLES: [&str; 2] = ["GH_REPO", "GH_HOST"];
 
 /// The most `gh pr merge` calls one command may make before the probe refuses it (H-13).
 const MAX_MERGES: usize = 8;
@@ -77,12 +83,36 @@ impl<'c> Checker<'c> {
             cwd: Cwd::Start,
             variables: Variables::default(),
             merges: Vec::new(),
+            gh_env: None,
         }
     }
 
-    /// The `gh pr merge` calls found, in order, each once.
+    /// The `gh pr merge` calls found, in order, each once, each noting a [`GH_TARGET_VARIABLES`]
+    /// the command sets anywhere.
     pub(super) fn into_merges(self) -> Vec<PrMerge> {
+        let env = self.gh_env;
         self.merges
+            .into_iter()
+            .map(|merge| PrMerge {
+                env: env.map(str::to_owned),
+                ..merge
+            })
+            .collect()
+    }
+
+    /// Notes the first word of `words` that sets or names one of [`GH_TARGET_VARIABLES`]
+    /// (`GH_REPO`, `GH_REPO=...`, `GH_REPO+=...`), in the probe only.
+    fn note_gh_env(&mut self, words: &[Word]) {
+        if self.entries != Entries::PrMerge || self.gh_env.is_some() {
+            return;
+        }
+        self.gh_env = words.iter().find_map(|word| {
+            GH_TARGET_VARIABLES.into_iter().find(|name| {
+                word.text.strip_prefix(name).is_some_and(|after| {
+                    after.is_empty() || after.starts_with('=') || after.starts_with("+=")
+                })
+            })
+        });
     }
 
     /// `check`'s denial, when this check applies the denylist's entries; `None` for the probe.
@@ -145,6 +175,7 @@ impl<'c> Checker<'c> {
 
     /// Checks one simple command's words.
     fn words(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        self.note_gh_env(words);
         match wrappers::unwrap(words) {
             Run::Nothing => None,
             Run::Script(text) => self.text(&text, scope.nested()),

@@ -160,6 +160,13 @@ impl PrRepo {
         self.hook_stdin(&input)
     }
 
+    /// Runs the merge gate on `command` with `--match-head-commit <HEAD>` appended, the pin
+    /// the gate requires.
+    pub(crate) fn merge_pinned(&self, command: &str) -> TestResult<Output> {
+        let pinned = format!("{command} --match-head-commit {}", self.head()?);
+        self.merge_gate(&pinned)
+    }
+
     /// Runs `anneal hook merge-gate --fail-closed` with `stdin`.
     pub(crate) fn hook_stdin(&self, stdin: &[u8]) -> TestResult<Output> {
         let mut child = anneal_in(self.path())

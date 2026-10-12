@@ -121,6 +121,139 @@ fn other_commands_and_disabling_auto_merge_are_not_merges() {
     }
 }
 
+/// The one merge `command` runs: its target, `-R`/`--repo`, and the URL's repository.
+fn read_one(command: &str) -> (Target, Option<String>, Option<String>) {
+    let found = merges(command);
+    let [merge] = found.as_slice() else {
+        panic!("{command:?}: one merge expected, found {found:?}");
+    };
+    (
+        merge.target.clone(),
+        merge.repo.clone(),
+        merge.url_repo.clone(),
+    )
+}
+
+#[test]
+fn a_short_option_cluster_takes_its_value_as_pflag_does() {
+    let rows = [
+        ("gh pr merge -db 5 6", Target::Number(6), None),
+        ("gh pr merge -sdt subject 4", Target::Number(4), None),
+        ("gh pr merge -dA me@example.com 8", Target::Number(8), None),
+        ("gh pr merge -sbbody 9", Target::Number(9), None),
+        ("gh pr merge -dRo/x 3", Target::Number(3), Some("o/x")),
+        ("gh pr merge -R=o/x 3", Target::Number(3), Some("o/x")),
+    ];
+
+    for (command, target, repo) in rows {
+        let (found, found_repo, _) = read_one(command);
+        assert_eq!((found, found_repo.as_deref()), (target, repo), "{command}");
+    }
+}
+
+#[test]
+fn options_before_pr_are_read_with_the_same_table() {
+    let rows = [
+        ("gh -R o/x pr merge 7", Some("o/x")),
+        ("gh --repo=o/x pr merge 7", Some("o/x")),
+        ("gh --squash=true pr merge 7", None),
+    ];
+
+    for (command, repo) in rows {
+        let (target, found_repo, _) = read_one(command);
+        assert_eq!(
+            (target, found_repo.as_deref()),
+            (Target::Number(7), repo),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn only_a_true_disable_auto_turns_the_merge_off() {
+    for command in [
+        "gh pr merge 3 --disable-auto=false",
+        "gh pr merge 3 --disable-auto=0",
+        "gh pr merge 3 --disable-auto=no",
+    ] {
+        assert_eq!(targets(command), [Target::Number(3)], "{command}");
+    }
+    for command in [
+        "gh pr merge 3 --disable-auto=true",
+        "gh pr merge 3 --disable-auto=1",
+        "gh pr merge 3 --disable-auto=T",
+    ] {
+        assert_eq!(targets(command), [], "{command}");
+    }
+}
+
+#[test]
+fn only_a_pull_request_url_names_a_number_and_its_repository_is_kept() {
+    let rows = [
+        (
+            "gh pr merge https://GitHub.com/O/R/pull/42",
+            Target::Number(42),
+            Some("github.com/o/r"),
+        ),
+        (
+            "gh pr merge https://github.com/o/r/pull/42#discussion",
+            Target::Number(42),
+            Some("github.com/o/r"),
+        ),
+        ("gh pr merge feature/pull/5", Target::Unnumbered, None),
+        (
+            "gh pr merge https://github.com/o/pull/5",
+            Target::Unnumbered,
+            None,
+        ),
+        (
+            "gh pr merge https://github.com/o/r/pull/5x",
+            Target::Unnumbered,
+            None,
+        ),
+        (
+            "gh pr merge ftp://github.com/o/r/pull/5",
+            Target::Unnumbered,
+            None,
+        ),
+        ("gh pr merge 42", Target::Number(42), None),
+    ];
+
+    for (command, target, url_repo) in rows {
+        let (found, _, found_url) = read_one(command);
+        assert_eq!(
+            (found, found_url.as_deref()),
+            (target, url_repo),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn a_gh_repository_or_host_set_in_the_command_is_noted() {
+    let rows = [
+        ("GH_REPO=o/x gh pr merge 7", "GH_REPO"),
+        ("env GH_HOST=ghe.example gh pr merge 7", "GH_HOST"),
+        ("export GH_REPO=o/x; gh pr merge 7", "GH_REPO"),
+        ("bash -c 'GH_REPO=o/x gh pr merge 7'", "GH_REPO"),
+    ];
+
+    for (command, name) in rows {
+        let found = merges(command);
+        let names: Vec<Option<&str>> = found.iter().map(|merge| merge.env.as_deref()).collect();
+        assert_eq!(names, [Some(name)], "{command}");
+    }
+    let plain = merges("gh pr merge 7");
+    assert_eq!(
+        plain
+            .iter()
+            .map(|merge| merge.env.as_deref())
+            .collect::<Vec<_>>(),
+        [None],
+        "nothing set"
+    );
+}
+
 #[test]
 fn a_command_the_guard_cannot_read_is_unreadable_here_too() {
     let scan = find_pr_merge("gh pr merge 'unclosed", &context());

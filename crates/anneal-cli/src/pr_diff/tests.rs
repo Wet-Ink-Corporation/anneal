@@ -26,6 +26,53 @@ fn a_rebase_only_change_keeps_the_patch_id_and_a_real_change_does_not() -> Setup
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git")]
+fn a_whitespace_only_change_changes_the_patch_id() -> Setup<()> {
+    let repo = ScratchRepo::new()?;
+    let first = repo.feature()?;
+    let before = patch_id(repo.path(), "main", &first, TIMEOUT)?;
+    repo.write("src/lib.rs", "pub fn answer() -> u32 {\n    42 \n}\n")?;
+    let spaced = repo.commit("trailing space")?;
+
+    let after = patch_id(repo.path(), "main", &spaced, TIMEOUT)?;
+
+    assert_ne!(
+        before, after,
+        "whitespace is code (Python, YAML, Makefiles): --verbatim keeps it in the hash"
+    );
+    Ok(())
+}
+
+/// Branch `feature` from `main` adding a submodule entry (a gitlink) at `sub` pointing at
+/// `commit`, with `diff.ignoreSubmodules=all` set as a repository might; returns its head.
+fn gitlink_feature(repo: &ScratchRepo, commit: &str) -> Setup<String> {
+    repo.git(&["config", "diff.ignoreSubmodules", "all"])?;
+    repo.git(&["checkout", "-q", "-b", "feature"])?;
+    repo.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{commit},sub"),
+    ])?;
+    repo.git(&["commit", "-q", "-m", "submodule"])?;
+    repo.head()
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn a_submodule_change_is_read_whatever_the_repository_ignores() -> Setup<()> {
+    let repo = ScratchRepo::new()?;
+    let one = gitlink_feature(&repo, "1111111111111111111111111111111111111111")?;
+
+    let listed = numstat(repo.path(), "main", &one, TIMEOUT)?;
+    let hashed = patch_id(repo.path(), "main", &one, TIMEOUT)?;
+
+    assert_eq!(listed, b"1\t0\tsub\0", "the gitlink is a changed file");
+    assert!(hashed.is_some(), "the gitlink is part of the patch");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
 fn an_empty_diff_has_no_patch_id() -> Setup<()> {
     let repo = ScratchRepo::new()?;
     let head = repo.head()?;
@@ -123,5 +170,23 @@ fn a_budget_gives_each_call_at_most_its_limit_and_refuses_once_spent() {
         Budget::per_call(TIMEOUT).next().ok(),
         Some(TIMEOUT),
         "no deadline"
+    );
+}
+
+#[test]
+fn a_budget_caps_a_wait_at_what_is_left_of_it() {
+    let started = std::time::Instant::now();
+    let roomy = Budget::within(started, Duration::from_secs(60), Duration::from_secs(1));
+    let spent = Budget::within(started, Duration::ZERO, Duration::from_secs(1));
+    let lock = Duration::from_millis(500);
+
+    assert_eq!(
+        (
+            roomy.cap(lock),
+            spent.cap(lock),
+            Budget::per_call(TIMEOUT).cap(lock)
+        ),
+        (lock, Duration::ZERO, lock),
+        "a ledger lock wait never outlasts the hook's budget"
     );
 }

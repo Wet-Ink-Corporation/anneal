@@ -1,9 +1,10 @@
 //! Path globs for repository-relative, `/`-separated paths.
 //!
-//! `**` as a whole segment matches zero or more directories, `*` any run of characters within one segment, `?` one character;
-//! everything else is literal. Matching ignores ASCII letter case, as the guard's protected
-//! paths do (APFS and NTFS are case-insensitive by default). A pattern matches the whole path
-//! from the repository root, so `**/` is how it matches at any depth.
+//! `**` as a whole segment matches zero or more directories, `*` any run of characters within
+//! one segment, `?` one character; everything else is literal. Matching ignores ASCII letter
+//! case, as the guard's protected paths do (APFS and NTFS are case-insensitive by default). A
+//! pattern matches the whole path from the repository root, so `**/` is how it matches at any
+//! depth.
 
 /// The longest pattern accepted, in bytes (H-13).
 pub(crate) const MAX_GLOB_BYTES: usize = 256;

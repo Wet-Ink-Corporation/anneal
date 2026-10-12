@@ -125,15 +125,18 @@ Matcher `Bash`, `timeout` 5 s, `onFailure: "block"`, arguments `hook merge-gate 
 in the same matcher group as the guard. It reads Claude Code's `PreToolUse` input on stdin (at
 most 1 MiB; it uses `tool_name`, `tool_input.command`, `session_id` and `cwd`) and finds every
 `gh pr merge` the command runs with the guard's lexer and unwrapping (`guard::find_pr_merge`).
-Any other call is allowed silently. Each merge must name its pull request by number and no other
-repository, and needs a fresh `tests_verified`-or-better verdict for its head
-(`--match-head-commit`, else `HEAD`; fresh by commit or by patch id, so a rebase keeps it) and a
+Any other call is allowed silently. gh's arguments are read as its flag parser reads them (options
+before `pr`, short-option clusters). Each merge must name its pull request by number (or by a
+`/pull/<n>` URL of the worktree's `origin`) and no other repository (no `-R`, and no `GH_REPO` or
+`GH_HOST` set in the command), pin its head with `--match-head-commit <full commit>` (the denial
+names the command), and needs a fresh `tests_verified`-or-better verdict for that head (fresh by
+commit or by patch id, so a rebase keeps it) and a
 review verdict unless `anneal ship skip-rule` would skip the change; a human `approved` counts as
 the review only while `review.require_plugin` is false. A denial is the guard's deny decision with
 one `ERROR merge-gate: ...` line naming what is missing and the `anneal verdict set` command that
 records it, plus a `gate_blocked` event (`point` is `merge-gate.<check>`) in an existing ledger;
 it never creates one. Unreadable input or commands, and a ledger, git or setting it cannot read,
-are denied; git and ledger reads share 4 s from the hook's start. See `docs/verdict.md`.
+are denied; git and ledger reads share 3.5 s from the hook's start. See `docs/verdict.md`.
 
 ## `preconditions` (PreToolUse)
 

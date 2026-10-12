@@ -26,7 +26,7 @@ It resolves `--sha` to a full commit id, takes the base from `--base` (else `ori
 | `verdict` | `tests_verified`, `reviewed` or `approved`: the levels, lowest first |
 | `source` | `local` (anneal's own checks, such as `verify`), `review_plugin` or `human` |
 | `sha` | the full commit id the verdict is for |
-| `patch_id` | `git patch-id --stable` of `git diff <base>...<sha>`; `null` for an empty diff |
+| `patch_id` | `git patch-id --verbatim` of `git diff <base>...<sha>`; `null` for an empty diff |
 | `base` | the base as given or defaulted |
 
 The review plugin records its outcomes, `changes_requested` and `noise_only`, with
@@ -39,11 +39,15 @@ refused value creates no file. A commit or base that does not resolve is a usage
 A verdict is fresh for a head when it was recorded for that commit, or when its patch id is the
 head's patch id from the same base. The patch id hashes the diff's content without line numbers
 or commit ids, so rebasing the branch onto a newer base, or recreating the same commits, keeps a
-verdict fresh; changing a line of the change does not.
+verdict fresh; changing a line of the change does not, and neither does changing only its
+whitespace (`--verbatim` hashes whitespace as written, since it is code in Python, YAML and
+Makefiles).
 
 The diff is fixed so the id depends only on content: `git diff --no-color --no-ext-diff
---no-textconv --no-renames --binary -U3 --src-prefix=a/ --dst-prefix=b/ <base>...<head>`, piped
-into `git patch-id --stable`. Each git call is bounded (10 s for the commands, 1 s in the hook;
+--no-textconv --no-renames --ignore-submodules=none --binary -U3 --src-prefix=a/
+--dst-prefix=b/ <base>...<head>`, piped into `git patch-id --verbatim`. A submodule pointer
+change counts whatever `diff.ignoreSubmodules` the repository sets, in the patch id and in the
+skip-rule. Each git call is bounded (10 s for the commands, 1 s in the hook;
 the diff's output is not buffered, and `--numstat` is capped at 16 MiB). The patch id is computed
 only when some verdict could be fresh by it.
 
@@ -95,8 +99,8 @@ directories and `*` and `?` within one name:
 
 | Category | Globs |
 |---|---|
-| auth | `**/*auth*`, `**/*auth*/**`, `**/*login*`, `**/*login*/**`, `**/*password*`, `**/*credential*`, `**/*secret*`, `**/*secret*/**` |
-| payments | `**/*payment*`, `**/*payment*/**`, `**/*billing*`, `**/*billing*/**`, `**/*invoice*`, `**/*checkout*`, `**/*stripe*` |
+| auth | `**/*auth*`, `**/*auth*/**`, `**/*login*`, `**/*login*/**`, `**/*password*`, `**/*password*/**`, `**/*credential*`, `**/*credential*/**`, `**/*secret*`, `**/*secret*/**` |
+| payments | `**/*payment*`, `**/*payment*/**`, `**/*billing*`, `**/*billing*/**`, `**/*invoice*`, `**/*invoice*/**`, `**/*checkout*`, `**/*checkout*/**`, `**/*stripe*`, `**/*stripe*/**` |
 | migrations | `**/migrations/**`, `**/migrate/**`, `**/*migration*`, `**/*.sql` |
 | ci | `.github/**`, `.gitlab-ci.yml`, `.gitlab/**`, `.circleci/**`, `.buildkite/**`, `.travis.yml`, `azure-pipelines.yml`, `**/Jenkinsfile` |
 | infra | `**/*.tf`, `**/*.tfvars`, `**/terraform/**`, `**/infra/**`, `**/infrastructure/**`, `**/k8s/**`, `**/kubernetes/**`, `**/helm/**`, `**/ansible/**`, `**/deploy/**`, `**/Dockerfile*`, `**/docker-compose*` |
@@ -124,15 +128,20 @@ usage error for the commands and a denial in the hook.
 
 `anneal hook merge-gate --fail-closed` runs on every Bash call (`PreToolUse`, matcher `Bash`,
 5 s, `onFailure: "block"`). It reads the command as the guard does, through wrappers, `bash -c`,
-`eval`, scripts on stdin and variables the command sets, and finds each `gh pr merge` it runs. A
-call that runs none is allowed silently; so is `gh pr merge --disable-auto`, which merges nothing.
-For each merge:
+`eval`, scripts on stdin and variables the command sets, and finds each `gh pr merge` it runs.
+gh's arguments are read as gh's flag parser (pflag) reads them: options may come before `pr`,
+short options cluster (`-db 5` is `-d -b 5`), and `-R=o/r` is `-R o/r`. A call that runs none is
+allowed silently; so is `gh pr merge --disable-auto` (bare, or set to a true value such as `1`
+or `true`), which merges nothing; `--disable-auto=false` is a merge. For each merge:
 
-1. The pull request must be named by number (`7`, `#7` or a `.../pull/7` URL). With no argument
-   gh merges the current branch's pull request, and a branch name needs a network lookup; both
-   are denied, as is `-R`/`--repo` (another repository's verdicts are not in this ledger).
-2. The head is `--match-head-commit` when given (gh refuses the merge if the remote head
-   differs), else the worktree's `HEAD`.
+1. The pull request must be named by number (`7`, `#7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
+   URL whose host, owner and repository are the worktree's `origin`). With no argument gh merges
+   the current branch's pull request, and a branch name needs a network lookup; both are denied,
+   as are `-R`/`--repo`, any other URL, and a `GH_REPO` or `GH_HOST` the command sets (another
+   repository's verdicts are not in this ledger).
+2. The head must be pinned with `--match-head-commit <full 40-hex commit>`, so gh refuses the
+   merge if the remote head differs from the commit judged. Without a pin the denial names the
+   command to run, with the worktree's `HEAD` filled in.
 3. A fresh tests verdict must hold for the head. Otherwise it denies with `no-verdict`, `stale`,
    `changes-requested` or `tests`, naming `anneal verdict set ... --level tests-verified`.
 4. A review verdict must hold, unless the skip-rule skips the change from the base the latest
@@ -141,11 +150,13 @@ For each merge:
    --source human`.
 
 A denial is Claude Code's deny decision whose reason is one `ERROR merge-gate: ...` line, plus a
-`gate_blocked` event (`point` `merge-gate.<check>`) in the ledger when one exists; the gate never
-creates a ledger, and with none every pull request has no verdict. Unreadable input or commands,
-a merge naming no number, and a ledger, git or `.anneal/config.json` it cannot read are denied.
-git and ledger reads share 4 s from the hook's start, each git call at most 1 s, and each ledger
-statement waits at most 500 ms for a lock.
+`gate_blocked` event (`point` `merge-gate.<check>`, the checks being `target`, `repo`, `env`,
+`head`, `no-verdict`, `stale`, `changes-requested`, `tests`, `review`, `bad-input`, `unreadable`
+and `unjudged`) in the ledger when one exists; the gate never creates a ledger, and with none
+every pull request has no verdict. Unreadable input or commands, a merge naming no number, and a
+ledger, git or `.anneal/config.json` it cannot read are denied. git and ledger reads share 3.5 s
+from the hook's start, each git call at most 1 s, and each ledger statement waits at most 500 ms
+for a lock and never past what is left of the 3.5 s.
 
 ### Known gaps
 
@@ -153,9 +164,8 @@ The gate judges what it can see in a Bash command, for an honest agent:
 
 - merges outside `gh pr merge`: `gh api` calls to the merge endpoint, a gh alias, the web UI, or
   another tool;
-- `GH_REPO` naming another repository (only `-R`/`--repo` is read);
-- the head is the local `HEAD` unless `--match-head-commit` pins it, so a branch pushed from
-  elsewhere is judged by the local checkout;
+- `GH_REPO` or `GH_HOST` already in the process environment (only an assignment in the command
+  is seen), and a gh configured for another host than `origin`'s;
 - `.anneal/config.json` is read from the working tree, so an uncommitted edit changes the
   settings; and anyone can record `--source human` or append a verdict with `anneal ledger
   append`.
