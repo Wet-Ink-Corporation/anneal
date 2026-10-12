@@ -116,16 +116,25 @@ pub enum GrillError {
         #[source]
         source: BaselineError,
     },
+    /// `classify` could not resolve the file's path (its links) to write it.
+    #[error("resolving design tree {}", path.display())]
+    Resolve {
+        /// The path as given.
+        path: PathBuf,
+        /// The failure.
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl GrillError {
     /// The documented exit code: a missing file or one that is not a regular file is a usage
-    /// error (2), a read or write failure 70.
+    /// error (2), a read, resolve or write failure 70.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Missing { .. } | Self::NotAFile { .. } => exit_codes::USAGE,
-            Self::Read { .. } | Self::Write { .. } => exit_codes::INTERNAL,
+            Self::Read { .. } | Self::Write { .. } | Self::Resolve { .. } => exit_codes::INTERNAL,
         }
     }
 }

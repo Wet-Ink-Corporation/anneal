@@ -1,5 +1,6 @@
-//! `anneal grill frontier|confirm` through the built binary: the frontier envelope, invalid
-//! trees, and the confirmation that is appended only with the human's words and no open node.
+//! `anneal grill frontier|classify|confirm` through the built binary: the frontier envelope,
+//! invalid trees, classify with Clef off, and the confirmation that is appended only with the
+//! human's words and no open node.
 
 use std::error::Error;
 use std::path::Path;
@@ -373,4 +374,55 @@ fn a_named_pipe_as_the_tree_is_a_usage_error_without_opening_it() -> TestResult 
     let output = grill(dir.path(), &["frontier", "--tree", "tree.fifo"])?;
 
     assert_usage_error(&output, "tree.fifo")
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn classify_with_clef_off_exits_0_and_leaves_the_tree_and_the_home_alone() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let before = write_tree(dir.path(), &[node("decide-format", &[], "open")], &[])?;
+    let home = dir.path().join("home");
+
+    let output = anneal_in(dir.path())
+        .env("ANNEAL_HOME", &home)
+        .args([
+            "grill",
+            "classify",
+            "--tree",
+            "tree.json",
+            "--node",
+            "decide-format",
+        ])
+        .output()?;
+
+    let envelope = envelope(&output, 0)?;
+    assert_eq!(
+        [
+            &envelope["command"],
+            &envelope["data"]["clef"],
+            &envelope["data"]["written"]
+        ],
+        [&json!("grill classify"), &json!("off"), &json!(false)]
+    );
+    assert_eq!(std::fs::read(dir.path().join("tree.json"))?, before);
+    assert!(!home.exists(), "nothing logged: {home:?}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn classify_of_an_invalid_tree_exits_1_with_its_findings() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let mut bad = node("decide-format", &[], "open");
+    bad["is_decision"] = json!(1.5);
+    write_tree(dir.path(), &[bad], &[])?;
+
+    let output = grill(
+        dir.path(),
+        &["classify", "--tree", "tree.json", "--node", "decide-format"],
+    )?;
+
+    let envelope = envelope(&output, 1)?;
+    assert_eq!(finding_keys(&envelope), ["grill/is-decision:decide-format"]);
+    Ok(())
 }

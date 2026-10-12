@@ -11,13 +11,13 @@ use tempfile::TempDir;
 use super::{precedents, run, state_for};
 use crate::decide::clock::Clock;
 use crate::decide::point::Point;
+use crate::decide::redact::safe_prompt;
 use crate::decide::state::CompactState;
 use crate::decide::transport::{ClefRequest, Transport, TransportError};
 use crate::hook::HookEnv;
 use crate::hook::clef_fake::{
     Fixed, Stepping, TestResult, World, block_the_log, context, parsed, reply,
 };
-use crate::hook::prompt::safe_prompt;
 
 /// Answers every choice with one fixed reply and keeps each request's body.
 struct Endpoint {

@@ -4,13 +4,15 @@
 //! `decide`'s own in-process code (`decide::in_process`, then `client::ask`), so its
 //! thresholds, log, modes and shadow count are the command's.
 //!
-//! Clef gets the question and the tree's goal, each through `hook::safe_prompt` (redacted, at most
-//! 1,024 characters); the row keeps neither. Only when D7 is in effect `enforce` (configured,
-//! and past its first 50 answered decisions) is Clef's P(yes) written into the node's
-//! `is_decision`, so `grill frontier`'s `ask` and `look_up` follow it; in shadow the tree is
+//! Clef gets the question and the tree's goal, each through `decide::redact::safe_prompt`
+//! (redacted, at most 1,024 characters); the row keeps neither. Only when D7 is in effect
+//! `enforce` (configured, and past its first 50 answered decisions) is Clef's P(yes) written
+//! into the node's `is_decision`, so `grill frontier`'s `ask` and `look_up` follow it; the file
+//! is rewritten at its resolved path, so a symlinked tree stays a link. In shadow the tree is
 //! left exactly as the model wrote it and the skill's prose decides. Clef off, unreachable or
-//! misconfigured falls back to the model's own estimate (`fail_open`) and exits 0; an answer
-//! whose row could not be logged is an error and is never written. See `docs/grill.md`.
+//! misconfigured (a malformed configuration, or thresholds or an anneal home that cannot be
+//! read) falls back to the model's own estimate (`fail_open`) and exits 0; an answer whose row
+//! could not be logged is an error and is never written. See `docs/grill.md`.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -28,8 +30,9 @@ use crate::decide::client::{self, Ask, Outcome};
 use crate::decide::clock::Clock;
 use crate::decide::config::Mode;
 use crate::decide::id::DecisionId;
-use crate::decide::in_process::{self, PrepareError, Prepared};
+use crate::decide::in_process::{self, Prepared};
 use crate::decide::point::{Point, Question};
+use crate::decide::redact::safe_prompt;
 use crate::decide::state::CompactState;
 use crate::decide::transport::Transport;
 use crate::decide::{DecideEnv, DecideError};
@@ -37,10 +40,13 @@ use crate::envelope::Envelope;
 use crate::error::CliError;
 use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
-use crate::hook::safe_prompt;
 
 /// The subcommand's name in its envelope.
 const SUBCOMMAND: &str = "classify";
+
+/// D7's fallback when its thresholds cannot be read to name it: the shipped
+/// `clef-thresholds.json` gives `fail_open`.
+const FALLBACK: &str = "fail_open";
 
 /// `anneal grill classify`.
 #[derive(Debug, Args)]
@@ -142,12 +148,8 @@ where
     C: Clock,
 {
     let bytes = read_tree(env.cwd, &args.tree)?;
-    let checked = TreeFile::read(&bytes).and_then(|file| {
-        // The file keeps the model's node order for a rewrite; the tree sorts its own copy.
-        DesignTree::validate(file.clone()).map(|tree| (file, tree))
-    });
-    let (mut file, tree) = match checked {
-        Ok(read) => read,
+    let tree = match DesignTree::parse(&bytes) {
+        Ok(tree) => tree,
         Err(problems) => return invalid(SUBCOMMAND, &args.tree, &problems, out),
     };
     let node = open_node(&tree, &args.node, &args.tree)?;
@@ -158,7 +160,18 @@ where
         let data = Classified::empty(&args.tree, &args.node, ClefOutcome::Off);
         return emit_classified(&data, out);
     }
-    let clef = Prepared::load(&env.lookup).map_err(prepare_error)?;
+    let clef = match Prepared::load(&env.lookup) {
+        Ok(clef) => clef,
+        // D7 fails open: without its thresholds or log, the model's estimate stands.
+        Err(error) => {
+            let data = Classified {
+                fallback: Some(FALLBACK),
+                reason: Some(reason(&error)),
+                ..Classified::empty(&args.tree, &args.node, ClefOutcome::Misconfigured)
+            };
+            return emit_classified(&data, out);
+        }
+    };
     let state = state_for(&tree, node)?;
     let ask = Ask {
         point: Point::D7,
@@ -173,10 +186,17 @@ where
     let mut data = Classified::of(&args.tree, &args.node, &outcome);
     if let Outcome::Decided(decision) = &outcome
         && decision.stamp.mode == Mode::Enforce
-        && file.set_is_decision(&node.id, decision.answer.probability())
     {
-        save(env.cwd, &args.tree, &file)?;
-        data.written = true;
+        // Read again as written, so the rewrite keeps the model's node order (the tree above
+        // sorted its nodes by id). The bytes were validated above, so this does not fail.
+        let mut file = match TreeFile::read(&bytes) {
+            Ok(file) => file,
+            Err(problems) => return invalid(SUBCOMMAND, &args.tree, &problems, out),
+        };
+        if file.set_is_decision(&node.id, decision.answer.probability()) {
+            save(env.cwd, &args.tree, &file)?;
+            data.written = true;
+        }
     }
     emit_classified(&data, out)
 }
@@ -209,21 +229,20 @@ fn state_for(tree: &DesignTree, node: &Node) -> Result<CompactState, CliError> {
     Ok(CompactState::parse(&state.to_string()).map_err(DecideError::from)?)
 }
 
-/// Saves `file` over the tree at `path` (relative to `cwd`), atomically.
+/// Saves `file` over the tree at `path` (relative to `cwd`), atomically, at its resolved path:
+/// the atomic rename replaces the file it lands on, so a symlinked tree is written through
+/// its link, which stays.
 fn save(cwd: &Path, path: &Path, file: &TreeFile) -> Result<(), GrillError> {
-    baseline::write_snapshot_json(&cwd.join(path), file).map_err(|source| GrillError::Write {
+    let target = std::fs::canonicalize(cwd.join(path)).map_err(|source| GrillError::Resolve {
+        // The error owns the path it names.
+        path: path.to_path_buf(),
+        source,
+    })?;
+    baseline::write_snapshot_json(&target, file).map_err(|source| GrillError::Write {
         // The error owns the path it names.
         path: path.to_path_buf(),
         source,
     })
-}
-
-/// A failure to find the anneal home or read the thresholds, as the command reports it.
-fn prepare_error(error: PrepareError) -> CliError {
-    match error {
-        PrepareError::Home(error) => CliError::Path(error),
-        PrepareError::Thresholds(error) => CliError::Decide(error),
-    }
 }
 
 fn emit_classified<O: Write>(data: &Classified<'_>, out: &mut O) -> Result<Code, CliError> {

@@ -14,7 +14,10 @@ use crate::decide::point::Point;
 use crate::decide::transport::{ClefRequest, Transport, TransportError};
 use crate::error::CliError;
 use crate::grill::{GrillAction, run};
-use crate::hook::clef_fake::{Fixed, TestResult, World, block_the_log, reply};
+use crate::hook::clef_fake::{CONFIGURED, Fixed, TestResult, World, block_the_log, reply};
+
+/// The variable that sets Clef's mode.
+const MODE: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
 
 /// Answers every request with one fixed reply and keeps each request body.
 struct Endpoint {
@@ -339,5 +342,106 @@ fn clef_gets_the_redacted_question_and_goal_and_the_row_keeps_neither() -> TestR
     let row = rows.first().ok_or("a row")?;
     assert_eq!(row.get("input"), None, "{row}");
     assert!(!row.to_string().contains("vault"), "{row}");
+    Ok(())
+}
+
+#[test]
+fn enforce_within_its_first_50_answers_is_shadow_and_writes_nothing() -> TestResult {
+    let mut vars = CONFIGURED.to_vec();
+    vars.push((MODE, "enforce"));
+    let world = World::new(&vars)?;
+    let (dir, before) = usual()?;
+
+    let ran = classify(&world, dir.path(), "format", &Endpoint::yes(0.25))?;
+
+    assert_eq!(ran.code(), Some(0));
+    let data = ran.data()?;
+    assert_eq!(
+        [&data["clef"], &data["mode"], &data["written"]],
+        [&json!("decided"), &json!("shadow"), &json!(false)]
+    );
+    let rows = world.rows()?;
+    let row = rows.first().ok_or("a row")?;
+    assert_eq!(
+        [&row["mode"], &row["configured_mode"]],
+        [&json!("shadow"), &json!("enforce")],
+        "configured to enforce, but still in its shadow period"
+    );
+    assert_eq!(
+        tree_bytes(dir.path())?,
+        before,
+        "the shadow period writes nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_malformed_configuration_falls_back_and_asks_logs_and_writes_nothing() -> TestResult {
+    let mut vars = CONFIGURED.to_vec();
+    vars.push((MODE, "sometimes"));
+    let world = World::new(&vars)?;
+    let (dir, before) = usual()?;
+    let endpoint = Endpoint::yes(0.9);
+
+    let ran = classify(&world, dir.path(), "format", &endpoint)?;
+
+    assert_eq!(ran.code(), Some(0), "D7 fails open");
+    let data = ran.data()?;
+    assert_eq!(
+        [&data["clef"], &data["fallback"], &data["written"]],
+        [&json!("misconfigured"), &json!("fail_open"), &json!(false)]
+    );
+    assert!(endpoint.bodies().is_empty(), "Clef is not asked");
+    assert_eq!(world.rows()?, Vec::<Value>::new(), "nothing logged");
+    assert_eq!(tree_bytes(dir.path())?, before);
+    Ok(())
+}
+
+#[test]
+fn thresholds_that_cannot_be_read_fall_back_instead_of_failing() -> TestResult {
+    let plugin = tempfile::tempdir()?;
+    let root = plugin.path().to_str().ok_or("a UTF-8 temporary path")?;
+    let mut vars = CONFIGURED.to_vec();
+    vars.push(("CLAUDE_PLUGIN_ROOT", root));
+    let world = World::new(&vars)?;
+    let (dir, before) = usual()?;
+    let endpoint = Endpoint::yes(0.9);
+
+    let ran = classify(&world, dir.path(), "format", &endpoint)?;
+
+    assert_eq!(ran.code(), Some(0), "D7 fails open: {:?}", ran.result);
+    let data = ran.data()?;
+    assert_eq!(
+        [&data["clef"], &data["fallback"], &data["written"]],
+        [&json!("misconfigured"), &json!("fail_open"), &json!(false)]
+    );
+    let why = data["reason"].as_str().ok_or("a reason")?;
+    assert!(why.contains("thresholds"), "{why}");
+    assert!(endpoint.bodies().is_empty(), "Clef is not asked");
+    assert_eq!(tree_bytes(dir.path())?, before);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn an_enforced_estimate_is_written_through_a_symlinked_tree_which_stays_a_link() -> TestResult {
+    let world = World::enforcing(Point::D7)?;
+    let (dir, _) = usual()?;
+    let real = dir.path().join("real.json");
+    std::fs::rename(dir.path().join("tree.json"), &real)?;
+    std::os::unix::fs::symlink("real.json", dir.path().join("tree.json"))?;
+
+    let ran = classify(&world, dir.path(), "format", &Endpoint::yes(0.25))?;
+
+    assert_eq!(ran.code(), Some(0));
+    assert_eq!(ran.data()?["written"], json!(true));
+    let link = std::fs::symlink_metadata(dir.path().join("tree.json"))?;
+    assert!(link.file_type().is_symlink(), "the link is kept");
+    let written: Value = serde_json::from_slice(&std::fs::read(&real)?)?;
+    assert_eq!(
+        written["nodes"][2]["is_decision"],
+        json!(0.25),
+        "written through it"
+    );
     Ok(())
 }

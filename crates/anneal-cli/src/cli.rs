@@ -56,7 +56,8 @@ pub enum Command {
     /// Append to, query and tail the event ledger
     #[command(after_help = command_help(CommandName::Ledger))]
     Ledger(LedgerArgs),
-    /// List a design tree's open frontier, or record the human's confirmation of it
+    /// List a design tree's open frontier, classify a question with Clef D7, or record the
+    /// human's confirmation of the tree
     #[command(after_help = command_help(CommandName::Grill))]
     Grill(GrillArgs),
     /// Mark a task done once its tests are green

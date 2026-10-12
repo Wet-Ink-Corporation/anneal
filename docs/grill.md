@@ -99,11 +99,14 @@ node. In this order:
 4. Only when D7 is in effect `enforce` (configured so, and past its first 50 answered
    decisions) is Clef's P(yes) written into the node's `is_decision`, so `grill frontier`'s
    `ask` and `look_up` follow Clef. The file is rewritten atomically as pretty JSON, nodes in
-   their order, nothing else changed. In shadow the tree is left byte for byte as the model
-   wrote it, and the skill's prose (the model's own `is_decision`) decides.
+   their order, nothing else changed. The file written is the tree's resolved path, so a
+   `--tree` that is a symbolic link stays one and its target is rewritten. In shadow the tree
+   is left byte for byte as the model wrote it, and the skill's prose (the model's own
+   `is_decision`) decides.
 
-Clef unreachable, timed out, a bad response or a malformed configuration takes D7's fallback,
-`fail_open`: the tree is left alone, `data.fallback` says so and the run exits 0, since the
+Clef unreachable, timed out, a bad response, a malformed configuration, or a thresholds file
+or anneal home that cannot be read takes D7's fallback, `fail_open` (`data.clef` is
+`no_answer` for the first three, `misconfigured` for the rest, with `data.reason`): the tree is left alone, `data.fallback` says so and the run exits 0, since the
 model's own estimate stands. An answer whose row could not be logged is never written: the
 run fails with one `ERROR` line (exit 70). Until an HTTP client is approved every call is
 unreachable, so `classify` only logs.
@@ -150,8 +153,8 @@ kept in the ledger so a reviewer can read it.
 | 3 | `confirm`: a question is still open |
 
 A missing `--tree` file, or one that is not a regular file (a directory), is a usage error (2),
-as is a `classify --node` that names no open node. A tree `classify` cannot rewrite, or an
-answer it cannot log, is an internal error (70).
+as is a `classify --node` that names no open node. A tree `classify` cannot resolve or
+rewrite, or an answer it cannot log, is an internal error (70).
 So is, for `confirm`, a `--tree` path or `--session` id the ledger cannot keep as a tag (over 255
 bytes, or with a control character); it is checked before the ledger is opened, so no ledger
 file is created. The global codes are in

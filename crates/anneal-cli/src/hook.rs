@@ -32,9 +32,6 @@ use serde::Serialize;
 
 use crate::decide::clock::SystemClock;
 use crate::decide::transport::NoHttpClient;
-/// Text as it may be sent to Clef (redacted, collapsed, cut); `grill classify` sends its
-/// question and goal through it too.
-pub(crate) use prompt::safe_prompt;
 
 /// Arguments of `anneal hook`.
 #[derive(Debug, Args)]

@@ -71,6 +71,7 @@ impl TreeFile {
 
     /// Sets the `is_decision` of the first node with `id` to `probability` (Clef D7's
     /// estimate) and returns true, or returns false when no node has `id`.
+    #[must_use]
     pub fn set_is_decision(&mut self, id: &str, probability: f64) -> bool {
         let Some(node) = self.nodes.iter_mut().find(|node| node.id == id) else {
             return false;
