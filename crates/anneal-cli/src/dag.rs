@@ -131,8 +131,9 @@ pub fn run<O: Write>(args: &DagArgs, cwd: &Path, out: &mut O) -> Result<Code, Cl
     }
 }
 
-/// The tracker `source` selects; flags of the other tracker are a usage error.
-fn tracker(source: &Source, cwd: &Path) -> Result<Box<dyn Tracker>, CliError> {
+/// The tracker `source` selects; flags of the other tracker are a usage error. `orchestrate
+/// fan-out` reads the same tickets.
+pub(crate) fn tracker(source: &Source, cwd: &Path) -> Result<Box<dyn Tracker>, CliError> {
     let usage = |reason: &str| CliError::Usage {
         reason: reason.to_owned(),
     };
@@ -162,7 +163,7 @@ fn tracker(source: &Source, cwd: &Path) -> Result<Box<dyn Tracker>, CliError> {
 }
 
 /// Reads `tracker`, with the external tickets its blockers name, into a graph.
-fn read_graph(tracker: &dyn Tracker) -> Result<Graph, DagError> {
+pub(crate) fn read_graph(tracker: &dyn Tracker) -> Result<Graph, DagError> {
     let tickets = tracker
         .read_with_external()
         .map_err(|source| DagError::Tracker {
@@ -213,7 +214,7 @@ fn check<O: Write>(tracker: &dyn Tracker, out: &mut O) -> Result<Code, CliError>
 }
 
 /// One finding per dangling reference, then one for the cycle.
-fn check_findings(verdict: &Check<'_>) -> Vec<Finding> {
+pub(crate) fn check_findings(verdict: &Check<'_>) -> Vec<Finding> {
     let dangling = verdict.dangling.iter().map(|Dangling { ticket, missing }| {
         Finding::new(
             format!("dag/dangling:{ticket}->{missing}"),

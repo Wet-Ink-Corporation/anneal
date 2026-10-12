@@ -3,8 +3,9 @@
 Work is cut into tickets that each fit one fresh context, joined by "blocked by" edges.
 `anneal dag check` proves the edges form a graph you can work through: no cycle, and no
 reference to a ticket that does not exist. `anneal dag frontier` lists the tickets that are
-ready now, each with a token estimate, so `/orchestrate` (#37) can fan out over independent
-work and split anything too large for one context.
+ready now, each with a token estimate, so `/orchestrate` can fan out over independent work
+(`anneal orchestrate fan-out`, [orchestrate.md](orchestrate.md)) and split anything too large
+for one context.
 
 ```text
 anneal dag check    [--tracker markdown|github] [--dir PATH] [--repo OWNER/NAME] [--issue N]

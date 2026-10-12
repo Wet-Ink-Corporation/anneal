@@ -439,11 +439,18 @@ one):
    frontmatter alone: `weighin_item` (the `wi-` id, the option), `status` (only `accepted`
    counts) and `title`, else `question`, as the summary. At most 4,096 directory entries are
    looked at and 256 atoms read, 16 KiB of each. An atom that does not read or parse is
-   skipped, as is one a ruling already cites as its `weigh_in_ref`. No weigh-in binary is
-   needed; `weighin open --all --json` as a third source arrives with #37.
+   skipped, as is one a ruling already cites as its `weigh_in_ref`;
+3. then, with a `weighin` to ask (`$WEIGHIN_BIN`, else `weighin` on `PATH`; see
+   [orchestrate.md](orchestrate.md)), the items `weighin open --all --json` lists as
+   `decided` whose atom is not written yet, summarised as `<question>: <option>`. weigh-in
+   gets at most 1 s, and never the time Clef's timeout needs; its output is capped at 4 MiB.
+   Without a `weighin` this step is skipped silently. When it fails (a `$WEIGHIN_BIN` naming
+   no file, a non-zero exit, a timeout, output that does not parse, no time left) the other
+   rulings are still offered and one `ERROR ruled-before: weigh-in's decided items were not
+   read: ...` line is the `systemMessage`.
 
 An id must be a decide option (1 to 64 of `A-Z a-z 0-9 _ . : -`) and not `none`. At most 31
-rulings are offered, rulings first, then atoms, each in id order, with `none` last; summaries
+rulings are offered, rulings first, then atoms and weigh-in's decided items, each in id order, with `none` last; summaries
 are cut to 120 bytes. With no rulings nothing is asked. The state is
 `{"input": <prompt>, "rulings": [{"id", "summary"}, ...]}`.
 

@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 8;
+pub const REGISTRY_VERSION: u32 = 9;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -49,11 +49,17 @@ pub enum EventKind {
     MigrateWaveDone,
     /// `migrate.contract`
     MigrateContract,
+    /// `weighin_parked`
+    WeighinParked,
+    /// `bridge.unavailable`
+    BridgeUnavailable,
+    /// `orchestrate.ruled`
+    OrchestrateRuled,
 }
 
 impl EventKind {
     /// Every registered type, in registry order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 17] = [
         Self::TestRun,
         Self::TaskDone,
         Self::PlanApproved,
@@ -68,6 +74,9 @@ impl EventKind {
         Self::MigrateWaveStarted,
         Self::MigrateWaveDone,
         Self::MigrateContract,
+        Self::WeighinParked,
+        Self::BridgeUnavailable,
+        Self::OrchestrateRuled,
     ];
 
     /// The type as stored: snake case.
@@ -88,6 +97,9 @@ impl EventKind {
             Self::MigrateWaveStarted => "migrate.wave.started",
             Self::MigrateWaveDone => "migrate.wave.done",
             Self::MigrateContract => "migrate.contract",
+            Self::WeighinParked => "weighin_parked",
+            Self::BridgeUnavailable => "bridge.unavailable",
+            Self::OrchestrateRuled => "orchestrate.ruled",
         }
     }
 
@@ -95,7 +107,13 @@ impl EventKind {
     #[must_use]
     pub const fn subject(self) -> TagKey {
         match self {
-            Self::TestRun | Self::TaskDone | Self::ReproRed => TagKey::Task,
+            // An orchestrated ticket is the task its events are about.
+            Self::TestRun
+            | Self::TaskDone
+            | Self::ReproRed
+            | Self::WeighinParked
+            | Self::BridgeUnavailable
+            | Self::OrchestrateRuled => TagKey::Task,
             Self::PlanApproved | Self::GrillConfirmed => TagKey::Plan,
             Self::VerdictSet | Self::RoundStarted => TagKey::Pr,
             Self::GateBlocked | Self::StopBlocked => TagKey::Point,
@@ -171,6 +189,14 @@ pub enum LedgerEvent {
     /// A migration's contract step ran: the old shape is removed (registry v7).
     #[serde(rename = "migrate.contract")]
     MigrateContract(MigrateContract),
+    /// A one-way call was parked in weigh-in with a default (registry v9).
+    WeighinParked(WeighinParked),
+    /// The weigh-in bridge could not park a call, so it was ruled instead (registry v9).
+    #[serde(rename = "bridge.unavailable")]
+    BridgeUnavailable(BridgeUnavailable),
+    /// The orchestrator ruled on a reversible call itself (registry v9).
+    #[serde(rename = "orchestrate.ruled")]
+    OrchestrateRuled(OrchestrateRuled),
 }
 
 impl LedgerEvent {
@@ -192,6 +218,9 @@ impl LedgerEvent {
             Self::MigrateWaveStarted(_) => EventKind::MigrateWaveStarted,
             Self::MigrateWaveDone(_) => EventKind::MigrateWaveDone,
             Self::MigrateContract(_) => EventKind::MigrateContract,
+            Self::WeighinParked(_) => EventKind::WeighinParked,
+            Self::BridgeUnavailable(_) => EventKind::BridgeUnavailable,
+            Self::OrchestrateRuled(_) => EventKind::OrchestrateRuled,
         }
     }
 
@@ -204,6 +233,11 @@ impl LedgerEvent {
             Self::TestRun(TestRun { task, .. }) => task.as_deref().map(Cow::Borrowed),
             Self::TaskDone(TaskDone { task }) | Self::ReproRed(ReproRed { task, .. }) => {
                 Some(Cow::Borrowed(task))
+            }
+            Self::WeighinParked(WeighinParked { ticket, .. })
+            | Self::BridgeUnavailable(BridgeUnavailable { ticket, .. })
+            | Self::OrchestrateRuled(OrchestrateRuled { ticket, .. }) => {
+                Some(Cow::Borrowed(ticket))
             }
             Self::PlanApproved(PlanApproved { plan, .. })
             | Self::GrillConfirmed(GrillConfirmed { plan, .. }) => Some(Cow::Borrowed(plan)),
@@ -559,12 +593,60 @@ pub struct MigrateContract {
     pub migration: String,
 }
 
+/// `weighin_parked`: a one-way call was parked in weigh-in with a default (registry v9).
+///
+/// `anneal orchestrate park` raised it and deferred it. The decision itself is weigh-in's; this
+/// records only that the ticket waits on `item_id`. Subject tag `task:` (the ticket).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WeighinParked {
+    /// The weigh-in item the call was raised as, `wi-` and its id.
+    pub item_id: String,
+    /// The ticket the call blocks.
+    pub ticket: String,
+    /// The Clef D2 decision that parked it, so its outcome can be labelled later; written only
+    /// when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+}
+
+/// `bridge.unavailable`: the weigh-in bridge could not park a call (registry v9).
+///
+/// There was no `weighin`, or it failed, so the orchestrator rules instead. Subject tag `task:`
+/// (the ticket).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeUnavailable {
+    /// The ticket whose call could not be parked.
+    pub ticket: String,
+    /// Why, in one line.
+    pub reason: String,
+}
+
+/// `orchestrate.ruled`: the orchestrator ruled on a call itself (registry v9).
+///
+/// It rules below D2's one-way threshold, in shadow, or with the bridge unavailable. Subject
+/// tag `task:` (the ticket).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrchestrateRuled {
+    /// The ticket the call was made in.
+    pub ticket: String,
+    /// What was ruled.
+    pub what: String,
+    /// Why.
+    pub why: String,
+    /// What it costs to undo if the ruling is wrong.
+    pub cost_if_wrong: String,
+    /// The Clef D2 decision behind the ruling, if one was asked; written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentStatus, EventKind, GrillConfirmed, LedgerEvent, MigrateContract, MigrateWave, Mode,
-        ModeSet, REGISTRY_VERSION, RoundStarted, SubagentStatus, TestOutcome, TestRun, TokenUsage,
-        UnknownEventKind, Verdict, VerdictSet, VerdictSource,
+        AgentStatus, BridgeUnavailable, EventKind, GrillConfirmed, LedgerEvent, MigrateContract,
+        MigrateWave, Mode, ModeSet, OrchestrateRuled, REGISTRY_VERSION, RoundStarted,
+        SubagentStatus, TestOutcome, TestRun, TokenUsage, UnknownEventKind, Verdict, VerdictSet,
+        VerdictSource, WeighinParked,
     };
     use crate::tag::TagKey;
     use serde_json::json;
@@ -882,11 +964,12 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_8() {
+    fn the_registry_is_version_9() {
         assert_eq!(
-            REGISTRY_VERSION, 8,
+            REGISTRY_VERSION, 9,
             "the migrate.wave.started, migrate.wave.done and migrate.contract types were added \
-             in version 7, round_started's ticket (with pr optional) in version 8"
+             in version 7, round_started's ticket (with pr optional) in version 8, \
+             weighin_parked, bridge.unavailable and orchestrate.ruled in version 9"
         );
     }
 
@@ -988,6 +1071,60 @@ mod tests {
                 (event.kind().subject(), event.subject_value()),
                 (TagKey::Migration, Some("users-email".into())),
                 "its subject is the migration"
+            );
+        }
+    }
+
+    #[test]
+    fn orchestrate_events_carry_their_ticket_as_the_task_subject() {
+        let cases = [
+            (
+                json!({"type": "weighin_parked", "item_id": "wi-e41e02", "ticket": "36",
+                       "decision": "d-0123"}),
+                LedgerEvent::WeighinParked(WeighinParked {
+                    item_id: "wi-e41e02".to_owned(),
+                    ticket: "36".to_owned(),
+                    decision: Some("d-0123".to_owned()),
+                }),
+            ),
+            (
+                json!({"type": "bridge.unavailable", "ticket": "36",
+                       "reason": "no weighin: WEIGHIN_BIN is unset and none is on PATH"}),
+                LedgerEvent::BridgeUnavailable(BridgeUnavailable {
+                    ticket: "36".to_owned(),
+                    reason: "no weighin: WEIGHIN_BIN is unset and none is on PATH".to_owned(),
+                }),
+            ),
+            (
+                json!({"type": "orchestrate.ruled", "ticket": "36", "what": "keep the cache",
+                       "why": "reversible", "cost_if_wrong": "one revert"}),
+                LedgerEvent::OrchestrateRuled(OrchestrateRuled {
+                    ticket: "36".to_owned(),
+                    what: "keep the cache".to_owned(),
+                    why: "reversible".to_owned(),
+                    cost_if_wrong: "one revert".to_owned(),
+                    decision: None,
+                }),
+            ),
+        ];
+
+        for (value, expected) in cases {
+            let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+            assert_eq!(event, expected, "{value} reads");
+            assert_eq!(
+                serde_json::to_value(&event).expect("serialises"),
+                value,
+                "and is written back under the same keys, an absent decision left out"
+            );
+            assert_eq!(
+                Some(event.kind().as_str()),
+                value["type"].as_str(),
+                "its kind is the stored name"
+            );
+            assert_eq!(
+                (event.kind().subject(), event.subject_value()),
+                (TagKey::Task, Some("36".into())),
+                "its subject is the ticket, as a task"
             );
         }
     }

@@ -4,7 +4,7 @@
 //! A ticket's round count is the highest `round` among its `round_started` events (0 with
 //! none). Rounds 1 to 3 go back to the same agent; rounds 4 and 5 go to a fresh agent one model
 //! tier up (`context: fork` with a named subagent, never `model:` in frontmatter); after round
-//! 5 the ticket is parked (exit 3; parking it to weigh-in is #37). `start` records the next
+//! 5 the ticket is parked (exit 3; `anneal orchestrate park` parks it to weigh-in). `start` records the next
 //! round, first writer wins, and records nothing once the ticket is parked; `status` never
 //! creates a ledger. See `docs/brief.md`.
 
@@ -124,7 +124,8 @@ impl Next {
                  subagent (never `model:` in frontmatter), with the brief and review package"
             }
             Self::Park => {
-                "five rounds ran: stop the fix loop and park the ticket to weigh-in (#37)"
+                "five rounds ran: stop the fix loop and park the ticket to weigh-in with \
+                 anneal orchestrate park"
             }
         }
     }

@@ -6,7 +6,9 @@
 //! list; a symlink is never followed) and then the weigh-in decision
 //! atoms in `.kb/_intake/decisions/*.md`, from their frontmatter only: `weighin_item` (the
 //! `wi-` id), `status` (only `accepted` counts) and `title` (else `question`) as the summary.
-//! An atom that does not read is skipped: the atoms are weigh-in's files, not anneal's.
+//! An atom that does not read is skipped: the atoms are weigh-in's files, not anneal's. The
+//! items weigh-in lists as decided (`weighin open --all --json`, read by the hook) join the
+//! atoms when no atom has their id yet, summarised as their question and the option decided.
 //!
 //! Bounds (H-13): the ruling store may hold at most [`MAX_DIR_ENTRIES`] entries and
 //! [`MAX_ATOM_FILES`] rulings; at most [`MAX_DIR_ENTRIES`] entries of the atoms directory are
@@ -25,6 +27,7 @@ use crate::decide::client::MAX_OPTIONS;
 use crate::decide::id::is_word;
 use crate::lint::skills::frontmatter;
 use crate::rulings::{self, ListLimits, RulingError};
+use crate::weighin::Decided;
 
 /// The atoms directory, relative to the repository root.
 const ATOMS_DIR: [&str; 3] = [".kb", "_intake", "decisions"];
@@ -89,12 +92,13 @@ pub(crate) enum PrecedentError {
     },
 }
 
-/// The precedents under the repository root `root`; see the module documentation.
+/// The precedents under the repository root `root`, with the items weigh-in has `decided`
+/// whose atoms are not written yet; see the module documentation.
 ///
 /// # Errors
 /// [`PrecedentError::Rulings`] for a ruling store that does not read,
 /// [`PrecedentError::Atoms`] for an atoms directory that cannot be listed.
-pub(crate) fn gather(root: &Path) -> Result<Vec<Precedent>, PrecedentError> {
+pub(crate) fn gather(root: &Path, decided: &[Decided]) -> Result<Vec<Precedent>, PrecedentError> {
     let limits = ListLimits {
         max_entries: MAX_DIR_ENTRIES,
         max_files: MAX_ATOM_FILES,
@@ -112,6 +116,16 @@ pub(crate) fn gather(root: &Path) -> Result<Vec<Precedent>, PrecedentError> {
         .collect();
     let atoms_dir = ATOMS_DIR.iter().fold(root.to_path_buf(), |p, c| p.join(c));
     let mut atoms = accepted_atoms(&atoms_dir)?;
+    for item in decided {
+        let id = item.id.as_str();
+        if offerable(id) && atoms.iter().all(|atom| atom.id != id) {
+            let question = item.question.trim().trim_end_matches('?');
+            atoms.push(Precedent {
+                id: id.to_owned(),
+                summary: one_line(&format!("{question}: {}", item.option)),
+            });
+        }
+    }
     atoms.sort_by(|a, b| a.id.cmp(&b.id));
     for atom in atoms {
         let fresh = precedents.iter().all(|taken| taken.id != atom.id);
@@ -237,7 +251,7 @@ mod tests {
     }
 
     fn ids(root: &Path) -> Result<Vec<String>, PrecedentError> {
-        Ok(gather(root)?
+        Ok(gather(root, &[])?
             .iter()
             .map(|precedent| precedent.id().to_owned())
             .collect())
@@ -248,7 +262,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         atom(root.path(), "wi-a53271", "accepted")?;
 
-        let found = gather(root.path())?;
+        let found = gather(root.path(), &[])?;
 
         let [precedent] = found.as_slice() else {
             panic!("one precedent: {found:?}");
@@ -346,7 +360,7 @@ mod tests {
             &format!("---\nid: long\nruled_at: 2026-10-11\nsummary: {long}\n---\n"),
         )?;
 
-        let found = gather(root.path())?;
+        let found = gather(root.path(), &[])?;
 
         let summary = found.first().map(Precedent::summary).unwrap_or_default();
         assert!(summary.len() <= MAX_SUMMARY_BYTES, "{}", summary.len());
@@ -367,7 +381,7 @@ mod tests {
             "no frontmatter\n",
         )?;
 
-        let error = gather(root.path()).expect_err("an invalid ruling");
+        let error = gather(root.path(), &[]).expect_err("an invalid ruling");
 
         assert!(matches!(error, PrecedentError::Rulings(_)), "{error:?}");
         Ok(())
@@ -380,7 +394,7 @@ mod tests {
             ruling(root.path(), &format!("r{n:03}"), "")?;
         }
 
-        let error = gather(root.path()).expect_err("over the bound");
+        let error = gather(root.path(), &[]).expect_err("over the bound");
 
         assert!(
             matches!(
@@ -399,7 +413,7 @@ mod tests {
     fn a_repository_with_neither_store_has_no_precedents() -> TestResult {
         let root = tempfile::tempdir()?;
 
-        assert!(gather(root.path())?.is_empty(), "nothing to offer");
+        assert!(gather(root.path(), &[])?.is_empty(), "nothing to offer");
         Ok(())
     }
 }

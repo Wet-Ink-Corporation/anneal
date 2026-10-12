@@ -38,6 +38,7 @@ mod lint_skills_inputs;
 mod lint_spec;
 mod lint_terms;
 mod migrate;
+mod orchestrate;
 mod paths;
 mod perf;
 mod plan;

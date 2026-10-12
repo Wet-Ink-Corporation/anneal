@@ -28,6 +28,7 @@ use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
 use crate::migrate::{self, MigrateArgs};
 use crate::mode::{self, ModeArgs};
+use crate::orchestrate::{self, OrchestrateArgs};
 use crate::perf::runner::ProcessRunner;
 use crate::perf::{self, PerfArgs};
 use crate::plan::{self, PlanArgs};
@@ -39,6 +40,7 @@ use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
 use crate::watch::{self, WatchArgs};
+use crate::weighin;
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -113,6 +115,9 @@ pub enum Command {
     /// Start a ticket's next fix-loop round, or print its round count and what comes next
     #[command(after_help = command_help(CommandName::Round))]
     Round(RoundArgs),
+    /// Gate fan-out on the frontier, park a one-way call in weigh-in, or record a ruling
+    #[command(after_help = command_help(CommandName::Orchestrate))]
+    Orchestrate(OrchestrateArgs),
     /// Ask a Clef decision point and record the answer
     #[command(after_help = command_help(CommandName::Decide))]
     Decide(DecideArgs),
@@ -166,6 +171,7 @@ impl Command {
             Self::Migrate(_) => CommandName::Migrate,
             Self::Brief(_) => CommandName::Brief,
             Self::Round(_) => CommandName::Round,
+            Self::Orchestrate(_) => CommandName::Orchestrate,
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
@@ -197,6 +203,7 @@ impl Command {
             | Self::Migrate(_)
             | Self::Brief(_)
             | Self::Round(_)
+            | Self::Orchestrate(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
             | Self::Eval(_) => OnFailure::Exit,
@@ -321,7 +328,20 @@ fn dispatch<O: Write, E: Write>(
         Command::Migrate(args) => run_migrate(args, out),
         Command::Brief(args) => run_brief(args, out),
         Command::Round(args) => run_round(args, out),
+        Command::Orchestrate(args) => run_orchestrate(args, out),
     }
+}
+
+/// `anneal orchestrate` from the process's working directory, with its environment for the
+/// ledger and `weighin`, which runs as a child process.
+fn run_orchestrate<O: Write>(args: &OrchestrateArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let ports = orchestrate::Ports {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        runner: &weighin::ProcessRunner,
+    };
+    orchestrate::run(args, &ports, out)
 }
 
 /// `anneal hook` with the process's stdin, working directory and environment.
