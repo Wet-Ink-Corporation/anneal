@@ -7,8 +7,9 @@
 //!    credential (`TOKEN=x`, `"API_KEY"=x`, `db_pass=x`);
 //! 2. a credential-named key anywhere in it, before `=` or `:` with optional quotes between
 //!    (`--from-literal=password=x`, `-Dpassword=x`, `/:_authToken=x`, `{"password":"x"}`,
-//!    `X-Api-Key:`, `"Authorization":`); a key with nothing after its `:`, or an
-//!    `Authorization` one, is a header whose value runs on ([`Then::Header`]);
+//!    `X-Api-Key:`, `"Authorization":`); a key with nothing after its `:`, an `Authorization`
+//!    one, or a header-shaped one with text after its `:` (`Cookie:a=1;`, `X-Api-Key:k`), is a
+//!    header whose value runs on ([`Then::Header`]);
 //! 3. a secret option of a known tool ([`super::tools`]);
 //! 4. an option, one dash or two, whose name names a credential (`--password x`,
 //!    `-storepass x`): the next word is its value, unless the name says the value is read
@@ -154,7 +155,9 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         let then = if rest.starts_with('=') {
             Then::Nothing
         } else if rest.starts_with(':') && !rest.starts_with("::") {
-            let header = kept >= word.len() || name.to_ascii_lowercase().contains("authorization");
+            let header = kept >= word.len()
+                || name.to_ascii_lowercase().contains("authorization")
+                || is_header_name(name);
             if header { Then::Header } else { Then::Nothing }
         } else {
             continue;
@@ -164,6 +167,17 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         }
     }
     None
+}
+
+/// Whether a credential key's name has the shape of an HTTP header, so a value attached to its
+/// `:` (`Cookie:a=1;`, `X-Api-Key:k`) may run on: `cookie`, or a name with a `-` inside it that
+/// ends in a credential word (`X-Api-Key`, `PRIVATE-TOKEN`, `Set-Cookie`). A git refspec such
+/// as `auth-fix:main` ends in no credential word, so it stays a key with its value in the word.
+fn is_header_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "cookie"
+        || (lower.trim_start_matches('-').contains('-')
+            && CREDENTIAL_WORDS.iter().any(|word| lower.ends_with(word)))
 }
 
 /// Rule 3: a known tool's secret option, read with shell quotes removed (`'-pX'`).

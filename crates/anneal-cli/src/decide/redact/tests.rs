@@ -251,3 +251,39 @@ fn url_userinfo_holding_a_question_mark_is_redacted() {
         "clone https://<redacted>@host/x now"
     );
 }
+
+// Final review of #89.
+
+#[test]
+fn every_cookie_pair_is_redacted_however_it_is_written() {
+    let cases = [
+        (
+            "set Cookie:a=x; sid=S now",
+            "set Cookie:<redacted> <redacted> <redacted>",
+        ),
+        (
+            "send \"Cookie:a=x; sid=S\" now",
+            "send \"Cookie:<redacted> <redacted>\" now",
+        ),
+        (
+            "send 'Cookie: a=x; sid=\"S\"' now",
+            "send 'Cookie: <redacted>; <redacted>\"' now",
+        ),
+        (
+            "run bash -c \"curl -H 'Cookie: a=S; sid=S' u\"",
+            "run bash -c \"curl -H 'Cookie: <redacted>; <redacted>' u\"",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
+fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
+    // Accepted over-redaction (wi-434adf): `host:8080?to=a` reads like `user:pass?X`.
+    assert_eq!(
+        safe_prompt("open https://host:8080?to=a@b now"),
+        "open https://<redacted>@b now"
+    );
+}

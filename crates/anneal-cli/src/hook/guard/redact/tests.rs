@@ -638,6 +638,9 @@ fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
         "curl -H Authorization: Bearer x",
         "curl -H Cookie: a=1",
         "printf %s Cookie:",
+        "curl -H Cookie:a=1",
+        "curl -H Cookie: a=1; b=2",
+        "curl -H X-Api-Key:k",
     ];
     let separators = [";", " ;", "&&", "||", "|", "&", "\n"];
     let nests: [(&str, &str); 6] = [
@@ -717,5 +720,56 @@ fn url_userinfo_holding_a_question_mark_is_redacted() {
     assert_eq!(
         redact("curl https://user:p?X@host/x"),
         "curl https://<redacted>@host/x"
+    );
+}
+
+// Final review of #89.
+
+#[test]
+fn a_cookie_with_no_blank_after_its_colon_hides_every_pair() {
+    assert_eq!(
+        redact("curl -H \"Cookie:a=x; sid=S\" u"),
+        "curl -H \"Cookie:<redacted>; <redacted>\" u"
+    );
+}
+
+#[test]
+fn a_cookie_pair_with_a_quoted_value_is_hidden() {
+    assert_eq!(
+        redact("curl -H 'Cookie: a=x; sid=\"S\"' u"),
+        "curl -H 'Cookie: <redacted>; <redacted>' u"
+    );
+}
+
+#[test]
+fn a_cookie_pair_ending_in_the_quote_that_closes_its_header_is_hidden() {
+    assert_eq!(
+        redact("bash -c \"curl -H 'Cookie: a=S; sid=S' u\""),
+        "bash -c \"curl -H 'Cookie: <redacted>; <redacted> u\""
+    );
+}
+
+#[test]
+fn a_word_after_a_cookie_semicolon_holding_a_substitution_stays_readable() {
+    assert_eq!(
+        redact("bash -c 'curl -H Cookie: a=1; b=$(dropdb production)'"),
+        "bash -c 'curl -H Cookie: <redacted>; b=$(dropdb production)'"
+    );
+}
+
+#[test]
+fn a_word_after_a_cookie_semicolon_that_is_no_pair_ends_the_hidden_pairs() {
+    assert_eq!(
+        redact("curl -H 'Cookie: a=1; Secure; b=2' u"),
+        "curl -H 'Cookie: <redacted>; Secure; b=2' u"
+    );
+}
+
+#[test]
+fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
+    // Accepted over-redaction (wi-434adf): `host:8080?to=a` reads like `user:pass?X`.
+    assert_eq!(
+        redact("open https://host:8080?to=a@b"),
+        "open https://<redacted>@b"
     );
 }

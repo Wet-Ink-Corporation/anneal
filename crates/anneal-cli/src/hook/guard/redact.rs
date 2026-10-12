@@ -15,10 +15,11 @@
 //!   only when what stays readable before it closes every quote it opens; otherwise the inside
 //!   of the quote is scanned and finds it there.
 //! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
-//!   `Cookie:`), every word to the end of its simple command or quote; inside a quote or
-//!   substitution, the `name=value` words after a `;` too (`"Cookie: a=1; b=2"`), but no other
-//!   word, so no header hides the next command; the word after `Bearer`, and after `Basic`
-//!   unless `decide::redact::basic_credential` says it cannot be one.
+//!   `Cookie:`, or `Cookie:a=1` with its value attached), every word to the end of its simple
+//!   command or quote; inside a quote or substitution, the `name=value` words after a `;` too
+//!   (`"Cookie: a=1; b=2"`, `sid="S"`), but no other word, so no header hides the next
+//!   command; the word after `Bearer`, and after `Basic` unless
+//!   `decide::redact::basic_credential` says it cannot be one.
 //! - **Subcommand arguments.** The word after `vault login` (`decide::redact::tools`).
 //! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
 //!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
@@ -48,6 +49,10 @@ use crate::decide::state::cut_chars;
 
 /// Characters that open a quote or substitution: a word part holding none is plain text.
 const QUOTING: [char; 6] = ['\'', '"', '`', '$', '\\', '('];
+
+/// The [`QUOTING`] characters that substitute or escape rather than only quote: a word holding
+/// one may run a command, so a cookie pair ([`is_pair`]) holds none.
+const SUBSTITUTING: [char; 4] = ['`', '$', '\\', '('];
 
 /// Most characters of the command kept, after redaction; a longer one ends in `…`. The same as
 /// `decide::state::MAX_STRING_CHARS`, so the compact state does not cut it again.
@@ -399,13 +404,16 @@ fn plain_token(raw: &str) -> Option<(&str, &str)> {
     looks_like_token(core).then_some((lead, trail))
 }
 
-/// A plain `name=value` word (`b=2`), as the pairs of a cookie are: a name of letters, digits,
-/// `_` and `-` that is not an option, and no quoting anywhere.
+/// A `name=value` word (`b=2`), as the pairs of a cookie are, read through the punctuation
+/// around it: only quotes before a name of letters, digits, `_` and `-` (so not an option), a
+/// value that may be quoted (`sid="S"`) or end in a quote that closes an outer one (`sid=S'`),
+/// and no substitution or escape anywhere, so a hidden pair never hides a command.
 fn is_pair(raw: &str) -> bool {
-    !raw.contains(QUOTING)
-        && raw.split_once('=').is_some_and(|(name, _)| {
+    let (lead, core, _) = split_punctuation(raw);
+    !raw.contains(SUBSTITUTING)
+        && lead.chars().all(|c| matches!(c, '\'' | '"'))
+        && core.split_once('=').is_some_and(|(name, _)| {
             !name.is_empty()
-                && !name.starts_with('-')
                 && name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
