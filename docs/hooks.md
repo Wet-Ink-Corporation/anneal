@@ -69,7 +69,8 @@ The context is, in order:
    runs its index rule only when it lints at least one skill; `plugin/skills` has none yet, so
    the test (`lint_skills_accepts_the_committed_index`) lints a fixture skill.
 2. **`.continue-here`**, the note the `handoff` hook writes before a compaction, every time it
-   exists at the worktree root (a regular file of at most 16 KiB); see `docs/handoff.md`.
+   exists at the worktree root (a regular file of at most 32 KiB whose head the hook recorded),
+   framed as data, with the injection scan's line on a hit; see `docs/handoff.md`.
 3. **The status-line hint**, once per anneal home, while no status line has saved context usage
    (`context-usage.json`), so the context monitor is off; see `docs/handoff.md`.
 4. **The live state**, only when it changed for this session (volatile last): the newest five
@@ -475,8 +476,9 @@ once per batch and no per-call entry exists. See `docs/handoff.md`.
 ## `handoff` (PreCompact)
 
 No matcher (manual and automatic compactions), 30 s timeout, `onFailure: continue`, role
-`scaffolding`. Before Claude Code compacts, it writes `.continue-here` at the worktree root
-(gitignored): the anneal mode, the build plan's current task ("task N of M"), the open gates
+`scaffolding`. Before Claude Code compacts, it writes `.continue-here` at the worktree root,
+excluded from git through the repository's `info/exclude` and recorded by hash in the anneal
+home: the anneal mode, the build plan's current task ("task N of M"), the open gates
 (the Stop hook's checks, run in process with no reply), a one-line summary of the ledger's
 newest events and the `/compact` instructions, keeping any `## Notes` section of the previous
 file. The bootstrap injects it at the next session start. It never blocks compaction, never

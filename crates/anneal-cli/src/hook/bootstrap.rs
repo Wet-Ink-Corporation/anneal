@@ -128,7 +128,7 @@ fn context(
         None => current_dir(),
     };
     let (handoff, handoff_note) = match &cwd {
-        Ok(cwd) => compaction::continue_here(cwd, GIT_TIMEOUT),
+        Ok(cwd) => compaction::continue_here(cwd, GIT_TIMEOUT, &lookup),
         // The live state's note below already says the working directory cannot be read.
         Err(_) => (None, None),
     };

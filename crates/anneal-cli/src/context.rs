@@ -4,11 +4,14 @@
 //!
 //! - [`usage`]: the auto-compact window, the thresholds and the crossing rule.
 //! - [`sessions`]: the small per-session state files (at most 64 sessions, newest last).
+//! - [`note`]: the handoff note `.continue-here`: its bounded read, the record of the notes the
+//!   handoff hook wrote (`handoff-notes.json` in the anneal home), and its git exclusion.
 //!
 //! The files, all in the anneal home (`~/.anneal`, or `$ANNEAL_HOME`):
 //! [`USAGE_FILE`] (written by the status line), [`MONITOR_FILE`] (the level each session last
 //! reached, written by the monitor) and [`HINT_FILE`] (the bootstrap's one-time setup hint).
 
+pub(crate) mod note;
 pub(crate) mod sessions;
 pub(crate) mod usage;
 

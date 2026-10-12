@@ -108,6 +108,20 @@ fn a_reading_without_a_usable_percentage_has_no_tokens() {
 }
 
 #[test]
+fn a_percentage_over_100_reads_as_the_whole_window() {
+    assert_eq!(
+        reading(Some(250.0), Some(200_000), None).used_tokens,
+        Some(200_000.0),
+        "clamped to 100%"
+    );
+    assert_eq!(
+        reading(Some(f64::MAX), Some(200_000), None).used_tokens,
+        Some(200_000.0),
+        "even the largest finite value"
+    );
+}
+
+#[test]
 fn each_threshold_fires_once_per_upward_crossing() {
     assert_eq!(crossing(None, None), None, "below: nothing");
     assert_eq!(

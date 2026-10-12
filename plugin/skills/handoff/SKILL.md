@@ -9,14 +9,14 @@ argument-hint: "[what the next session must know]"
 
 ## Overview
 
-Whatever must outlive `/clear` or `/compact` lives on disk, and a script writes it. The `handoff` hook writes `.continue-here` at the repository root before every compaction, and the `bootstrap` hook injects it at the next session start.
+Whatever must outlive `/clear` or `/compact` lives on disk, and a script writes it. The `handoff` hook writes `.continue-here` at the repository root before every compaction; the `bootstrap` hook injects it at the next session start.
 
 - You MUST write the note with `anneal hook handoff` before a `/clear` that leaves work unfinished; the `bootstrap` hook injects only what is on disk.
 - You MUST stop and hand off when the `context-monitor` hook stops you at 75% of the auto-compact window.
 
 ## When to use
 
-- A phase ends (spec approved, task done, review settled) and the next one starts.
+- A phase ends (spec approved, task done, review settled).
 - The `context-monitor` hook warned at 60% or stopped you at 75%.
 - Not to claim the work is finished (use `verify`), nor to split it (use `plan`).
 
@@ -34,7 +34,7 @@ Whatever must outlive `/clear` or `/compact` lives on disk, and a script writes 
 
 1. **Choose.** Take the first row of the table that fits. It's working if you can name the row.
 2. **Write the facts.** For hand off or compact, run `anneal hook handoff` with `{}` on stdin (compaction runs it for you). It's working if `.continue-here` shows the phase, the task N of M, the open gates and the ledger line.
-3. **Write the notes.** Under `## Notes` in `.continue-here`, add what a script cannot know: decisions in flight, what was tried and failed, the next step, and any argument given to this skill. It's working if a stranger could take the next step from the file alone.
+3. **Write the notes.** Under `## Notes` in `.continue-here`, add what a script cannot know: decisions in flight, what was tried and failed, the next step, and this skill's argument. Change nothing above it, or it is not injected. It's working if a stranger could take the next step from the file alone.
 4. **Act.** Run `/clear` or `/compact`, start the subagent, or continue. It's working if the next session's start shows the note.
 5. **Resume.** In the new session, read the injected note, check its open gates, and delete `.continue-here` once the work is picked up. It's working if no stale note is injected the session after.
 
@@ -50,7 +50,7 @@ Whatever must outlive `/clear` or `/compact` lives on disk, and a script writes 
 ## Red flags
 
 - `/clear` with unfinished work and no `.continue-here`.
-- Ignoring a stop from the `context-monitor` hook to squeeze in one more step.
+- Ignoring the `context-monitor` hook's stop to squeeze in one more step.
 - Notes that repeat the facts above them instead of the decisions behind them.
 - A note days old injected into an unrelated session.
 

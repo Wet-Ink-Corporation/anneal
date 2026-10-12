@@ -56,8 +56,11 @@ batch of tool calls; given a `PostToolUse` input it answers as `PostToolUse`.
 
 ## `.continue-here`
 
-Before every compaction the `handoff` hook writes `.continue-here` at the worktree root
-(gitignored), atomically:
+Before every compaction the `handoff` hook writes `.continue-here` at the worktree root,
+atomically. It adds `/.continue-here` to the repository's `<git-common-dir>/info/exclude` (once,
+only when no line there names it yet), so the note is never an untracked change: `git status`,
+`anneal mode` and the Stop hook do not see it, and `mode::scope` counts a root
+`.continue-here` as scratch as well. The note:
 
 ```markdown
 # Continue here
@@ -84,12 +87,26 @@ Written by anneal's handoff hook before an automatic compaction at <time>. ...
 - **Notes**: the `## Notes` section of the previous file and all after it, at most 8 KiB, is
   kept: that is where the agent writes what a script cannot know.
 
+Each item is one line: control characters (CR and LF among them) and Unicode line separators in
+a file name, task title, gate or error read as spaces, so no item can forge another line.
+
+The hook records the SHA-256 of the note's head (everything before its `## Notes` line) for the
+worktree in `<anneal home>/handoff-notes.json` (at most 64 worktrees). Notes are kept, and the
+note is injected, only while the file's head is the one recorded: a hand-written or committed
+`.continue-here`, or one whose head was edited, is neither. Edit only the notes section.
+
 What it cannot read is listed under `Not read:`. Outside a git repository it writes nothing; it
 never creates a ledger and never blocks compaction. Run by hand with `{}` on stdin (`anneal hook
 handoff`), it writes the same note for a handoff by `/clear`.
 
-The bootstrap injects the file (a regular file of at most 16 KiB) at every session start while
-it exists, after the index; the skill deletes it once the work is picked up.
+Both the hook and the bootstrap read the note only as a regular file (a symlink is refused, not
+followed) of at most 32 KiB, checking its length before reading it. The bootstrap injects a
+recorded note at every session start while it exists, after the index, under a `## Handoff
+note (.continue-here)` heading that frames it as data, not instructions. It runs the
+injection scan (`docs/injection-scan.md`) over the note and, on a hit, adds one line naming
+`.continue-here:<line>` and the kind of text, as the injection-scan hook does. An unrecorded
+note is not injected; a one-line note says so. The skill deletes the file once the work is
+picked up.
 
 ## The setup hint
 

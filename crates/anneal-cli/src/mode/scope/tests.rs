@@ -1,6 +1,13 @@
 use super::{PathKind, classify, normalise, relative, worktree_key};
 
 #[test]
+fn the_handoff_note_at_the_root_is_scratch_and_elsewhere_is_not() {
+    assert_eq!(classify(".continue-here", &[]), PathKind::Scratch);
+    assert_eq!(classify(".Continue-Here", &[]), PathKind::Scratch);
+    assert_eq!(classify("src/.continue-here", &[]), PathKind::Source);
+}
+
+#[test]
 fn a_posix_path_keeps_its_root_and_drops_dot_and_empty_components() {
     assert_eq!(normalise("/repo/./src//lib.rs"), "/repo/src/lib.rs");
 }

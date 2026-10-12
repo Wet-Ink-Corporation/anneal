@@ -192,6 +192,27 @@ fn a_post_tool_use_input_is_answered_as_post_tool_use() {
 }
 
 #[test]
+fn a_state_file_that_cannot_be_written_fails_open_without_a_block() {
+    let home = Home::new();
+    home.report(Some(190_000.0));
+    std::fs::create_dir(context::in_home(home.path(), context::MONITOR_FILE))
+        .expect("a directory where the monitor's state file goes");
+
+    let output = home.batch();
+
+    assert_eq!(decision(output.as_ref()), None, "fails open: no block");
+    let message = output
+        .as_ref()
+        .and_then(|output| output.get("systemMessage"))
+        .and_then(Value::as_str)
+        .expect("a system message");
+    assert!(
+        message.starts_with("ERROR context-monitor: ") && !message.contains('\n'),
+        "one ERROR line: {message}"
+    );
+}
+
+#[test]
 fn an_unreadable_input_is_one_error_line_and_never_a_block() {
     let home = Home::new();
     home.report(Some(190_000.0));

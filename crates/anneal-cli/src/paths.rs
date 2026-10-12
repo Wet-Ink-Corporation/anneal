@@ -84,7 +84,7 @@ pub fn git_common_dir(cwd: &Path) -> Result<PathBuf, PathError> {
 }
 
 /// [`git_common_dir`] with git killed after `timeout`.
-fn git_common_dir_within(cwd: &Path, timeout: Duration) -> Result<PathBuf, PathError> {
+pub(crate) fn git_common_dir_within(cwd: &Path, timeout: Duration) -> Result<PathBuf, PathError> {
     let output = run_git(cwd, &["rev-parse", "--git-common-dir"], timeout)?;
     if !output.status.success() {
         return Err(git_failure(cwd, &output.stderr));

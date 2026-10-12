@@ -6,5 +6,5 @@
 /plugin/libexec/anneal.exe
 /dist
 
-# The handoff hook's note for the next session (#38), written at the repository root
+# The handoff hook's note (#38); the hook also lists it in .git/info/exclude of any repository
 /.continue-here

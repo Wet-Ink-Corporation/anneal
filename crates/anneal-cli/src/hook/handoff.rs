@@ -4,10 +4,12 @@
 //! worktree: the anneal mode (phase), the build plan's current task ("task N of M"), the open
 //! gates (what the Stop hook would hold against stopping now: `[DEBUG-` leftovers and the
 //! playbook's missing events), a one-line summary of the ledger's newest events, and the
-//! instructions given to `/compact`. A `## Notes` section written into the previous file (what
-//! a script cannot know) is kept, at most [`MAX_NOTES_BYTES`] of it. The bootstrap injects the
-//! file at the next session start. Outside a git repository it writes nothing; it never
-//! creates a ledger.
+//! instructions given to `/compact`, each item on one line. It records the note's head in the
+//! anneal home and adds `/.continue-here` to the repository's `info/exclude` (see
+//! [`crate::context::note`]). A `## Notes` section written into the previous file (what a
+//! script cannot know) is kept, at most [`MAX_NOTES_BYTES`] of it, but only when the hook wrote
+//! that file's head. The bootstrap injects the file at the next session start. Outside a git
+//! repository it writes nothing; it never creates a ledger.
 //!
 //! Run by hand with `{}` on stdin, it writes the same file for a handoff without compaction
 //! (the `/handoff` skill does this before `/clear`). What it cannot read is listed in the file,
@@ -25,17 +27,12 @@ use anneal_ledger::Timestamp;
 use serde::Deserialize;
 
 use crate::baseline;
+use crate::context::note::{self, CONTINUE_HERE};
 use crate::error_chain::reason;
 use crate::hook::stop_output::StopOutput;
 use crate::hook::{HookEnv, StdinError, read_stdin};
 use crate::paths::{self, PathError};
 use facts::Facts;
-
-/// The handoff note's name, at the worktree root (gitignored).
-pub(crate) const CONTINUE_HERE: &str = ".continue-here";
-
-/// The heading whose section, and everything after it, survives a rewrite.
-const NOTES_HEADING: &str = "## Notes";
 
 /// The most of the previous file's notes kept, in bytes (H-13).
 pub(crate) const MAX_NOTES_BYTES: usize = 8 * 1024;
@@ -112,16 +109,20 @@ where
         .write(out)
 }
 
-/// Writes the note at the worktree `root`; what could not be read or written.
+/// Writes the note at the worktree `root`, records it in the anneal home and excludes it from
+/// git; what could not be read or written.
 fn write_note(root: &str, input: &Input, lookup: impl Fn(&str) -> Option<OsString>) -> Vec<String> {
     let path = Path::new(root).join(CONTINUE_HERE);
-    let mut facts = facts::gather(root, lookup);
-    let notes = match previous_notes(&path) {
-        Ok(notes) => notes,
+    let home = paths::anneal_home_from(&lookup);
+    let mut facts = facts::gather(root, &lookup);
+    let notes = match &home {
+        Ok(home) => previous_notes(&path, home, root, &mut facts.problems),
         Err(error) => {
-            facts
-                .problems
-                .push(format!("the previous {CONTINUE_HERE}: {}", reason(&error)));
+            facts.problems.push(format!(
+                "the anneal home, so earlier notes were not kept and the next session start \
+                 will not inject this one: {}",
+                reason(error)
+            ));
             None
         }
     };
@@ -134,25 +135,63 @@ fn write_note(root: &str, input: &Input, lookup: impl Fn(&str) -> Option<OsStrin
             "an unknown time".to_owned()
         }
     };
+    if let Err(error) = note::exclude(Path::new(root), GIT_TIMEOUT) {
+        facts.problems.push(format!(
+            "excluding {CONTINUE_HERE} from git: {}",
+            reason(&error)
+        ));
+    }
     let text = render(&facts, input, &written_at, notes.as_deref());
     if let Err(error) = baseline::write_text_atomically(&path, &text) {
         facts.problems.push(reason(&error));
+        return facts.problems;
+    }
+    if let Ok(home) = &home
+        && let Err(error) = note::record(home, root, &text)
+    {
+        facts.problems.push(format!(
+            "recording the note, so the next session start will not inject it: {}",
+            reason(&error)
+        ));
     }
     facts.problems
 }
 
-/// The `## Notes` section of the note at `path` and all after it, cut to [`MAX_NOTES_BYTES`];
-/// `None` when there is no file or no such section.
-fn previous_notes(path: &Path) -> Result<Option<String>, baseline::BaselineError> {
-    let Some(bytes) = baseline::read_state_bytes(path)? else {
-        return Ok(None);
+/// The notes section of the previous note at `path` and all after it, cut to
+/// [`MAX_NOTES_BYTES`], only when the hook wrote that note's head (recorded in the anneal home
+/// `home` for the worktree `root`); `None` when there is no such file or section. Why notes
+/// were not kept goes into `problems`.
+fn previous_notes(
+    path: &Path,
+    home: &Path,
+    root: &str,
+    problems: &mut Vec<String>,
+) -> Option<String> {
+    let text = match note::read(path) {
+        Ok(text) => text?,
+        Err(error) => {
+            problems.push(format!("the previous {CONTINUE_HERE}: {}", reason(&error)));
+            return None;
+        }
     };
-    let text = String::from_utf8_lossy(&bytes);
-    let start = text
-        .match_indices(NOTES_HEADING)
-        .map(|(at, _)| at)
-        .find(|at| *at == 0 || text.get(..*at).is_some_and(|before| before.ends_with('\n')));
-    Ok(start.and_then(|at| text.get(at..)).map(cut_notes))
+    let start = note::notes_start(&text)?;
+    match note::is_recorded(home, root, &text) {
+        Ok(true) => text.get(start..).map(cut_notes),
+        Ok(false) => {
+            problems.push(format!(
+                "the previous {CONTINUE_HERE} was not written by this hook (or its head was \
+                 edited), so its notes were not kept"
+            ));
+            None
+        }
+        Err(error) => {
+            problems.push(format!(
+                "the record of the previous {CONTINUE_HERE}, so its notes were not kept: {}",
+                reason(&error)
+            ));
+            None
+        }
+    }
 }
 
 /// `notes` cut to at most [`MAX_NOTES_BYTES`] at a character boundary, ending in a newline.
@@ -192,7 +231,7 @@ fn render(facts: &Facts, input: &Input, written_at: &str, notes: Option<&str>) -
     let instructions = input
         .custom_instructions
         .as_deref()
-        .map(|given| given.replace(['\r', '\n'], " "))
+        .map(one_line)
         .filter(|given| !given.trim().is_empty());
     if let Some(given) = instructions {
         let given: String = given.chars().take(MAX_INSTRUCTION_CHARS).collect();
@@ -201,6 +240,7 @@ fn render(facts: &Facts, input: &Input, written_at: &str, notes: Option<&str>) -
     if !facts.problems.is_empty() {
         items.push(format!("- Not read: {}", facts.problems.join("; ")));
     }
+    let items: Vec<String> = items.iter().map(|item| one_line(item)).collect();
     format!(
         "# Continue here\n\n\
          Written by anneal's handoff hook {when} at {written_at}. The next session start \
@@ -211,6 +251,21 @@ fn render(facts: &Facts, input: &Input, written_at: &str, notes: Option<&str>) -
              next step. This section is kept when the file is rewritten.\n"
         )
     )
+}
+
+/// `item` with every control character (CR and LF among them) and Unicode line or paragraph
+/// separator read as a space, so text from a file name, a plan or an error cannot start a line
+/// of its own in the note.
+fn one_line(item: &str) -> String {
+    item.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -112,7 +112,8 @@ fn leading_number(value: &OsStr) -> Option<u32> {
 }
 
 /// The reading for a status-line input whose context window reports `used_percentage` of a
-/// model window of `model_window` tokens, with the variable's value `env`.
+/// model window of `model_window` tokens, with the variable's value `env`. A percentage over
+/// 100 reads as 100; a negative or non-finite one as no reading.
 pub(crate) fn reading(
     used_percentage: Option<f64>,
     model_window: Option<u64>,
@@ -124,7 +125,7 @@ pub(crate) fn reading(
     let measured_against = f64::from(model.unwrap_or(DEFAULT_WINDOW));
     let used_tokens = used_percentage
         .filter(|percent| percent.is_finite() && *percent >= 0.0)
-        .map(|percent| percent / 100.0 * measured_against);
+        .map(|percent| percent.min(100.0) / 100.0 * measured_against);
     Reading {
         used_tokens,
         window: window(env, model),

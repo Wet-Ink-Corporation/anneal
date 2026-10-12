@@ -3,8 +3,11 @@
 //! them (H-13). The `kind` names the file's owner, so another file of the same name is refused
 //! rather than overwritten.
 //!
-//! Concurrent sessions may write the same file; the save is atomic, so the last writer wins
-//! and a lost update only waits for that session's next write.
+//! Concurrent sessions may write the same file. A save is atomic but a load-then-save is not
+//! locked, so the last writer wins and another session's update made in between is lost. What
+//! a loss costs depends on the file: a lost status-line reading is replaced at that session's
+//! next refresh; a lost monitor level means that session's threshold can fire once more (a
+//! repeated warning or stop); a lost handoff record means that note is not injected.
 
 use std::path::{Path, PathBuf};
 
