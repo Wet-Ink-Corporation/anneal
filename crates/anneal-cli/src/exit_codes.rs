@@ -229,6 +229,23 @@ pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");
 /// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted.
 pub const EVAL_INVALID: Code = Code::new(2, "invalid fixtures or skills");
+/// `eval routing --router claude`: the cost cap, the time limit or a failed later batch
+/// stopped the run while a prompt was still unsettled.
+pub const EVAL_INCOMPLETE: Code = Code::new(
+    3,
+    "incomplete: cost cap, time limit or a failed batch left a prompt unsettled",
+);
+/// `eval routing --router claude`: the real router could not run (`claude` missing or
+/// failing, no credentials, the plugin not loaded, an unreadable result).
+pub const EVAL_ROUTER_FAILED: Code = Code::new(4, "the real router could not run");
+/// `eval routing`'s codes, in table order.
+const EVAL_CODES: [Code; 5] = [
+    OK,
+    EVAL_BELOW_BOUND,
+    EVAL_INVALID,
+    EVAL_INCOMPLETE,
+    EVAL_ROUTER_FAILED,
+];
 /// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
 /// failure noted in its output or on stderr.
 pub const HOOK_DONE: Code = Code::new(
@@ -294,7 +311,7 @@ impl CommandCodes {
             CommandName::Orchestrate => ("", &ORCHESTRATE_CODES),
             CommandName::Verify => ("risk", &[VERIFY_REVIEW, VERIFY_TOOL_ERROR, VERIFY_SKIP]),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
-            CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
+            CommandName::Eval => ("routing", &EVAL_CODES),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };

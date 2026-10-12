@@ -244,6 +244,8 @@ A green result proves the calibration run completed and was recorded. It does **
 | 0 | ok |
 | 1 | below bound |
 | 2 | invalid fixtures or skills |
+| 3 | incomplete: cost cap, time limit or a failed batch left a prompt unsettled |
+| 4 | the real router could not run |
 
 A green result proves skill routing accuracy is at or above its bound on the eval set. It does **not** prove routing accuracy on prompts outside the eval set.
 

@@ -1,12 +1,13 @@
-//! The confusion table: rows are the expected skills, columns the top-ranked skills.
+//! The confusion table: rows are the expected skills, columns the skills the router picked
+//! (Tier 1: the top-ranked skill; Tier 2: the skill that fired).
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::eval::routing::{Case, NO_MATCH, TIE, Top};
+use crate::eval::routing::{Case, NO_MATCH, TIE};
 
-/// The row-header cell of the rendered table.
+/// The row-header cell of Tier 1's rendered table.
 const CORNER: &str = "expected \\ top";
 
 /// Counts of cases by expected skill (row) and top-ranked skill (column).
@@ -21,26 +22,49 @@ pub struct Confusion<'a> {
     /// Column labels in display order: every skill, then `(tie)` and `(none)` when they occur.
     #[serde(skip)]
     columns: Vec<&'a str>,
+    /// The row-header cell of the rendered table.
+    #[serde(skip)]
+    corner: &'static str,
 }
 
 impl<'a> Confusion<'a> {
     /// The table for `cases` over the model-invoked `skills` (sorted).
     pub(crate) fn new(skills: &'a [String], cases: &'a [Case]) -> Self {
+        let pairs = cases
+            .iter()
+            .map(|case| (case.expected.as_str(), case.top.label()))
+            .collect();
+        Self::tally(CORNER, skills, &[TIE, NO_MATCH], pairs)
+    }
+
+    /// The table of `(expected, picked)` pairs over the model-invoked `skills` (sorted). The
+    /// columns are every skill, then each of `extras` that some pair picked, in that order;
+    /// `corner` heads the rendered rows.
+    pub(crate) fn tally(
+        corner: &'static str,
+        skills: &'a [String],
+        extras: &[&'a str],
+        pairs: Vec<(&'a str, &'a str)>,
+    ) -> Self {
         let mut columns: Vec<&str> = skills.iter().map(String::as_str).collect();
-        for (extra, label) in [(Top::Tie, TIE), (Top::NoMatch, NO_MATCH)] {
-            if cases.iter().any(|case| case.top == extra) {
-                columns.push(label);
+        for &extra in extras {
+            if pairs.iter().any(|&(_, picked)| picked == extra) {
+                columns.push(extra);
             }
         }
         let mut rows: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
-        for case in cases {
+        for (expected, picked) in pairs {
             let row = rows
-                .entry(case.expected.as_str())
+                .entry(expected)
                 .or_insert_with(|| columns.iter().map(|&c| (c, 0)).collect());
-            let count = row.entry(case.top.label()).or_insert(0);
+            let count = row.entry(picked).or_insert(0);
             *count = count.saturating_add(1);
         }
-        Self { rows, columns }
+        Self {
+            rows,
+            columns,
+            corner,
+        }
     }
 
     /// The table as aligned text lines: a header, then one line per expected skill.
@@ -50,7 +74,7 @@ impl<'a> Confusion<'a> {
             .rows
             .keys()
             .map(|name| name.chars().count())
-            .chain([CORNER.chars().count()])
+            .chain([self.corner.chars().count()])
             .max()
             .unwrap_or(0);
         let widths: Vec<usize> = self
@@ -75,7 +99,7 @@ impl<'a> Confusion<'a> {
         let mut lines = Vec::with_capacity(self.rows.len().saturating_add(1));
         let header = self.columns.iter().zip(&widths);
         lines.push(line(
-            CORNER,
+            self.corner,
             header
                 .map(|(column, width)| format!("{column:>width$}"))
                 .collect(),

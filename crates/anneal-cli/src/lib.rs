@@ -17,7 +17,9 @@
 //! - [`plan`]: `anneal plan approve|check`, a plan approval recorded in the ledger by hash.
 //! - [`mode`]: `anneal mode build|diagnose|off`, the worktree's anneal mode that the
 //!   `PreToolUse` preconditions hook (`hook preconditions`, on Edit and Write) enforces.
-//! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`.
+//! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`, and with
+//!   `--router claude` Tier 2, the same prompts under Claude Code's router with Wilson
+//!   intervals.
 //! - [`dag`]: `anneal dag check|frontier` over the tickets a tracker holds (markdown, GitHub).
 //! - [`decide`]: `anneal decide`, one Clef question per decision point with its thresholds
 //!   applied and a row in `~/.anneal/decisions/decisions.jsonl`, and `decide label`.
