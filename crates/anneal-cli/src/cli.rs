@@ -1,16 +1,14 @@
 //! The command tree and the entry point that turns arguments into an exit code.
 //!
-//! Every command starts as a [`Stub`] that exits 64 (not implemented). To build one out,
-//! replace its `Stub` with a real `clap::Args` type (as `ledger` does with
-//! [`LedgerArgs`]), keep its `after_help`, and
-//! give it its own arm in the private `dispatch` function that writes an
+//! Every command has a real `clap::Args` type (as `ledger` has [`LedgerArgs`]), its
+//! `after_help`, and its own arm in the private `dispatch` function that writes an
 //! [`Envelope`](crate::envelope::Envelope) and returns the code `emit` hands back.
 
 use std::ffi::OsString;
 use std::io::Write;
 
 use clap::error::{ContextKind, ContextValue, ErrorKind};
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::brief::{self, BriefArgs};
 use crate::calibrate::{self, CalibrateArgs, CalibrateEnv};
@@ -144,14 +142,6 @@ enum OnFailure {
     /// Exit 2, which Claude Code reads as "block": a guard fails closed. The error is still
     /// written as one `ERROR` line.
     FailClosed,
-}
-
-/// Arguments of a command that is not built yet. It accepts anything, so a caller already using
-/// the future syntax (`anneal brief build ...`) gets 64, not a usage error.
-#[derive(Debug, Args)]
-pub struct Stub {
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
-    args: Vec<OsString>,
 }
 
 impl Command {
