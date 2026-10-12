@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "anneal-cli"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "anneal-ledger",
  "clap",
@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "anneal-ledger"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "happenstance-core",
  "happenstance-sqlite",
