@@ -215,7 +215,7 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    use super::{Limits, WaitError, wait_with_input};
+    use super::{Limits, wait_with_input};
 
     /// Thirty seconds and 1 KiB of each stream: ample for `git` on any runner.
     const LIMITS: Limits = Limits {
@@ -277,7 +277,10 @@ mod tests {
 
         let result = wait_with_input(&mut child, &vec![b'x'; 2 * 1024 * 1024], limits, "sleep");
 
-        assert!(matches!(result, Err(WaitError::Timeout)), "{result:?}");
+        assert!(
+            matches!(result, Err(super::WaitError::Timeout)),
+            "{result:?}"
+        );
         assert!(
             child.try_wait().expect("waitable").is_some(),
             "the child was reaped"
