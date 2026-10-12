@@ -1,6 +1,8 @@
 //! `anneal eval`: evaluation suites.
 //!
-//! - [`routing`]: `eval routing`, Tier 1 lexical routing over `evals/routing/<skill>.yaml`.
+//! - [`routing`]: `eval routing`, Tier 1 lexical routing over `evals/routing/<skill>.yaml`,
+//!   and with `--router claude` Tier 2, the same fixtures under Claude Code's own router
+//!   ([`routing::real`]).
 //!
 //! The envelope's `data` holds the counts, the confusion table as a map (`confusion`) and as
 //! aligned text lines (`table`, for `jq -r '.data.table[]'`); every miss and every problem is a
@@ -18,6 +20,7 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::Code;
 use crate::exit_codes::render::command_help;
+use routing::real::{self, RealArgs};
 use routing::{Case, CaseKind, Confusion, Outcome, Problem};
 
 /// Arguments of `anneal eval`.
@@ -31,19 +34,35 @@ pub struct EvalArgs {
 /// The suites `anneal eval` runs.
 #[derive(Debug, Subcommand)]
 pub enum EvalSuite {
-    /// Score routing fixtures against the skills by word overlap; 100% rank-1 or it fails
+    /// Score routing fixtures against the skills: by word overlap (100% rank-1), or with
+    /// `--router claude` under Claude Code's router (Wilson intervals; runs a model)
     #[command(after_help = command_help(CommandName::Eval))]
-    Routing(routing::RoutingArgs),
+    Routing(RoutingCommand),
+}
+
+/// Arguments of `anneal eval routing`: the inputs both routers read, and the Tier 2 flags.
+#[derive(Debug, Clone, Args)]
+pub struct RoutingCommand {
+    /// The skills and fixtures.
+    #[command(flatten)]
+    pub inputs: routing::RoutingArgs,
+    /// The router and its Tier 2 settings.
+    #[command(flatten)]
+    pub real: RealArgs,
 }
 
 /// Runs `anneal eval <suite>` and writes its envelope to `out`.
 ///
 /// # Errors
-/// [`CliError::Eval`] when the inputs could not be read, [`CliError::Output`] when `out`
-/// cannot be written.
+/// [`CliError::Usage`] for a Tier 2 flag without `--router claude`, [`CliError::Eval`] when
+/// the inputs could not be read or the real router could not run, [`CliError::Output`] when
+/// `out` cannot be written.
 pub fn run<O: Write>(args: &EvalArgs, out: &mut O) -> Result<Code, CliError> {
     match &args.suite {
-        EvalSuite::Routing(routing_args) => report(&routing::evaluate(routing_args)?, out),
+        EvalSuite::Routing(command) => match command.real.settings()? {
+            None => report(&routing::evaluate(&command.inputs)?, out),
+            Some(settings) => real::report(&real::evaluate(&command.inputs, &settings)?, out),
+        },
     }
 }
 
@@ -83,7 +102,8 @@ fn report<O: Write>(outcome: &Outcome, out: &mut O) -> Result<Code, CliError> {
         .map_err(CliError::Output)
 }
 
-fn problem_finding(problem: &Problem) -> Finding {
+/// The finding of a fixture or skill problem, shared by both routers' reports.
+pub(crate) fn problem_finding(problem: &Problem) -> Finding {
     match problem {
         Problem::Skill(finding) => Finding::new(
             format!("eval/routing/skill:{}", finding.key()),

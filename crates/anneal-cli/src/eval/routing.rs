@@ -8,6 +8,7 @@
 mod confusion;
 mod fixture;
 mod judge;
+pub mod real;
 mod score;
 
 use std::ffi::OsStr;
@@ -277,15 +278,23 @@ pub enum RoutingError {
     /// The fixtures directory could not be read.
     #[error("reading fixtures")]
     Fixtures(#[source] LintError),
+    /// The real router (`--router claude`) could not run.
+    #[error("the real router")]
+    Router(#[source] real::RouterError),
+    /// `--changed-since` could not compare the skills with its base.
+    #[error("--changed-since")]
+    Changed(#[source] real::ChangedError),
 }
 
 impl RoutingError {
     /// The documented exit code: a missing or wrong-kind path is a usage error, the rest
-    /// internal.
+    /// internal; the real router's failures are [`real::RouterError::code`]'s.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Skills(error) | Self::Fixtures(error) => error.code(),
+            Self::Router(error) => error.code(),
+            Self::Changed(error) => error.code(),
         }
     }
 }
