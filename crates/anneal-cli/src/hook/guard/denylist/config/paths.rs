@@ -81,7 +81,7 @@ const fn file(name: &'static str) -> Protected {
 }
 
 /// The protected paths.
-const PROTECTED: [Protected; 12] = [
+const PROTECTED: [Protected; 13] = [
     Protected {
         label: "hooks/",
         parent: None,
@@ -132,10 +132,18 @@ const PROTECTED: [Protected; 12] = [
     file("deny.toml"),
     file(".pre-commit-config.yaml"),
     file("lefthook.yml"),
+    // The gates' own settings: the orchestrate leads the brief hook trusts, the merge gate's
+    // review switch and sensitive globs, `check_fast`.
+    Protected {
+        label: ".anneal/config.json",
+        parent: Some(".anneal"),
+        name: Name::Exact("config.json"),
+    },
 ];
 
 /// Directories that hold protected config: removing, moving or re-permissioning one changes it.
-pub(super) const CONTAINERS: [(&str, &str); 3] = [
+pub(super) const CONTAINERS: [(&str, &str); 4] = [
+    (".anneal", ".anneal/"),
     (".claude", ".claude/"),
     (".github", ".github/"),
     (".cargo", ".cargo/"),

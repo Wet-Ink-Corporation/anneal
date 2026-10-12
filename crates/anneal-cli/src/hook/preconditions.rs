@@ -4,9 +4,10 @@
 //! worktree (from the file's longest existing ancestor directory, not the session's working
 //! directory) and that worktree's anneal mode in the ledger (`mode::active`). A file in no
 //! repository, no ledger, no mode or mode `off` is allowed silently, and it never creates a
-//! ledger. In a mode it allows test files, the build's plan and design tree, scratch
-//! directories and prose documents (the spec among them when it is one) (`mode::scope`), and
-//! judges every other file as source:
+//! ledger; the one exception is `.anneal/config.json`, anneal's own settings, which it denies
+//! in every mode and none (`Check::Settings`). In a mode it allows test files, the build's
+//! plan and design tree, scratch directories and prose documents (the spec among them when it
+//! is one) (`mode::scope`), and judges every other file as source:
 //!
 //! - build mode (`build`): the plan's spec passes `lint spec`, the design tree is confirmed at
 //!   its current hash, the tree was clean at entry and the plan is approved and current;
@@ -46,6 +47,14 @@ const GATED_TOOLS: [&str; 2] = ["Edit", "Write"];
 /// The `point` of the hook's `gate_blocked` events, before the check's id.
 const POINT_PREFIX: &str = "preconditions.";
 
+/// The directory and file name of anneal's own settings, `.anneal/config.json`.
+const SETTINGS: [&str; 2] = [".anneal", "config.json"];
+
+/// The reason an agent's edit of `.anneal/config.json` is denied.
+const SETTINGS_DENIED: &str = "preconditions: .anneal/config.json is anneal's own settings (the \
+                               orchestrate leads, the merge gate's keys, check_fast), which an \
+                               agent may not edit; edit it yourself";
+
 /// The precondition a denial names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Check {
@@ -65,6 +74,8 @@ pub(crate) enum Check {
     BadInput,
     /// The edit could not be judged: the ledger, git or the file system failed.
     Unjudged,
+    /// Any mode, or none: the file is `.anneal/config.json`, anneal's own settings.
+    Settings,
 }
 
 impl Check {
@@ -79,6 +90,7 @@ impl Check {
             Self::Repro => "repro",
             Self::BadInput => "bad-input",
             Self::Unjudged => "unjudged",
+            Self::Settings => "settings",
         }
     }
 }
@@ -292,6 +304,12 @@ fn judge(
         );
         return Verdict::deny(denial, Ok(None));
     };
+    // Before any ledger or mode: the settings name the agents trusted to spawn and the merge
+    // gate's rules, so an agent may never write them, in a mode or not.
+    if is_settings(&target, &anchor) {
+        let denial = Denial::new(Check::Settings, SETTINGS_DENIED);
+        return Verdict::deny(denial, open_existing(&anchor, lookup));
+    }
     let ledger = match open_existing(&anchor, lookup) {
         Ok(ledger) => ledger,
         Err(error) => {
@@ -317,6 +335,38 @@ fn existing_ancestor(target: &Path) -> Option<PathBuf> {
         .ancestors()
         .find(|dir| dir.is_dir())
         .map(Path::to_path_buf)
+}
+
+/// Whether `target` (absolute), whose longest existing ancestor directory is `anchor`, is a
+/// `.anneal/config.json`: as written after `.` and `..`, as the file resolves when it exists,
+/// or as `anchor` resolves with the rest of the path after it (a symlinked directory). Any
+/// directory's counts, not only the worktree root's, since this is judged before git is asked.
+/// A path that does not resolve is judged as written: the edit tool would meet the same
+/// failure.
+fn is_settings(target: &Path, anchor: &Path) -> bool {
+    let lexical = PathBuf::from(scope::normalise(&target.to_string_lossy()));
+    let through_anchor = || {
+        let rest = lexical.strip_prefix(anchor).ok()?;
+        Some(std::fs::canonicalize(anchor).ok()?.join(rest))
+    };
+    names_settings(&lexical)
+        || std::fs::canonicalize(&lexical).is_ok_and(|real| names_settings(&real))
+        || through_anchor().is_some_and(|real| names_settings(&real))
+}
+
+/// Whether `path` ends in `.anneal/config.json`, in any ASCII letter case (APFS and NTFS are
+/// case-insensitive by default) and with what Windows ignores in a name taken off: trailing
+/// dots and spaces, and an alternate data stream (`config.json::$DATA`).
+fn names_settings(path: &Path) -> bool {
+    let names = [path.parent().and_then(Path::file_name), path.file_name()];
+    names.iter().zip(SETTINGS).all(|(name, wanted)| {
+        name.is_some_and(|name| {
+            let name = name.to_string_lossy();
+            let stem = name.split_once(':').map_or(&*name, |(stem, _stream)| stem);
+            stem.trim_end_matches(['.', ' '])
+                .eq_ignore_ascii_case(wanted)
+        })
+    })
 }
 
 /// The denial for an edit of `target` (absolute), whose longest existing ancestor directory is

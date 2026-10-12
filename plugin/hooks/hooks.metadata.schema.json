@@ -46,6 +46,7 @@
             "PermissionRequest",
             "Stop",
             "SubagentStop",
+            "SubagentStart",
             "PreCompact",
             "PostCompact",
             "Notification",

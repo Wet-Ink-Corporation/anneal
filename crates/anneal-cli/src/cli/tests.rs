@@ -119,25 +119,6 @@ fn command_help_shows_its_exit_codes_and_does_not_prove() {
 }
 
 #[test]
-fn a_stub_exits_64_with_one_error_line_and_no_stdout() {
-    for args in [
-        &["brief"][..],
-        &["brief", "build", "--kind", "x"],
-        &["lint", "brief", "-q"],
-    ] {
-        let (code, out, err) = anneal(args);
-        assert_eq!(code, 64, "{args:?} is not implemented");
-        assert!(out.is_empty(), "{args:?}: nothing on stdout");
-        let command = args.first().expect("non-empty");
-        assert_eq!(
-            err,
-            format!("ERROR anneal {command} is not implemented yet\n"),
-            "{args:?}: one ERROR line"
-        );
-    }
-}
-
-#[test]
 fn unknown_argument_exits_2_with_one_error_line() {
     let (code, out, err) = anneal(&["nope"]);
     assert_eq!(code, 2, "usage errors exit 2");

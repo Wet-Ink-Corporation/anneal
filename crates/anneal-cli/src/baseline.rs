@@ -238,22 +238,36 @@ fn write_and_sync(mut file: File, bytes: &[u8]) -> io::Result<()> {
 /// and renames it over `path`, so readers see the old file or the new one, never a mix. On
 /// failure the temporary file is removed.
 fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temporary = stage(path, bytes)?;
+    fs::rename(&temporary, path).map_err(|error| discard(&temporary, error))
+}
+
+/// Writes `bytes` to a temporary file beside `path`, unique to this writer, and syncs it; the
+/// caller renames it over `path` (or [`discard`]s it). `brief build` stages its two files
+/// before renaming either, so a failure leaves neither half-written. On failure the temporary
+/// file is removed.
+pub(crate) fn stage(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     let (temporary, file) = create_temporary(|| temporary_path(path))?;
-    // `write_and_sync` consumes the file, so it is closed before the rename (Windows needs that).
-    let written = write_and_sync(file, bytes).and_then(|()| fs::rename(&temporary, path));
-    match written {
-        Ok(()) => Ok(()),
-        Err(error) => match fs::remove_file(&temporary) {
-            Ok(()) => Err(error),
-            Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
-            Err(cleanup) => Err(io::Error::new(
-                error.kind(),
-                format!(
-                    "{error}; removing {} also failed: {cleanup}",
-                    temporary.display()
-                ),
-            )),
-        },
+    // `write_and_sync` consumes the file, so it is closed before any rename (Windows needs that).
+    match write_and_sync(file, bytes) {
+        Ok(()) => Ok(temporary),
+        Err(error) => Err(discard(&temporary, error)),
+    }
+}
+
+/// Removes the staged `temporary` after `error`, returning `error` (with the removal's own
+/// failure added, if any).
+pub(crate) fn discard(temporary: &Path, error: io::Error) -> io::Error {
+    match fs::remove_file(temporary) {
+        Ok(()) => error,
+        Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => error,
+        Err(cleanup) => io::Error::new(
+            error.kind(),
+            format!(
+                "{error}; removing {} also failed: {cleanup}",
+                temporary.display()
+            ),
+        ),
     }
 }
 

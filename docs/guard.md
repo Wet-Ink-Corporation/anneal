@@ -140,6 +140,7 @@ case-insensitive file system (APFS, NTFS) `.CLAUDE/Settings.json` is `.claude/se
 | `.cargo/config*` | `config`, `config.toml` directly in `.cargo` |
 | `.github/workflows/` | `workflows` directly in `.github` |
 | `.eslintrc*`, `.pre-commit-config.yaml`, `lefthook.yml` | anywhere |
+| `.anneal/config.json` | `config.json` directly in `.anneal`: the gates' own settings (the orchestrate leads the brief hook trusts, the merge gate's `review` and `ship` keys, `check_fast`); the preconditions hook denies the Edit and Write tools on it |
 
 The writes it checks:
 
@@ -150,10 +151,10 @@ The writes it checks:
   `sed -i 's/hooks/x/' notes` is allowed;
 - the destination of `cp`, `mv`, `ln` and `install`, including `-t DIR` and
   `--target-directory` (or `--target`, `--t`). When the destination
-  is a directory (`-t`, a trailing `/`, or `.claude`, `.github`, `.cargo`), the destination is
+  is a directory (`-t`, a trailing `/`, or `.anneal`, `.claude`, `.github`, `.cargo`), the destination is
   also checked joined with each source's name, so `cp settings.json .claude/` is denied;
 - what `mv` moves away, and what `rm`, `unlink`, `rmdir`, `shred`, `chmod`, `chown` and `chgrp`
-  touch. These also deny `.claude`, `.github` or `.cargo` itself, because removing or
+  touch. These also deny `.anneal`, `.claude`, `.github` or `.cargo` itself, because removing or
   re-permissioning that directory changes the config inside it.
 
 A path component with an unquoted glob is denied when it could match a protected name

@@ -96,6 +96,18 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "brief", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "Stop": [
@@ -132,6 +144,19 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
             "args": ["hook", "handoff"],
             "timeout": 30,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "standing-orders"],
+            "timeout": 5,
             "onFailure": "continue"
           }
         ]

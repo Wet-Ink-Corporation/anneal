@@ -66,24 +66,6 @@ fn a_usage_error_writes_exactly_one_error_line() -> TestResult {
 }
 
 #[test]
-fn a_stub_command_exits_64_with_one_error_line() -> TestResult {
-    let output = anneal().args(["brief", "build", "--all"]).output()?;
-
-    assert_eq!(
-        output.status.code(),
-        Some(64),
-        "not implemented: {output:?}"
-    );
-    assert!(output.stdout.is_empty(), "no envelope for an error");
-    assert_eq!(
-        String::from_utf8(output.stderr)?,
-        "ERROR anneal brief is not implemented yet\n",
-        "one ERROR line"
-    );
-    Ok(())
-}
-
-#[test]
 fn help_lists_every_command_with_its_exit_codes() -> TestResult {
     let output = anneal().arg("--help").output()?;
     let help = String::from_utf8(output.stdout)?;

@@ -182,6 +182,10 @@ pub const MIGRATE_WAVE_OPEN: Code =
 pub const MIGRATE_REFUSED: Code = Code::new(3, "out of order; nothing recorded");
 /// `brief build`: the commit range is invalid.
 pub const BRIEF_BAD_RANGE: Code = Code::new(2, "bad range");
+/// `round start|status`: the next round may run (start: it was recorded).
+pub const ROUND_OK: Code = Code::new(0, "a round may run (start: recorded)");
+/// `round start|status`: five rounds ran, so the ticket is parked; start records nothing.
+pub const ROUND_PARK: Code = Code::new(3, "park: five rounds ran; start records nothing");
 /// `decide`: Clef answered and the decision was logged; `decide label`: the label was
 /// appended.
 pub const DECIDE_DECIDED: Code = Code::new(0, "decided and logged (label: appended)");
@@ -259,6 +263,7 @@ impl CommandCodes {
             // No scope: `start|done|contract` would widen the help's title column.
             CommandName::Migrate => ("", &[MIGRATE_RECORDED, MIGRATE_WAVE_OPEN, MIGRATE_REFUSED]),
             CommandName::Brief => ("build", &[OK, BRIEF_BAD_RANGE]),
+            CommandName::Round => ("start|status", &[ROUND_OK, ROUND_PARK]),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),

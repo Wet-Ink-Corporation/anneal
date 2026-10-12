@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 7;
+pub const REGISTRY_VERSION: u32 = 8;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -207,8 +207,9 @@ impl LedgerEvent {
             }
             Self::PlanApproved(PlanApproved { plan, .. })
             | Self::GrillConfirmed(GrillConfirmed { plan, .. }) => Some(Cow::Borrowed(plan)),
-            Self::VerdictSet(VerdictSet { pr, .. })
-            | Self::RoundStarted(RoundStarted { pr, .. }) => Some(Cow::Owned(pr.to_string())),
+            Self::VerdictSet(VerdictSet { pr, .. }) => Some(Cow::Owned(pr.to_string())),
+            // A ticket round has no pull request, so no subject tag.
+            Self::RoundStarted(RoundStarted { pr, .. }) => pr.map(|pr| Cow::Owned(pr.to_string())),
             Self::GateBlocked(GateBlocked { point, .. })
             | Self::StopBlocked(StopBlocked { point, .. }) => Some(Cow::Borrowed(point)),
             Self::SubagentStatus(SubagentStatus { agent, .. }) => Some(Cow::Borrowed(agent)),
@@ -350,13 +351,92 @@ pub struct VerdictSet {
     pub base: Option<String>,
 }
 
-/// `round_started`: a review round started on a pull request. Subject tag `pr:`.
+/// `round_started`: a review or fix-loop round started, on a pull request or a ticket.
+///
+/// Subject tag `pr:` when `pr` is set; a ticket round has no subject tag and is found by its
+/// type and `ticket` (`anneal round`). It names a pull request, a ticket or both, never
+/// neither: it is built with [`RoundStarted::for_pr`] or [`RoundStarted::for_ticket`], and an
+/// event naming neither does not read. A missing one is not written, so a pull request round
+/// keeps registry v6's shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RoundStartedFields")]
 pub struct RoundStarted {
-    /// The pull request number.
-    pub pr: u64,
+    /// The pull request number; optional since registry v8, required before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pr: Option<u64>,
+    /// The ticket the round is for, as given to `anneal round start --ticket` (registry v8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ticket: Option<String>,
     /// The round number, from 1.
-    pub round: u32,
+    round: u32,
+}
+
+impl RoundStarted {
+    /// Round `round` of the review of pull request `pr`.
+    #[must_use]
+    pub const fn for_pr(pr: u64, round: u32) -> Self {
+        Self {
+            pr: Some(pr),
+            ticket: None,
+            round,
+        }
+    }
+
+    /// Round `round` of the fix loop of `ticket`. The ticket is stored, so it is taken owned.
+    #[must_use]
+    pub fn for_ticket(ticket: impl Into<String>, round: u32) -> Self {
+        Self {
+            pr: None,
+            ticket: Some(ticket.into()),
+            round,
+        }
+    }
+
+    /// The pull request, if the round is a review round.
+    #[must_use]
+    pub const fn pr(&self) -> Option<u64> {
+        self.pr
+    }
+
+    /// The ticket, if the round is a fix-loop round.
+    #[must_use]
+    pub fn ticket(&self) -> Option<&str> {
+        self.ticket.as_deref()
+    }
+
+    /// The round number, from 1.
+    #[must_use]
+    pub const fn round(&self) -> u32 {
+        self.round
+    }
+}
+
+/// `round_started` as stored, before it is checked to name a pull request or a ticket.
+#[derive(Deserialize)]
+struct RoundStartedFields {
+    #[serde(default)]
+    pr: Option<u64>,
+    #[serde(default)]
+    ticket: Option<String>,
+    round: u32,
+}
+
+/// A `round_started` that names neither a pull request nor a (non-empty) ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("round_started names neither a pull request (pr) nor a ticket")]
+pub struct RoundOfNothing;
+
+impl TryFrom<RoundStartedFields> for RoundStarted {
+    type Error = RoundOfNothing;
+
+    fn try_from(fields: RoundStartedFields) -> Result<Self, Self::Error> {
+        let RoundStartedFields { pr, ticket, round } = fields;
+        let ticket = ticket.filter(|ticket| !ticket.is_empty());
+        if pr.is_none() && ticket.is_none() {
+            return Err(RoundOfNothing);
+        }
+        Ok(Self { pr, ticket, round })
+    }
 }
 
 /// `gate_blocked`: a gate refused to let work proceed. Subject tag `point:`.
@@ -483,7 +563,7 @@ pub struct MigrateContract {
 mod tests {
     use super::{
         AgentStatus, EventKind, GrillConfirmed, LedgerEvent, MigrateContract, MigrateWave, Mode,
-        ModeSet, REGISTRY_VERSION, SubagentStatus, TestOutcome, TestRun, TokenUsage,
+        ModeSet, REGISTRY_VERSION, RoundStarted, SubagentStatus, TestOutcome, TestRun, TokenUsage,
         UnknownEventKind, Verdict, VerdictSet, VerdictSource,
     };
     use crate::tag::TagKey;
@@ -802,12 +882,68 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_7() {
+    fn the_registry_is_version_8() {
         assert_eq!(
-            REGISTRY_VERSION, 7,
+            REGISTRY_VERSION, 8,
             "the migrate.wave.started, migrate.wave.done and migrate.contract types were added \
-             in version 7"
+             in version 7, round_started's ticket (with pr optional) in version 8"
         );
+    }
+
+    #[test]
+    fn round_started_carries_a_ticket_without_a_pull_request() {
+        let value = json!({"type": "round_started", "ticket": "36", "round": 2});
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::RoundStarted(RoundStarted::for_ticket("36", 2)),
+            "ticket and round are read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys, with no pr key"
+        );
+        assert_eq!(event.subject_value(), None, "no pull request, no pr: tag");
+    }
+
+    #[test]
+    fn a_round_started_written_before_ticket_still_reads_with_its_pull_request() {
+        let v6 = json!({"type": "round_started", "pr": 7, "round": 1});
+
+        let event: LedgerEvent = serde_json::from_value(v6.clone()).expect("registry v6 shape");
+
+        assert_eq!(
+            event.subject_value().as_deref(),
+            Some("7"),
+            "the pr: tag is kept"
+        );
+        assert_eq!(
+            event,
+            LedgerEvent::RoundStarted(RoundStarted::for_pr(7, 1)),
+            "the ticket defaults to none"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            v6,
+            "a pull request round is still written in v6's shape, with no ticket key"
+        );
+    }
+
+    #[test]
+    fn a_round_started_naming_neither_a_pull_request_nor_a_ticket_is_refused() {
+        for value in [
+            json!({"type": "round_started", "round": 1}),
+            json!({"type": "round_started", "pr": null, "ticket": null, "round": 1}),
+            json!({"type": "round_started", "ticket": "", "round": 1}),
+        ] {
+            assert!(
+                serde_json::from_value::<LedgerEvent>(value.clone()).is_err(),
+                "a round of nothing: {value}"
+            );
+        }
     }
 
     #[test]

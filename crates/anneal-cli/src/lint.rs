@@ -11,9 +11,10 @@
 //!   its findings are [`plan::PlanFinding`]s and its `data` carries the plan as read.
 //! - [`finding`]: the finding model the skill rules use, and its envelope form.
 //!
-//! `lint brief` is a stub until its story lands. It will be a module beside [`skills`] with
-//! its own `Args` type and `lint` function; [`run`] gets one more arm.
+//! - [`brief`]: `lint brief`, the nine fields of a brief (`brief::fields`), each present once
+//!   and filled; its findings are [`brief::BriefFinding`]s.
 
+pub mod brief;
 pub mod finding;
 pub mod plan;
 pub mod skills;
@@ -26,7 +27,6 @@ use std::path::Path;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::cli::Stub;
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
@@ -61,15 +61,16 @@ pub enum LintTarget {
     /// and blockers
     #[command(after_help = command_help(CommandName::Lint))]
     Plan(plan::PlanArgs),
-    /// Check a brief (not implemented yet)
-    Brief(Stub),
+    /// Check a brief: each of its nine fields present once and filled
+    #[command(after_help = command_help(CommandName::Lint))]
+    Brief(brief::BriefArgs),
 }
 
 /// Runs `anneal lint <target>` and writes its envelope to `out`.
 ///
 /// # Errors
-/// [`CliError::Lint`] when the target could not be checked, [`CliError::NotImplemented`] for a
-/// stubbed target, [`CliError::Output`] when `out` cannot be written.
+/// [`CliError::Lint`] when the target could not be checked, [`CliError::Output`] when `out`
+/// cannot be written.
 pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
     match &args.target {
         LintTarget::Skills(skills_args) => {
@@ -93,9 +94,10 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
             let outcome = plan::lint(plan_args)?;
             plan::report(&outcome, out)
         }
-        LintTarget::Brief(_) => Err(CliError::NotImplemented {
-            command: CommandName::Lint,
-        }),
+        LintTarget::Brief(brief_args) => {
+            let outcome = brief::lint(brief_args)?;
+            brief::report(&outcome, out)
+        }
     }
 }
 

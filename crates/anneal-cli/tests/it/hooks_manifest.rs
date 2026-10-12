@@ -75,6 +75,7 @@ enum HookEvent {
     PermissionRequest,
     Stop,
     SubagentStop,
+    SubagentStart,
     PreCompact,
     PostCompact,
     Notification,
@@ -82,7 +83,7 @@ enum HookEvent {
 }
 
 impl HookEvent {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::SessionStart,
         Self::SessionEnd,
         Self::UserPromptSubmit,
@@ -92,6 +93,7 @@ impl HookEvent {
         Self::PermissionRequest,
         Self::Stop,
         Self::SubagentStop,
+        Self::SubagentStart,
         Self::PreCompact,
         Self::PostCompact,
         Self::Notification,
@@ -835,5 +837,49 @@ fn the_handoff_hook_runs_before_every_compaction_and_fails_open() -> TestResult 
         hook.timeout, 30,
         "the Stop hook's checks run inside it, within the same 30 s"
     );
+    Ok(())
+}
+
+#[test]
+fn the_brief_hook_runs_before_every_agent_spawn_and_fails_closed() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::Brief)?;
+    assert_eq!(event, HookEvent::PreToolUse, "before the spawn");
+    assert_eq!(matcher, "Agent", "on every Agent call");
+    assert_eq!(
+        hook.args,
+        ["hook", "brief", "--fail-closed"],
+        "the launcher blocks when no binary is installed"
+    );
+    assert_eq!(
+        hook.on_failure,
+        OnFailure::Block,
+        "a crash or timeout blocks"
+    );
+    assert_eq!(hook.timeout, 5, "the brief budget is 5 s");
+    let role = metadata()?
+        .hooks
+        .into_iter()
+        .find(|row| row.id == HookName::Brief.as_str())
+        .map(|row| row.role);
+    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    Ok(())
+}
+
+#[test]
+fn the_standing_orders_hook_runs_on_every_subagent_start_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::StandingOrders)?;
+    assert_eq!(event, HookEvent::SubagentStart, "when a subagent starts");
+    assert_eq!(matcher, "", "every agent type");
+    assert_eq!(hook.args, ["hook", "standing-orders"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "fails open");
+    assert_eq!(hook.timeout, 5, "the standing-orders budget is 5 s");
     Ok(())
 }

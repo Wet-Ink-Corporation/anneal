@@ -7,6 +7,7 @@ compile_error!(
     "the integration tests need a debug build: ANNEAL_CLEF_URL is honoured only with debug_assertions"
 );
 
+mod brief;
 mod calibrate;
 mod cli;
 mod dag;
@@ -18,6 +19,7 @@ mod eval_routing;
 mod floor_guard;
 mod grill;
 mod hook_bootstrap;
+mod hook_brief;
 mod hook_completeness;
 mod hook_fast_check;
 mod hook_guard;
@@ -26,6 +28,7 @@ mod hook_handoff;
 mod hook_injection_scan;
 mod hook_merge_gate;
 mod hook_prompt;
+mod hook_standing_orders;
 mod hook_status;
 mod hooks_manifest;
 mod ledger;
@@ -45,6 +48,7 @@ mod release_check;
 mod repo_gates;
 mod repro;
 mod rollout;
+mod round;
 mod ship;
 mod statusline;
 #[cfg(test)]

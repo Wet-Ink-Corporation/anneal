@@ -550,6 +550,69 @@ fn an_edit_is_judged_like_a_write() -> TestResult {
     Ok(())
 }
 
+/// The deny line for an agent's edit of `.anneal/config.json`.
+const SETTINGS_DENIED: &str = "ERROR preconditions: .anneal/config.json is anneal's own \
+                               settings (the orchestrate leads, the merge gate's keys, \
+                               check_fast), which an agent may not edit; edit it yourself";
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn with_no_mode_a_write_or_edit_of_the_anneal_config_is_denied() -> TestResult {
+    let repo = Repo::new()?;
+    let config = repo.path().join(".anneal").join("config.json");
+
+    let write = repo.write_to(".anneal/config.json")?;
+    repo.write(".anneal/config.json", "{}\n")?;
+    let edit = repo.hook(&repo.input("Edit", &config)?)?;
+    let shouting = repo.write_to(".ANNEAL/Config.JSON")?;
+    let climbing = repo.write_to("src/../.anneal/./config.json")?;
+
+    assert_eq!(denial(&write)?, SETTINGS_DENIED, "a Write, no mode");
+    assert_eq!(denial(&edit)?, SETTINGS_DENIED, "an Edit, no mode");
+    assert_eq!(denial(&shouting)?, SETTINGS_DENIED, "any case");
+    assert_eq!(denial(&climbing)?, SETTINGS_DENIED, "after . and ..");
+    assert!(!repo.ledger().exists(), "the hook never creates a ledger");
+    assert_allowed(&repo.write_to(".anneal/briefs/36.md")?, "a brief");
+    assert_allowed(&repo.write_to(".anneal/config.json.bak")?, "another file");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn in_a_mode_a_write_of_the_anneal_config_is_denied_and_recorded() -> TestResult {
+    let repo = Repo::new()?;
+    repo.ready()?;
+    assert_allowed(&repo.write_to(SOURCE)?, "the mode's preconditions hold");
+
+    let reason = denial(&repo.write_to(".anneal/config.json")?)?;
+
+    assert_eq!(reason, SETTINGS_DENIED);
+    let blocked = repo.blocked()?;
+    let [recorded] = blocked.as_slice() else {
+        return Err(format!("one gate_blocked, got {blocked:?}").into());
+    };
+    assert_eq!(
+        recorded.pointer("/event/point"),
+        Some(&json!("preconditions.settings")),
+        "{recorded}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_write_through_a_symlink_to_the_anneal_directory_is_denied() -> TestResult {
+    let repo = Repo::new()?;
+    std::fs::create_dir_all(repo.path().join(".anneal"))?;
+    std::os::unix::fs::symlink(".anneal", repo.path().join("settings"))?;
+
+    let reason = denial(&repo.write_to("settings/config.json")?)?;
+
+    assert_eq!(reason, SETTINGS_DENIED);
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_path_climbing_out_of_a_test_directory_is_still_source() -> TestResult {

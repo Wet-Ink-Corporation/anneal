@@ -121,6 +121,26 @@
       "role": "scaffolding",
       "model_generation": "claude-5",
       "source": "Blueprint: Hooks (handoff), context survival; story #38"
+    },
+    {
+      "id": "brief",
+      "event": "PreToolUse",
+      "matcher": "Agent",
+      "fingerprint": "sha256:7138cdbabc332ae7",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Orchestration (no brief, no spawn; no nested spawns); story #36"
+    },
+    {
+      "id": "standing-orders",
+      "event": "SubagentStart",
+      "matcher": "",
+      "fingerprint": "sha256:caa18fb3d04187c1",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Orchestration (standing orders in every subagent); story #36"
     }
   ]
 }
