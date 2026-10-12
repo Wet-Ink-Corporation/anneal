@@ -162,14 +162,24 @@ A green result proves the change meets the rule for skipping a full review. It d
 
 A green result proves the rollout metrics are within their bounds. It does **not** prove that the metrics capture what users experience.
 
-## `anneal perf noise`
+## `anneal perf noise|sample`
 
 | Code | Meaning |
 |---|---|
-| 0 | keep |
-| 1 | revert |
+| 0 | keep (sample: saved) |
+| 1 | revert: neutral or slower |
 
-A green result proves the measured change is not a regression beyond run-to-run noise. It does **not** prove performance on hardware or workloads that were not measured.
+A green result proves the change is faster than the baseline beyond run-to-run noise (the 95% interval of the difference is below zero); for sample, its run times were saved. It does **not** prove performance on hardware or workloads that were not measured.
+
+## `anneal migrate`
+
+| Code | Meaning |
+|---|---|
+| 0 | recorded |
+| 1 | contract: a wave is still open; nothing recorded |
+| 3 | out of order; nothing recorded |
+
+A green result proves the migration step was recorded in order: a wave started once and done after its start, or the contract with every wave done. It does **not** prove that the waves migrated the data correctly or completely: the ledger records what was reported.
 
 ## `anneal brief build`
 

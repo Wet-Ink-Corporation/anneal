@@ -46,6 +46,12 @@
 //! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
 //! - [`statusline`]: `anneal statusline`, Claude Code's status line, which saves each
 //!   session's context usage for the context-monitor hook.
+//! - [`rollout`]: `anneal rollout decide`, go, hold or rollback from metrics and band tables.
+//! - [`json_file`]: a JSON file named on the command line, read within a size cap.
+//! - [`perf`]: `anneal perf sample|noise`, a change kept only when it is faster beyond
+//!   run-to-run noise.
+//! - [`migrate`]: `anneal migrate start|done|contract`, a migration's waves in the ledger;
+//!   contract is refused while a wave is open.
 
 pub mod adr;
 pub mod baseline;
@@ -66,10 +72,13 @@ pub mod floor_guard;
 pub mod glob;
 pub mod grill;
 pub mod hook;
+pub mod json_file;
 pub mod ledger;
 pub mod lint;
+pub mod migrate;
 pub mod mode;
 pub mod paths;
+pub mod perf;
 pub mod plan;
 pub mod pr_diff;
 mod process;
@@ -77,6 +86,7 @@ mod process;
 mod release_check;
 pub mod repo_config;
 pub mod repro;
+pub mod rollout;
 pub mod rulings;
 pub mod ship;
 pub mod statusline;

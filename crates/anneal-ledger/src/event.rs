@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 6;
+pub const REGISTRY_VERSION: u32 = 7;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -43,11 +43,17 @@ pub enum EventKind {
     ModeSet,
     /// `subagent_status`
     SubagentStatus,
+    /// `migrate.wave.started`
+    MigrateWaveStarted,
+    /// `migrate.wave.done`
+    MigrateWaveDone,
+    /// `migrate.contract`
+    MigrateContract,
 }
 
 impl EventKind {
     /// Every registered type, in registry order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::TestRun,
         Self::TaskDone,
         Self::PlanApproved,
@@ -59,6 +65,9 @@ impl EventKind {
         Self::StopBlocked,
         Self::ModeSet,
         Self::SubagentStatus,
+        Self::MigrateWaveStarted,
+        Self::MigrateWaveDone,
+        Self::MigrateContract,
     ];
 
     /// The type as stored: snake case.
@@ -76,6 +85,9 @@ impl EventKind {
             Self::StopBlocked => "stop_blocked",
             Self::ModeSet => "mode_set",
             Self::SubagentStatus => "subagent_status",
+            Self::MigrateWaveStarted => "migrate.wave.started",
+            Self::MigrateWaveDone => "migrate.wave.done",
+            Self::MigrateContract => "migrate.contract",
         }
     }
 
@@ -90,6 +102,9 @@ impl EventKind {
             // The payload names no worktree: the envelope's `worktree` is the subject.
             Self::ModeSet => TagKey::Worktree,
             Self::SubagentStatus => TagKey::Agent,
+            Self::MigrateWaveStarted | Self::MigrateWaveDone | Self::MigrateContract => {
+                TagKey::Migration
+            }
         }
     }
 }
@@ -147,6 +162,15 @@ pub enum LedgerEvent {
     ModeSet(ModeSet),
     /// A subagent stopped, with the status block its last message gave (or the violation).
     SubagentStatus(SubagentStatus),
+    /// A wave of a migration started (registry v7).
+    #[serde(rename = "migrate.wave.started")]
+    MigrateWaveStarted(MigrateWave),
+    /// A wave of a migration finished (registry v7).
+    #[serde(rename = "migrate.wave.done")]
+    MigrateWaveDone(MigrateWave),
+    /// A migration's contract step ran: the old shape is removed (registry v7).
+    #[serde(rename = "migrate.contract")]
+    MigrateContract(MigrateContract),
 }
 
 impl LedgerEvent {
@@ -165,6 +189,9 @@ impl LedgerEvent {
             Self::StopBlocked(_) => EventKind::StopBlocked,
             Self::ModeSet(_) => EventKind::ModeSet,
             Self::SubagentStatus(_) => EventKind::SubagentStatus,
+            Self::MigrateWaveStarted(_) => EventKind::MigrateWaveStarted,
+            Self::MigrateWaveDone(_) => EventKind::MigrateWaveDone,
+            Self::MigrateContract(_) => EventKind::MigrateContract,
         }
     }
 
@@ -185,6 +212,11 @@ impl LedgerEvent {
             Self::GateBlocked(GateBlocked { point, .. })
             | Self::StopBlocked(StopBlocked { point, .. }) => Some(Cow::Borrowed(point)),
             Self::SubagentStatus(SubagentStatus { agent, .. }) => Some(Cow::Borrowed(agent)),
+            Self::MigrateWaveStarted(MigrateWave { migration, .. })
+            | Self::MigrateWaveDone(MigrateWave { migration, .. })
+            | Self::MigrateContract(MigrateContract { migration }) => {
+                Some(Cow::Borrowed(migration))
+            }
             // Its subject is the envelope's `worktree`, tagged from the envelope.
             Self::ModeSet(_) => None,
         }
@@ -429,12 +461,30 @@ pub struct SubagentStatus {
     pub tokens: Option<TokenUsage>,
 }
 
+/// `migrate.wave.started` and `migrate.wave.done`: a wave of an expand, migrate, contract
+/// migration started or finished (registry v7). Subject tag `migration:`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MigrateWave {
+    /// The migration's id.
+    pub migration: String,
+    /// The wave's number within the migration.
+    pub wave: u32,
+}
+
+/// `migrate.contract`: a migration's contract step ran, removing the old shape (registry v7).
+/// Subject tag `migration:`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MigrateContract {
+    /// The migration's id.
+    pub migration: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentStatus, EventKind, GrillConfirmed, LedgerEvent, Mode, ModeSet, REGISTRY_VERSION,
-        SubagentStatus, TestOutcome, TestRun, TokenUsage, UnknownEventKind, Verdict, VerdictSet,
-        VerdictSource,
+        AgentStatus, EventKind, GrillConfirmed, LedgerEvent, MigrateContract, MigrateWave, Mode,
+        ModeSet, REGISTRY_VERSION, SubagentStatus, TestOutcome, TestRun, TokenUsage,
+        UnknownEventKind, Verdict, VerdictSet, VerdictSource,
     };
     use crate::tag::TagKey;
     use serde_json::json;
@@ -752,11 +802,58 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_6() {
+    fn the_registry_is_version_7() {
         assert_eq!(
-            REGISTRY_VERSION, 6,
-            "verdict_set's levels, source, sha, patch_id and base were added in version 6"
+            REGISTRY_VERSION, 7,
+            "the migrate.wave.started, migrate.wave.done and migrate.contract types were added \
+             in version 7"
         );
+    }
+
+    #[test]
+    fn migrate_events_are_stored_under_their_dotted_names_with_the_migration_as_subject() {
+        let cases = [
+            (
+                json!({"type": "migrate.wave.started", "migration": "users-email", "wave": 1}),
+                LedgerEvent::MigrateWaveStarted(MigrateWave {
+                    migration: "users-email".to_owned(),
+                    wave: 1,
+                }),
+            ),
+            (
+                json!({"type": "migrate.wave.done", "migration": "users-email", "wave": 2}),
+                LedgerEvent::MigrateWaveDone(MigrateWave {
+                    migration: "users-email".to_owned(),
+                    wave: 2,
+                }),
+            ),
+            (
+                json!({"type": "migrate.contract", "migration": "users-email"}),
+                LedgerEvent::MigrateContract(MigrateContract {
+                    migration: "users-email".to_owned(),
+                }),
+            ),
+        ];
+
+        for (value, expected) in cases {
+            let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+            assert_eq!(event, expected, "{value} reads");
+            assert_eq!(
+                serde_json::to_value(&event).expect("serialises"),
+                value,
+                "and is written back under the same keys"
+            );
+            assert_eq!(
+                Some(event.kind().as_str()),
+                value["type"].as_str(),
+                "its kind is the stored name"
+            );
+            assert_eq!(
+                (event.kind().subject(), event.subject_value()),
+                (TagKey::Migration, Some("users-email".into())),
+                "its subject is the migration"
+            );
+        }
     }
 
     #[test]

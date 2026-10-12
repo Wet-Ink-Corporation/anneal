@@ -7,7 +7,7 @@
     { "phase": "build", "entry_skill": "build" },
     { "phase": "diagnose", "entry_skill": "diagnose" },
     { "phase": "verify", "entry_skill": "verify" },
-    { "phase": "ship", "entry_skill": null },
+    { "phase": "ship", "entry_skill": "ship" },
     { "phase": "answer", "entry_skill": null }
   ],
   "no_skill_phase": "answer",

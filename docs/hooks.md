@@ -391,7 +391,7 @@ most one 2 s timeout:
   | `build` | `build` |
   | `diagnose` | `diagnose` |
   | `verify` | `verify` |
-  | `ship` | none until the `ship` skill lands |
+  | `ship` | `ship` |
   | `answer` | none: a question or chat that needs no workflow |
 
   A test keeps every entry skill a shipped `plugin/skills/<name>/SKILL.md` among the bootstrap

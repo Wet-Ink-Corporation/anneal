@@ -34,7 +34,9 @@ mod lint_skills;
 mod lint_skills_inputs;
 mod lint_spec;
 mod lint_terms;
+mod migrate;
 mod paths;
+mod perf;
 mod plan;
 #[cfg(test)]
 mod pr_repo;
@@ -42,6 +44,7 @@ mod preconditions;
 mod release_check;
 mod repo_gates;
 mod repro;
+mod rollout;
 mod ship;
 mod statusline;
 #[cfg(test)]

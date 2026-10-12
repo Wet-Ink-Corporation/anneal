@@ -18,10 +18,13 @@ use crate::exit_codes::{self, Code};
 use crate::floor_guard::FloorError;
 use crate::grill::GrillError;
 use crate::lint::skills::LintError;
+use crate::migrate::MigrateError;
 use crate::mode::ModeError;
 use crate::paths::PathError;
+use crate::perf::PerfError;
 use crate::pr_diff::PrError;
 use crate::repro::ReproError;
+use crate::rollout::RolloutError;
 use crate::task::TaskError;
 use crate::watch::WatchError;
 
@@ -94,6 +97,15 @@ pub enum CliError {
     /// `anneal watch` could not read its target.
     #[error("watch")]
     Watch(#[from] WatchError),
+    /// `anneal rollout decide` could not read its metrics or bands.
+    #[error(transparent)]
+    Rollout(#[from] RolloutError),
+    /// `anneal perf` could not read its baseline, run its command or save its samples.
+    #[error(transparent)]
+    Perf(#[from] PerfError),
+    /// `anneal migrate` could not read the migration's events.
+    #[error(transparent)]
+    Migrate(#[from] MigrateError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -123,6 +135,9 @@ impl CliError {
             Self::Decide(error) => error.code(),
             Self::Calibrate(error) => error.code(),
             Self::Watch(error) => error.code(),
+            Self::Rollout(error) => error.code(),
+            Self::Perf(error) => error.code(),
+            Self::Migrate(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }
