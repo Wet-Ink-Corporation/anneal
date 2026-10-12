@@ -239,6 +239,28 @@ more tool calls, is not seen.
 |---|---|---|
 | claim | the reply claims success and a source file changed after the worktree's latest `test_run` started, or that run is not green with exit 0, or has no `duration_ms`, or there is none | `completeness.claim` |
 | leftovers | a `[DEBUG-<id>]` tag is left in a file git knows of (`repro::debug_leftovers`, the scan `anneal repro leftovers` runs) | `completeness.leftovers` |
+| grounded | Clef D4, in effect enforce, finds a required section of the reply's status block not present and grounded (P(yes) below 0.50) | `completeness.grounded` |
+
+**Clef D4** is asked after the checks above, in a worktree, and only when the final message holds
+a status block (its last `Status:` line starts with `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT` or
+`BLOCKED`; a prose "Status: …" line is not one). Each required section (`Gate`, `Review`, `Changed`,
+`Decisions needed`, `Not verified`, as `hook::status::block::SECTIONS`) is one
+`noul present_and_grounded` question on the `clef` model, all asked at once; an absent section is
+asked with empty text, so Clef judges presence as well as grounding. Clef gets the section's text
+and the worktree's 8 newest ledger events (`<type> <subject>`), both redacted and cut to 1,024
+characters, and the ids of the gates the deterministic checks found; the decision rows keep
+neither text. Clef is asked only while its 2 s timeout fits in the first 25 s of the hook's 30 s.
+Only in effect enforce (configured `enforce` and past its first 50 answers), and only for an
+answer whose row was logged, does a section whose action is `block` become the `grounded` gate,
+which names each such section with its P(yes) and counts toward the cap like the other gates.
+In shadow (the default), off, misconfigured or with Clef unreachable, timed out or answering
+badly, the hook's output is exactly what it would be without D4. D4's other failures (the
+thresholds or anneal home, the budget, a row that could not be logged) join the `ERROR` line only
+when D4 is configured `enforce`; a Clef failure never blocks. Each section's answer advances D4's
+shadow count, so a stop with a report adds up to five; the five calls run at once and can lose an
+increment between them, which only lengthens the shadow period. Its outcome label, a human pushing back with
+"not done", is given by hand (`anneal decide label <id> no` after such a pushback, `yes` when the
+report stood; the id from the decision log) until a later story labels it automatically.
 
 A file the leftover scan could not read (over 1 MiB, past the 64 MiB budget, or a name it cannot
 open) is a nudge naming how many were skipped and pointing at `anneal repro leftovers`.

@@ -86,6 +86,67 @@ pub(crate) fn parse(message: &str) -> Parsed {
     }
 }
 
+/// Each section of [`SECTIONS`] with its text in the last status block of `message`, in report
+/// order: the text after its key, then its continuation lines up to a blank line, a code fence
+/// or the next key, joined by spaces; empty for a section the block lacks. `None` when
+/// `message` is not a report: it has no `Status:` line, or its last one does not start with a
+/// status word of [`STATUSES`] (a prose "Status: …" line), as [`parse`] reads it.
+pub(crate) fn section_texts(message: &str) -> Option<Vec<(&'static str, String)>> {
+    let raw: Vec<&str> = message.lines().collect();
+    let lines: Vec<String> = raw.iter().map(|line| plain(line)).collect();
+    let status_at = lines
+        .iter()
+        .rposition(|line| value(line, "Status").is_some())?;
+    let word = first_word(
+        lines
+            .get(status_at)
+            .and_then(|line| value(line, "Status"))?,
+    );
+    if !STATUSES
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case(word))
+    {
+        return None;
+    }
+    let rest = lines.get(status_at.saturating_add(1)..).unwrap_or_default();
+    let raw_rest = raw.get(status_at.saturating_add(1)..).unwrap_or_default();
+    let is_key = |line: &str| {
+        value(line, "Status").is_some() || SECTIONS.iter().any(|s| value(line, s).is_some())
+    };
+    let texts = SECTIONS
+        .iter()
+        .map(|section| {
+            let Some(at) = rest.iter().position(|line| value(line, section).is_some()) else {
+                return (*section, String::new());
+            };
+            let first = rest
+                .get(at)
+                .and_then(|line| value(line, section))
+                .unwrap_or_default();
+            let following = rest
+                .iter()
+                .zip(raw_rest)
+                .skip(at.saturating_add(1))
+                .take_while(|(line, raw)| {
+                    !line.trim().is_empty() && !is_fence(raw) && !is_key(line)
+                })
+                .map(|(line, _)| line.as_str());
+            let words: Vec<&str> = std::iter::once(first)
+                .chain(following)
+                .flat_map(str::split_whitespace)
+                .collect();
+            (*section, words.join(" "))
+        })
+        .collect();
+    Some(texts)
+}
+
+/// Whether `line` opens or closes a code fence.
+fn is_fence(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("```") || line.starts_with("~~~")
+}
+
 /// `line` without emphasis and code-span marks, and without leading list or quote markers.
 fn plain(line: &str) -> String {
     let unmarked: String = line.chars().filter(|c| !matches!(c, '*' | '`')).collect();
@@ -126,7 +187,7 @@ fn first_word(text: &str) -> &str {
 mod tests {
     use anneal_ledger::event::AgentStatus;
 
-    use super::{Parsed, parse};
+    use super::{Parsed, parse, section_texts};
 
     const FULL: &str = "\
 Gate: fmt ok | clippy ok | test ok (3 passed) | doc ok
@@ -253,6 +314,60 @@ Not verified: none";
             parse(&format!("{FULL}\nStatus: DONE\n")).missing.len(),
             5,
             "sections before the status line belong to something else"
+        );
+    }
+
+    #[test]
+    fn section_texts_reads_each_section_of_the_last_block_in_order() {
+        let message = "Earlier: Gate: ignored\n\n```text\nStatus: DONE\nGate: fmt ok | test ok\n\
+                       - **Changed:** crates/x (+1/-0)\n  and crates/y\nNot verified: none\n```\n";
+
+        let texts = section_texts(message).expect("a status line");
+
+        assert_eq!(
+            texts,
+            vec![
+                ("Gate", "fmt ok | test ok".to_owned()),
+                ("Review", String::new()),
+                ("Changed", "crates/x (+1/-0) and crates/y".to_owned()),
+                ("Decisions needed", String::new()),
+                ("Not verified", "none".to_owned()),
+            ],
+            "every section in report order, its continuation lines joined, absent ones empty"
+        );
+    }
+
+    #[test]
+    fn section_texts_is_none_without_a_status_line() {
+        assert_eq!(
+            section_texts("Gate: green\nChanged: a"),
+            None,
+            "sections without a Status: line are not a report"
+        );
+    }
+
+    #[test]
+    fn section_texts_is_none_when_the_last_status_line_is_prose() {
+        let prose = "Status: the build is still running\nGate: green\nChanged: a";
+        let prose_last = "Status: DONE\nGate: green\n\nStatus: waiting on CI, see above\n";
+
+        assert_eq!(section_texts(prose), None, "no status word: not a report");
+        assert_eq!(
+            section_texts(prose_last),
+            None,
+            "the last Status: line decides, as in `parse`"
+        );
+    }
+
+    #[test]
+    fn section_texts_reads_a_block_whose_status_word_is_known_in_any_case() {
+        let texts = section_texts("Status: blocked: waiting on CI\nGate: fmt ok\n")
+            .expect("BLOCKED is a known status");
+
+        assert_eq!(
+            texts.first(),
+            Some(&("Gate", "fmt ok".to_owned())),
+            "{texts:?}"
         );
     }
 }

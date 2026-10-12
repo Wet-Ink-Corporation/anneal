@@ -106,6 +106,14 @@ impl World {
         Self::new(&CONFIGURED)
     }
 
+    /// Configured for enforce, but with no answer counted yet: every point is still in its
+    /// 50-answer shadow period.
+    pub(crate) fn enforce_configured_in_shadow_period() -> TestResult<Self> {
+        let mut vars = CONFIGURED.to_vec();
+        vars.push(("CLAUDE_PLUGIN_OPTION_CLEF_MODE", "enforce"));
+        Self::new(&vars)
+    }
+
     /// Configured for enforce, with `point` past its shadow period.
     pub(crate) fn enforcing(point: Point) -> TestResult<Self> {
         let mut vars = CONFIGURED.to_vec();

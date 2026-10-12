@@ -64,24 +64,32 @@ pub(crate) fn read_input<R: Read>(stdin: R) -> Result<Input, InputError> {
     serde_json::from_slice(&bytes).map_err(InputError::Json)
 }
 
-/// A prompt hook's time: [`HOOK_BUDGET`] from the hook's start, on the monotonic clock.
+/// A hook's time: a total ([`HOOK_BUDGET`] for a prompt hook) from the hook's start, on the
+/// monotonic clock.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Budget {
     start: Duration,
+    total: Duration,
 }
 
 impl Budget {
-    /// A budget starting now on `clock`.
+    /// A prompt hook's budget, [`HOOK_BUDGET`], starting now on `clock`.
     pub(crate) fn start(clock: &impl Clock) -> Self {
+        Self::start_for(clock, HOOK_BUDGET)
+    }
+
+    /// A budget of `total` starting now on `clock`, for a hook with a longer timeout.
+    pub(crate) fn start_for(clock: &impl Clock, total: Duration) -> Self {
         Self {
             start: clock.monotonic(),
+            total,
         }
     }
 
     /// What is left of the budget on `clock`, zero once spent.
     pub(crate) fn left(&self, clock: &impl Clock) -> Duration {
         let spent = clock.monotonic().saturating_sub(self.start);
-        HOOK_BUDGET.saturating_sub(spent)
+        self.total.saturating_sub(spent)
     }
 
     /// Whether Clef's whole timeout (`client::TIMEOUT`) still fits on `clock`.
@@ -96,7 +104,7 @@ impl Budget {
             Err(format!(
                 "Clef was not asked: {} ms of the hook's {} ms left, under Clef's {} ms timeout",
                 left.as_millis(),
-                HOOK_BUDGET.as_millis(),
+                self.total.as_millis(),
                 client::TIMEOUT.as_millis()
             ))
         }

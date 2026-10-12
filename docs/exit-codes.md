@@ -209,6 +209,16 @@ A green result proves the ticket's round count was read from the ledger, and for
 
 A green result proves fan-out: the frontier has at least 3 independent tickets; park: weigh-in raised the call and deferred it with its default, and the ledger names the item; rule: the ruling was recorded. It does **not** prove that the tickets are worth running in parallel, that the call was one-way, or that the ruling or the default is right.
 
+## `anneal verify risk`
+
+| Code | Meaning |
+|---|---|
+| 0 | run the doubt review |
+| 2 | the change could not be read |
+| 3 | skip the doubt review (D5 enforcing, no trigger) |
+
+A green result proves the whole change was read and the doubt review is due: a trigger fired, or Clef D5 did not say skip in effect enforce. It does **not** prove that the change has defects, or that a change sent past the review has none.
+
 ## `anneal decide`
 
 | Code | Meaning |

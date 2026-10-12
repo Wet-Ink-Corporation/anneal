@@ -124,6 +124,29 @@ first 50 answered decisions, and on exit 3 or 5, it rules and records the ruling
 park or ruling (`--decision`), so its outcome, the weigh-in ruling on the parked item, can be
 labelled later. See [orchestrate.md](orchestrate.md).
 
+**D4** is asked by the `completeness` (Stop) hook, in process, about each required section of
+the final report's status block (`noul present_and_grounded` on `clef`, the larger model): in
+effect enforce a `block` answer (below 0.50) blocks the stop naming the section, within the cap of
+2 blocks in a row; in shadow the hook's output never changes. See [hooks.md](hooks.md).
+
+**D5** is `anneal verify risk [--base <ref>]`, which the `verify` skill runs before its doubt
+pass. It reads the working tree's change as `floor-guard` does (committed and uncommitted changes
+against the merge base, untracked files as added) and fires its deterministic triggers whatever
+Clef says: a path, or the path it was renamed from, matching the skip-rule's default auth,
+payments or migrations globs; more than 400 changed lines (added plus removed; binary files count
+none); an untracked file over 1 MiB, whose lines are not counted. It then asks
+`score defect_risk` on `clef-flash` about the change (the number of files and lines and the paths
+with their line counts, redacted; the row keeps none of it; an empty change asks nothing). Exit 3
+(skip the doubt review) only when no trigger fired and D5, in effect enforce, answered `skip`
+with its row logged; otherwise exit 0 (run it), so in shadow, off, misconfigured or with no answer
+the review runs as it always did. A change that cannot be read exits 2. `data` holds `base`,
+`merge_base`, `files`, `lines`, `doubt_review`, `triggers` (`path` with `glob` and `category`,
+`lines` with `limit`, `unmeasured`; at most 64 file triggers, the rest in `omitted`) and `clef`
+(`clef`: `not_asked`, `off`, `misconfigured`, `decided`, `no_answer`, `unlogged` or `failed`;
+`id`, `defect_risk`, `action`, `mode`, `enforce`, `reason`). Its outcome, defects found later in
+the pull request's review, is labelled by hand (`anneal decide label <data.clef.id> yes` when
+review found one, `no` when it found none).
+
 Model aliases map to Workers AI ids in the file's `models` table (`clef-flash`, `clef`), so a
 model can change without a code change. The ids shipped are placeholders until the deployed
 models are named. D5's blueprint rule, an expected level of 2.0 or more on low/med/high/critical

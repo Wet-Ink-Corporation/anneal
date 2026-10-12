@@ -193,7 +193,9 @@ where
         HookName::Guard => guard::run(env, out),
         HookName::Preconditions => preconditions::run(env, out),
         HookName::FastCheck => fast_check::run(env, out),
-        HookName::Completeness => completeness::run(env, out),
+        HookName::Completeness => {
+            completeness::run(env, &UreqTransport::new(), &SystemClock::new(), out)
+        }
         HookName::Status => status::run(env, out),
         HookName::Route => route::run(env, &UreqTransport::new(), &SystemClock::new(), out),
         HookName::RuledBefore => {

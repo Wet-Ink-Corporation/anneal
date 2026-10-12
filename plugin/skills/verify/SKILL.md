@@ -20,10 +20,10 @@ Verification comes before completion: "done" or "passing" in a reply needs fresh
 
 ## Process
 
-1. **Run the tests fresh.** Run `anneal task done <id> -- <test command>` with the task's own test command. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
+1. **Run the tests fresh.** Run `anneal task done <id> -- <the task's test command>`. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
 2. **Run the gate.** In a Rust repository (a `Cargo.toml` at the root), run `temper:gate`. It's working if the gate is green.
 3. **Clear the leftovers.** Run `anneal repro leftovers`. It's working if it exits 0.
-4. **Doubt pass.** Hand one or more reviewer subagents the artifact (the diff and the files it touches) and the contract (the spec's criteria, the task's test, the plan), never your claim or summary. Ask each for findings as `file:line`, what is wrong and why, ending in a Status block. It's working if each reviewer got files, not your conclusions.
+4. **Doubt pass.** Run `anneal verify risk` first; on exit 3, skip to step 6 and say so. Hand one or more reviewer subagents the artifact (the diff and the files it touches) and the contract (the spec's criteria, the task's test, the plan), never your claim or summary. Ask each for findings as `file:line`, what is wrong and why, ending in a Status block. It's working if each reviewer got files, not your conclusions.
 5. **Triage.** Reject every finding without a `file:line`. Fix each one you accept, then go back to step 1. It's working if each cycle ends with no accepted finding, within 3 cycles; after the third, stop and hand the open findings to the human.
 6. **Report.** Claim only what the ledger shows: name the green `test_run`, the gate result and any finding left open. It's working if every claim points to evidence.
 

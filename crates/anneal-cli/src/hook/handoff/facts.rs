@@ -204,7 +204,7 @@ fn summary(store: &Store) -> Result<String, String> {
 }
 
 /// `task_done task:T1`, `mode_set build`: an event's type and what it is about, one line.
-fn event_word(recorded: &Recorded) -> String {
+pub(crate) fn event_word(recorded: &Recorded) -> String {
     let event = &recorded.event.event;
     let kind = event.kind();
     let about = match event {
