@@ -41,6 +41,8 @@ pub enum CommandName {
     Round,
     /// `anneal orchestrate`: fan-out, and one-way calls parked in weigh-in or ruled on
     Orchestrate,
+    /// `anneal verify`: whether a change goes to the `verify` skill's doubt review (Clef D5)
+    Verify,
     /// `anneal decide`
     Decide,
     /// `anneal calibrate`
@@ -64,7 +66,7 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -83,6 +85,7 @@ impl CommandName {
         Self::Brief,
         Self::Round,
         Self::Orchestrate,
+        Self::Verify,
         Self::Decide,
         Self::Calibrate,
         Self::Eval,
@@ -112,6 +115,7 @@ impl CommandName {
             Self::Brief => "brief",
             Self::Round => "round",
             Self::Orchestrate => "orchestrate",
+            Self::Verify => "verify",
             Self::Decide => "decide",
             Self::Calibrate => "calibrate",
             Self::Eval => "eval",
@@ -172,6 +176,10 @@ impl CommandName {
                  raised the call and deferred it with its default, and the ledger names the \
                  item; rule: the ruling was recorded"
             }
+            Self::Verify => {
+                "the whole change was read and the doubt review is due: a trigger fired, or Clef \
+                 D5 did not say skip in effect enforce"
+            }
             Self::Decide => "the decision was obtained and recorded",
             Self::Calibrate => "the calibration run completed and was recorded",
             Self::Eval => "skill routing accuracy is at or above its bound on the eval set",
@@ -221,6 +229,9 @@ impl CommandName {
             Self::Orchestrate => {
                 "that the tickets are worth running in parallel, that the call was one-way, or \
                  that the ruling or the default is right"
+            }
+            Self::Verify => {
+                "that the change has defects, or that a change sent past the review has none"
             }
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",

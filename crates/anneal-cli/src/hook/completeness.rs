@@ -7,7 +7,9 @@
 //!
 //! - **hard gates**, which block (`decision: block`): a success claim in the reply ("done",
 //!   "all tests passed", ...: `claim`) while a source file changed after the worktree's latest
-//!   green `test_run` started (`edits`), and a `[DEBUG-<id>]` tag left in the worktree;
+//!   green `test_run` started (`edits`), a `[DEBUG-<id>]` tag left in the worktree, and, after
+//!   those, a required section of the reply's status block that Clef D4 finds not present and
+//!   grounded (`grounded`; only in effect enforce, so shadow never changes the output);
 //! - **nudges**, which are only context (`additionalContext`): the events the active playbook
 //!   requires and the ledger lacks (`playbook`).
 //!
@@ -22,6 +24,7 @@ pub(crate) mod check;
 mod claim;
 mod counter;
 mod edits;
+mod grounded;
 mod playbook;
 
 use std::ffi::OsString;
@@ -33,13 +36,16 @@ use anneal_ledger::event::StopBlocked;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Timestamp};
 use serde::Deserialize;
 
+use crate::decide::clock::Clock;
+use crate::decide::transport::Transport;
 use crate::error_chain::reason;
+use crate::hook::prompt::Budget;
 use crate::hook::stop_output::StopOutput;
 use crate::hook::transcript::{self, Activity};
 use crate::hook::{HookEnv, StdinError, read_stdin};
 use crate::paths;
 
-use check::Findings;
+use check::{Findings, Gate};
 use counter::Counter;
 
 /// Most bytes of hook input read: the reply rides in it.
@@ -84,17 +90,27 @@ enum InputError {
 }
 
 /// Runs the hook: reads the input from `env.stdin`, checks the worktree of its `cwd` (or
-/// `env.current_dir`), and writes the decision to `out`. Pass `&mut out` to keep the writer.
+/// `env.current_dir`), asks Clef D4 through `transport` (on `clock`, within
+/// [`grounded::STOP_BUDGET`]), and writes the decision to `out`. Pass `&mut out` to keep the
+/// writer.
 ///
 /// # Errors
 /// Only the I/O error from writing `out`; every other failure is the `ERROR` line.
-pub(crate) fn run<R, D, L, W>(env: HookEnv<R, D, L>, out: W) -> io::Result<()>
+pub(crate) fn run<R, D, L, W, T, C>(
+    env: HookEnv<R, D, L>,
+    transport: &T,
+    clock: &C,
+    out: W,
+) -> io::Result<()>
 where
     R: Read,
     D: FnOnce() -> io::Result<PathBuf>,
     L: Fn(&str) -> Option<OsString>,
     W: Write,
+    T: Transport + Sync,
+    C: Clock + Sync,
 {
+    let budget = Budget::start_for(clock, grounded::STOP_BUDGET);
     let HookEnv {
         stdin,
         current_dir,
@@ -128,6 +144,14 @@ where
         .or_else(|| last_message(transcript, &mut notes));
     let mut found = check::run(&cwd, reply.as_deref(), &lookup);
     found.notes.append(&mut notes);
+    if let Some(reply) = reply.as_deref() {
+        let clef = grounded::Clef {
+            transport,
+            clock,
+            budget,
+        };
+        ground(&mut found, reply, &lookup, clef);
+    }
     let session = Session {
         id: input.session_id.as_deref(),
         transcript,
@@ -137,6 +161,34 @@ where
         record(&mut found, session.id);
     }
     output(found, blocked).write(out)
+}
+
+/// Asks Clef D4 about `reply` after the deterministic checks, in a worktree only, and adds what
+/// it finds: a [`Gate::Grounded`] in effect enforce, and its notes.
+fn ground<T, C>(
+    found: &mut Findings,
+    reply: &str,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    clef: grounded::Clef<'_, T, C>,
+) where
+    T: Transport + Sync,
+    C: Clock + Sync,
+{
+    let Some(worktree) = found.worktree.as_deref() else {
+        return;
+    };
+    let gates: Vec<&'static str> = found.gates.iter().map(|(gate, _)| gate.id()).collect();
+    let report = grounded::Report {
+        reply,
+        store: found.store.as_ref(),
+        worktree,
+        gates: &gates,
+    };
+    let judged = grounded::judge(&report, lookup, clef);
+    found.notes.extend(judged.notes);
+    if let Some(line) = judged.block {
+        found.gates.push((Gate::Grounded, line));
+    }
 }
 
 /// The text of the transcript's last assistant message, for a Claude Code that does not send
@@ -286,3 +338,6 @@ fn output(found: Findings, blocked: bool) -> StopOutput {
     }
     output
 }
+
+#[cfg(test)]
+mod tests;

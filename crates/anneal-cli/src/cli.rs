@@ -39,6 +39,7 @@ use crate::ship::{self, ShipArgs};
 use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
+use crate::verify::{self, VerifyArgs};
 use crate::watch::{self, WatchArgs};
 use crate::weighin;
 
@@ -118,6 +119,9 @@ pub enum Command {
     /// Gate fan-out on the frontier, park a one-way call in weigh-in, or record a ruling
     #[command(after_help = command_help(CommandName::Orchestrate))]
     Orchestrate(OrchestrateArgs),
+    /// Decide whether the change goes to the verify skill's doubt review (Clef D5)
+    #[command(after_help = command_help(CommandName::Verify))]
+    Verify(VerifyArgs),
     /// Ask a Clef decision point and record the answer
     #[command(after_help = command_help(CommandName::Decide))]
     Decide(DecideArgs),
@@ -172,6 +176,7 @@ impl Command {
             Self::Brief(_) => CommandName::Brief,
             Self::Round(_) => CommandName::Round,
             Self::Orchestrate(_) => CommandName::Orchestrate,
+            Self::Verify(_) => CommandName::Verify,
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
@@ -204,6 +209,7 @@ impl Command {
             | Self::Brief(_)
             | Self::Round(_)
             | Self::Orchestrate(_)
+            | Self::Verify(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
             | Self::Eval(_) => OnFailure::Exit,
@@ -329,7 +335,21 @@ fn dispatch<O: Write, E: Write>(
         Command::Brief(args) => run_brief(args, out),
         Command::Round(args) => run_round(args, out),
         Command::Orchestrate(args) => run_orchestrate(args, out),
+        Command::Verify(args) => run_verify(args, out),
     }
+}
+
+/// `anneal verify` from the process's working directory, with its environment, the system
+/// clock and the transport `verify risk` asks Clef D5 through.
+fn run_verify<O: Write>(args: &VerifyArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let env = DecideEnv {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        transport: &UreqTransport::new(),
+        clock: &SystemClock::new(),
+    };
+    verify::run(args, &env, out)
 }
 
 /// `anneal orchestrate` from the process's working directory, with its environment for the

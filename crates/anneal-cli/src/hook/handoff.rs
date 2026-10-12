@@ -16,7 +16,7 @@
 //! and reported as one `ERROR` line in the `systemMessage` (which Claude Code discards for
 //! `PreCompact`, but a manual run shows).
 
-mod facts;
+pub(crate) mod facts;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};

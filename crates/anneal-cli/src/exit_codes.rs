@@ -204,6 +204,14 @@ const ORCHESTRATE_CODES: [Code; 3] = [
     ORCHESTRATE_NO_FAN_OUT,
     ORCHESTRATE_UNAVAILABLE,
 ];
+/// `verify risk`: run the doubt review (a trigger fired, or Clef D5 did not say skip in effect
+/// enforce).
+pub const VERIFY_REVIEW: Code = Code::new(0, "run the doubt review");
+/// `verify risk`: skip the doubt review: no trigger fired and Clef D5, in effect enforce, said
+/// skip.
+pub const VERIFY_SKIP: Code = Code::new(3, "skip the doubt review (D5 enforcing, no trigger)");
+/// `verify risk`: the change could not be read (no repository, no base, a git failure).
+pub const VERIFY_TOOL_ERROR: Code = Code::new(2, "the change could not be read");
 /// `decide`: Clef answered and the decision was logged; `decide label`: the label was
 /// appended.
 pub const DECIDE_DECIDED: Code = Code::new(0, "decided and logged (label: appended)");
@@ -284,6 +292,7 @@ impl CommandCodes {
             CommandName::Round => ("start|status", &[ROUND_OK, ROUND_PARK]),
             // No scope: `fan-out|park|rule` would widen the help's title column.
             CommandName::Orchestrate => ("", &ORCHESTRATE_CODES),
+            CommandName::Verify => ("risk", &[VERIFY_REVIEW, VERIFY_TOOL_ERROR, VERIFY_SKIP]),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),

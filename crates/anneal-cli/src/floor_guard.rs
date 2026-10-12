@@ -15,6 +15,7 @@
 //! output over its cap. It complements temper's escape-hatch scan rather than replacing it;
 //! `docs/floor-guard.md` describes the split.
 
+pub(crate) mod change;
 mod detect;
 mod diff;
 mod git;

@@ -28,6 +28,7 @@ use crate::pr_diff::PrError;
 use crate::repro::ReproError;
 use crate::rollout::RolloutError;
 use crate::task::TaskError;
+use crate::verify::VerifyError;
 use crate::watch::WatchError;
 
 /// Why `anneal` could not produce a result.
@@ -90,6 +91,9 @@ pub enum CliError {
     /// `anneal verdict` or `anneal ship` could not read the pull request's change.
     #[error(transparent)]
     Pr(#[from] PrError),
+    /// `anneal verify risk` could not read the working tree's change.
+    #[error(transparent)]
+    Verify(#[from] VerifyError),
     /// `anneal decide` could not ask, or record, its question.
     #[error("decide")]
     Decide(#[from] DecideError),
@@ -176,6 +180,7 @@ impl CliError {
             Self::Repro(error) => error.code(),
             Self::FloorGuard(error) => error.code(),
             Self::Pr(error) => error.code(),
+            Self::Verify(error) => error.code(),
             Self::Decide(error) => error.code(),
             Self::Calibrate(error) => error.code(),
             Self::Watch(error) => error.code(),

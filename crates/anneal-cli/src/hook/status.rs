@@ -9,7 +9,7 @@
 //! up to 32 MiB; a longer one is recorded without them. The hook writes nothing unless
 //! something failed, which is one `ERROR` line as the `systemMessage`. See `docs/hooks.md`.
 
-mod block;
+pub(crate) mod block;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};

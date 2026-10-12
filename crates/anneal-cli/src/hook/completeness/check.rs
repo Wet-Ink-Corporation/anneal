@@ -34,6 +34,9 @@ pub(crate) enum Gate {
     Claim,
     /// A `[DEBUG-<id>]` tag is left in the worktree.
     Leftovers,
+    /// Clef D4, in effect enforce, found a required section of the report not present and
+    /// grounded.
+    Grounded,
 }
 
 impl Gate {
@@ -42,6 +45,7 @@ impl Gate {
         match self {
             Self::Claim => "claim",
             Self::Leftovers => "leftovers",
+            Self::Grounded => "grounded",
         }
     }
 }
