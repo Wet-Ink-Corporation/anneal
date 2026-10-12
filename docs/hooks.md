@@ -302,19 +302,27 @@ Shared behaviour:
   `ruled-before` gives git at most 1 s to find the repository, and never the time Clef needs.
 - **The prompt sent** (as `{"input": <prompt>}` in the compact state) is whitespace-collapsed,
   redacted, and cut to 1,024 characters (the compact state's own cap) with `…` marking a cut,
-  by `decide::state::cut_chars` as for the guard's command. Redaction shares the guard's rule
-  for assignments (`hook::guard::redact`): the value of a `NAME=value` (also `NAME+=`,
-  `NAME[i]=`), even behind punctuation such as a quote, whose name looks like an environment
-  variable or holds a credential word in any case (`token`, `password`, `passwd`, `secret`,
-  `apikey`, `api-key`, `api_key`, `credential`, `private-key`, `private_key`), becomes
-  `<redacted>`; a value that opens a quote (`'` or `"`) is redacted through the word that
+  by `decide::state::cut_chars` as for the guard's command. Redaction (`decide::redact`)
+  applies the guard's word rules (listed in `docs/guard.md`) to each word, even behind
+  punctuation such as a quote or bracket: an environment-style or credential-named assignment
+  (its name's own quotes stripped, as in `export "API_KEY"=x`), a credential-named key
+  anywhere in a word (`--from-literal=password=x`, `{"password":"x"}`, `/:_authToken=x`), a
+  credential-named option or configuration key (`--password x`, `-storepass x`,
+  `user.password x`; not `--password-stdin`), the secret options of the known tools named
+  earlier in the prompt (`mysql -p<redacted>`, `docker login -p <redacted>`, quotes around the
+  option removed) and the word after `vault login`, the word after `Bearer` (and after `Basic` unless it is
+  plain lower-case letters), the userinfo of a URL, and obvious tokens (`sk-`, `ghp_`, `gho_`,
+  `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, `hvs.`, `hvb.` and `eyJ` prefixes, AWS access
+  key ids, and opaque words of 32 or more letters and digits mixed). Since prose has no command
+  end, what one word says about the next is carried across words: a header name
+  (`Authorization:`, `X-Api-Key:`, `Cookie:`) hides the words through its quote when it
+  opens one (`"Cookie: s=1; t=2"`), else its next two words (scheme and credential); a quote
+  opened before a name, in a value or by a hidden word is redacted through the word that
   closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
-  `DB_PASS=<redacted> then go`). Since a prompt is prose rather than shell, the guard's comment
-  and heredoc rules do not apply; instead obvious credentials are redacted whole, even inside
-  punctuation such as quotes or brackets: `sk-`, `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
-  `github_pat_`, `xox[abps]-`, `glpat-` and `eyJ` prefixes, AWS access key ids, the word after
-  `Bearer`, and opaque words of 32 or more letters and digits mixed. This is a filter, not a secret scanner. The rows keep no `input`, only the state's
-  hash.
+  `DB_PASS=<redacted> then go`, `TOKEN=abc"def ghi" then go` becomes
+  `TOKEN=<redacted> then go`, `curl -u "me:my pass" x` becomes `curl -u "<redacted> x`). The
+  guard's comment and heredoc rules do not apply. This is a filter, not a secret scanner. The
+  rows keep no `input`, only the state's hash.
 - **Failures** that are not Clef's (a malformed `clef_mode`, account or token, an unreadable
   thresholds file or log, an answer that could not be logged, an invalid ruling, unreadable
   input, a spent budget) are one `ERROR <hook>: ...` line as `systemMessage`, and the prompt

@@ -238,3 +238,484 @@ fn values_are_redacted_before_the_cut_so_a_long_secret_does_not_crowd_out_the_co
 fn an_unclosed_quote_redacts_to_the_end() {
     assert_eq!(redact("K='abc def"), format!("K={REDACTED}"));
 }
+
+#[test]
+fn a_quoted_assignment_name_has_its_value_redacted() {
+    let cases = [
+        ("export \"API_KEY\"=x", "export \"API_KEY\"=<redacted>"),
+        (
+            "declare -x 'PASSWORD'=x",
+            "declare -x 'PASSWORD'=<redacted>",
+        ),
+        (
+            "export \"db_\"'token'=x run",
+            "export \"db_\"'token'=<redacted> run",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn the_words_pass_auth_and_bearer_name_credentials() {
+    let cases = [
+        ("deploy db_pass=x", "deploy db_pass=<redacted>"),
+        ("run my_auth=x go", "run my_auth=<redacted> go"),
+        (
+            "tool --bearer t --pass p",
+            "tool --bearer <redacted> --pass <redacted>",
+        ),
+        ("gh --oauth=t", "gh --oauth=<redacted>"),
+        ("tool --authorization x", "tool --authorization <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn authorization_header_values_are_redacted() {
+    let cases = [
+        (
+            "curl -H \"Authorization: Bearer abc\" https://x",
+            "curl -H \"Authorization: <redacted> <redacted>\" https://x",
+        ),
+        (
+            "curl -H 'proxy-authorization: token t' -X GET u",
+            "curl -H 'proxy-authorization: <redacted> <redacted>' -X GET u",
+        ),
+        (
+            "curl -HAuthorization:Basic\\ abc u; ls",
+            "curl -HAuthorization:<redacted> <redacted>; ls",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn the_credential_after_bearer_or_basic_is_redacted() {
+    let cases = [
+        ("echo Bearer abc def", "echo Bearer <redacted> def"),
+        ("printf 'basic dXNlcjpwYXNz'", "printf 'basic <redacted>'"),
+        ("echo BASIC Abc", "echo BASIC <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_plain_lowercase_word_after_basic_is_kept() {
+    assert_eq!(redact("echo basic usage"), "echo basic usage");
+}
+
+#[test]
+fn url_userinfo_is_redacted() {
+    let cases = [
+        (
+            "git clone https://user:tok@github.com/o/r.git",
+            "git clone https://<redacted>@github.com/o/r.git",
+        ),
+        (
+            "curl \"https://ci:abc@host/p?q=1\"",
+            "curl \"https://<redacted>@host/p?q=1\"",
+        ),
+        (
+            "tool --url=ftp://tok@h,ssh://u:p@k/x",
+            "tool --url=ftp://<redacted>@h,ssh://<redacted>@k/x",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn urls_without_userinfo_are_kept() {
+    let cases = [
+        "git clone git@github.com:o/r.git",
+        "curl https://host/a@b",
+        "open https://host?to=a@b",
+    ];
+    for command in cases {
+        assert_eq!(redact(command), command, "{command:?}");
+    }
+}
+
+#[test]
+fn secret_short_options_of_known_tools_are_redacted() {
+    let cases = [
+        ("mysql -uroot -phunter2 db", "mysql -uroot -p<redacted> db"),
+        (
+            "sudo /usr/bin/mysqldump -p'p w' db",
+            "sudo /usr/bin/mysqldump -p<redacted> db",
+        ),
+        (
+            "curl -u user:pass https://x",
+            "curl -u <redacted> https://x",
+        ),
+        ("curl -su user:pass x", "curl -su <redacted> x"),
+        ("curl -uuser:pass x", "curl -u<redacted> x"),
+        ("curl --user user:pass x", "curl --user <redacted> x"),
+        ("curl --proxy-user=u:p x", "curl --proxy-user=<redacted> x"),
+        ("sshpass -p pw ssh h", "sshpass -p <redacted> ssh h"),
+        ("redis-cli -a pw ping", "redis-cli -a <redacted> ping"),
+        ("mongosh -u me -p pw", "mongosh -u me -p <redacted>"),
+        ("bash -c 'mysql -pX'", "bash -c 'mysql -p<redacted>'"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn short_options_of_other_tools_are_kept() {
+    let cases = [
+        "mkdir -p a/b",
+        "docker run -p 8080:80 img",
+        "mysql -p db",
+        "curl x; ls -u",
+        "ssh -p 22 host",
+        "git add -p",
+    ];
+    for command in cases {
+        assert_eq!(redact(command), command, "{command:?}");
+    }
+}
+
+#[test]
+fn a_quote_opened_in_the_middle_of_a_value_is_redacted_through_its_close() {
+    assert_eq!(redact("TOKEN=abc\"def ghi\" run"), "TOKEN=<redacted> run");
+}
+
+// Review round 1 of #89: each leak the reviewer saw reach the log in shadow mode.
+
+#[test]
+fn a_registry_login_password_option_is_redacted() {
+    let cases = [
+        (
+            "docker login -u me -p hunter2 ghcr.io",
+            "docker login -u me -p <redacted> ghcr.io",
+        ),
+        (
+            "podman login -phunter2 quay.io",
+            "podman login -p<redacted> quay.io",
+        ),
+        (
+            "helm registry login h -p pw",
+            "helm registry login h -p <redacted>",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn credential_named_header_values_are_redacted() {
+    let cases = [
+        (
+            "curl -H \"X-Api-Key: abc\" -H 'PRIVATE-TOKEN: t' u",
+            "curl -H \"X-Api-Key: <redacted>\" -H 'PRIVATE-TOKEN: <redacted>' u",
+        ),
+        (
+            "curl -H \"Cookie: s=1; t=2\" u",
+            "curl -H \"Cookie: <redacted>; <redacted>\" u",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_credential_key_inside_an_option_value_is_redacted() {
+    assert_eq!(
+        redact(
+            "kubectl create secret generic s --from-literal=password=hunter2 --from-literal=user=me"
+        ),
+        "kubectl create secret generic s --from-literal=password=<redacted> --from-literal=user=me"
+    );
+}
+
+#[test]
+fn a_credential_system_property_is_redacted() {
+    assert_eq!(
+        redact("mvn deploy -Dpassword=hunter2 -Ddb.password=pw -Dskip=true"),
+        "mvn deploy -Dpassword=<redacted> -Ddb.password=<redacted> -Dskip=true"
+    );
+}
+
+#[test]
+fn single_dash_credential_options_are_redacted() {
+    assert_eq!(
+        redact("keytool -importcert -storepass changeit -keypass k2 -alias a"),
+        "keytool -importcert -storepass <redacted> -keypass <redacted> -alias a"
+    );
+}
+
+#[test]
+fn an_openssl_pass_phrase_is_redacted() {
+    let cases = [
+        (
+            "openssl pkcs12 -export -passout pass:hunter2 -in c.pem",
+            "openssl pkcs12 -export -passout <redacted> -in c.pem",
+        ),
+        (
+            "openssl enc -k pass:hunter2 -in f",
+            "openssl enc -k pass:<redacted> -in f",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_github_secret_body_is_redacted_and_other_bodies_kept() {
+    let cases = [
+        (
+            "gh secret set TOKEN --body hunter2",
+            "gh secret set TOKEN --body <redacted>",
+        ),
+        ("gh secret set K -bhunter2", "gh secret set K -b<redacted>"),
+        ("gh pr create --body text", "gh pr create --body text"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_quoted_or_escaped_program_name_is_still_a_known_tool() {
+    let cases = [
+        ("\"mysql\" -phunter2", "\"mysql\" -p<redacted>"),
+        ("\\mysql -phunter2", "\\mysql -p<redacted>"),
+        ("mysql '-phunter2' db", "mysql -p<redacted> db"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn url_userinfo_holding_a_hash_is_redacted() {
+    assert_eq!(
+        redact("curl https://user:p#ss@host/x"),
+        "curl https://<redacted>@host/x"
+    );
+}
+
+#[test]
+fn an_ldap_bind_password_is_redacted() {
+    assert_eq!(
+        redact("ldapsearch -x -D cn=admin -w hunter2 -b dc=x"),
+        "ldapsearch -x -D cn=admin -w <redacted> -b dc=x"
+    );
+}
+
+#[test]
+fn a_sql_server_password_is_redacted() {
+    assert_eq!(
+        redact("sqlcmd -S db -U sa -P hunter2 -Q q"),
+        "sqlcmd -S db -U sa -P <redacted> -Q q"
+    );
+}
+
+#[test]
+fn an_npm_auth_token_is_redacted() {
+    assert_eq!(
+        redact("npm config set //registry.npmjs.org/:_authToken=abc"),
+        "npm config set //registry.npmjs.org/:_authToken=<redacted>"
+    );
+}
+
+#[test]
+fn a_quoted_authorization_key_has_its_value_redacted() {
+    assert_eq!(
+        redact("curl -d '{\"Authorization\": \"Token abc\"}' u"),
+        "curl -d '{\"Authorization\": <redacted>' u"
+    );
+}
+
+#[test]
+fn a_credential_in_a_json_body_is_redacted() {
+    let cases = [
+        (
+            "curl -d '{\"password\":\"hunter2\"}' u",
+            "curl -d '{\"password\":<redacted>' u",
+        ),
+        (
+            "curl -d '{\"password\": \"hunter2\", \"user\": \"me\"}' u",
+            "curl -d '{\"password\": <redacted> <redacted> <redacted>' u",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn an_smb_user_and_password_is_redacted() {
+    assert_eq!(
+        redact("smbclient //h/s -U me%hunter2"),
+        "smbclient //h/s -U <redacted>"
+    );
+}
+
+#[test]
+fn an_obvious_token_is_redacted_in_a_command() {
+    assert_eq!(
+        redact("echo ghp_0123456789abcdefghij | gh auth login"),
+        "echo <redacted> | gh auth login"
+    );
+}
+
+#[test]
+fn a_credential_key_with_its_value_in_the_word_hides_only_that_word() {
+    assert_eq!(
+        redact("git push origin auth-fix:main --force"),
+        "git push origin auth-fix:<redacted> --force"
+    );
+}
+
+#[test]
+fn a_path_separator_is_not_a_key() {
+    let command = "cargo test auth::tests::login";
+    assert_eq!(redact(command), command);
+}
+
+// Review round 2 of #89.
+
+#[test]
+fn a_header_in_a_shell_body_does_not_hide_the_next_command() {
+    let cases = [
+        (
+            "bash -c 'curl -H X-Api-Key: k; dropdb production'",
+            "bash -c 'curl -H X-Api-Key: <redacted>; dropdb production'",
+        ),
+        (
+            "x=$(echo token: a; kubectl delete ns prod)",
+            "x=$(echo token: <redacted>; kubectl delete ns prod)",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn cookie_pairs_after_a_semicolon_in_a_quote_stay_hidden_but_a_command_does_not() {
+    let cases = [
+        (
+            "curl -H 'Cookie: a=1; b=2; c=3' u",
+            "curl -H 'Cookie: <redacted>; <redacted>; <redacted>' u",
+        ),
+        (
+            "bash -c 'curl -H Cookie: a=1; b=2 rm -rf /tmp/x'",
+            "bash -c 'curl -H Cookie: <redacted>; <redacted> rm -rf /tmp/x'",
+        ),
+        (
+            "bash -c 'curl -H Cookie: a=1 | b=2 sh'",
+            "bash -c 'curl -H Cookie: <redacted> | b=2 sh'",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
+    // TST-06 by enumeration: every header form, before every separator, in every nesting.
+    let headers = [
+        "echo token:",
+        "echo token: a",
+        "curl -H X-Api-Key: k",
+        "curl -H Authorization: Bearer x",
+        "curl -H Cookie: a=1",
+        "printf %s Cookie:",
+    ];
+    let separators = [";", " ;", "&&", "||", "|", "&", "\n"];
+    let nests: [(&str, &str); 6] = [
+        ("", ""),
+        ("bash -c '", "'"),
+        ("bash -c \"", "\""),
+        ("x=$(", ")"),
+        ("x=`", "`"),
+        ("eval \"", "\""),
+    ];
+    for header in headers {
+        for separator in separators {
+            for (open, close) in nests {
+                let command = format!("{open}{header}{separator} dropdb production{close}");
+
+                let redacted = redact(&command);
+
+                assert!(
+                    redacted.contains("dropdb production"),
+                    "{command:?} became {redacted:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_credential_config_key_has_its_next_word_redacted() {
+    let cases = [
+        (
+            "aws configure set aws_secret_access_key X",
+            "aws configure set aws_secret_access_key <redacted>",
+        ),
+        (
+            "git config user.password X",
+            "git config user.password <redacted>",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn twine_and_az_login_passwords_are_redacted() {
+    let cases = [
+        (
+            "twine upload -u me -p pw dist/x",
+            "twine upload -u me -p <redacted> dist/x",
+        ),
+        ("az login -u me -p pw", "az login -u me -p <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_vault_token_is_redacted() {
+    let cases = [
+        ("vault login s.abcdefgh", "vault login <redacted>"),
+        ("echo hvs.CAESIabcdef", "echo <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_credential_option_read_from_stdin_or_a_file_takes_no_value() {
+    let command = "docker login --password-stdin -u me ghcr.io";
+    assert_eq!(redact(command), command);
+}
+
+#[test]
+fn url_userinfo_holding_a_question_mark_is_redacted() {
+    assert_eq!(
+        redact("curl https://user:p?X@host/x"),
+        "curl https://<redacted>@host/x"
+    );
+}

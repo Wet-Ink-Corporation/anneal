@@ -5,14 +5,23 @@
 //! `sudo`, `timeout` or `env -u`, a `bash -c '…'` or `eval "…"` body) can carry a secret past
 //! it. Redacting too much only costs Clef some signal; too little leaks.
 //!
-//! - **Assignments anywhere.** The value of every `NAME=value` (also `NAME+=`, `NAME[i]=` and
-//!   `NAME=(…)`), wherever it stands, when `NAME` looks like an environment variable (upper
-//!   case, `[A-Z_][A-Z0-9_]*`) or holds a credential word (`decide::redact::CREDENTIAL_WORDS`,
-//!   any letter case; the rule is `decide::redact::secret_assignment_prefix`, which the prose
-//!   redaction shares). Lower-case operands such as `dd of=/dev/sda` stay readable: they are what Clef
-//!   judges.
-//! - **Credential flags.** The value of a long option whose name holds a credential word, as
-//!   `--token=x` or `--token x`.
+//! - **The shared word rules** (`decide::redact::rules::find_secret`), wherever a word stands:
+//!   the value of an environment-style or credential-named assignment (`TOKEN=x`,
+//!   `"API_KEY"=x`; lower-case operands such as `dd of=/dev/sda` stay readable, they are what
+//!   Clef judges), of a credential-named key inside a word (`--from-literal=password=x`,
+//!   `{"password":"x"}`), of a credential-named option or configuration key (`--password x`,
+//!   `-storepass x`, `user.password x`; not `--password-stdin`), and of
+//!   a known tool's secret option (`mysql -pX`, `docker login -p x`). A word's secret is taken
+//!   only when what stays readable before it closes every quote it opens; otherwise the inside
+//!   of the quote is scanned and finds it there.
+//! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
+//!   `Cookie:`), every word to the end of its simple command or quote; inside a quote or
+//!   substitution, the `name=value` words after a `;` too (`"Cookie: a=1; b=2"`), but no other
+//!   word, so no header hides the next command; the word after `Bearer`, and after `Basic`
+//!   unless `decide::redact::basic_credential` says it cannot be one.
+//! - **Subcommand arguments.** The word after `vault login` (`decide::redact::tools`).
+//! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
+//!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
 //! - **Quoted text is scanned too**: the inside of `'…'`, `$'…'`, `$( )` and backticks as a
 //!   command, the inside of `"…"` with double-quote rules (`'` and `$'` are plain there).
 //! - **Comments and heredocs.** An unquoted `#` comment to the end of its line, and every
@@ -24,9 +33,21 @@
 //! so it cannot rewrite the command in place; this scanner reads the same quoting to find each
 //! span in the source.
 
+use self::spans::{
+    after, char_at, close_ansi, close_backtick, close_double, close_group, close_single, closed,
+    word_end,
+};
 use super::shell::MAX_NESTING;
-use crate::decide::redact::{REDACTED, is_credential, secret_assignment_prefix};
+use crate::decide::redact::rules::secret_assignment_prefix;
+use crate::decide::redact::tools::{self, Tool};
+use crate::decide::redact::{
+    REDACTED, Scheme, Secret, Then, basic_credential, find_secret, looks_like_token, scheme,
+    split_punctuation, url_userinfo,
+};
 use crate::decide::state::cut_chars;
+
+/// Characters that open a quote or substitution: a word part holding none is plain text.
+const QUOTING: [char; 6] = ['\'', '"', '`', '$', '\\', '('];
 
 /// Most characters of the command kept, after redaction; a longer one ends in `…`. The same as
 /// `decide::state::MAX_STRING_CHARS`, so the compact state does not cut it again.
@@ -76,10 +97,27 @@ fn redact_into(text: &str, quoting: Quoting, depth: usize, out: &mut String) -> 
         out,
         quoting,
         depth,
-        secret_next: false,
+        pending: Pending::Nothing,
+        tool: None,
         heredocs: Vec::new(),
     }
     .run()
+}
+
+/// What the words before say about the next one, until a command separator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Nothing,
+    /// The next word is a secret: a credential option's value, the word after `Bearer`.
+    Word,
+    /// The next word follows `Basic`: a secret unless `basic_credential` says it cannot be.
+    BasicWord,
+    /// Every word is a secret, to the end of the simple command: a header's value.
+    Rest,
+    /// After a `;` that ended a header's value inside a quote or substitution: each
+    /// `name=value` word is a secret (the other pairs of `"Cookie: a=1; b=2"`); the first other
+    /// word is read as usual, so it ends this.
+    Pairs,
 }
 
 /// Redacts the inside of a closed span; whatever it leaves unclosed is already redacted and
@@ -98,8 +136,10 @@ struct Scanner<'t, 'o> {
     out: &'o mut String,
     quoting: Quoting,
     depth: usize,
-    /// The next word is a credential flag's value.
-    secret_next: bool,
+    /// Whether the next word, or every word, is a secret.
+    pending: Pending,
+    /// The known tool this simple command named, whose secret options are redacted.
+    tool: Option<Tool>,
     /// Heredocs opened on the current line.
     heredocs: Vec<Heredoc>,
 }
@@ -112,11 +152,11 @@ impl Scanner<'_, '_> {
                 ' ' | '\t' => self.copy_to(next),
                 '\n' => {
                     self.copy_to(next);
-                    self.secret_next = false;
+                    self.end_command(c);
                     self.heredoc_bodies()
                 }
                 ';' | '&' | '|' | '(' | ')' => {
-                    self.secret_next = false;
+                    self.end_command(c);
                     self.copy_to(next)
                 }
                 '<' | '>' => self.redirection(c),
@@ -133,6 +173,22 @@ impl Scanner<'_, '_> {
             self.out.push_str(REDACTED);
             Scan::Unclosed
         }
+    }
+
+    /// At the command separator `separator`: what one simple command said about its words ends
+    /// there, so no secret rule hides a command word. Inside a quote or substitution a `;` after
+    /// a header's value may instead sit between its pairs (`"Cookie: a=1; b=2"`), so the
+    /// `name=value` words after it stay hidden ([`Pending::Pairs`]).
+    fn end_command(&mut self, separator: char) {
+        self.pending = match self.pending {
+            Pending::Rest | Pending::Pairs if self.depth > 0 && separator == ';' => Pending::Pairs,
+            Pending::Nothing
+            | Pending::Word
+            | Pending::BasicWord
+            | Pending::Rest
+            | Pending::Pairs => Pending::Nothing,
+        };
+        self.tool = None;
     }
 
     /// Copies the source up to `end` (a char boundary past `pos`) unchanged.
@@ -242,45 +298,118 @@ impl Scanner<'_, '_> {
             .text
             .get(self.pos..end.unwrap_or(self.text.len()))
             .unwrap_or_default();
-        let secret_value = std::mem::take(&mut self.secret_next);
-        let secret_prefix = secret_assignment_prefix(raw);
+        let pending = std::mem::replace(&mut self.pending, Pending::Nothing);
         let Some(end) = end else {
-            self.out.push_str(secret_prefix.unwrap_or_default());
+            self.out
+                .push_str(secret_assignment_prefix(raw).unwrap_or_default());
             return self.redact_rest();
         };
-        if secret_value {
+        let hidden = match pending {
+            Pending::Nothing => false,
+            Pending::Word => true,
+            Pending::BasicWord => basic_credential(raw),
+            Pending::Rest => {
+                self.pending = Pending::Rest;
+                true
+            }
+            Pending::Pairs => {
+                let pair = is_pair(raw);
+                if pair {
+                    self.pending = Pending::Pairs;
+                }
+                pair
+            }
+        };
+        if hidden {
             self.out.push_str(REDACTED);
-        } else if let Some(prefix) = secret_prefix {
-            self.out.push_str(prefix);
-            self.out.push_str(REDACTED);
-        } else if !self.credential_flag(raw) {
-            units(raw, self.quoting, self.depth, self.out);
+        } else {
+            self.readable_word(raw);
         }
         self.pos = end;
         Scan::Closed
     }
 
-    /// Writes `raw` redacted when it is a credential flag (`--token=x`, or `--token` with the
-    /// next word redacted), and says whether it was one.
-    fn credential_flag(&mut self, raw: &str) -> bool {
-        let Some(flag) = raw.strip_prefix("--") else {
-            return false;
-        };
-        match flag.split_once('=') {
-            Some((name, _value)) if is_credential(name) => {
-                self.out.push_str("--");
-                self.out.push_str(name);
-                self.out.push('=');
-                self.out.push_str(REDACTED);
-                true
-            }
-            Some(_) => false,
-            None => {
-                self.secret_next = is_credential(flag);
-                false
-            }
+    /// A word not hidden by the words before it: its own secret, a token, or the word with any
+    /// URL userinfo redacted; then what it says about the next words.
+    fn readable_word(&mut self, raw: &str) {
+        let secret = find_secret(raw, self.tool)
+            .filter(|secret| closed(&secret.shown, self.quoting, self.depth));
+        if let Some(secret) = secret {
+            self.write_secret(&secret);
+        } else if let Some((lead, trail)) = plain_token(raw) {
+            self.out.push_str(lead);
+            self.out.push_str(REDACTED);
+            self.out.push_str(trail);
+        } else {
+            self.copy_word(raw);
+        }
+        if self.pending == Pending::Nothing {
+            self.pending = match scheme(raw) {
+                Some(Scheme::Bearer) => Pending::Word,
+                Some(Scheme::Basic) => Pending::BasicWord,
+                None => Pending::Nothing,
+            };
+        }
+        if let Some(tool) = self.tool.as_mut()
+            && tool.note(raw)
+        {
+            self.pending = Pending::Word;
+        }
+        if let Some(tool) = tools::known(raw) {
+            self.tool = Some(tool);
         }
     }
+
+    /// Writes a word's secret: what stays readable, the mark, and what the next words are.
+    fn write_secret(&mut self, secret: &Secret<'_>) {
+        self.out.push_str(&secret.shown);
+        if secret.redacts {
+            self.out.push_str(REDACTED);
+        }
+        match secret.then {
+            Then::Nothing => {}
+            Then::NextWord => self.pending = Pending::Word,
+            Then::Header => self.pending = Pending::Rest,
+        }
+    }
+
+    /// Copies a word with the userinfo of each URL in it (`https://user:token@host`) redacted;
+    /// a URL inside a quote is found by the scan of the quote's inside.
+    fn copy_word(&mut self, raw: &str) {
+        let mut rest = raw;
+        while let Some((start, end)) = url_userinfo(rest)
+            && let (Some(head), Some(tail)) = (rest.get(..start), rest.get(end..))
+            && !head.contains(QUOTING)
+        {
+            self.out.push_str(head);
+            self.out.push_str(REDACTED);
+            rest = tail;
+        }
+        units(rest, self.quoting, self.depth, self.out);
+    }
+}
+
+/// The punctuation around an unquoted word that looks like a token (`ghp_…`), so the token
+/// goes whole; a quoted one is found by the scan of the quote's inside.
+fn plain_token(raw: &str) -> Option<(&str, &str)> {
+    if raw.contains(QUOTING) {
+        return None;
+    }
+    let (lead, core, trail) = split_punctuation(raw);
+    looks_like_token(core).then_some((lead, trail))
+}
+
+/// A plain `name=value` word (`b=2`), as the pairs of a cookie are: a name of letters, digits,
+/// `_` and `-` that is not an option, and no quoting anywhere.
+fn is_pair(raw: &str) -> bool {
+    !raw.contains(QUOTING)
+        && raw.split_once('=').is_some_and(|(name, _)| {
+            !name.is_empty()
+                && !name.starts_with('-')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
 }
 
 /// Copies a word whose spans are all closed, scanning the inside of each quote or
@@ -349,129 +478,7 @@ fn units(raw: &str, quoting: Quoting, depth: usize, out: &mut String) {
     }
 }
 
-/// The char at byte `pos` of `text`, if any.
-fn char_at(text: &str, pos: usize) -> Option<char> {
-    text.get(pos..).and_then(|rest| rest.chars().next())
-}
-
-/// The byte just past `c` at `pos`.
-fn after(pos: usize, c: char) -> usize {
-    pos.saturating_add(c.len_utf8())
-}
-
-/// Characters that end a word outside quotes.
-const fn is_meta(c: char) -> bool {
-    matches!(
-        c,
-        ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>'
-    )
-}
-
-/// Where the word starting at `start` ends: the first blank or metacharacter outside any span.
-/// `NAME=(` opens an array value. `None` when a span is never closed.
-fn word_end(text: &str, start: usize, quoting: Quoting, depth: usize) -> Option<usize> {
-    let mut pos = start;
-    while let Some(c) = char_at(text, pos) {
-        if is_meta(c) {
-            let array = c == '(' && text.get(start..pos).is_some_and(|word| word.ends_with('='));
-            if !array {
-                return Some(pos);
-            }
-            pos = close_group(text, after(pos, c), ')', depth)?;
-            continue;
-        }
-        pos = skip_unit(text, pos, quoting, depth)?;
-    }
-    Some(pos)
-}
-
-/// Past the quoting or substitution starting at `pos` (or the plain character there); `None`
-/// when it is never closed.
-fn skip_unit(text: &str, pos: usize, quoting: Quoting, depth: usize) -> Option<usize> {
-    if depth > MAX_NESTING {
-        return None;
-    }
-    let c = char_at(text, pos)?;
-    let next = after(pos, c);
-    let deeper = depth.saturating_add(1);
-    match (c, char_at(text, next), quoting) {
-        ('\\', Some(escaped), _) => Some(after(next, escaped)),
-        ('\'', _, Quoting::Bare) => close_single(text, next),
-        ('"', _, _) => close_double(text, next, depth),
-        ('`', _, _) => close_backtick(text, next),
-        ('$', Some('\''), Quoting::Bare) => close_ansi(text, after(next, '\'')),
-        ('$', Some('('), _) => close_group(text, after(next, '('), ')', deeper),
-        ('$', Some('{'), _) => close_group(text, after(next, '{'), '}', deeper),
-        _ => Some(next),
-    }
-}
-
-/// Past the `'` closing a single-quoted string whose inside starts at `pos`.
-fn close_single(text: &str, pos: usize) -> Option<usize> {
-    let at = text.get(pos..)?.find('\'')?;
-    Some(pos.saturating_add(at).saturating_add(1))
-}
-
-/// Past the `'` closing an ANSI-C string (`$'…'`, backslash escapes) whose inside starts at
-/// `pos`.
-fn close_ansi(text: &str, mut pos: usize) -> Option<usize> {
-    loop {
-        match char_at(text, pos)? {
-            '\'' => return Some(after(pos, '\'')),
-            '\\' => pos = skip_escape(text, pos),
-            c => pos = after(pos, c),
-        }
-    }
-}
-
-/// Past the backtick closing a substitution whose inside starts at `pos`.
-fn close_backtick(text: &str, mut pos: usize) -> Option<usize> {
-    loop {
-        match char_at(text, pos)? {
-            '`' => return Some(after(pos, '`')),
-            '\\' => pos = skip_escape(text, pos),
-            c => pos = after(pos, c),
-        }
-    }
-}
-
-/// Past the `"` closing a double-quoted string whose inside starts at `pos`. Substitutions
-/// inside it are skipped whole; `'` and `$'` are plain characters there.
-fn close_double(text: &str, mut pos: usize, depth: usize) -> Option<usize> {
-    loop {
-        let c = char_at(text, pos)?;
-        pos = match c {
-            '"' => return Some(after(pos, c)),
-            '\\' => skip_escape(text, pos),
-            '$' | '`' => skip_unit(text, pos, Quoting::Double, depth)?,
-            _ => after(pos, c),
-        };
-    }
-}
-
-/// Past the `close` ending a `$( )`, `( )` or `${ }` group whose inside (read unquoted)
-/// starts at `pos`.
-fn close_group(text: &str, mut pos: usize, close: char, depth: usize) -> Option<usize> {
-    if depth > MAX_NESTING {
-        return None;
-    }
-    loop {
-        let c = char_at(text, pos)?;
-        pos = if c == close {
-            return Some(after(pos, c));
-        } else if c == '(' {
-            close_group(text, after(pos, c), ')', depth.saturating_add(1))?
-        } else {
-            skip_unit(text, pos, Quoting::Bare, depth)?
-        };
-    }
-}
-
-/// Past a backslash at `pos` and the character it escapes.
-fn skip_escape(text: &str, pos: usize) -> usize {
-    let next = after(pos, '\\');
-    char_at(text, next).map_or(next, |escaped| after(next, escaped))
-}
+mod spans;
 
 #[cfg(test)]
 mod tests;
