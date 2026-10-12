@@ -20,6 +20,7 @@ All notable changes to anneal are recorded here. A release renames `## Unrelease
 - `anneal hook brief`, a fail-closed `PreToolUse` hook on the Agent tool (`onFailure: "block"`, 5 s): no brief, no spawn. A spawn's prompt must name, on one `Brief: <path>` line, a brief under `.anneal/briefs/` of the worktree that passes `lint brief`; a spawn from inside a subagent is denied unless its agent type is in `orchestrate.leads` of `.anneal/config.json` (default `orchestrate-lead`). Each denial is one `ERROR brief:` line plus a `gate_blocked` event.
 - `anneal hook standing-orders`, a fail-open `SubagentStart` hook (5 s): adds `.anneal/standing-orders.md` (at most 16 KiB) to every subagent's context; silent when the file is missing.
 - `anneal round start|status --ticket <id>`: the fix-loop round counter, read from `round_started` events so it survives compaction. Rounds 1 to 3 go back to the same agent, rounds 4 and 5 to a fresh agent one model tier up (`context: fork` with a named subagent), and after round 5 the ticket is parked (exit 3; `start` records nothing). The ledger registry is now version 8 (`round_started` gains an optional `ticket`, and its `pr` is optional).
+- The guard now denies Bash writes to `.anneal/config.json` and removing or moving `.anneal`, as for `.claude/settings*.json`: the file holds the orchestrate leads and the merge gate's settings. Ticket names for `brief build` and `round` are lower-cased, and names ending in `.review` or that are Windows device names are refused.
 
 ## 0.0.1 — 2026-10-12
 

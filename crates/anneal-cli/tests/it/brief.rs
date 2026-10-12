@@ -161,6 +161,31 @@ fn a_base_that_names_no_commit_is_a_bad_range() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn when_the_review_package_cannot_be_written_no_brief_is_written_either() -> TestResult {
+    let repo = PrRepo::new()?;
+    let blocker = briefs(&repo).join("36.review.md");
+    fs::create_dir_all(&blocker)?;
+    fs::write(blocker.join("keep"), "a directory where the package goes\n")?;
+    let args = build_args(&[]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let output = repo.anneal(&args)?;
+
+    assert_eq!(output.status.code(), Some(70), "{output:?}");
+    let mut left: Vec<String> = fs::read_dir(briefs(&repo))?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<Result<_, _>>()?;
+    left.sort();
+    assert_eq!(
+        left,
+        ["36.review.md"],
+        "no brief without its package, and no temporary file left"
+    );
+    Ok(())
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn an_unknown_field_key_is_a_usage_error() -> TestResult {
     let repo = PrRepo::new()?;

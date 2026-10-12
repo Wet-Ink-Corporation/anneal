@@ -137,18 +137,35 @@ fn a_spawn_whose_brief_fails_lint_brief_is_denied_naming_the_fields() -> TestRes
 fn a_brief_path_outside_the_briefs_directory_or_missing_is_denied() -> TestResult {
     let dir = repo()?;
     let absolute = dir.path().join(".anneal").join("briefs").join("36.md");
-    let paths = [
-        "../36.md".to_owned(),
-        ".anneal/briefs/../../README.md".to_owned(),
-        ".anneal/notes.md".to_owned(),
-        ".anneal/briefs/37.md".to_owned(),
-        absolute.display().to_string(),
+    let not_under = |path: &str| {
+        format!(
+            "ERROR brief: the brief {path:?} is not a relative path under .anneal/briefs/ (no \
+             `..`, `.`, `\\` or absolute paths)"
+        )
+    };
+    let cases = [
+        ("../36.md".to_owned(), not_under("../36.md")),
+        (
+            ".anneal/briefs/../../README.md".to_owned(),
+            not_under(".anneal/briefs/../../README.md"),
+        ),
+        (".anneal/notes.md".to_owned(), not_under(".anneal/notes.md")),
+        (
+            ".anneal/briefs/37.md".to_owned(),
+            "ERROR brief: the brief .anneal/briefs/37.md does not exist; write it with \
+             `anneal brief build`"
+                .to_owned(),
+        ),
+        (
+            absolute.display().to_string(),
+            not_under(&absolute.display().to_string()),
+        ),
     ];
 
-    for path in paths {
+    for (path, expected) in cases {
         let prompt = format!("Brief: {path}");
         let reason = judge(dir.path(), &agent_call(dir.path(), &prompt, None))?;
-        assert!(reason.is_some(), "{path}: denied");
+        assert_eq!(reason, Some(expected), "{path}");
     }
     Ok(())
 }
@@ -170,7 +187,14 @@ fn a_brief_that_is_a_symlink_out_of_the_worktree_is_denied() -> TestResult {
         &agent_call(dir.path(), "Brief: .anneal/briefs/link.md", None),
     )?;
 
-    assert!(reason.is_some(), "a valid brief, but outside the worktree");
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "ERROR brief: the brief .anneal/briefs/link.md resolves outside .anneal/briefs/ of \
+             this worktree"
+        ),
+        "a valid brief, but outside the worktree"
+    );
     Ok(())
 }
 

@@ -210,6 +210,24 @@ fn bash_writes_to_lint_or_hook_config_are_denied() {
 }
 
 #[test]
+fn bash_writes_to_the_anneal_config_are_denied_and_the_rest_of_anneal_is_not() {
+    assert_table(&[
+        ("echo '{}' > .anneal/config.json", CONFIG),
+        ("echo x >> ./.anneal/config.json", CONFIG),
+        ("tee .anneal/config.json < x", CONFIG),
+        ("sed -i 's/a/b/' .anneal/config.json", CONFIG),
+        ("cp x.json .anneal/config.json", CONFIG),
+        ("mv .anneal/config.json old.json", CONFIG),
+        ("rm .anneal/config.json", CONFIG),
+        ("rm -r .anneal", CONFIG),
+        ("echo x > .Anneal/Config.json", CONFIG),
+        ("echo x > .anneal/briefs/36.md", ALLOW),
+        ("cat .anneal/config.json", ALLOW),
+        ("echo x > config.json", ALLOW),
+    ]);
+}
+
+#[test]
 fn reads_and_writes_elsewhere_are_allowed() {
     assert_table(&[
         ("cat .claude/settings.json", ALLOW),

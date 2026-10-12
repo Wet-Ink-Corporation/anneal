@@ -111,6 +111,14 @@ pub enum CliError {
     /// `anneal brief build` could not read its range or write its files.
     #[error(transparent)]
     Brief(#[from] BriefError),
+    /// `anneal round start` lost every try to other tickets' rounds.
+    #[error(
+        "round start: other tickets' rounds kept starting during {attempts} tries; run it again"
+    )]
+    RoundContended {
+        /// How many tries were made.
+        attempts: usize,
+    },
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -137,7 +145,8 @@ impl CliError {
             | Self::Ledger(_)
             | Self::Clock(_)
             | Self::CurrentDir(_)
-            | Self::Dag(_) => exit_codes::INTERNAL,
+            | Self::Dag(_)
+            | Self::RoundContended { .. } => exit_codes::INTERNAL,
             Self::Lint(error) | Self::Plan(error) => error.code(),
             Self::Eval(error) => error.code(),
             Self::Grill(error) => error.code(),

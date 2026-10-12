@@ -96,10 +96,16 @@ pub(crate) fn resolve(root: &Path, text: &str) -> Result<PathBuf, Refusal> {
         }
         Err(error) => Err(Refusal::Unresolvable(text.to_owned(), error.to_string())),
     };
+    // The briefs directory itself must be the worktree's own, not a symlink (of `.anneal` or
+    // of `briefs`) to somewhere else: compare it with the resolved root's.
+    let real_root = canonical(root)?;
+    let own_dir = dir_parts
+        .iter()
+        .fold(real_root, |path, part| path.join(part));
     let real_dir = canonical(&dir)?;
     let file = rest.iter().fold(dir, |path, part| path.join(part));
     let real_file = canonical(&file)?;
-    if real_file.starts_with(&real_dir) {
+    if real_dir == own_dir && real_file.starts_with(&own_dir) {
         Ok(real_file)
     } else {
         Err(Refusal::Escapes(text.to_owned()))
@@ -164,6 +170,53 @@ mod tests {
             resolve(root.path(), ".anneal/briefs/36.md"),
             Err(Refusal::Missing(".anneal/briefs/36.md".to_owned())),
             "named, not written yet"
+        );
+    }
+
+    /// A worktree whose `link` (a path under it, `/`-separated) is a symlink to a directory
+    /// outside it holding `briefs/36.md` or `36.md`, as `nested` says.
+    #[cfg(unix)]
+    fn linked_out(link: &str, nested: bool) -> (tempfile::TempDir, tempfile::TempDir) {
+        let root = tempfile::tempdir().expect("a worktree");
+        let outside = tempfile::tempdir().expect("a directory outside it");
+        let target = if nested {
+            outside.path().join("briefs")
+        } else {
+            outside.path().to_path_buf()
+        };
+        std::fs::create_dir_all(&target).expect("created");
+        std::fs::write(target.join("36.md"), "## Goal\nx\n").expect("written");
+        let link = link
+            .split('/')
+            .fold(root.path().to_path_buf(), |path, part| path.join(part));
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).expect("created");
+        }
+        std::os::unix::fs::symlink(outside.path(), &link).expect("linked");
+        (root, outside)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_briefs_directory_that_is_a_symlink_out_of_the_worktree_is_refused() {
+        let (root, _outside) = linked_out(".anneal/briefs", false);
+
+        assert_eq!(
+            resolve(root.path(), ".anneal/briefs/36.md"),
+            Err(Refusal::Escapes(".anneal/briefs/36.md".to_owned())),
+            "the file is inside the linked directory, but not inside the worktree"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_anneal_directory_that_is_a_symlink_out_of_the_worktree_is_refused() {
+        let (root, _outside) = linked_out(".anneal", true);
+
+        assert_eq!(
+            resolve(root.path(), ".anneal/briefs/36.md"),
+            Err(Refusal::Escapes(".anneal/briefs/36.md".to_owned())),
+            "briefs/ resolves outside the worktree"
         );
     }
 }

@@ -136,7 +136,8 @@ pub(crate) fn review_package(inputs: &Brief<'_>, diff: Option<&str>) -> String {
     };
     [
         format!(
-            "# Review package: {ticket}\n\nBrief: `{}`\n\n## Contract\n\n",
+            // Not `Brief:`, which the brief hook reads as the spawn's brief line.
+            "# Review package: {ticket}\n\nBrief file: `{}`\n\n## Contract\n\n",
             brief_file(ticket)
         ),
         inputs.fields("###"),
@@ -287,6 +288,24 @@ mod tests {
         assert!(
             text.find("## Volatile").expect("volatile") > text.find("## Diff").expect("diff"),
             "commits and time last"
+        );
+    }
+
+    #[test]
+    fn the_review_package_has_no_brief_line_so_pasting_it_into_a_prompt_names_no_second_brief() {
+        let ticket: Ticket = "36".parse().expect("a ticket");
+        let given = every_field();
+
+        let text = review_package(&inputs(&ticket, &given, false), Some("+x\n"));
+
+        let brief_lines: Vec<&str> = text
+            .lines()
+            .filter(|line| line.trim_start().starts_with("Brief:"))
+            .collect();
+        assert_eq!(brief_lines, Vec::<&str>::new(), "{text}");
+        assert!(
+            text.contains("Brief file: `.anneal/briefs/36.md`"),
+            "it still names its brief: {text}"
         );
     }
 

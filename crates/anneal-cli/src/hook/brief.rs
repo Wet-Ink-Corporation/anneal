@@ -13,6 +13,8 @@
 //! `docs/hooks.md` and `docs/brief.md`.
 
 mod reference;
+#[cfg(test)]
+mod tests;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -326,21 +328,40 @@ fn summary(findings: &[BriefFinding]) -> String {
     .join("; ")
 }
 
+/// Why a brief could not be read; each reads as the end of "the brief <path> ...".
+#[derive(Debug, thiserror::Error)]
+enum BriefReadError {
+    #[error("is not a regular file")]
+    NotAFile,
+    #[error("is larger than {MAX_BRIEF_BYTES} bytes")]
+    TooLarge,
+    #[error("cannot be read: {0}")]
+    Io(#[from] io::Error),
+}
+
 /// The text of the brief at `path` (lossy UTF-8), a regular file of at most
-/// [`MAX_BRIEF_BYTES`]; else why not, as the end of a sentence.
-fn read_brief(path: &Path) -> Result<String, String> {
-    match fs::metadata(path) {
-        Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => return Err("is not a regular file".to_owned()),
-        Err(error) => return Err(format!("cannot be read: {error}")),
+/// [`MAX_BRIEF_BYTES`].
+///
+/// The path is checked before it is opened, since opening a FIFO would block; the opened
+/// handle is checked again, so what is read is the file that was judged even if the path was
+/// swapped in between, and the read stops one byte past the cap.
+fn read_brief(path: &Path) -> Result<String, BriefReadError> {
+    if !fs::metadata(path)?.is_file() {
+        return Err(BriefReadError::NotAFile);
     }
-    let file = File::open(path).map_err(|error| format!("cannot be read: {error}"))?;
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(BriefReadError::NotAFile);
+    }
+    if metadata.len() > MAX_BRIEF_BYTES {
+        return Err(BriefReadError::TooLarge);
+    }
     let mut bytes = Vec::new();
     file.take(MAX_BRIEF_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("cannot be read: {error}"))?;
+        .read_to_end(&mut bytes)?;
     if u64::try_from(bytes.len()).map_or(true, |len| len > MAX_BRIEF_BYTES) {
-        return Err(format!("is larger than {MAX_BRIEF_BYTES} bytes"));
+        return Err(BriefReadError::TooLarge);
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

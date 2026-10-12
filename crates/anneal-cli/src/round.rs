@@ -148,11 +148,9 @@ fn count(store: &Store, ticket: &Ticket) -> Result<Count, StoreError> {
     let rounds = events
         .iter()
         .filter_map(|recorded| match &recorded.event.event {
-            LedgerEvent::RoundStarted(RoundStarted {
-                ticket: Some(name),
-                round,
-                ..
-            }) if name == ticket.as_str() => Some(*round),
+            LedgerEvent::RoundStarted(started) if started.ticket() == Some(ticket.as_str()) => {
+                Some(started.round())
+            }
             _ => None,
         })
         .max()
@@ -191,6 +189,10 @@ struct Data<'a> {
     guidance: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     position: Option<u64>,
+    /// The round another `start` recorded first, which this `start` reports instead of
+    /// recording one more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    joined: Option<u32>,
 }
 
 /// `anneal round start`.
@@ -211,43 +213,78 @@ fn run_start<O: Write>(
     let location = paths::ledger_store(None, lookup, cwd)?;
     let store = Store::open(&location.path)?;
     for _ in 0..START_ATTEMPTS {
-        let Count {
-            rounds,
-            last_position,
-        } = count(&store, &ticket)?;
-        if Next::after(rounds) == Next::Park {
-            let parked = Report {
-                subcommand: "start",
+        let seen = count(&store, &ticket)?;
+        let report = match start_once(&store, &ticket, seen, args.session.as_deref())? {
+            Attempt::Retry => continue,
+            Attempt::Parked { rounds } => Report {
                 rounds,
-                started: None,
-                next: Next::Park,
-                position: None,
-            };
-            return parked.emit(&ticket, out);
-        }
-        let round = rounds.saturating_add(1);
-        let envelope = envelope_for(&ticket, round, args.session.as_deref())?;
-        let condition = Condition::none_matching(Filter {
-            types: vec![EventKind::RoundStarted],
-            tags: Vec::new(),
-        })
-        .after(last_position);
-        if let Appended::At(position) = store.append_if(&envelope, &condition)? {
-            let started = Report {
-                subcommand: "start",
+                ..Report::start(Next::Park)
+            },
+            Attempt::Started { round, position } => Report {
                 rounds: round,
                 started: Some(round),
-                next: Next::for_round(round),
                 position: Some(position),
-            };
-            return started.emit(&ticket, out);
+                ..Report::start(Next::for_round(round))
+            },
+            Attempt::Joined { rounds } => Report {
+                rounds,
+                joined: Some(rounds),
+                ..Report::start(Next::for_round(rounds))
+            },
+        };
+        return report.emit(&ticket, out);
+    }
+    Err(CliError::RoundContended {
+        attempts: START_ATTEMPTS,
+    })
+}
+
+/// What one try of `round start` came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    /// Five rounds ran; nothing was appended.
+    Parked { rounds: u32 },
+    /// This start recorded `round` at `position`.
+    Started { round: u32, position: u64 },
+    /// Another writer started this ticket's next round first; that round counts for this
+    /// start too, and nothing was appended.
+    Joined { rounds: u32 },
+    /// Another ticket's round was appended after the read; read again.
+    Retry,
+}
+
+/// Tries once to record the round after `seen` for `ticket`, on the condition that no
+/// `round_started` follows the read. On a conflict it reads again: a round of this ticket
+/// means another start won (`Joined`), only other tickets' rounds mean `Retry`.
+fn start_once(
+    store: &Store,
+    ticket: &Ticket,
+    seen: Count,
+    session: Option<&str>,
+) -> Result<Attempt, CliError> {
+    if Next::after(seen.rounds) == Next::Park {
+        return Ok(Attempt::Parked {
+            rounds: seen.rounds,
+        });
+    }
+    let round = seen.rounds.saturating_add(1);
+    let envelope = envelope_for(ticket, round, session)?;
+    let condition = Condition::none_matching(Filter {
+        types: vec![EventKind::RoundStarted],
+        tags: Vec::new(),
+    })
+    .after(seen.last_position);
+    match store.append_if(&envelope, &condition)? {
+        Appended::At(position) => Ok(Attempt::Started { round, position }),
+        Appended::Conflict => {
+            let now = count(store, ticket)?;
+            if now.rounds > seen.rounds {
+                Ok(Attempt::Joined { rounds: now.rounds })
+            } else {
+                Ok(Attempt::Retry)
+            }
         }
     }
-    Err(CliError::Usage {
-        reason: format!(
-            "other rounds kept starting while round start ran {START_ATTEMPTS} times; run it again"
-        ),
-    })
 }
 
 /// The `round_started` envelope for round `round` of `ticket`.
@@ -256,11 +293,7 @@ fn envelope_for(
     round: u32,
     session: Option<&str>,
 ) -> Result<EventEnvelope, CliError> {
-    let event = LedgerEvent::RoundStarted(RoundStarted {
-        pr: None,
-        ticket: Some(ticket.as_str().to_owned()),
-        round,
-    });
+    let event = LedgerEvent::RoundStarted(RoundStarted::for_ticket(ticket.as_str(), round));
     let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
     envelope.session_id = session.map(str::to_owned);
     Ok(envelope)
@@ -290,6 +323,7 @@ fn run_status<O: Write>(
         started: None,
         next: Next::after(rounds),
         position: None,
+        joined: None,
     };
     report.emit(&ticket, out)
 }
@@ -306,9 +340,23 @@ struct Report {
     next: Next,
     /// Where `start` recorded its round.
     position: Option<u64>,
+    /// The round another start recorded while this one ran, which this start reports.
+    joined: Option<u32>,
 }
 
 impl Report {
+    /// A `start` report whose round does `next`, with nothing recorded yet.
+    const fn start(next: Next) -> Self {
+        Self {
+            subcommand: "start",
+            rounds: 0,
+            started: None,
+            next,
+            position: None,
+            joined: None,
+        }
+    }
+
     /// Writes the envelope for `ticket`: exit 3 when `next` parks, else 0.
     fn emit<O: Write>(self, ticket: &Ticket, out: &mut O) -> Result<Code, CliError> {
         let parked = self.next == Next::Park;
@@ -332,6 +380,7 @@ impl Report {
             next: self.next,
             guidance: self.next.guidance(),
             position: self.position,
+            joined: self.joined,
         };
         Envelope::new(CommandName::Round, Some(self.subcommand), code, data)
             .with_findings(&findings)
@@ -341,35 +390,4 @@ impl Report {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::Next;
-
-    #[test]
-    fn rounds_one_to_three_use_the_same_agent_four_and_five_a_fresh_one_then_park() {
-        let plans: Vec<Next> = (0..=7).map(Next::for_round).collect();
-
-        assert_eq!(
-            plans,
-            [
-                Next::Park,
-                Next::SameAgent,
-                Next::SameAgent,
-                Next::SameAgent,
-                Next::FreshAgent,
-                Next::FreshAgent,
-                Next::Park,
-                Next::Park,
-            ],
-            "round 0 does not exist; after round 5 nothing runs"
-        );
-    }
-
-    #[test]
-    fn the_next_round_follows_the_rounds_already_started() {
-        assert_eq!(
-            [0, 3, 5, u32::MAX].map(Next::after),
-            [Next::SameAgent, Next::FreshAgent, Next::Park, Next::Park],
-            "the round after the count, saturating"
-        );
-    }
-}
+mod tests;

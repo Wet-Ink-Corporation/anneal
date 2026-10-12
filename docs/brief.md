@@ -46,8 +46,12 @@ It writes two files under the worktree root, replacing earlier ones:
   envelope sets `data.diff_omitted`.
 
 `--ticket` is a plain id used for file names: an issue number (`36`) or a dag ticket id
-(`003-auth`), 1 to 64 ASCII letters, digits, `.`, `_` or `-`, not starting with `.`. Nothing is
-fetched from a tracker.
+(`003-auth`), 1 to 64 ASCII letters, digits, `.`, `_` or `-`, not starting with `.`. Letters are
+lowered (`T1` is `t1`), since names differing only in case share one file on case-insensitive
+file systems (APFS, NTFS); the round counter uses the same lowered name. A name ending in
+`.review` (its brief would be another ticket's review package) and a Windows device name (`con`,
+`prn`, `aux`, `nul`, `com1` to `com9`, `lpt1` to `lpt9`, in any case and before any `.`) are
+refused. Nothing is fetched from a tracker.
 
 A field not given is written as an HTML comment naming its purpose, which `lint brief` does not
 count as content, except `repository` (the worktree root and the base) and `return-contract`
@@ -89,6 +93,11 @@ in `.anneal/config.json`; the list replaces the default, `["orchestrate-lead"]`,
 most 64 names. A plugin's agent reports a plugin-scoped type (`anneal:orchestrate-lead`), so
 list that form for one.
 
+The guard denies Bash writes to `.anneal/config.json` (and removing `.anneal`), so a subagent
+cannot add itself to the list from the shell. The Edit and Write tools are not gated by anneal
+there (the preconditions hook always allows `.anneal/`): that is left to Claude Code's
+permissions, a known gap.
+
 ## Standing orders
 
 `anneal hook standing-orders` (`SubagentStart`, fail open) adds `.anneal/standing-orders.md`
@@ -106,9 +115,10 @@ anneal round status --ticket <id>
 
 A ticket's round count is the highest `round` among its `round_started` events (registry v8:
 `{"type": "round_started", "ticket": "36", "round": 2}`), so it survives compaction and
-restarts. `start` appends the next round, first writer wins (it reads again when another round
-started in between); `status` reads and never creates a ledger. `data.next` says what the round
-does:
+restarts. `start` appends the next round, first writer wins: when another `start` of the same
+ticket recorded that round first, it reports that round (`data.joined`) and appends nothing;
+when only other tickets' rounds came in between, it reads again, up to 4 times, then fails with
+exit 70. `status` reads and never creates a ledger. `data.next` says what the round does:
 
 | Round | `next` | What the orchestrator does |
 |---|---|---|

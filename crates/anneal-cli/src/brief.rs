@@ -9,6 +9,7 @@ pub mod fields;
 mod render;
 pub mod ticket;
 
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use anneal_ledger::Timestamp;
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::baseline::write_atomically;
+use crate::baseline::{discard, stage};
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
@@ -247,12 +248,26 @@ fn write_files(
     diff: Option<&str>,
 ) -> Result<Vec<&'static str>, BriefError> {
     let brief_text = render::brief(inputs);
-    write_under(root, &brief_file(inputs.ticket), &brief_text)?;
-    write_under(
-        root,
-        &package_file(inputs.ticket),
-        &render::review_package(inputs, diff),
-    )?;
+    let package_text = render::review_package(inputs, diff);
+    let brief = under(root, &brief_file(inputs.ticket));
+    let package = under(root, &package_file(inputs.ticket));
+    if let Some(dir) = brief.parent() {
+        fs::create_dir_all(dir).map_err(|source| write_failed(dir, source))?;
+    }
+    // Both are staged before either is renamed, and the package goes first: a failure leaves
+    // no new brief pointing at a package that was not written.
+    let staged_brief =
+        stage(&brief, brief_text.as_bytes()).map_err(|source| write_failed(&brief, source))?;
+    let staged_package = match stage(&package, package_text.as_bytes()) {
+        Ok(staged) => staged,
+        Err(error) => return Err(write_failed(&package, discard(&staged_brief, error))),
+    };
+    if let Err(error) = fs::rename(&staged_package, &package) {
+        let error = discard(&staged_package, error);
+        return Err(write_failed(&package, discard(&staged_brief, error)));
+    }
+    fs::rename(&staged_brief, &brief)
+        .map_err(|error| write_failed(&brief, discard(&staged_brief, error)))?;
     Ok(check(&brief_text)
         .into_iter()
         .filter(|finding| finding.rule == Rule::Empty)
@@ -260,17 +275,19 @@ fn write_files(
         .collect())
 }
 
-/// Writes `text` to `relative` (`/`-separated) under `root`, creating its directory.
-fn write_under(root: &Path, relative: &str, text: &str) -> Result<(), BriefError> {
-    let path = relative
-        .split('/')
-        .fold(root.to_path_buf(), |path, part| path.join(part));
-    let written = match path.parent() {
-        Some(dir) => std::fs::create_dir_all(dir),
-        None => Ok(()),
+/// The error for `path` that could not be written; the path is kept for the message.
+fn write_failed(path: &Path, source: io::Error) -> BriefError {
+    BriefError::Write {
+        path: path.to_path_buf(),
+        source,
     }
-    .and_then(|()| write_atomically(&path, text.as_bytes()));
-    written.map_err(|source| BriefError::Write { path, source })
+}
+
+/// `relative` (`/`-separated) under `root`.
+fn under(root: &Path, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(root.to_path_buf(), |path, part| path.join(part))
 }
 
 /// The envelope for a refused range: exit 2, one `brief/range` finding, nothing written.
