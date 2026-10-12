@@ -91,6 +91,16 @@
       "role": "scaffolding",
       "model_generation": "claude-5",
       "source": "Blueprint: Clef decision points (D6 ruled-before); story #31"
+    },
+    {
+      "id": "injection-scan",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:7b9a78954ee46111",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Story #39 (GSD pattern: flag instruction-shaped text in fetched content)"
     }
   ]
 }

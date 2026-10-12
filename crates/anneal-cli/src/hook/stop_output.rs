@@ -1,6 +1,7 @@
 //! What the `Stop` and `SubagentStop` hooks write: Claude Code's top-level `decision` and
 //! `reason`, the event's `additionalContext`, and a `systemMessage` for the one `ERROR` line
-//! of a hook that failed open. Nothing at all when there is nothing to say.
+//! of a hook that failed open. Nothing at all when there is nothing to say. The injection-scan
+//! hook writes its `additionalContext` and `systemMessage` through it too, never a `decision`.
 
 use std::io::{self, Write};
 

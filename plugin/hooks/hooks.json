@@ -43,6 +43,13 @@
             "args": ["hook", "fast-check"],
             "timeout": 15,
             "onFailure": "continue"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "injection-scan"],
+            "timeout": 2,
+            "onFailure": "continue"
           }
         ]
       }
