@@ -40,27 +40,45 @@ const TOOL_CALL_ARGUMENTS: [&str; 3] = ["\"input\"", "\"arguments\"", "\"paramet
 const TOOL_CALL_REACH: usize = 400;
 
 /// Adds the markup and tool-call JSON hits on the lines of `text` outside code fences, at most
-/// one of each kind per line.
+/// one of each kind per line. A fence still open when the text ends hides nothing: the lines
+/// after its opener are scanned as if it were not there.
 pub(super) fn markup(text: &str, found: &mut Scan) {
-    let mut fence: Option<char> = None;
+    if let Some(opener) = markup_lines(text, None, found) {
+        markup_lines(text, Some(opener), found);
+    }
+}
+
+/// Scans the lines of `text` for [`markup`]. With `after: None` it honours code fences and
+/// returns the index of a fence's opening line when the text ends inside it; with
+/// `after: Some(i)` it scans only the lines after line `i`, ignoring fences, and returns `None`.
+fn markup_lines(text: &str, after: Option<usize>, found: &mut Scan) -> Option<usize> {
+    let mut fence: Option<(char, usize)> = None;
     let mut start = 0_usize;
     for (index, line) in text.split('\n').enumerate() {
         let number = index.saturating_add(1);
         let line_start = start;
         start = start.saturating_add(line.len()).saturating_add(1);
-        let trimmed = line.trim_start();
-        if let Some(open) = fence {
-            if starts_with_fence(trimmed) == Some(open) {
-                fence = None;
+        match after {
+            Some(opener) if index <= opener => continue,
+            Some(_) => {}
+            None => {
+                let marker = starts_with_fence(line.trim_start());
+                if let Some((open, _)) = fence {
+                    if marker == Some(open) {
+                        fence = None;
+                    }
+                    continue;
+                }
+                if let Some(open) = marker {
+                    fence = Some((open, index));
+                    continue;
+                }
             }
-            continue;
         }
-        if let Some(open) = starts_with_fence(trimmed) {
-            fence = Some(open);
-            continue;
-        }
-        let lower = line.to_ascii_lowercase();
-        if MARKUP.iter().any(|needle| lower.contains(needle)) {
+        if MARKUP
+            .iter()
+            .any(|needle| contains_ignoring_ascii_case(line, needle))
+        {
             found.add(Hit {
                 kind: Kind::Markup,
                 line: number,
@@ -73,6 +91,16 @@ pub(super) fn markup(text: &str, found: &mut Scan) {
             });
         }
     }
+    fence.map(|(_, opener)| opener)
+}
+
+/// Whether `haystack` holds `needle` (lowercase ASCII) in any ASCII letter case, without
+/// lowercasing a copy of the line.
+fn contains_ignoring_ascii_case(haystack: &str, needle: &str) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// The fence character when `trimmed` opens or closes a code fence (three backticks or tildes).

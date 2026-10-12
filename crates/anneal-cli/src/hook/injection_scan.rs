@@ -34,7 +34,8 @@ const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SCAN_BYTES: usize = 256 * 1024;
 
 /// The most scanned across one batch, in bytes: sixteen full results, well inside the 2 s
-/// timeout (a full 16 MiB input scans in about 0.7 s in a release build).
+/// timeout (a full 16 MiB input of dense hits, parse included, takes about 0.5 s in a release
+/// build).
 const MAX_BATCH_SCAN_BYTES: usize = 16 * MAX_SCAN_BYTES;
 
 /// How much of an input is scanned.
@@ -179,13 +180,17 @@ fn line(content: &Content<'_>, hit: Hit, count: usize) -> String {
 /// Where `line` of `content` is: `path:line` for a file, the URL and the line of the fetched
 /// text for a page, and the place alone when the content's lines are not the source's.
 fn location(content: &Content<'_>, line: usize) -> String {
-    let place = content.place.map_or_else(
-        || match content.tool {
-            Tool::Read => "a Read result".to_owned(),
-            Tool::WebFetch => "a WebFetch result".to_owned(),
-        },
-        one_line,
-    );
+    let place = content
+        .place
+        .map(cut_place)
+        .filter(|place| detect::scan(place).first.is_none())
+        .map_or_else(
+            || match content.tool {
+                Tool::Read => "a Read result".to_owned(),
+                Tool::WebFetch => "a WebFetch result".to_owned(),
+            },
+            one_line,
+        );
     let Some(first_line) = content.first_line else {
         return place;
     };
@@ -196,15 +201,27 @@ fn location(content: &Content<'_>, line: usize) -> String {
     }
 }
 
-/// `place` with control characters as spaces, cut to [`MAX_PLACE_BYTES`].
-fn one_line(place: &str) -> String {
+/// `place` cut to [`MAX_PLACE_BYTES`], at a character boundary.
+fn cut_place(place: &str) -> &str {
     let cut = place.floor_char_boundary(MAX_PLACE_BYTES);
-    place
-        .get(..cut)
-        .unwrap_or_default()
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    place.get(..cut).unwrap_or_default()
+}
+
+/// `place` as one printable line: control characters (`\n`, U+0085 and the rest of Cc) as
+/// spaces, and format, line and paragraph separator characters ([`detect::is_format`]) as
+/// escaped code points (`\u{2028}`), so nothing in a path or URL is relayed unseen.
+fn one_line(place: &str) -> String {
+    let mut line = String::with_capacity(place.len());
+    for c in place.chars() {
+        if c.is_control() {
+            line.push(' ');
+        } else if detect::is_format(c) {
+            line.extend(c.escape_unicode());
+        } else {
+            line.push(c);
+        }
+    }
+    line
 }
 
 #[cfg(test)]

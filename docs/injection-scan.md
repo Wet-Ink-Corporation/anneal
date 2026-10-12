@@ -29,8 +29,9 @@ moving it is a manifest change. It is not declared there because
   a `content` string, and finally every string in the response are read too, the last without
   line numbers. An image is not scanned.
 - The first 256 KiB of each result, cut at a character boundary, and 4 MiB per batch: once the
-  batch's budget is spent, later calls are not scanned. A full 16 MiB input of dense hits scans
-  in about 0.7 s in a release build.
+  batch's budget is spent, later calls are not scanned. A full 16 MiB input of dense hits,
+  with or without an unclosed code fence in each result, takes about 0.5 s in a release build,
+  parsing included.
 
 ## Heuristics
 
@@ -47,8 +48,17 @@ reads as `ignore`.
 | Tool-call JSON | `"tool_use"`, `"tool_calls"`, `"tool_call"` or `"function_call"` followed within 400 bytes by `"name"` and `"input"`, `"arguments"` or `"parameters"`, outside code fences. |
 | Hidden characters | A line with a Unicode tag character or a bidi embedding, override or isolate control, or two or more zero-width characters. A zero-width joiner or non-joiner between two characters outside ASCII (emoji sequences, Persian, Indic scripts) and a byte-order mark that starts the text do not count. |
 
+Code fences (three backticks or tildes) hide markup and tool-call JSON only when closed: when
+the text ends inside a fence, the lines after its opener are scanned as unfenced, so an opener
+with no close cannot silence the rest of a file.
+
 The note names the first hit by call, then line, and counts every hit in the batch. It never
-quotes the content, which would put the instruction back in front of the model.
+quotes the content, which would put the instruction back in front of the model. The path or URL
+it names is treated as untrusted too: when the place itself scans as a hit (an injection phrase,
+tag characters, a bidi override) the note says `a Read result` or `a WebFetch result` instead;
+otherwise control characters become spaces and format, line and paragraph separator characters
+(Unicode Cf, Zl, Zp, such as U+200B or U+2028) are written escaped, as `\u{2028}`. The place is
+cut to 512 bytes.
 
 ## Corpus and false-positive rate
 

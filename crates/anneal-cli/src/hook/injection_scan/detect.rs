@@ -70,6 +70,36 @@ impl Scan {
     }
 }
 
+/// Whether `c` is a Unicode format, line separator or paragraph separator character
+/// (categories Cf, Zl and Zp, Unicode 15.1, and the whole tag block U+E0000..U+E007F): it
+/// prints nothing or breaks a line, so a place holding one is shown escaped. Every character
+/// the word scanner drops as invisible is one.
+pub(crate) const fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
 /// Scans `text` for instruction-shaped passages.
 pub(crate) fn scan(text: &str) -> Scan {
     let mut found = Scan::default();
