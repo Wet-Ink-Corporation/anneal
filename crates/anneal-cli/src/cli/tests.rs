@@ -121,8 +121,8 @@ fn command_help_shows_its_exit_codes_and_does_not_prove() {
 #[test]
 fn a_stub_exits_64_with_one_error_line_and_no_stdout() {
     for args in [
-        &["watch"][..],
-        &["watch", "pr", "--kind", "x"],
+        &["rollout"][..],
+        &["rollout", "decide", "--kind", "x"],
         &["lint", "brief", "-q"],
     ] {
         let (code, out, err) = anneal(args);

@@ -1,0 +1,1 @@
+[{"url":"https://api.github.com/repos/octo/app/deployments/42/statuses/10","id":10,"state":"failure","description":"Health check failed","environment":"production","target_url":"https://app.example.com","log_url":"https://github.com/octo/app/actions/runs/702","created_at":"2026-10-12T10:05:00Z"}]

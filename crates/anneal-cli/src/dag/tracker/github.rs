@@ -28,7 +28,7 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::dag::tracker::{Tickets, Tracker, TrackerError};
-pub use gh::{GH_TIMEOUT, GhApi, GhCli, GhError, MAX_GH_OUTPUT};
+pub use gh::{Field, GH_TIMEOUT, GhApi, GhCli, GhError, GhGraphql, MAX_GH_OUTPUT};
 
 /// Issues asked for per page (GitHub's maximum).
 pub const PER_PAGE: usize = 100;

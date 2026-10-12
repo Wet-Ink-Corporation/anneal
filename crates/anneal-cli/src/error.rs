@@ -23,6 +23,7 @@ use crate::paths::PathError;
 use crate::pr_diff::PrError;
 use crate::repro::ReproError;
 use crate::task::TaskError;
+use crate::watch::WatchError;
 
 /// Why `anneal` could not produce a result.
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +91,9 @@ pub enum CliError {
     /// `anneal calibrate` could not read the log or thresholds, or write its proposals.
     #[error("calibrate")]
     Calibrate(#[from] CalibrateError),
+    /// `anneal watch` could not read its target.
+    #[error("watch")]
+    Watch(#[from] WatchError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -118,6 +122,7 @@ impl CliError {
             Self::Pr(error) => error.code(),
             Self::Decide(error) => error.code(),
             Self::Calibrate(error) => error.code(),
+            Self::Watch(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

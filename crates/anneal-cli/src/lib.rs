@@ -37,6 +37,8 @@
 //! - [`verdict`]: `anneal verdict set|valid`, review verdicts per pull request, fresh for the
 //!   head's commit or, after a rebase-only change, its patch id.
 //! - [`ship`]: `anneal ship skip-rule`, whether a change may skip full review.
+//! - [`watch`]: `anneal watch pr|ci|deploy`, a long poll of a pull request, a commit's checks
+//!   or a deployment that exits with one code per blocker.
 //! - [`pr_diff`]: the bounded git reads of a pull request's diff (commits, base, patch id,
 //!   numstat) that `verdict`, `ship` and the merge gate share.
 //! - [`repo_config`]: `.anneal/config.json`, read within a size cap (`check_fast`,
@@ -78,3 +80,4 @@ pub mod task;
 #[cfg(test)]
 mod test_repo;
 pub mod verdict;
+pub mod watch;

@@ -63,3 +63,29 @@ fn a_gh_that_never_answers_is_killed_at_the_timeout() -> Result<(), Box<dyn std:
     );
     Ok(())
 }
+
+#[test]
+fn a_graphql_query_sends_raw_fields_with_f_and_typed_ones_with_capital_f() {
+    use crate::dag::tracker::github::gh::{Field, graphql_args};
+
+    let args = graphql_args(
+        "query { viewer { login } }",
+        &[Field::Raw("ref", "@main"), Field::Typed("number", "5")],
+    );
+
+    assert_eq!(
+        args,
+        [
+            "api",
+            "graphql",
+            "-f",
+            "query=query { viewer { login } }",
+            "-f",
+            "ref=@main",
+            "-F",
+            "number=5",
+        ]
+        .map(std::ffi::OsString::from),
+        "a raw field is never read as a file, number or placeholder"
+    );
+}
