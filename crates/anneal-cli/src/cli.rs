@@ -30,7 +30,9 @@ use crate::lint::{self, LintArgs};
 use crate::mode::{self, ModeArgs};
 use crate::plan::{self, PlanArgs};
 use crate::repro::{self, ReproArgs};
+use crate::ship::{self, ShipArgs};
 use crate::task::{self, TaskArgs};
+use crate::verdict::{self, VerdictArgs};
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -81,15 +83,15 @@ pub enum Command {
     /// Refuse changes that lower a quality floor
     #[command(name = "floor-guard", after_help = command_help(CommandName::FloorGuard))]
     FloorGuard(FloorGuardArgs),
-    /// Set or validate a review verdict
+    /// Set a review verdict for a pull request's head, or check that it has a fresh one
     #[command(after_help = command_help(CommandName::Verdict))]
-    Verdict(Stub),
+    Verdict(VerdictArgs),
     /// Watch a pull request, CI run or deploy until it settles
     #[command(after_help = command_help(CommandName::Watch))]
     Watch(Stub),
     /// Decide whether a change may skip full review
     #[command(after_help = command_help(CommandName::Ship))]
-    Ship(Stub),
+    Ship(ShipArgs),
     /// Decide go, hold or rollback for a rollout
     #[command(after_help = command_help(CommandName::Rollout))]
     Rollout(Stub),
@@ -292,6 +294,10 @@ fn dispatch<O: Write, E: Write>(
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             floor_guard::run(args, &cwd, out)
         }
+        Command::Verdict(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            verdict::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Eval(args) => eval::run(args, out),
         Command::Decide(args) => run_decide(args, out),
         Command::Calibrate(args) => run_calibrate(args, out, err),
@@ -305,9 +311,11 @@ fn dispatch<O: Write, E: Write>(
                 .map(|()| exit_codes::HOOK_DONE)
                 .map_err(CliError::Output)
         }
-        Command::Verdict(_)
-        | Command::Watch(_)
-        | Command::Ship(_)
+        Command::Ship(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            ship::run(args, &cwd, out)
+        }
+        Command::Watch(_)
         | Command::Rollout(_)
         | Command::Perf(_)
         | Command::Brief(_)

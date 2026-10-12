@@ -3,7 +3,8 @@
 //!
 //! Hooks fail open: a hook's own failures are reported in its output (or as an `ERROR` line on
 //! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2. The
-//! exception is a guard (`hook guard`, `hook preconditions`, or any hook passed `--fail-closed`),
+//! exception is a guard (`hook guard`, `hook preconditions`, `hook merge-gate`, or any hook
+//! passed `--fail-closed`),
 //! which fails closed: it denies what it cannot judge, and exits 2 when its decision cannot be
 //! written.
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
@@ -14,6 +15,7 @@ pub(crate) mod clef_fake;
 pub(crate) mod completeness;
 pub(crate) mod fast_check;
 pub(crate) mod guard;
+pub(crate) mod merge_gate;
 pub(crate) mod preconditions;
 mod prompt;
 pub(crate) mod route;
@@ -77,11 +79,14 @@ pub enum HookName {
     /// `UserPromptSubmit`: ask Clef (D6) whether the prompt re-opens a ruling, and in enforce
     /// mode surface it; fails open
     RuledBefore,
+    /// `PreToolUse` (Bash): deny `gh pr merge` without a fresh tests-verified verdict, and
+    /// without a review verdict unless the skip-rule skips the change; fails closed
+    MergeGate,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
@@ -90,6 +95,7 @@ impl HookName {
         Self::Status,
         Self::Route,
         Self::RuledBefore,
+        Self::MergeGate,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -104,6 +110,7 @@ impl HookName {
             Self::Status => "status",
             Self::Route => "route",
             Self::RuledBefore => "ruled-before",
+            Self::MergeGate => "merge-gate",
         }
     }
 
@@ -119,7 +126,7 @@ impl HookName {
             | Self::Status
             | Self::Route
             | Self::RuledBefore => false,
-            Self::Guard | Self::Preconditions => true,
+            Self::Guard | Self::Preconditions | Self::MergeGate => true,
         }
     }
 }
@@ -159,6 +166,7 @@ where
         HookName::RuledBefore => {
             ruled_before::run(env, &UreqTransport::new(), &SystemClock::new(), out)
         }
+        HookName::MergeGate => merge_gate::run(env, out),
     }
 }
 

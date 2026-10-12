@@ -5,19 +5,15 @@
 //! ```
 //!
 //! `check_fast` is an argv array, run without a shell. Other keys belong to other readers and
-//! are ignored here.
+//! are ignored here. The file is read through `repo_config::read_text`, which the merge gate's
+//! settings share.
 
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 
 use serde::Deserialize;
 
-/// The config file, relative to the worktree root.
-pub(crate) const CONFIG_PATH: &str = ".anneal/config.json";
-
-/// Most bytes of the config read.
-const MAX_CONFIG_BYTES: u64 = 64 * 1024;
+use crate::repo_config::{self, CONFIG_PATH, FileError};
 
 /// The fields this hook reads.
 #[derive(Debug, Deserialize)]
@@ -35,8 +31,8 @@ pub(crate) enum ConfigError {
     /// The path is not a regular file (a directory, a symlink, a FIFO): never opened.
     #[error("{CONFIG_PATH} is not a regular file")]
     NotAFile,
-    /// The file is over [`MAX_CONFIG_BYTES`].
-    #[error("{CONFIG_PATH} is larger than {MAX_CONFIG_BYTES} bytes")]
+    /// The file is over the config's size cap.
+    #[error("{}", FileError::TooLarge)]
     TooLarge,
     /// Not a JSON object, or `check_fast` is not an array of strings.
     #[error("{CONFIG_PATH} is not a config object with check_fast as an array of strings")]
@@ -44,6 +40,16 @@ pub(crate) enum ConfigError {
     /// `check_fast` is an empty array: there is no program to run.
     #[error("{CONFIG_PATH}: check_fast is empty; give the program and its arguments")]
     EmptyCheckFast,
+}
+
+impl From<FileError> for ConfigError {
+    fn from(error: FileError) -> Self {
+        match error {
+            FileError::Read(source) => Self::Read(source),
+            FileError::NotAFile => Self::NotAFile,
+            FileError::TooLarge => Self::TooLarge,
+        }
+    }
 }
 
 /// The `check:fast` argv of the config `text`; `None` when it sets none.
@@ -64,21 +70,8 @@ pub(crate) fn check_fast(text: &str) -> Result<Option<Vec<String>>, ConfigError>
 /// # Errors
 /// The [`ConfigError`] when the file cannot be read or is not valid.
 pub(crate) fn read(root: &Path) -> Result<Option<Vec<String>>, ConfigError> {
-    let path = root.join(CONFIG_PATH);
-    // Checked before opening: a FIFO would block the hook, and a directory opens on unix only.
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.is_file() => {}
-        Ok(_) => return Err(ConfigError::NotAFile),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(ConfigError::Read(error)),
+    match repo_config::read_text(root)? {
+        Some(text) => check_fast(&text),
+        None => Ok(None),
     }
-    let file = File::open(&path).map_err(ConfigError::Read)?;
-    let mut bytes = Vec::new();
-    file.take(MAX_CONFIG_BYTES.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(ConfigError::Read)?;
-    if u64::try_from(bytes.len()).map_or(true, |len| len > MAX_CONFIG_BYTES) {
-        return Err(ConfigError::TooLarge);
-    }
-    check_fast(&String::from_utf8_lossy(&bytes))
 }

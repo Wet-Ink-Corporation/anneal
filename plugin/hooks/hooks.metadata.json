@@ -23,6 +23,16 @@
       "source": "Blueprint: Hooks (guard), Gate escalation, skill rule 15; story #14"
     },
     {
+      "id": "merge-gate",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "fingerprint": "sha256:2ec04a288f2021d2",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (merge-gate), Feature catalog #24, #25 and #26, Boundaries (review plugin); story #33"
+    },
+    {
       "id": "preconditions",
       "event": "PreToolUse",
       "matcher": "Edit|Write",

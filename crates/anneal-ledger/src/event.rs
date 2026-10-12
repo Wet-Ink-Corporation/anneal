@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 5;
+pub const REGISTRY_VERSION: u32 = 6;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -262,11 +262,17 @@ pub struct ReproRed {
     pub test: String,
 }
 
-/// A review verdict.
+/// A review verdict: a level a change reached (`tests_verified`, `reviewed`, `approved`, from
+/// lowest to highest; the first two in registry v6), or a review's outcome
+/// (`changes_requested`, `noise_only`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
-    /// The change may merge.
+    /// Level: the change's tests were verified green (registry v6).
+    TestsVerified,
+    /// Level: the change was reviewed (registry v6).
+    Reviewed,
+    /// Level: the change may merge.
     Approved,
     /// The change needs work.
     ChangesRequested,
@@ -274,13 +280,42 @@ pub enum Verdict {
     NoiseOnly,
 }
 
+/// Who set a verdict (registry v6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerdictSource {
+    /// anneal's own checks in the session, such as `verify`.
+    Local,
+    /// The review plugin.
+    ReviewPlugin,
+    /// A human.
+    Human,
+}
+
 /// `verdict_set`: a review verdict was set on a pull request. Subject tag `pr:`.
+///
+/// `sha`, `patch_id` and `base` say what the verdict is for: it is fresh for a head whose commit
+/// is `sha`, or whose `git patch-id --verbatim` of the diff from `base` is `patch_id` (a
+/// rebase that changed nothing else).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerdictSet {
     /// The pull request number.
     pub pr: u64,
     /// The verdict.
     pub verdict: Verdict,
+    /// Who set it (registry v6).
+    #[serde(default)]
+    pub source: Option<VerdictSource>,
+    /// The full commit id of the head it was set for (registry v6).
+    #[serde(default)]
+    pub sha: Option<String>,
+    /// `git patch-id --verbatim` of `git diff <base>...<sha>`; `None` for an empty diff
+    /// (registry v6).
+    #[serde(default)]
+    pub patch_id: Option<String>,
+    /// The base ref the patch id was taken from, as given (registry v6).
+    #[serde(default)]
+    pub base: Option<String>,
 }
 
 /// `round_started`: a review round started on a pull request. Subject tag `pr:`.
@@ -398,7 +433,8 @@ pub struct SubagentStatus {
 mod tests {
     use super::{
         AgentStatus, EventKind, GrillConfirmed, LedgerEvent, Mode, ModeSet, REGISTRY_VERSION,
-        SubagentStatus, TestOutcome, TestRun, TokenUsage, UnknownEventKind,
+        SubagentStatus, TestOutcome, TestRun, TokenUsage, UnknownEventKind, Verdict, VerdictSet,
+        VerdictSource,
     };
     use crate::tag::TagKey;
     use serde_json::json;
@@ -650,10 +686,76 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_5() {
+    fn verdict_set_carries_the_level_source_commit_patch_id_and_base() {
+        let value = json!({
+            "type": "verdict_set",
+            "pr": 33,
+            "verdict": "tests_verified",
+            "source": "review_plugin",
+            "sha": "a21c5e7b17ac7075034918873814cd7950807243",
+            "patch_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+            "base": "origin/main",
+        });
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
         assert_eq!(
-            REGISTRY_VERSION, 5,
-            "subagent_status was added in version 5"
+            event,
+            LedgerEvent::VerdictSet(VerdictSet {
+                pr: 33,
+                verdict: Verdict::TestsVerified,
+                source: Some(VerdictSource::ReviewPlugin),
+                sha: Some("a21c5e7b17ac7075034918873814cd7950807243".to_owned()),
+                patch_id: Some("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c".to_owned()),
+                base: Some("origin/main".to_owned()),
+            }),
+            "every field is read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+    }
+
+    #[test]
+    fn every_verdict_and_source_has_its_stored_name() {
+        let verdicts = [
+            Verdict::TestsVerified,
+            Verdict::Reviewed,
+            Verdict::Approved,
+            Verdict::ChangesRequested,
+            Verdict::NoiseOnly,
+        ]
+        .map(|verdict| serde_json::to_value(verdict).expect("serialises"));
+        let sources = [
+            VerdictSource::Local,
+            VerdictSource::ReviewPlugin,
+            VerdictSource::Human,
+        ]
+        .map(|source| serde_json::to_value(source).expect("serialises"));
+
+        assert_eq!(
+            (verdicts.to_vec(), sources.to_vec()),
+            (
+                vec![
+                    json!("tests_verified"),
+                    json!("reviewed"),
+                    json!("approved"),
+                    json!("changes_requested"),
+                    json!("noise_only"),
+                ],
+                vec![json!("local"), json!("review_plugin"), json!("human")],
+            ),
+            "snake case, as the ledger's other enums"
+        );
+    }
+
+    #[test]
+    fn the_registry_is_version_6() {
+        assert_eq!(
+            REGISTRY_VERSION, 6,
+            "verdict_set's levels, source, sha, patch_id and base were added in version 6"
         );
     }
 

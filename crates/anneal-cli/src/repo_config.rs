@@ -1,0 +1,168 @@
+//! `.anneal/config.json`, the repository's anneal settings: its bounded read (`read_text`),
+//! shared with `hook::fast_check` (`check_fast`), and the merge gate's settings (`gate`):
+//!
+//! ```json
+//! {"review": {"require_plugin": false},
+//!  "ship": {"sensitive_globs": ["**/billing/**"]}}
+//! ```
+//!
+//! `review.require_plugin` (default `false`): while false, a human `approved` verdict satisfies
+//! `ship`'s review requirement; once true, only the review plugin's verdict does.
+//! `ship.sensitive_globs` (default none): paths that force a full review, added to the
+//! skip-rule's defaults (`ship::skip_rule::DEFAULT_SENSITIVE`), never replacing them. Each
+//! reader ignores the other readers' keys, but `review` and `ship` are read strictly, so a
+//! misspelt switch is an error rather than its default.
+
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::path::Path;
+
+use serde::Deserialize;
+
+use crate::glob::{Glob, GlobError};
+
+/// The config file, relative to the worktree root.
+pub(crate) const CONFIG_PATH: &str = ".anneal/config.json";
+
+/// Most bytes of the config read.
+const MAX_CONFIG_BYTES: u64 = 64 * 1024;
+
+/// Most globs `ship.sensitive_globs` may list (H-13).
+pub(crate) const MAX_SENSITIVE_GLOBS: usize = 256;
+
+/// Why the config file could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum FileError {
+    /// The file exists but cannot be read.
+    #[error("{CONFIG_PATH} cannot be read")]
+    Read(#[source] io::Error),
+    /// The path is not a regular file (a directory, a symlink, a FIFO): never opened.
+    #[error("{CONFIG_PATH} is not a regular file")]
+    NotAFile,
+    /// The file is over `MAX_CONFIG_BYTES` (64 KiB).
+    #[error("{CONFIG_PATH} is larger than {MAX_CONFIG_BYTES} bytes")]
+    TooLarge,
+}
+
+/// The text of the config in the worktree `root` (lossy UTF-8); `None` when there is none.
+///
+/// # Errors
+/// The [`FileError`] when the path is not a regular file, cannot be read or is too large.
+pub(crate) fn read_text(root: &Path) -> Result<Option<String>, FileError> {
+    let path = root.join(CONFIG_PATH);
+    // Checked before opening: a FIFO would block a hook, and a directory opens on unix only.
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Err(FileError::NotAFile),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(FileError::Read(error)),
+    }
+    let file = File::open(&path).map_err(FileError::Read)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(FileError::Read)?;
+    if u64::try_from(bytes.len()).map_or(true, |len| len > MAX_CONFIG_BYTES) {
+        return Err(FileError::TooLarge);
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// The merge gate's settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GateConfig {
+    /// `review.require_plugin`: only the review plugin's verdict satisfies the review
+    /// requirement.
+    pub(crate) require_plugin: bool,
+    /// `ship.sensitive_globs`: added to the skip-rule's default sensitive globs.
+    pub(crate) sensitive_globs: Vec<Glob>,
+}
+
+/// The keys [`gate`] reads; the rest of the file belongs to other readers.
+#[derive(Debug, Default, Deserialize)]
+struct GateDto {
+    #[serde(default)]
+    review: ReviewDto,
+    #[serde(default)]
+    ship: ShipDto,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewDto {
+    #[serde(default)]
+    require_plugin: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShipDto {
+    #[serde(default)]
+    sensitive_globs: Vec<String>,
+}
+
+/// Why the merge gate's settings could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum GateConfigError {
+    /// The file could not be read.
+    #[error(transparent)]
+    File(#[from] FileError),
+    /// Not a JSON object, or `review` or `ship` is not as documented.
+    #[error(
+        "{CONFIG_PATH}: `review` must be {{\"require_plugin\": <bool>}} and `ship` \
+         {{\"sensitive_globs\": [<glob>, ...]}}"
+    )]
+    Json(#[source] serde_json::Error),
+    /// `ship.sensitive_globs` lists more than `MAX_SENSITIVE_GLOBS` (256).
+    #[error("{CONFIG_PATH}: ship.sensitive_globs lists more than {MAX_SENSITIVE_GLOBS} globs")]
+    TooManyGlobs,
+    /// A glob in `ship.sensitive_globs` was refused.
+    #[error("{CONFIG_PATH}: ship.sensitive_globs {glob:?}")]
+    Glob {
+        /// The glob as written.
+        glob: String,
+        /// Why it was refused.
+        #[source]
+        source: GlobError,
+    },
+}
+
+/// The merge gate's settings from the config in the worktree `root`; the defaults when there
+/// is no config file.
+///
+/// # Errors
+/// The [`GateConfigError`] when the file cannot be read or its settings are not valid.
+pub(crate) fn gate(root: &Path) -> Result<GateConfig, GateConfigError> {
+    match read_text(root)? {
+        Some(text) => gate_from_text(&text),
+        None => Ok(GateConfig::default()),
+    }
+}
+
+/// The merge gate's settings from the config `text`.
+///
+/// # Errors
+/// As [`gate`], for the settings.
+pub(crate) fn gate_from_text(text: &str) -> Result<GateConfig, GateConfigError> {
+    let dto: GateDto = serde_json::from_str(text).map_err(GateConfigError::Json)?;
+    if dto.ship.sensitive_globs.len() > MAX_SENSITIVE_GLOBS {
+        return Err(GateConfigError::TooManyGlobs);
+    }
+    let sensitive_globs = dto
+        .ship
+        .sensitive_globs
+        .into_iter()
+        .map(|glob| match Glob::new(&glob) {
+            Ok(compiled) => Ok(compiled),
+            // The error owns the glob it names.
+            Err(source) => Err(GateConfigError::Glob { glob, source }),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(GateConfig {
+        require_plugin: dto.review.require_plugin,
+        sensitive_globs,
+    })
+}
+
+#[cfg(test)]
+mod tests;

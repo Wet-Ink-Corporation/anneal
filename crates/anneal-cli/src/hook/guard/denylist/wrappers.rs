@@ -232,6 +232,11 @@ pub(super) fn names_checked(word: &Word) -> bool {
     }
 }
 
+/// Whether `word` names the program `name` (by path or with `.exe` too).
+pub(super) fn names_program(word: &Word, name: &str) -> bool {
+    program(word) == Program::Named(name)
+}
+
 /// Whether `name`, a program that is not a wrapper the guard unwraps, may run its arguments as
 /// a command: it is not one the guard checks, nor one that only prints or searches them.
 pub(super) fn may_run_arguments(name: &str) -> bool {

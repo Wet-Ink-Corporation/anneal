@@ -57,6 +57,13 @@
             "args": ["hook", "guard", "--fail-closed"],
             "timeout": 5,
             "onFailure": "block"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "merge-gate", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       },

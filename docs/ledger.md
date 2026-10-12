@@ -89,13 +89,15 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 5)
+## Event registry (version 6)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
 version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `docs/task.md`);
 version 4 added `mode_set` (#23, `docs/preconditions.md`); version 5 added `subagent_status` and
-the `agent:` tag (#26, `docs/hooks.md`).
+the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verified` and
+`reviewed` and the fields `source`, `sha`, `patch_id` and `base` to `verdict_set` (#33,
+`docs/verdict.md`).
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -104,7 +106,7 @@ the `agent:` tag (#26, `docs/hooks.md`).
 | `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`) | `plan:` |
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
 | `repro_red` | `task` string, `test` string (the failing reproduction); `anneal repro record` sets the envelope's `worktree` ([preconditions.md](preconditions.md)) | `task:` |
-| `verdict_set` | `pr` number, `verdict` `approved`/`changes_requested`/`noise_only` | `pr:` |
+| `verdict_set` | `pr` number, `verdict` `tests_verified`/`reviewed`/`approved` (levels, lowest first) or `changes_requested`/`noise_only` (review outcomes), `source?` `local`/`review_plugin`/`human`, `sha?` string (the full commit the verdict is for), `patch_id?` string (`git patch-id --verbatim` of `git diff <base>...<sha>`; null for an empty diff), `base?` string (the base ref as given); written by `anneal verdict set`, see [verdict.md](verdict.md) | `pr:` |
 | `round_started` | `pr` number, `round` number (from 1) | `pr:` |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |

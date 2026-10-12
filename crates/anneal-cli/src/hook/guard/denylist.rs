@@ -17,6 +17,7 @@ mod braces;
 mod checker;
 mod config;
 mod feed;
+mod gh;
 mod git;
 mod rm;
 mod variables;
@@ -26,8 +27,9 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use super::Denial;
-use checker::{Checker, Scope};
+use checker::{Checker, Entries, Scope};
 use feed::Feed;
+pub(crate) use gh::{PrMerge, Target};
 
 /// How deep `bash -c`, `eval`, `env -S` and `find -exec` may nest before a command is refused.
 pub(crate) const MAX_DEPTH: usize = 8;
@@ -94,14 +96,37 @@ pub(crate) enum Verdict {
 
 /// Checks the Bash command `command` against the denylist.
 pub(crate) fn check(command: &str, context: &Context) -> Verdict {
-    let scope = Scope {
+    match Checker::new(context, Entries::Denylist).text(command, top_level()) {
+        Some(denial) => Verdict::Deny(denial),
+        None => Verdict::Undecided,
+    }
+}
+
+/// What the merge gate's probe found in a command.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MergeScan {
+    /// Every `gh pr merge` call it runs, in order (none when it runs none).
+    Merges(Vec<PrMerge>),
+    /// The command cannot be read (the guard denies it too).
+    Unreadable(Denial),
+}
+
+/// Every `gh pr merge` the Bash command `command` runs, read as the guard reads commands
+/// (wrappers, `bash -c`, `eval`, scripts on stdin, variables), without the denylist's entries.
+pub(crate) fn find_pr_merge(command: &str, context: &Context) -> MergeScan {
+    let mut checker = Checker::new(context, Entries::PrMerge);
+    match checker.text(command, top_level()) {
+        Some(denial) => MergeScan::Unreadable(denial),
+        None => MergeScan::Merges(checker.into_merges()),
+    }
+}
+
+/// The scope of a command as the hook receives it.
+const fn top_level() -> Scope<'static> {
+    Scope {
         feed: &Feed::Empty,
         depth: 0,
         appended: false,
-    };
-    match Checker::new(context).text(command, scope) {
-        Some(denial) => Verdict::Deny(denial),
-        None => Verdict::Undecided,
     }
 }
 
