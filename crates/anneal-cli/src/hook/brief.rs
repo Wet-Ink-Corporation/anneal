@@ -259,8 +259,15 @@ fn worktree_root(cwd: &Path, budget: Budget) -> Result<PathBuf, Denial> {
 }
 
 /// The denial for a spawn from inside a subagent of type `agent_type`, unless it is an
-/// orchestrate lead of the worktree `root`.
+/// orchestrate lead of the worktree `root`. A subagent that names no type is no lead.
 fn nested(root: &Path, agent_type: Option<&str>) -> Option<Denial> {
+    let Some(agent) = agent_type.filter(|agent| !agent.is_empty()) else {
+        return Some(Denial::new(
+            Check::Nested,
+            "a subagent that names no agent_type may not spawn subagents; only the orchestrate \
+             leads may (orchestrate.leads in .anneal/config.json)",
+        ));
+    };
     let leads = match repo_config::orchestrate_leads(root) {
         Ok(leads) => leads,
         Err(error) => {
@@ -270,16 +277,14 @@ fn nested(root: &Path, agent_type: Option<&str>) -> Option<Denial> {
             ));
         }
     };
-    let agent = agent_type.unwrap_or("");
-    if leads.iter().any(|lead| lead == agent) {
+    if leads.contains(agent) {
         return None;
     }
     Some(Denial::new(
         Check::Nested,
         &format!(
             "a subagent ({agent:?}) may not spawn subagents; only the orchestrate leads may \
-             (orchestrate.leads in .anneal/config.json: {})",
-            leads.join(", ")
+             (orchestrate.leads in .anneal/config.json: {leads})"
         ),
     ))
 }
@@ -342,9 +347,12 @@ enum BriefReadError {
 /// The text of the brief at `path` (lossy UTF-8), a regular file of at most
 /// [`MAX_BRIEF_BYTES`].
 ///
-/// The path is checked before it is opened, since opening a FIFO would block; the opened
-/// handle is checked again, so what is read is the file that was judged even if the path was
-/// swapped in between, and the read stops one byte past the cap.
+/// The path is checked before it is opened, since opening a FIFO blocks until a writer comes.
+/// That check and the open are two steps: a path swapped for a FIFO in between still blocks
+/// the open, until the hook's `timeout` ends it (Claude Code then blocks the call, as the
+/// entry is `onFailure: "block"`). The opened handle is checked again, so anything else
+/// swapped in (a directory, a larger file) is refused, and the read stops one byte past the
+/// cap.
 fn read_brief(path: &Path) -> Result<String, BriefReadError> {
     if !fs::metadata(path)?.is_file() {
         return Err(BriefReadError::NotAFile);

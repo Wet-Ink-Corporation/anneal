@@ -185,6 +185,62 @@ fn when_the_review_package_cannot_be_written_no_brief_is_written_either() -> Tes
     Ok(())
 }
 
+/// Builds with `link` (under the repository) a symlink to a fresh directory outside it, and
+/// checks the build is refused, naming where the link leads, with nothing written there.
+#[cfg(unix)]
+fn assert_refused_through(repo: &PrRepo, link: &std::path::Path) -> TestResult {
+    let outside = tempfile::tempdir()?;
+    let target = outside.path().join("briefs");
+    fs::create_dir_all(&target)?;
+    if link.ends_with(".anneal") {
+        std::os::unix::fs::symlink(outside.path(), link)?;
+    } else {
+        std::os::unix::fs::symlink(&target, link)?;
+    }
+    let args = build_args(&[]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let output = repo.anneal(&args)?;
+
+    assert_eq!(output.status.code(), Some(70), "{output:?}");
+    assert!(output.stdout.is_empty(), "no envelope: {output:?}");
+    let expected = format!(
+        "ERROR .anneal/briefs resolves to {}, not this worktree's own \
+         .anneal/briefs; make it a plain directory\n",
+        target.canonicalize()?.display()
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        expected,
+        "one ERROR line naming where the link leads"
+    );
+    assert_eq!(
+        fs::read_dir(&target)?.count(),
+        0,
+        "nothing written outside the worktree"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_briefs_directory_that_is_a_symlink_out_of_the_worktree_is_refused() -> TestResult {
+    let repo = PrRepo::new()?;
+    fs::create_dir_all(repo.path().join(".anneal"))?;
+
+    assert_refused_through(&repo, &briefs(&repo))
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn an_anneal_directory_that_is_a_symlink_out_of_the_worktree_is_refused() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    assert_refused_through(&repo, &repo.path().join(".anneal"))
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn an_unknown_field_key_is_a_usage_error() -> TestResult {

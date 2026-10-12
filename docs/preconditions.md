@@ -115,6 +115,14 @@ In either mode, these paths are never source and are always allowed:
   there would otherwise unlock it;
 - any file in no git repository.
 
+One file is denied in every mode, and with no mode or no ledger: `.anneal/config.json`
+(`preconditions.settings`), anneal's own settings (the orchestrate leads the brief hook trusts,
+the merge gate's keys, `check_fast`). It is judged before git or the ledger is asked, as written
+after `.` and `..`, as the file resolves when it exists and through a symlinked directory, in any
+ASCII letter case, with trailing dots and spaces and an alternate data stream (`:...`) taken off
+the names; a `.anneal/config.json` in any directory counts. The reason tells the user to edit it
+themselves.
+
 The worktree that judges an edit is the edited file's own: git is asked from the file's longest
 existing ancestor directory, not from the session's working directory. So a session running
 above the repository, or in a sibling linked worktree, cannot write into a gated worktree. A

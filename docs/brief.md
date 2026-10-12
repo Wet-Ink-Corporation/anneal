@@ -64,6 +64,11 @@ the base must be an ancestor of `HEAD`. Otherwise it exits 2 with one `brief/ran
 writes nothing. A usage error (a bad ticket or field, outside a worktree) also exits 2 but with
 nothing on stdout.
 
+The files are written only when `.anneal/briefs` resolves to the resolved worktree root's own
+`.anneal/briefs`: a symlinked `.anneal` or `briefs` leading elsewhere exits 70 with one `ERROR`
+line naming where it leads, and nothing is written there. git failing to resolve the range
+(`resolving the range`) or to read the diff (`reading the diff`) is also 70.
+
 ## `anneal lint brief <file>`
 
 Exit 0 when each of the nine fields is one `## <heading>` section with content, else 1 with one
@@ -83,27 +88,31 @@ Brief: .anneal/briefs/36.md
 The path is relative to the worktree root, under `.anneal/briefs/`, with no `..`, `.`, `\` or
 absolute form, and it must resolve, symlinks included, to a regular file of at most 256 KiB
 inside that directory that passes `lint brief`. A spawn from inside a subagent (its input has
-`agent_id`) is denied unless its `agent_type` is an orchestrate lead:
+`agent_id`) is denied unless its `agent_type` is an orchestrate lead (one that names no
+`agent_type` is denied without reading the list):
 
 ```json
 {"orchestrate": {"leads": ["orchestrate-lead"]}}
 ```
 
 in `.anneal/config.json`; the list replaces the default, `["orchestrate-lead"]`, and holds at
-most 64 names. A plugin's agent reports a plugin-scoped type (`anneal:orchestrate-lead`), so
+most 64 names, each 1 to 128 bytes with no control character. An empty list lets no subagent
+spawn. A setting that breaks these, or a file that cannot be read, denies every nested spawn as
+unjudged, naming the problem (for a name, its index). A plugin's agent reports a plugin-scoped type (`anneal:orchestrate-lead`), so
 list that form for one.
 
-The guard denies Bash writes to `.anneal/config.json` (and removing `.anneal`), so a subagent
-cannot add itself to the list from the shell. The Edit and Write tools are not gated by anneal
-there (the preconditions hook always allows `.anneal/`): that is left to Claude Code's
-permissions, a known gap.
+An agent cannot add itself to the list: the guard denies Bash writes to `.anneal/config.json`
+(and removing `.anneal`), and the preconditions hook denies the Edit and Write tools on it in
+every mode and with none (`preconditions.settings`), so a human edits it. The hook's matcher is
+`Edit|Write`, so `MultiEdit` and `NotebookEdit` on it are left to Claude Code's permissions, as
+for every file the hook gates (`docs/preconditions.md`).
 
 ## Standing orders
 
 `anneal hook standing-orders` (`SubagentStart`, fail open) adds `.anneal/standing-orders.md`
 at the worktree root to every subagent's context. It is silent when the file is missing and
-injects nothing, with one `ERROR` line as `systemMessage`, when it is over 16 KiB or not a
-regular file. Claude Code moves context over 10,000 characters to a file and passes a preview,
+injects nothing, with one `ERROR` line as `systemMessage`, when it is over 16 KiB, not a
+regular file, or resolves outside the worktree's own `.anneal/` (a symlinked `.anneal`). Claude Code moves context over 10,000 characters to a file and passes a preview,
 so keep orders meant to be read whole under that.
 
 ## Fix-loop rounds
@@ -118,7 +127,10 @@ A ticket's round count is the highest `round` among its `round_started` events (
 restarts. `start` appends the next round, first writer wins: when another `start` of the same
 ticket recorded that round first, it reports that round (`data.joined`) and appends nothing;
 when only other tickets' rounds came in between, it reads again, up to 4 times, then fails with
-exit 70. `status` reads and never creates a ledger. `data.next` says what the round does:
+exit 70. Rounds are found by type, not tagged by ticket, so both read the `round_started`
+events of every ticket, at most 4,096; a ledger holding more fails with exit 70 rather than
+counting a cut history (a tag key for tickets would lift this; it is a registry decision).
+`status` reads and never creates a ledger. `data.next` says what the round does:
 
 | Round | `next` | What the orchestrator does |
 |---|---|---|

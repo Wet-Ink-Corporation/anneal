@@ -15,8 +15,7 @@ use std::time::Duration;
 
 use anneal_ledger::event::RoundStarted;
 use anneal_ledger::{
-    Appended, Condition, EventEnvelope, EventKind, Filter, LedgerEvent, Store, StoreError,
-    Timestamp,
+    Appended, Condition, EventEnvelope, EventKind, Filter, LedgerEvent, Store, Timestamp,
 };
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -38,6 +37,9 @@ const SAME_AGENT_ROUNDS: u32 = 3;
 /// How many times `start` reads and appends again when another writer started a round in
 /// between.
 const START_ATTEMPTS: usize = 4;
+
+/// How many `round_started` events of all tickets are read, as `migrate` caps a migration's.
+const MAX_ROUND_EVENTS: usize = 4096;
 
 /// How long `status` waits for another process's ledger lock, as `Store::open` does.
 const LEDGER_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -138,13 +140,27 @@ struct Count {
     last_position: u64,
 }
 
-/// The rounds of `ticket` in `store`.
-fn count(store: &Store, ticket: &Ticket) -> Result<Count, StoreError> {
+/// The rounds of `ticket` in `store`, reading at most [`MAX_ROUND_EVENTS`] events.
+///
+/// # Errors
+/// [`CliError::Ledger`] when the store cannot be read, [`CliError::TooManyRounds`] when it
+/// holds more `round_started` events than that.
+fn count(store: &Store, ticket: &Ticket) -> Result<Count, CliError> {
+    count_within(store, ticket, MAX_ROUND_EVENTS)
+}
+
+/// The rounds of `ticket` in `store`, read from at most `cap` `round_started` events of any
+/// ticket (they are found by type, not tagged by ticket); more fails rather than counting a
+/// cut history, in which an early round could be missing.
+fn count_within(store: &Store, ticket: &Ticket, cap: usize) -> Result<Count, CliError> {
     let filter = Filter {
         types: vec![EventKind::RoundStarted],
         tags: Vec::new(),
     };
-    let events = store.query(&filter)?;
+    let events = store.tail(&filter, cap.saturating_add(1))?;
+    if events.len() > cap {
+        return Err(CliError::TooManyRounds { cap });
+    }
     let rounds = events
         .iter()
         .filter_map(|recorded| match &recorded.event.event {
@@ -212,36 +228,50 @@ fn run_start<O: Write>(
     }
     let location = paths::ledger_store(None, lookup, cwd)?;
     let store = Store::open(&location.path)?;
-    for _ in 0..START_ATTEMPTS {
+    let outcome = start_tries(|| {
         let seen = count(&store, &ticket)?;
-        let report = match start_once(&store, &ticket, seen, args.session.as_deref())? {
-            Attempt::Retry => continue,
-            Attempt::Parked { rounds } => Report {
-                rounds,
-                ..Report::start(Next::Park)
-            },
-            Attempt::Started { round, position } => Report {
-                rounds: round,
-                started: Some(round),
-                position: Some(position),
-                ..Report::start(Next::for_round(round))
-            },
-            Attempt::Joined { rounds } => Report {
-                rounds,
-                joined: Some(rounds),
-                ..Report::start(Next::for_round(rounds))
-            },
-        };
-        return report.emit(&ticket, out);
+        start_once(&store, &ticket, seen, args.session.as_deref())
+    })?;
+    let report = match outcome {
+        Outcome::Parked { rounds } => Report {
+            rounds,
+            ..Report::start(Next::Park)
+        },
+        Outcome::Started { round, position } => Report {
+            rounds: round,
+            started: Some(round),
+            position: Some(position),
+            ..Report::start(Next::for_round(round))
+        },
+        Outcome::Joined { rounds } => Report {
+            rounds,
+            joined: Some(rounds),
+            ..Report::start(Next::for_round(rounds))
+        },
+    };
+    report.emit(&ticket, out)
+}
+
+/// Runs `try_once` until it comes to an [`Outcome`], at most [`START_ATTEMPTS`] times.
+///
+/// # Errors
+/// `try_once`'s error, or [`CliError::RoundContended`] when every try was a retry.
+fn start_tries(
+    mut try_once: impl FnMut() -> Result<Attempt, CliError>,
+) -> Result<Outcome, CliError> {
+    for _ in 0..START_ATTEMPTS {
+        if let Attempt::Done(outcome) = try_once()? {
+            return Ok(outcome);
+        }
     }
     Err(CliError::RoundContended {
         attempts: START_ATTEMPTS,
     })
 }
 
-/// What one try of `round start` came to.
+/// What `round start` came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Attempt {
+enum Outcome {
     /// Five rounds ran; nothing was appended.
     Parked { rounds: u32 },
     /// This start recorded `round` at `position`.
@@ -249,6 +279,13 @@ enum Attempt {
     /// Another writer started this ticket's next round first; that round counts for this
     /// start too, and nothing was appended.
     Joined { rounds: u32 },
+}
+
+/// What one try of `round start` came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    /// The start is decided.
+    Done(Outcome),
     /// Another ticket's round was appended after the read; read again.
     Retry,
 }
@@ -263,9 +300,9 @@ fn start_once(
     session: Option<&str>,
 ) -> Result<Attempt, CliError> {
     if Next::after(seen.rounds) == Next::Park {
-        return Ok(Attempt::Parked {
+        return Ok(Attempt::Done(Outcome::Parked {
             rounds: seen.rounds,
-        });
+        }));
     }
     let round = seen.rounds.saturating_add(1);
     let envelope = envelope_for(ticket, round, session)?;
@@ -275,11 +312,11 @@ fn start_once(
     })
     .after(seen.last_position);
     match store.append_if(&envelope, &condition)? {
-        Appended::At(position) => Ok(Attempt::Started { round, position }),
+        Appended::At(position) => Ok(Attempt::Done(Outcome::Started { round, position })),
         Appended::Conflict => {
             let now = count(store, ticket)?;
             if now.rounds > seen.rounds {
-                Ok(Attempt::Joined { rounds: now.rounds })
+                Ok(Attempt::Done(Outcome::Joined { rounds: now.rounds }))
             } else {
                 Ok(Attempt::Retry)
             }

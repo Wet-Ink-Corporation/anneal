@@ -106,10 +106,14 @@ fn a_spawn_without_a_brief_line_is_denied() -> TestResult {
         &agent_call(dir.path(), "Just fix it, please.", None),
     )?;
 
-    let reason = reason.ok_or("denied")?;
-    assert!(
-        reason.starts_with("ERROR brief: ") && reason.contains("anneal brief build"),
-        "names the command that writes one: {reason}"
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "ERROR brief: the prompt names no brief; write one with `anneal brief build \
+             --ticket <id> --base <ref>` and add a line `Brief: .anneal/briefs/<id>.md` to the \
+             prompt"
+        ),
+        "names the command that writes one"
     );
     Ok(())
 }
@@ -124,10 +128,14 @@ fn a_spawn_whose_brief_fails_lint_brief_is_denied_naming_the_fields() -> TestRes
         &agent_call(dir.path(), "Brief: .anneal/briefs/bad.md", None),
     )?;
 
-    let reason = reason.ok_or("denied")?;
-    assert!(
-        reason.contains("Repository") && reason.contains("Return contract"),
-        "{reason}"
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "ERROR brief: the brief .anneal/briefs/bad.md fails lint brief: missing: \
+             Repository, Owned scope, Do not touch, Invariants, Success criteria, Verification, \
+             Edits allowed, Return contract; fill them (anneal lint brief .anneal/briefs/bad.md)"
+        ),
+        "names every missing field"
     );
     Ok(())
 }
@@ -208,10 +216,84 @@ fn a_spawn_from_inside_a_subagent_is_denied_even_with_a_valid_brief() -> TestRes
         &agent_call(dir.path(), "Brief: .anneal/briefs/36.md", Some("Explore")),
     )?;
 
-    let reason = reason.ok_or("denied")?;
+    assert_eq!(
+        reason.as_deref(),
+        Some(
+            "ERROR brief: a subagent (\"Explore\") may not spawn subagents; only the orchestrate \
+             leads may (orchestrate.leads in .anneal/config.json: orchestrate-lead)"
+        ),
+        "names the agent and the allowlist"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_spawn_from_inside_a_subagent_that_names_no_agent_type_is_denied() -> TestResult {
+    let dir = repo()?;
+    let mut input = agent_call(dir.path(), "Brief: .anneal/briefs/36.md", None);
+    input["agent_id"] = json!("agent-1");
+    let mut blank = input.clone();
+    blank["agent_type"] = json!("");
+
+    let missing = judge(dir.path(), &input)?;
+    let empty = judge(dir.path(), &blank)?;
+
+    let expected = "ERROR brief: a subagent that names no agent_type may not spawn subagents; \
+                    only the orchestrate leads may (orchestrate.leads in .anneal/config.json)";
+    assert_eq!(missing.as_deref(), Some(expected), "no agent_type");
+    assert_eq!(empty.as_deref(), Some(expected), "an empty agent_type");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_nested_spawn_with_a_settings_file_that_cannot_be_read_is_denied_as_unjudged() -> TestResult {
+    let dir = repo()?;
+    let config = dir.path().join(".anneal").join("config.json");
+    let call = agent_call(
+        dir.path(),
+        "Brief: .anneal/briefs/36.md",
+        Some("orchestrate-lead"),
+    );
+    let unjudged = |why: &str| {
+        Some(format!(
+            "ERROR brief: the orchestrate leads cannot be read ({why}), so the spawn cannot be \
+             checked"
+        ))
+    };
+
+    fs::write(&config, r#"{"orchestrate": {"leads": "orchestrate-lead"}}"#)?;
+    let not_a_list = judge(dir.path(), &call)?;
+    fs::write(
+        &config,
+        "{\"orchestrate\": {\"leads\": [\"orchestrate-lead\", \"x\\u0007\"]}}",
+    )?;
+    let control = judge(dir.path(), &call)?;
+    fs::remove_file(&config)?;
+    fs::create_dir(&config)?;
+    let directory = judge(dir.path(), &call)?;
+
+    assert_eq!(
+        not_a_list,
+        unjudged(
+            ".anneal/config.json: `orchestrate` must be {\"leads\": [<agent type>, ...]}: \
+             invalid type: string \"orchestrate-lead\", expected a sequence at line 1 column 44"
+        ),
+        "not a list"
+    );
+    assert_eq!(
+        control,
+        unjudged(
+            ".anneal/config.json: orchestrate.leads[1] holds a control character; a lead is \
+             1 to 128 bytes of printable text"
+        ),
+        "a control character"
+    );
     assert!(
-        reason.contains("Explore") && reason.contains("orchestrate.leads"),
-        "names the agent and the allowlist: {reason}"
+        directory.as_deref().is_some_and(|reason| reason
+            .starts_with("ERROR brief: the orchestrate leads cannot be read (.anneal/config.json")),
+        "a directory: {directory:?}"
     );
     Ok(())
 }

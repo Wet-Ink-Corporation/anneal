@@ -1,5 +1,5 @@
 use super::{
-    CONFIG_PATH, DEFAULT_LEADS, FileError, GateConfigError, LeadsError, MAX_LEADS,
+    CONFIG_PATH, DEFAULT_LEADS, FileError, GateConfigError, LeadsError, MAX_LEAD_BYTES, MAX_LEADS,
     MAX_SENSITIVE_GLOBS, gate, gate_from_text, leads_from_text, orchestrate_leads,
 };
 use crate::glob::Glob;
@@ -10,7 +10,7 @@ fn with_no_config_only_the_orchestrate_lead_may_spawn_from_a_subagent() {
 
     let leads = orchestrate_leads(root.path()).expect("an absent file is the default");
 
-    assert_eq!(leads, ["orchestrate-lead"], "the default allowlist");
+    assert_eq!(leads.names(), ["orchestrate-lead"], "the default allowlist");
     assert_eq!(DEFAULT_LEADS, ["orchestrate-lead"], "documented default");
 }
 
@@ -23,7 +23,10 @@ fn orchestrate_leads_are_read_beside_other_keys_and_default_when_absent() {
     let absent = leads_from_text(r#"{"orchestrate": {}}"#);
 
     assert_eq!(
-        (configured.expect("valid"), absent.expect("valid").len()),
+        (
+            configured.expect("valid").names().to_vec(),
+            absent.expect("valid").names().len()
+        ),
         (
             vec!["lead".to_owned(), "anneal:orchestrate-lead".to_owned()],
             1
@@ -48,6 +51,56 @@ fn leads_that_are_not_a_list_of_names_or_too_many_are_refused() {
     );
     assert!(matches!(misspelt, Err(LeadsError::Json(_))), "{misspelt:?}");
     assert!(matches!(too_many, Err(LeadsError::TooMany)), "{too_many:?}");
+}
+
+#[test]
+fn a_lead_that_is_empty_too_long_or_holds_a_control_character_is_refused_by_index() {
+    let long = "l".repeat(MAX_LEAD_BYTES + 1);
+    let leads = |name: &str| {
+        leads_from_text(&serde_json::json!({"orchestrate": {"leads": ["lead", name]}}).to_string())
+    };
+
+    let refused = [
+        leads(""),
+        leads(&long),
+        leads("lead\n"),
+        leads("le\u{7f}ad"),
+    ]
+    .map(|result| result.err().map(|error| error.to_string()));
+
+    let problem = |what: &str| {
+        Some(format!(
+            "{CONFIG_PATH}: orchestrate.leads[1] {what}; a lead is 1 to {MAX_LEAD_BYTES} bytes \
+             of printable text"
+        ))
+    };
+    assert_eq!(
+        refused,
+        [
+            problem("is empty"),
+            problem(&format!("is longer than {MAX_LEAD_BYTES} bytes")),
+            problem("holds a control character"),
+            problem("holds a control character"),
+        ],
+        "each refused, naming the entry"
+    );
+}
+
+#[test]
+fn a_lead_at_the_length_cap_and_an_empty_list_are_valid() {
+    let longest = "l".repeat(MAX_LEAD_BYTES);
+    let at_cap = leads_from_text(
+        &serde_json::json!({"orchestrate": {"leads": [longest.as_str()]}}).to_string(),
+    )
+    .expect("a lead of exactly the cap");
+    let none = leads_from_text(r#"{"orchestrate": {"leads": []}}"#).expect("an empty list");
+
+    assert!(at_cap.contains(&longest), "the long lead is listed");
+    assert!(
+        !none.contains("orchestrate-lead"),
+        "an empty list lets no subagent spawn, not even the default lead"
+    );
+    assert_eq!(none.to_string(), "", "and lists nobody");
 }
 
 #[test]

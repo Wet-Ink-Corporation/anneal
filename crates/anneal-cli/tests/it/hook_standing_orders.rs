@@ -112,3 +112,39 @@ fn standing_orders_over_16_kib_are_one_error_line_and_not_injected() -> TestResu
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn standing_orders_through_a_symlinked_anneal_directory_are_one_error_line_and_not_injected()
+-> TestResult {
+    let dir = repo(None)?;
+    let outside = tempfile::tempdir()?;
+    fs::write(outside.path().join("standing-orders.md"), ORDERS)?;
+    std::os::unix::fs::symlink(outside.path(), dir.path().join(".anneal"))?;
+
+    let output = start(dir.path())?;
+
+    let written: Value = serde_json::from_slice(&output.stdout)?;
+    let expected = format!(
+        "ERROR standing-orders: {} resolves to {}, not this worktree's own \
+         .anneal/standing-orders.md; make .anneal a plain directory",
+        dir.path()
+            .canonicalize()?
+            .join(".anneal")
+            .join("standing-orders.md")
+            .display(),
+        outside
+            .path()
+            .canonicalize()?
+            .join("standing-orders.md")
+            .display()
+    );
+    assert_eq!(written["systemMessage"], json!(expected), "{written}");
+    assert_eq!(
+        written.get("hookSpecificOutput"),
+        None,
+        "nothing injected: {written}"
+    );
+    Ok(())
+}

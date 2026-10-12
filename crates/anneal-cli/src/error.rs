@@ -119,6 +119,16 @@ pub enum CliError {
         /// How many tries were made.
         attempts: usize,
     },
+    /// The ledger holds more `round_started` events than `anneal round` reads, so a ticket's
+    /// rounds cannot be counted whole.
+    #[error(
+        "round: the ledger holds more than {cap} round_started events, more than are read to \
+         count a ticket's rounds"
+    )]
+    TooManyRounds {
+        /// How many events are read.
+        cap: usize,
+    },
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
@@ -146,7 +156,8 @@ impl CliError {
             | Self::Clock(_)
             | Self::CurrentDir(_)
             | Self::Dag(_)
-            | Self::RoundContended { .. } => exit_codes::INTERNAL,
+            | Self::RoundContended { .. }
+            | Self::TooManyRounds { .. } => exit_codes::INTERNAL,
             Self::Lint(error) | Self::Plan(error) => error.code(),
             Self::Eval(error) => error.code(),
             Self::Grill(error) => error.code(),

@@ -158,7 +158,9 @@ until `anneal repro record` records a `repro_red` for the worktree after entry. 
 directories and prose documents are always allowed; the plan's `Spec:` line exempts nothing. A denial is the
 same deny decision as the guard's, with one `ERROR` line naming the missing precondition and the
 command that satisfies it, plus a `gate_blocked` event (`point` is `preconditions.<check>`).
-Unreadable input, and a ledger or git it cannot read, are denied. See `docs/preconditions.md`.
+Unreadable input, and a ledger or git it cannot read, are denied. An edit of
+`.anneal/config.json`, anneal's own settings, is denied in every mode and with none
+(`preconditions.settings`). See `docs/preconditions.md`.
 
 ## `fast-check` (PostToolBatch)
 
@@ -511,7 +513,8 @@ No matcher (every agent type), `timeout` 5 s, `onFailure: "continue"`. It reads 
 `.anneal/standing-orders.md` (at the worktree root, or under `cwd` outside git) to the
 subagent's context as `additionalContext`, headed `Standing orders for every subagent
 (.anneal/standing-orders.md):`. With no file it writes nothing. A file over 16 KiB, or a path
-that is not a regular file or cannot be read, injects nothing, never a part, and is one
+that is not a regular file, resolves outside the worktree's own `.anneal/` (a symlinked
+`.anneal`) or cannot be read, injects nothing, never a part, and is one
 `ERROR standing-orders: ...` line as `systemMessage`. `SubagentStart` cannot block, and the hook
 always exits 0 (only a usage error exits 2). Claude Code injects the context once per subagent
 and again after the subagent's auto-compaction; context over 10,000 characters is moved to a

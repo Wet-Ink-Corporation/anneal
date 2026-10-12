@@ -17,6 +17,7 @@
 //! brief hook lets spawn from inside a subagent (`orchestrate_leads`); a configured list
 //! replaces the default, and `orchestrate` is read strictly too.
 
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
@@ -189,9 +190,12 @@ struct OrchestrateDto {
     leads: Option<Vec<String>>,
 }
 
+/// Most bytes of one name in `orchestrate.leads` (H-13).
+pub(crate) const MAX_LEAD_BYTES: usize = 128;
+
 /// Why `orchestrate.leads` could not be read.
 #[derive(Debug, thiserror::Error)]
-pub enum LeadsError {
+pub(crate) enum LeadsError {
     /// The file could not be read.
     #[error(transparent)]
     File(#[from] FileError),
@@ -201,18 +205,105 @@ pub enum LeadsError {
     /// `orchestrate.leads` lists more than `MAX_LEADS` (64) names.
     #[error("{CONFIG_PATH}: orchestrate.leads lists more than {MAX_LEADS} names")]
     TooMany,
+    /// A name in `orchestrate.leads` is not one an `agent_type` can be.
+    #[error(
+        "{CONFIG_PATH}: orchestrate.leads[{index}] {problem}; a lead is 1 to {MAX_LEAD_BYTES} \
+         bytes of printable text"
+    )]
+    BadName {
+        /// The name's place in the list, from 0.
+        index: usize,
+        /// What is wrong with it.
+        problem: NameProblem,
+    },
 }
 
-/// The orchestrate leads from the config in the worktree `root`: the `agent_type`s allowed to
-/// spawn subagents from inside a subagent. [`DEFAULT_LEADS`] when the file or the key is
-/// absent; a configured list replaces it.
+/// What is wrong with a name in `orchestrate.leads`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum NameProblem {
+    /// It is empty.
+    #[error("is empty")]
+    Empty,
+    /// It is longer than [`MAX_LEAD_BYTES`].
+    #[error("is longer than {MAX_LEAD_BYTES} bytes")]
+    TooLong,
+    /// It holds a control character, such as a line break.
+    #[error("holds a control character")]
+    Control,
+}
+
+/// The orchestrate leads: the `agent_type`s allowed to spawn subagents from inside a subagent,
+/// each 1 to [`MAX_LEAD_BYTES`] bytes with no control character, at most [`MAX_LEADS`]. An
+/// empty list lets no subagent spawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Leads {
+    names: Vec<String>,
+}
+
+impl Leads {
+    /// Whether `agent_type` is one of the leads (exactly, as Claude Code reports it).
+    pub(crate) fn contains(&self, agent_type: &str) -> bool {
+        self.names.iter().any(|name| name == agent_type)
+    }
+
+    /// The leads, in the configured order.
+    pub(crate) fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    /// [`DEFAULT_LEADS`].
+    fn default_leads() -> Self {
+        Self {
+            names: DEFAULT_LEADS.map(str::to_owned).to_vec(),
+        }
+    }
+}
+
+impl TryFrom<Vec<String>> for Leads {
+    type Error = LeadsError;
+
+    fn try_from(names: Vec<String>) -> Result<Self, LeadsError> {
+        if names.len() > MAX_LEADS {
+            return Err(LeadsError::TooMany);
+        }
+        let problem = |name: &str| {
+            if name.is_empty() {
+                Some(NameProblem::Empty)
+            } else if name.len() > MAX_LEAD_BYTES {
+                Some(NameProblem::TooLong)
+            } else if name.chars().any(char::is_control) {
+                Some(NameProblem::Control)
+            } else {
+                None
+            }
+        };
+        if let Some((index, problem)) = names
+            .iter()
+            .enumerate()
+            .find_map(|(index, name)| problem(name).map(|problem| (index, problem)))
+        {
+            return Err(LeadsError::BadName { index, problem });
+        }
+        Ok(Self { names })
+    }
+}
+
+/// The names, joined with `, `.
+impl fmt::Display for Leads {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.names().join(", "))
+    }
+}
+
+/// The orchestrate leads from the config in the worktree `root`. [`DEFAULT_LEADS`] when the
+/// file or the key is absent; a configured list replaces it.
 ///
 /// # Errors
 /// The [`LeadsError`] when the file cannot be read or `orchestrate` is not valid.
-pub(crate) fn orchestrate_leads(root: &Path) -> Result<Vec<String>, LeadsError> {
+pub(crate) fn orchestrate_leads(root: &Path) -> Result<Leads, LeadsError> {
     match read_text(root)? {
         Some(text) => leads_from_text(&text),
-        None => Ok(default_leads()),
+        None => Ok(Leads::default_leads()),
     }
 }
 
@@ -220,18 +311,12 @@ pub(crate) fn orchestrate_leads(root: &Path) -> Result<Vec<String>, LeadsError> 
 ///
 /// # Errors
 /// As [`orchestrate_leads`], for the setting.
-pub(crate) fn leads_from_text(text: &str) -> Result<Vec<String>, LeadsError> {
+pub(crate) fn leads_from_text(text: &str) -> Result<Leads, LeadsError> {
     let dto: LeadsDto = serde_json::from_str(text).map_err(LeadsError::Json)?;
     match dto.orchestrate.leads {
-        Some(leads) if leads.len() > MAX_LEADS => Err(LeadsError::TooMany),
-        Some(leads) => Ok(leads),
-        None => Ok(default_leads()),
+        Some(names) => Leads::try_from(names),
+        None => Ok(Leads::default_leads()),
     }
-}
-
-/// [`DEFAULT_LEADS`], owned.
-fn default_leads() -> Vec<String> {
-    DEFAULT_LEADS.map(str::to_owned).to_vec()
 }
 
 #[cfg(test)]

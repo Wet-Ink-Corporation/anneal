@@ -7,6 +7,8 @@
 
 pub mod fields;
 mod render;
+#[cfg(test)]
+mod tests;
 pub mod ticket;
 
 use std::fs;
@@ -69,9 +71,22 @@ pub enum BriefError {
     /// The working directory is not in a git worktree.
     #[error("anneal brief build needs a git worktree")]
     NotAWorktree(#[source] PathError),
-    /// git could not resolve the range or read the diff.
-    #[error("reading the range")]
-    Git(#[from] DiffError),
+    /// git could not resolve the base or `HEAD`, or tell whether one is the other's ancestor.
+    #[error("resolving the range")]
+    Range(#[source] DiffError),
+    /// git could not read the diff of the range.
+    #[error("reading the diff")]
+    Diff(#[source] DiffError),
+    /// `.anneal/briefs` resolves (through a symlink) somewhere other than the worktree's own.
+    #[error(
+        ".anneal/briefs resolves to {}, not this worktree's own .anneal/briefs; make it a plain \
+         directory",
+        resolved.display()
+    )]
+    NotOwnDirectory {
+        /// Where it resolves.
+        resolved: PathBuf,
+    },
     /// A file could not be written.
     #[error("writing {}", path.display())]
     Write {
@@ -89,7 +104,9 @@ impl BriefError {
     pub const fn code(&self) -> Code {
         match self {
             Self::NotAWorktree(_) => exit_codes::USAGE,
-            Self::Git(_) | Self::Write { .. } => exit_codes::INTERNAL,
+            Self::Range(_) | Self::Diff(_) | Self::NotOwnDirectory { .. } | Self::Write { .. } => {
+                exit_codes::INTERNAL
+            }
         }
     }
 }
@@ -194,7 +211,7 @@ fn run_build<O: Write>(args: &BuildArgs, cwd: &Path, out: &mut O) -> Result<Code
         other => CliError::Path(other),
     })?;
     let root = Path::new(&root);
-    let (base_commit, head) = match resolve_range(root, &args.base).map_err(BriefError::from)? {
+    let (base_commit, head) = match resolve_range(root, &args.base).map_err(BriefError::Range)? {
         Ok(range) => range,
         Err(bad) => return bad_range(&ticket, &args.base, bad, out),
     };
@@ -203,7 +220,7 @@ fn run_build<O: Write>(args: &BuildArgs, cwd: &Path, out: &mut O) -> Result<Code
         max_bytes: MAX_DIFF_BYTES,
     };
     let diff = pr_diff::diff_text(root, &base_commit, &head, limits)
-        .map_err(BriefError::from)?
+        .map_err(BriefError::Diff)?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     let built = Timestamp::now()?;
     let repository = format!(
@@ -253,6 +270,7 @@ fn write_files(
     let package = under(root, &package_file(inputs.ticket));
     if let Some(dir) = brief.parent() {
         fs::create_dir_all(dir).map_err(|source| write_failed(dir, source))?;
+        own_directory(root, dir)?;
     }
     // Both are staged before either is renamed, and the package goes first: a failure leaves
     // no new brief pointing at a package that was not written.
@@ -273,6 +291,22 @@ fn write_files(
         .filter(|finding| finding.rule == Rule::Empty)
         .map(|finding| finding.field)
         .collect())
+}
+
+/// Refuses a briefs directory `dir` that does not resolve to the resolved worktree `root`'s own
+/// `.anneal/briefs`, as the brief hook does: a symlinked `.anneal` or `briefs` would put the
+/// files outside the worktree.
+fn own_directory(root: &Path, dir: &Path) -> Result<(), BriefError> {
+    let resolved = fs::canonicalize(dir).map_err(|source| write_failed(dir, source))?;
+    let own = fs::canonicalize(root)
+        .map_err(|source| write_failed(root, source))?
+        .join(".anneal")
+        .join("briefs");
+    if resolved == own {
+        Ok(())
+    } else {
+        Err(BriefError::NotOwnDirectory { resolved })
+    }
 }
 
 /// The error for `path` that could not be written; the path is kept for the message.
