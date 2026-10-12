@@ -40,6 +40,18 @@ pub(super) fn word_end(text: &str, start: usize, quoting: Quoting, depth: usize)
     Some(pos)
 }
 
+/// Whether every quote and substitution `text` opens also closes within it.
+pub(super) fn closed(text: &str, quoting: Quoting, depth: usize) -> bool {
+    let mut pos = 0;
+    while pos < text.len() {
+        match skip_unit(text, pos, quoting, depth) {
+            Some(next) => pos = next,
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Past the quoting or substitution starting at `pos` (or the plain character there); `None`
 /// when it is never closed.
 fn skip_unit(text: &str, pos: usize, quoting: Quoting, depth: usize) -> Option<usize> {

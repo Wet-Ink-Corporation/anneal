@@ -72,3 +72,142 @@ fn a_quote_opened_in_the_middle_of_a_value_is_redacted_through_its_close() {
         "a quote never closed takes the rest"
     );
 }
+
+// Review round 1 of #89: each leak the reviewer saw reach Clef, in prose.
+
+#[test]
+fn a_credential_option_value_is_redacted() {
+    assert_eq!(
+        safe_prompt("deploy --password hunter2 now"),
+        "deploy --password <redacted> now"
+    );
+}
+
+#[test]
+fn a_registry_login_password_option_is_redacted() {
+    assert_eq!(
+        safe_prompt("run docker login -u me -p hunter2 ghcr.io"),
+        "run docker login -u me -p <redacted> ghcr.io"
+    );
+}
+
+#[test]
+fn credential_named_header_values_are_redacted() {
+    assert_eq!(
+        safe_prompt("send \"X-Api-Key: abc\" and \"Cookie: s=1; t=2\" or PRIVATE-TOKEN: t x now"),
+        "send \"X-Api-Key: <redacted>\" and \"Cookie: <redacted>; <redacted>\" or PRIVATE-TOKEN: \
+         <redacted> <redacted> now"
+    );
+}
+
+#[test]
+fn a_credential_key_inside_an_option_value_is_redacted() {
+    assert_eq!(
+        safe_prompt("run kubectl create secret generic s --from-literal=password=hunter2 now"),
+        "run kubectl create secret generic s --from-literal=password=<redacted> now"
+    );
+}
+
+#[test]
+fn a_credential_system_property_is_redacted() {
+    assert_eq!(
+        safe_prompt("use mvn -Dpassword=hunter2 deploy"),
+        "use mvn -Dpassword=<redacted> deploy"
+    );
+}
+
+#[test]
+fn single_dash_credential_options_are_redacted() {
+    assert_eq!(
+        safe_prompt("keytool -storepass changeit -keypass k2 -list"),
+        "keytool -storepass <redacted> -keypass <redacted> -list"
+    );
+}
+
+#[test]
+fn an_openssl_pass_phrase_is_redacted() {
+    assert_eq!(
+        safe_prompt("openssl pkcs12 -passout pass:hunter2 -in c.pem, or try pass:hunter2 here"),
+        "openssl pkcs12 -passout <redacted> -in c.pem, or try pass:<redacted> here"
+    );
+}
+
+#[test]
+fn a_github_secret_body_is_redacted() {
+    assert_eq!(
+        safe_prompt("gh secret set TOKEN --body hunter2 then"),
+        "gh secret set TOKEN --body <redacted> then"
+    );
+}
+
+#[test]
+fn a_quoted_program_name_or_option_is_still_read() {
+    assert_eq!(
+        safe_prompt("run \"mysql\" -phunter2 or mysql '-phunter2' db"),
+        "run \"mysql\" -p<redacted> or mysql -p<redacted> db"
+    );
+}
+
+#[test]
+fn url_userinfo_holding_a_hash_is_redacted() {
+    assert_eq!(
+        safe_prompt("clone https://user:p#ss@host/x now"),
+        "clone https://<redacted>@host/x now"
+    );
+}
+
+#[test]
+fn an_ldap_bind_password_is_redacted() {
+    assert_eq!(
+        safe_prompt("ldapsearch -w hunter2 -b dc=x"),
+        "ldapsearch -w <redacted> -b dc=x"
+    );
+}
+
+#[test]
+fn a_sql_server_password_is_redacted() {
+    assert_eq!(
+        safe_prompt("sqlcmd -U sa -P hunter2 -Q q"),
+        "sqlcmd -U sa -P <redacted> -Q q"
+    );
+}
+
+#[test]
+fn an_npm_auth_token_is_redacted() {
+    assert_eq!(
+        safe_prompt("set //registry.npmjs.org/:_authToken=abc please"),
+        "set //registry.npmjs.org/:_authToken=<redacted> please"
+    );
+}
+
+#[test]
+fn a_quoted_authorization_key_has_its_value_redacted() {
+    assert_eq!(
+        safe_prompt("send {\"Authorization\": \"Token abc\"} now"),
+        "send {\"Authorization\": \"<redacted> now"
+    );
+}
+
+#[test]
+fn a_credential_in_a_json_body_is_redacted() {
+    assert_eq!(
+        safe_prompt("post {\"password\":\"hunter2\"} now"),
+        "post {\"password\":<redacted> now"
+    );
+}
+
+#[test]
+fn an_smb_user_and_password_is_redacted() {
+    assert_eq!(
+        safe_prompt("smbclient //h/s -U me%hunter2"),
+        "smbclient //h/s -U <redacted>"
+    );
+}
+
+#[test]
+fn a_quoted_option_value_is_redacted_through_its_close() {
+    assert_eq!(
+        safe_prompt("curl -u \"me:my pass\" x"),
+        "curl -u \"<redacted> x"
+    );
+}

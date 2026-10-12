@@ -5,20 +5,20 @@
 //! `sudo`, `timeout` or `env -u`, a `bash -c '…'` or `eval "…"` body) can carry a secret past
 //! it. Redacting too much only costs Clef some signal; too little leaks.
 //!
-//! - **Assignments anywhere.** The value of every `NAME=value` (also `NAME+=`, `NAME[i]=` and
-//!   `NAME=(…)`), wherever it stands, when `NAME` looks like an environment variable (upper
-//!   case, `[A-Z_][A-Z0-9_]*`) or holds a credential word (`decide::redact::CREDENTIAL_WORDS`,
-//!   any letter case; the rule is `decide::redact::secret_assignment_prefix`, which the prose
-//!   redaction shares), quotes in the name stripped first (`export "API_KEY"=x`). Lower-case
-//!   operands such as `dd of=/dev/sda` stay readable: they are what Clef judges.
-//! - **Credential flags.** The value of a long option whose name holds a credential word, as
-//!   `--token=x` or `--token x`.
-//! - **Authorization.** After an `Authorization:` header name, the rest of its word and every
-//!   word to the end of its quote or simple command; the word after `Bearer`, and after `Basic`
-//!   unless `decide::redact::basic_credential` says it cannot be one.
-//! - **URL userinfo.** `https://user:token@host` becomes `https://<redacted>@host`.
-//! - **Known tools.** From a tool of `decide::redact::tools` to the end of its simple command,
-//!   the values of its secret options (`mysql -pX`, `curl -u user:pass`).
+//! - **The shared word rules** (`decide::redact::rules::find_secret`), wherever a word stands:
+//!   the value of an environment-style or credential-named assignment (`TOKEN=x`,
+//!   `"API_KEY"=x`; lower-case operands such as `dd of=/dev/sda` stay readable, they are what
+//!   Clef judges), of a credential-named key inside a word (`--from-literal=password=x`,
+//!   `{"password":"x"}`), of a credential-named option (`--password x`, `-storepass x`), and of
+//!   a known tool's secret option (`mysql -pX`, `docker login -p x`). A word's secret is taken
+//!   only when what stays readable before it closes every quote it opens; otherwise the inside
+//!   of the quote is scanned and finds it there.
+//! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
+//!   `Cookie:`), every word to the end of its quote or simple command (inside a quote, a `;`
+//!   does not end it); the word after `Bearer`, and after `Basic` unless
+//!   `decide::redact::basic_credential` says it cannot be one.
+//! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
+//!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
 //! - **Quoted text is scanned too**: the inside of `'…'`, `$'…'`, `$( )` and backticks as a
 //!   command, the inside of `"…"` with double-quote rules (`'` and `$'` are plain there).
 //! - **Comments and heredocs.** An unquoted `#` comment to the end of its line, and every
@@ -31,13 +31,15 @@
 //! span in the source.
 
 use self::spans::{
-    after, char_at, close_ansi, close_backtick, close_double, close_group, close_single, word_end,
+    after, char_at, close_ansi, close_backtick, close_double, close_group, close_single, closed,
+    word_end,
 };
 use super::shell::MAX_NESTING;
-use crate::decide::redact::tools::{self, SecretOption, Tool};
+use crate::decide::redact::rules::secret_assignment_prefix;
+use crate::decide::redact::tools::{self, Tool};
 use crate::decide::redact::{
-    REDACTED, Scheme, authorization_end, basic_credential, is_credential, scheme,
-    secret_assignment_prefix, url_userinfo,
+    REDACTED, Scheme, Secret, Then, basic_credential, find_secret, looks_like_token, scheme,
+    split_punctuation, url_userinfo,
 };
 use crate::decide::state::cut_chars;
 
@@ -166,9 +168,12 @@ impl Scanner<'_, '_> {
         }
     }
 
-    /// At a command separator: what one simple command said about its words ends there.
+    /// At a command separator: what one simple command said about its words ends there. Inside
+    /// a quote a header's value goes on (`"Cookie: a=1; b=2"`): the quote is its end.
     fn end_command(&mut self) {
-        self.pending = Pending::Nothing;
+        if !(self.depth > 0 && self.pending == Pending::Rest) {
+            self.pending = Pending::Nothing;
+        }
         self.tool = None;
     }
 
@@ -280,9 +285,9 @@ impl Scanner<'_, '_> {
             .get(self.pos..end.unwrap_or(self.text.len()))
             .unwrap_or_default();
         let pending = std::mem::replace(&mut self.pending, Pending::Nothing);
-        let secret_prefix = secret_assignment_prefix(raw);
         let Some(end) = end else {
-            self.out.push_str(secret_prefix.unwrap_or_default());
+            self.out
+                .push_str(secret_assignment_prefix(raw).unwrap_or_default());
             return self.redact_rest();
         };
         let hidden = match pending {
@@ -296,10 +301,25 @@ impl Scanner<'_, '_> {
         };
         if hidden {
             self.out.push_str(REDACTED);
-        } else if let Some(prefix) = secret_prefix {
-            self.out.push_str(prefix);
+        } else {
+            self.readable_word(raw);
+        }
+        self.pos = end;
+        Scan::Closed
+    }
+
+    /// A word not hidden by the words before it: its own secret, a token, or the word with any
+    /// URL userinfo redacted; then what it says about the next words.
+    fn readable_word(&mut self, raw: &str) {
+        let secret = find_secret(raw, self.tool)
+            .filter(|secret| closed(&secret.shown, self.quoting, self.depth));
+        if let Some(secret) = secret {
+            self.write_secret(&secret);
+        } else if let Some((lead, trail)) = plain_token(raw) {
+            self.out.push_str(lead);
             self.out.push_str(REDACTED);
-        } else if !self.authorization(raw) && !self.tool_option(raw) && !self.credential_flag(raw) {
+            self.out.push_str(trail);
+        } else {
             self.copy_word(raw);
         }
         if self.pending == Pending::Nothing {
@@ -309,52 +329,25 @@ impl Scanner<'_, '_> {
                 None => Pending::Nothing,
             };
         }
+        if let Some(tool) = self.tool.as_mut() {
+            tool.note(raw);
+        }
         if let Some(tool) = tools::known(raw) {
             self.tool = Some(tool);
         }
-        self.pos = end;
-        Scan::Closed
     }
 
-    /// Writes `raw` redacted when it is a secret option of the command's known tool (its value
-    /// in the word, or the next word redacted), and says whether it was one.
-    fn tool_option(&mut self, raw: &str) -> bool {
-        let Some(option) = self.tool.and_then(|tool| tool.secret_option(raw)) else {
-            return false;
-        };
-        match option {
-            SecretOption::Attached(kept) => {
-                // `kept` ends within the ASCII option name, so the split exists.
-                if let Some((name, _value)) = raw.split_at_checked(kept) {
-                    self.out.push_str(name);
-                }
-                self.out.push_str(REDACTED);
-            }
-            SecretOption::NextWord => {
-                self.out.push_str(raw);
-                self.pending = Pending::Word;
-            }
-        }
-        true
-    }
-
-    /// Writes `raw` redacted when it holds an `Authorization:` header name outside any quote
-    /// (`-HAuthorization:x`): the rest of the word and every word up to the command's end are
-    /// its value. One inside a quote is found by the scan of the quote's inside.
-    fn authorization(&mut self, raw: &str) -> bool {
-        let Some((name, value)) = authorization_end(raw).and_then(|end| raw.split_at_checked(end))
-        else {
-            return false;
-        };
-        if name.contains(QUOTING) {
-            return false;
-        }
-        self.out.push_str(name);
-        if !value.is_empty() {
+    /// Writes a word's secret: what stays readable, the mark, and what the next words are.
+    fn write_secret(&mut self, secret: &Secret<'_>) {
+        self.out.push_str(&secret.shown);
+        if secret.redacts {
             self.out.push_str(REDACTED);
         }
-        self.pending = Pending::Rest;
-        true
+        match secret.then {
+            Then::Nothing => {}
+            Then::NextWord => self.pending = Pending::Word,
+            Then::Header => self.pending = Pending::Rest,
+        }
     }
 
     /// Copies a word with the userinfo of each URL in it (`https://user:token@host`) redacted;
@@ -371,30 +364,16 @@ impl Scanner<'_, '_> {
         }
         units(rest, self.quoting, self.depth, self.out);
     }
+}
 
-    /// Writes `raw` redacted when it is a credential flag (`--token=x`, or `--token` with the
-    /// next word redacted), and says whether it was one.
-    fn credential_flag(&mut self, raw: &str) -> bool {
-        let Some(flag) = raw.strip_prefix("--") else {
-            return false;
-        };
-        match flag.split_once('=') {
-            Some((name, _value)) if is_credential(name) => {
-                self.out.push_str("--");
-                self.out.push_str(name);
-                self.out.push('=');
-                self.out.push_str(REDACTED);
-                true
-            }
-            Some(_) => false,
-            None => {
-                if is_credential(flag) {
-                    self.pending = Pending::Word;
-                }
-                false
-            }
-        }
+/// The punctuation around an unquoted word that looks like a token (`ghp_…`), so the token
+/// goes whole; a quoted one is found by the scan of the quote's inside.
+fn plain_token(raw: &str) -> Option<(&str, &str)> {
+    if raw.contains(QUOTING) {
+        return None;
     }
+    let (lead, core, trail) = split_punctuation(raw);
+    looks_like_token(core).then_some((lead, trail))
 }
 
 /// Copies a word whose spans are all closed, scanning the inside of each quote or
