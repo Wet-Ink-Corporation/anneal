@@ -238,3 +238,155 @@ fn values_are_redacted_before_the_cut_so_a_long_secret_does_not_crowd_out_the_co
 fn an_unclosed_quote_redacts_to_the_end() {
     assert_eq!(redact("K='abc def"), format!("K={REDACTED}"));
 }
+
+#[test]
+fn a_quoted_assignment_name_has_its_value_redacted() {
+    let cases = [
+        ("export \"API_KEY\"=x", "export \"API_KEY\"=<redacted>"),
+        (
+            "declare -x 'PASSWORD'=x",
+            "declare -x 'PASSWORD'=<redacted>",
+        ),
+        (
+            "export \"db_\"'token'=x run",
+            "export \"db_\"'token'=<redacted> run",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn the_words_pass_auth_and_bearer_name_credentials() {
+    let cases = [
+        ("deploy db_pass=x", "deploy db_pass=<redacted>"),
+        ("run my_auth=x go", "run my_auth=<redacted> go"),
+        (
+            "tool --bearer t --pass p",
+            "tool --bearer <redacted> --pass <redacted>",
+        ),
+        ("gh --oauth=t", "gh --oauth=<redacted>"),
+        ("tool --authorization x", "tool --authorization <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn authorization_header_values_are_redacted() {
+    let cases = [
+        (
+            "curl -H \"Authorization: Bearer abc\" https://x",
+            "curl -H \"Authorization: <redacted> <redacted>\" https://x",
+        ),
+        (
+            "curl -H 'proxy-authorization: token t' -X GET u",
+            "curl -H 'proxy-authorization: <redacted> <redacted>' -X GET u",
+        ),
+        (
+            "curl -HAuthorization:Basic\\ abc u; ls",
+            "curl -HAuthorization:<redacted> <redacted>; ls",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn the_credential_after_bearer_or_basic_is_redacted() {
+    let cases = [
+        ("echo Bearer abc def", "echo Bearer <redacted> def"),
+        ("printf 'basic dXNlcjpwYXNz'", "printf 'basic <redacted>'"),
+        ("echo BASIC Abc", "echo BASIC <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_plain_lowercase_word_after_basic_is_kept() {
+    assert_eq!(redact("echo basic usage"), "echo basic usage");
+}
+
+#[test]
+fn url_userinfo_is_redacted() {
+    let cases = [
+        (
+            "git clone https://user:tok@github.com/o/r.git",
+            "git clone https://<redacted>@github.com/o/r.git",
+        ),
+        (
+            "curl \"https://ci:abc@host/p?q=1\"",
+            "curl \"https://<redacted>@host/p?q=1\"",
+        ),
+        (
+            "tool --url=ftp://tok@h,ssh://u:p@k/x",
+            "tool --url=ftp://<redacted>@h,ssh://<redacted>@k/x",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn urls_without_userinfo_are_kept() {
+    let cases = [
+        "git clone git@github.com:o/r.git",
+        "curl https://host/a@b",
+        "open https://host?to=a@b",
+    ];
+    for command in cases {
+        assert_eq!(redact(command), command, "{command:?}");
+    }
+}
+
+#[test]
+fn secret_short_options_of_known_tools_are_redacted() {
+    let cases = [
+        ("mysql -uroot -phunter2 db", "mysql -uroot -p<redacted> db"),
+        (
+            "sudo /usr/bin/mysqldump -p'p w' db",
+            "sudo /usr/bin/mysqldump -p<redacted> db",
+        ),
+        (
+            "curl -u user:pass https://x",
+            "curl -u <redacted> https://x",
+        ),
+        ("curl -su user:pass x", "curl -su <redacted> x"),
+        ("curl -uuser:pass x", "curl -u<redacted> x"),
+        ("curl --user user:pass x", "curl --user <redacted> x"),
+        ("curl --proxy-user=u:p x", "curl --proxy-user=<redacted> x"),
+        ("sshpass -p pw ssh h", "sshpass -p <redacted> ssh h"),
+        ("redis-cli -a pw ping", "redis-cli -a <redacted> ping"),
+        ("mongosh -u me -p pw", "mongosh -u me -p <redacted>"),
+        ("bash -c 'mysql -pX'", "bash -c 'mysql -p<redacted>'"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn short_options_of_other_tools_are_kept() {
+    let cases = [
+        "mkdir -p a/b",
+        "docker run -p 8080:80 img",
+        "mysql -p db",
+        "curl x; ls -u",
+        "ssh -p 22 host",
+        "git add -p",
+    ];
+    for command in cases {
+        assert_eq!(redact(command), command, "{command:?}");
+    }
+}
+
+#[test]
+fn a_quote_opened_in_the_middle_of_a_value_is_redacted_through_its_close() {
+    assert_eq!(redact("TOKEN=abc\"def ghi\" run"), "TOKEN=<redacted> run");
+}
