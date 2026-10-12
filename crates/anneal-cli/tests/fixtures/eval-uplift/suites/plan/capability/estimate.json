@@ -1,0 +1,10 @@
+{
+  "behaviour": "outcome",
+  "pressure": "time",
+  "seed": "test fixture",
+  "prompt": "Estimate each task of the export plan.",
+  "graders": [
+    {"type": "regex", "name": "outcome", "pattern": "estimate", "flags": "i"},
+    {"type": "regex", "name": "always", "pattern": "\\S"}
+  ]
+}

@@ -1,8 +1,9 @@
 //! The sequential run: batches of prompts through the [`Router`] port until each settles.
 
+use super::result::over_asked;
 use super::schedule::{BATCH, MAX_RUNS, Next, next};
 use super::tally::Probe;
-use super::{Ran, ResultError, RouterError, Stop};
+use super::{Ran, RouterError, Stop};
 use crate::error_chain;
 
 /// The least budget, in US dollars, worth launching a batch for.
@@ -85,20 +86,6 @@ fn cases<'a>(probes: &'a [Probe], indexes: &[usize]) -> Vec<BatchCase<'a>> {
         .collect()
 }
 
-/// The first case of `ran` reporting more than `asked` runs, as the error that refuses it.
-fn over_asked(ran: &Ran, asked: u32) -> Option<ResultError> {
-    let asked_runs = usize::try_from(asked).unwrap_or(usize::MAX);
-    ran.runs
-        .iter()
-        .find(|(_, runs)| runs.len() > asked_runs)
-        .map(|(case, runs)| ResultError::TooManyRuns {
-            // The error outlives the batch's result, so it owns the case name.
-            case: case.clone(),
-            runs: runs.len(),
-            asked,
-        })
-}
-
 /// Adds the checked batch `ran` to `drove` and its runs to the `pending` probes, returning
 /// why the batch stopped short, if it did.
 fn take(drove: &mut Drove, probes: &mut [Probe], pending: &[usize], ran: Ran) -> Option<Stop> {
@@ -167,7 +154,7 @@ pub(crate) fn drive<R: Router>(
                 break;
             }
         };
-        if let Some(padded) = over_asked(&ran, batch.runs) {
+        if let Some(padded) = over_asked(&ran.runs, batch.runs) {
             let error = RouterError::Result(padded);
             if round == 1 {
                 return Err(error);

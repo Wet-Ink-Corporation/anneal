@@ -237,17 +237,17 @@ A green result proves the decision was obtained and recorded. It does **not** pr
 
 A green result proves the calibration run completed and was recorded. It does **not** prove that the decision point is calibrated well enough to enforce.
 
-## `anneal eval routing`
+## `anneal eval`
 
 | Code | Meaning |
 |---|---|
 | 0 | ok |
 | 1 | below bound |
-| 2 | invalid fixtures or skills |
-| 3 | incomplete: cost cap, time limit or a failed batch left a prompt unsettled |
+| 2 | invalid fixtures, suites or skills |
+| 3 | incomplete: cost cap, time limit or a failed batch stopped the run short |
 | 4 | the real router could not run |
 
-A green result proves skill routing accuracy is at or above its bound on the eval set. It does **not** prove routing accuracy on prompts outside the eval set.
+A green result proves skill routing accuracy, or each skill's behaviour uplift over its baseline, is at or above its bound on the eval set. It does **not** prove routing accuracy or behaviour on prompts outside the eval set.
 
 ## `anneal statusline`
 

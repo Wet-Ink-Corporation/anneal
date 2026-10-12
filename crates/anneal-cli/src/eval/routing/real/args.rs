@@ -9,12 +9,12 @@ use super::claude::Options;
 use crate::error::CliError;
 
 /// The cost cap when `--max-cost-usd` is not given, in US dollars.
-/// A full run of the repository's suite is capped at $25 (Ryan, wi-92bc1b).
+/// A full run of the repository's suite is capped at $25 (Ryan, wi-92bc1b); Tier 3 shares it.
 pub(crate) const DEFAULT_MAX_COST_USD: f64 = 25.0;
 /// The time limit when `--timeout` is not given.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3600);
+pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3600);
 /// Runs at once when `--concurrency` is not given.
-const DEFAULT_CONCURRENCY: u8 = 4;
+pub(crate) const DEFAULT_CONCURRENCY: u8 = 4;
 
 /// Which router `eval routing` measures.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
@@ -61,7 +61,7 @@ pub struct RealArgs {
 }
 
 /// A `--max-cost-usd` value: a finite amount above zero.
-fn cost_cap(text: &str) -> Result<f64, String> {
+pub(crate) fn cost_cap(text: &str) -> Result<f64, String> {
     match text.parse::<f64>() {
         Ok(usd) if usd.is_finite() && usd > 0.0 => Ok(usd),
         Ok(_) | Err(_) => Err(format!(

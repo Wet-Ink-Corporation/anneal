@@ -146,46 +146,102 @@ impl Router for ClaudeRouter<'_> {
         }
         self.write_cases(batch)?;
         let root = self.workspace.root();
-        let stderr_path = root.join(format!("stderr-{}.log", batch.round));
-        // A fresh file only: never one planted in the workspace, nor a link it follows.
-        let stderr = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&stderr_path)
-            .map_err(RouterError::Workspace)?;
-        let mut child = Command::new(self.options.program)
-            .args(arguments(&self.options, root, batch))
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(stderr)
-            .spawn()
-            .map_err(|source| RouterError::Spawn {
-                // The error outlives the borrowed arguments, so it owns the path.
-                program: self.options.program.to_path_buf(),
-                source,
-            })?;
-        // Nothing is piped, so the wait returns once the child itself is reaped.
-        let status = match process::wait_with_deadline(&mut child, left, 0, "claude") {
-            Ok(output) => output.status,
-            Err(WaitError::Timeout) => return Ok(stopped(Spend::Unknown)),
-            Err(WaitError::Io(error)) => return Err(RouterError::Wait(error)),
+        let tag = batch.round.to_string();
+        let invocation = Invocation {
+            program: self.options.program,
+            args: &arguments(&self.options, root, batch),
+            root,
+            tag: &tag,
         };
-        let result_path = root.join(format!("result-{}.json", batch.round));
-        if !result_path.is_file() {
-            return Err(RouterError::Failed {
-                status: status.to_string(),
-                stderr: stderr_tail(&stderr_path),
-            });
+        match invoke(&invocation, left)? {
+            Invoked::TimedOut => Ok(stopped(Spend::Unknown)),
+            Invoked::Result(value) => Ok(result::read(
+                result::parse(value)?,
+                self.plugin,
+                self.graders,
+            )?),
         }
-        let value: Value =
-            json_file::read(&result_path, MAX_RESULT_BYTES).map_err(RouterError::Unreadable)?;
-        Ok(result::read(
-            result::parse(value)?,
-            self.plugin,
-            self.graders,
-        )?)
     }
+}
+
+/// One run of `claude` in a workspace.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Invocation<'a> {
+    /// The `claude` program.
+    pub(crate) program: &'a Path,
+    /// Its arguments, `--json` naming [`Invocation::result_path`].
+    pub(crate) args: &'a [OsString],
+    /// The workspace it runs in.
+    pub(crate) root: &'a Path,
+    /// Names this run's files in the workspace: `result-<tag>.json`, `stderr-<tag>.log`.
+    pub(crate) tag: &'a str,
+}
+
+impl Invocation<'_> {
+    /// Where `--json` writes the result.
+    pub(crate) fn result_path(&self) -> std::path::PathBuf {
+        self.root.join(format!("result-{}.json", self.tag))
+    }
+
+    fn stderr_path(&self) -> std::path::PathBuf {
+        self.root.join(format!("stderr-{}.log", self.tag))
+    }
+}
+
+/// What a `claude plugin eval` run came back with.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Invoked {
+    /// Its result file, parsed as JSON.
+    Result(Value),
+    /// It was killed at the time limit, before it reported anything.
+    TimedOut,
+}
+
+/// Runs `invocation` with stdin closed, stdout discarded and stderr into a file (nothing is
+/// piped, so a grandchild that outlives a killed child blocks nothing), within `left`, and
+/// reads the result file `--json` named.
+///
+/// # Errors
+/// [`RouterError::Spawn`] when `claude` cannot start, [`RouterError::Wait`] when it cannot be
+/// waited on, [`RouterError::Failed`] when it wrote no result, [`RouterError::Unreadable`]
+/// when the result is not JSON within the cap, and [`RouterError::Workspace`] when the stderr
+/// log cannot be created as a new file.
+pub(crate) fn invoke(invocation: &Invocation<'_>, left: Duration) -> Result<Invoked, RouterError> {
+    let stderr_path = invocation.stderr_path();
+    // A fresh file only: never one planted in the workspace, nor a link it follows.
+    let stderr = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stderr_path)
+        .map_err(RouterError::Workspace)?;
+    let mut child = Command::new(invocation.program)
+        .args(invocation.args)
+        .current_dir(invocation.root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr)
+        .spawn()
+        .map_err(|source| RouterError::Spawn {
+            // The error outlives the borrowed arguments, so it owns the path.
+            program: invocation.program.to_path_buf(),
+            source,
+        })?;
+    // Nothing is piped, so the wait returns once the child itself is reaped.
+    let status = match process::wait_with_deadline(&mut child, left, 0, "claude") {
+        Ok(output) => output.status,
+        Err(WaitError::Timeout) => return Ok(Invoked::TimedOut),
+        Err(WaitError::Io(error)) => return Err(RouterError::Wait(error)),
+    };
+    let result_path = invocation.result_path();
+    if !result_path.is_file() {
+        return Err(RouterError::Failed {
+            status: status.to_string(),
+            stderr: stderr_tail(&stderr_path),
+        });
+    }
+    json_file::read(&result_path, MAX_RESULT_BYTES)
+        .map(Invoked::Result)
+        .map_err(RouterError::Unreadable)
 }
 
 /// What a batch stopped by the time limit spent.

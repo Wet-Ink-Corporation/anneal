@@ -17,6 +17,7 @@ mod design_tree_schema;
 mod dry_run;
 mod eval_routing;
 mod eval_routing_real;
+mod eval_uplift;
 mod floor_guard;
 mod grill;
 mod hook_bootstrap;

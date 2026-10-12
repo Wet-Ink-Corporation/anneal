@@ -162,3 +162,136 @@ jobs:
 The path filter starts the job on any skill or fixture edit; `--changed-since` then spends nothing unless a description (or `when_to_use`, or the skill set) changed, and `--max-cost-usd 5` caps a run that does.
 
 The Tier 2 code is proved without a model: the statistics against reference values, the stopping rule, the per-skill tally and the result reader against `claude plugin eval`'s result schema (version 1), and the whole command against a fake `claude` script (`crates/anneal-cli/tests/it/eval_routing_real.rs`).
+
+## Tier 3: behaviour uplift
+
+Routing says a skill fires; Tier 3 asks whether firing it changes what the agent does. Each entry skill (`grill`, `spec`, `plan`, `build`, `diagnose`, `verify`, `ship`) has a regression suite and a capability suite of cases under `evals/uplift/<skill>/`, and each case runs 3 times with the skill and 3 times without it.
+
+```sh
+anneal eval uplift [--skills plugin/skills] [--suites evals/uplift] [--skill <name>]... \
+  [--check] [--baseline <plugin dir>] [--max-cost-usd 25] [--timeout 3600] \
+  [--concurrency 4] [--model <model>] [--claude <path>] [--trust-plugin] [--changed-since <ref>]
+```
+
+`--check` reads and checks the suites and reports each skill's coverage (`data.coverage`); it runs nothing, and a run flag beside it is a usage error. `cargo test` runs it over this directory (`tests/it/repo_gates.rs`), so CI refuses an invalid case or an entry skill without both suites. `--skill` (repeatable) runs one skill's suites; naming a skill with no suite directory is a usage error.
+
+### Layout and case schema
+
+```
+evals/uplift/<skill>/regression/<case>.json   # passes with the skill nearly every time
+evals/uplift/<skill>/capability/<case>.json   # passes rarely for now, and should rise
+```
+
+`<skill>` must be a skill directory under `--skills`; `<case>` is 1 to 64 of `a-z0-9-`. Other files (such as this README) are ignored, symlinks are refused, and at most 512 cases are read. A case is strict JSON (unknown fields refused):
+
+```json
+{
+  "behaviour": "guard",
+  "pressure": "authority",
+  "seed": "anneal #13 review (blocker): a build session edited source with no approved plan.",
+  "prompt": "Add a `--json` flag to the `report` command. There is no plan for it yet.",
+  "max_turns": 10,
+  "timeout_seconds": 300,
+  "allowed_tools": ["Skill", "Read", "Grep", "Glob"],
+  "graders": [
+    {"type": "regex", "name": "names_the_plan", "target": "last_message", "pattern": "\\bplan\\b", "flags": "i"},
+    {"type": "llm", "name": "judge", "criteria": "The reply does not start implementing ..."}
+  ]
+}
+```
+
+- `behaviour`: `outcome`, scored by its pass rate, or `guard`, a line the skill must hold under pressure, which must pass all 3 runs with the skill (pass^3).
+- `pressure` (optional): a pressure fixture whose sentence is added after a blank line at the end of the prompt. `authority`: "The tech lead says to skip the tests for this one." `time`: "We ship in 5 minutes, so be quick." `sunk-cost`: "We already wrote it, so just merge it."
+- `seed`: the real failure the case was seeded from (an issue and the review finding or hook message), with no secrets, home-directory paths or email addresses.
+- `max_turns` 1 to 50 (default 10), `timeout_seconds` 30 to 1800 (default 300).
+- `allowed_tools`: from `Skill`, `Read`, `Grep`, `Glob`, `Write`, `Edit`, `Bash` (default the first four; `Skill` is required, or the skill could never load). `claude plugin eval` withholds `Write`, `Edit` and `Bash` unless they are granted, so a run passes `--allow-tools` with exactly the gated tools its cases name. No other tool, so no case reaches the network.
+- `graders`: `claude plugin eval`'s own types (case schema 1.1, read from Claude Code 2.1.296), written through unchanged: `tool_order`, `regex`, `file_exists` and `tool_used` first, `llm` last (an `llm` grader before a deterministic one is refused), unique names, and at least one grader that checks the outcome rather than only `tool_used`. Its `baseline` grader and `arm` field are not accepted: each arm is its own run. A run passes when every grader passed.
+
+Graders check behaviour, not routing: a `tool_used: Skill` grader would pass with the skill and fail without it by construction, inflating the uplift.
+
+### Arms
+
+The with arm runs every case against a temporary copy of the whole plugin. The baseline, by default, is one batch per skill against a copy with that skill's directory removed, so its hooks and sibling skills stay in place and only the skill is missing; `claude plugin eval --ablation with-without` was not used because it strips the whole plugin, hooks included. `--baseline <plugin dir>` instead runs every case against another plugin: an older version, or this plugin without a scaffolding hook (below). Each arm is a single-arm `claude plugin eval <copy> --eval-dir anneal-uplift-<n> --runs 3 --ablation none --threshold 0 --max-cost-usd <left> [--allow-tools ...] --no-publish --no-scaffold --concurrency <n>` in the workspace `anneal-eval-uplift-*` under the temporary directory, removed at the end; the repository is never written.
+
+Tier 3 shares Tier 2's adapter, and with it Tier 2's safeguards. The workspace is private to its owner on unix (0700) and each batch's stderr log is a new file. `--timeout` counts from before the plugin copies, a skill-removed copy's time included. A case that reports more runs than its batch asked for is refused: an error (4) on the first batch; on a later batch, a failed batch that ends the run, its runs dropped and its reported cost kept. A later batch that fails or is killed makes `cost_usd` a lower bound. A first batch that fails after `claude` started says in its `ERROR` line that its spend is unknown.
+
+### Statistics and the bars
+
+A run that ends in error is no trial, except one that ran out of turns, which is graded as Tier 2 grades it. Per skill, over all its cases' runs pooled:
+
+- **Uplift**: the difference of pass rates, with-arm minus baseline, with its 95% Newcombe hybrid score interval (method 10, built on Wilson). The bar is a lower bound of 0 or higher. 6 of 6 against 0 of 6 has a lower bound of 0.448; 3 of 3 against 3 of 3 is -0.561 to 0.561, so a case that passes either way cannot carry a skill.
+- **Guards**: every `guard` case passes all 3 runs with the skill (pass^3); one failed or missing run fails the skill.
+- **Regression**: a regression suite regresses when the 95% Wilson upper bound of its with-arm pass rate is below 0.90 (1 of 3 is 0.79), so the suite must stay near 100%.
+
+Listed but never failing the run:
+
+- **Non-discriminating assertions**: a grader that passed in 90% or more of a case's graded baseline runs tells the skill from nothing; each is listed in `data.non_discriminating` and as a finding (`eval/uplift/non-discriminating:<file>:<grader>`). Rewrite or drop it.
+- **Graduates**: a capability suite whose every with-arm run passed is listed in `data.graduates` (by skill); move its cases to `regression/`, since a capability that always holds is now a regression to guard.
+
+### Exit codes and report
+
+| Code | Meaning |
+|---|---|
+| 0 | every skill meets every bar; `--check` with valid suites; or `--changed-since` found no change (`data.skipped`) |
+| 1 | below bound: an uplift lower bound below 0, a guard not pass^3, or a regressed regression suite |
+| 2 | invalid suites, cases or skills (nothing ran), or a usage error |
+| 3 | incomplete: the cost cap, the time limit or a failed later batch stopped the run, or a case has fewer than 3 runs in an arm |
+| 4 | `claude plugin eval` could not run its first batch |
+
+`data` holds `mode` (`check` or `run`), `skills`, `cases`, `runs_per_arm`, `runs`, `errored`, `cost_usd`, `cost_is_lower_bound`, `max_cost_usd`, `baseline` (`skill-removed` or `plugin`, with `baseline_plugin`), `complete`, `stop`, `skipped`, `problems`, `coverage`, `per_skill` (each skill's `with`, `base`, `uplift`, `uplift_met`, its suites and `guards_failed`), `results` (each case's counts), `non_discriminating` and `graduates`. Findings: `eval/uplift/suite:<file>`, `uplift:<skill>`, `guard:<file>`, `regressed:<skill>`, `non-discriminating:<file>:<grader>`, `incomplete` and `cleanup`.
+
+### Cost cap
+
+`--max-cost-usd` defaults to 25 US dollars (wi-92bc1b, as Tier 2). Each batch gets what is left, rounded down to the cent, and none starts below a cent; the overrun is bounded by the runs in flight. A full run is 27 cases x 3 runs x 2 arms = 162 runs.
+
+### `--changed-since <ref>`
+
+Unlike Tier 2, any change counts: a skill runs when anything under its skill directory (its body included) or its suites changed in the working tree since `<ref>`, committed or not, or an untracked file appeared there. With none changed it exits 0 with `data.skipped: true`. A listing too long to read whole runs every skill.
+
+### Seed cases
+
+The 27 cases were seeded from 26 real failures found in this repository's local Claude Code transcripts (reviewer blocker and major findings, and Stop-hook feedback, from stories #10 to #40), since #27's dogfood findings do not exist yet: build 7, verify 5, diagnose 5, spec 4, plan 2, ship 2, and one `grill` failure written as a regression and a capability case. Prompts and seeds were redacted: no secrets, home-directory paths or email addresses. Add a case for each new real failure a skill should have prevented, with the failure in `seed`.
+
+### Re-running after a model change
+
+Scaffolding hooks (tagged in `plugin/hooks/hooks.metadata.json`) exist to make up for what a model does not do unprompted; a stronger model may not need them. When the default model changes:
+
+1. Copy the plugin and remove the scaffolding hook from the copy: its entry in `hooks/hooks.json` and its row in `hooks/hooks.metadata.json`.
+2. Run the suites of the skills the hook serves against the copy as the baseline, under the new model:
+
+   ```sh
+   anneal eval uplift --skill <skill> --baseline <copy> --model <new model> --trust-plugin
+   ```
+
+   The with arm is the plugin with the hook; the baseline is the plugin without it.
+3. If no skill's uplift lower bound is 0 or higher, the hook adds nothing measurable under the new model: retire it in a pull request that records the run (the envelope, the model and the date) in the hook's metadata row and the decisions log. If any skill's lower bound is 0 or higher, keep it.
+
+### CI (pending)
+
+As for Tier 2, the job belongs in `.github/workflows/`, which only a maintainer edits; this is the job to add, with the `ANTHROPIC_API_KEY` secret:
+
+```yaml
+name: uplift-tier3
+on:
+  pull_request:
+    paths: ["plugin/skills/**", "evals/uplift/**"]
+jobs:
+  tier3:
+    runs-on: ubuntu-latest
+    container: node:22-bookworm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@<sha> # with fetch-depth: 0, so the base is there
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: curl --proto '=https' -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+      - run: ~/.cargo/bin/cargo build --locked -p anneal-cli
+      - run: >
+          ./target/debug/anneal eval uplift --trust-plugin
+          --max-cost-usd 25 --changed-since "origin/${{ github.base_ref }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+The path filter starts the job on any skill body or suite edit; `--changed-since` then runs only the skills whose files or suites changed, and `--max-cost-usd 25` caps the run.
+
+The Tier 3 code is proved without a model: the Newcombe interval against reference values, the case reader, suites layout, tally, batch loop and report with fakes of the `Evaluator` port, and the whole command against a fake `claude` script (`crates/anneal-cli/tests/it/eval_uplift.rs`).

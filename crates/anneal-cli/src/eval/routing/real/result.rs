@@ -66,17 +66,47 @@ struct ArmsDto {
     with: Vec<RunDto>,
 }
 
+/// One run of a case, the fields read.
 #[derive(Debug, Deserialize)]
-struct RunDto {
+pub(crate) struct RunDto {
     #[serde(default)]
     error: Option<String>,
     graders: Vec<GraderDto>,
+}
+
+impl RunDto {
+    /// Why the run ended in error, if it did.
+    pub(crate) fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// Each grader's name and whether it passed.
+    pub(crate) fn graders(&self) -> impl Iterator<Item = (&str, bool)> + '_ {
+        self.graders.iter().map(|g| (g.name.as_str(), g.passed))
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct GraderDto {
     name: String,
     passed: bool,
+}
+
+/// What every tier reads of a result once its header checks pass: its cost, why it stopped
+/// short, and each case's runs (the `with` arm: every eval anneal runs is single-arm).
+#[derive(Debug)]
+pub(crate) struct Checked {
+    /// What the batch cost, in US dollars (never negative).
+    pub(crate) cost_usd: f64,
+    /// Why the batch stopped short, if it did.
+    pub(crate) stop: Option<Stop>,
+    /// Each case's name and runs, in the result's order.
+    pub(crate) cases: Vec<(String, Vec<RunDto>)>,
+}
+
+/// Whether a run's error says it used its turns up ([`OUT_OF_TURNS`]).
+pub(crate) fn ran_out_of_turns(error: &str) -> bool {
+    error.contains(OUT_OF_TURNS)
 }
 
 /// Why a result says nothing about routing.
@@ -134,6 +164,19 @@ pub(crate) fn parse(value: Value) -> Result<ResultDto, ResultError> {
     ResultDto::deserialize(value).map_err(ResultError::Malformed)
 }
 
+/// The first case in `runs` reporting more than `asked` runs, as the error that refuses it.
+pub(crate) fn over_asked<T>(runs: &BTreeMap<String, Vec<T>>, asked: u32) -> Option<ResultError> {
+    let asked_runs = usize::try_from(asked).unwrap_or(usize::MAX);
+    runs.iter()
+        .find(|(_, runs)| runs.len() > asked_runs)
+        .map(|(case, runs)| ResultError::TooManyRuns {
+            // The error outlives the batch's result, so it owns the case name.
+            case: case.clone(),
+            runs: runs.len(),
+            asked,
+        })
+}
+
 /// The runs of `result`, by case name, for the plugin named `plugin` judged by `graders`.
 ///
 /// # Errors
@@ -144,6 +187,37 @@ pub(crate) fn read(
     plugin: &str,
     graders: &Graders<'_>,
 ) -> Result<Ran, ResultError> {
+    let checked = check(result, plugin)?;
+    let mut counted_errors: u32 = 0;
+    let mut runs: BTreeMap<String, Vec<Run>> = BTreeMap::new();
+    for (name, case_runs) in checked.cases {
+        let case_runs = case_runs
+            .iter()
+            .map(|run| {
+                let judged = to_run(run, graders);
+                if run.error.is_some() && matches!(judged, Run::Done { .. }) {
+                    counted_errors = counted_errors.saturating_add(1);
+                }
+                judged
+            })
+            .collect();
+        runs.insert(name, case_runs);
+    }
+    Ok(Ran {
+        runs,
+        cost_usd: checked.cost_usd,
+        cost_is_lower_bound: false,
+        counted_errors,
+        stop: checked.stop,
+    })
+}
+
+/// The header checks every tier makes: the schema version is 1, the cost is not negative,
+/// authentication worked and the plugin named `plugin` loaded. Then the cases' runs.
+///
+/// # Errors
+/// [`ResultError`] when a check fails.
+pub(crate) fn check(result: ResultDto, plugin: &str) -> Result<Checked, ResultError> {
     if result.schema_version != SCHEMA_VERSION {
         return Err(ResultError::Schema {
             version: result.schema_version,
@@ -172,29 +246,14 @@ pub(crate) fn read(
         }
         Some(_) => {}
     }
-    let mut counted_errors: u32 = 0;
-    let mut runs: BTreeMap<String, Vec<Run>> = BTreeMap::new();
-    for case in result.cases {
-        let case_runs = case
-            .arms
-            .with
-            .iter()
-            .map(|run| {
-                let judged = to_run(run, graders);
-                if run.error.is_some() && matches!(judged, Run::Done { .. }) {
-                    counted_errors = counted_errors.saturating_add(1);
-                }
-                judged
-            })
-            .collect();
-        runs.insert(case.name, case_runs);
-    }
-    Ok(Ran {
-        runs,
+    Ok(Checked {
         cost_usd: result.cost_usd,
-        cost_is_lower_bound: false,
-        counted_errors,
         stop,
+        cases: result
+            .cases
+            .into_iter()
+            .map(|case| (case.name, case.arms.with))
+            .collect(),
     })
 }
 
@@ -213,7 +272,7 @@ fn to_run(run: &RunDto, graders: &Graders<'_>) -> Run {
     let decided = run
         .error
         .as_deref()
-        .is_none_or(|error| error.contains(OUT_OF_TURNS) || !fired.is_empty());
+        .is_none_or(|error| ran_out_of_turns(error) || !fired.is_empty());
     if !decided {
         return Run::Errored;
     }

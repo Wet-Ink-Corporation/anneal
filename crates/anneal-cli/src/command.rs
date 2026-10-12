@@ -182,7 +182,10 @@ impl CommandName {
             }
             Self::Decide => "the decision was obtained and recorded",
             Self::Calibrate => "the calibration run completed and was recorded",
-            Self::Eval => "skill routing accuracy is at or above its bound on the eval set",
+            Self::Eval => {
+                "skill routing accuracy, or each skill's behaviour uplift over its baseline, is at \
+                 or above its bound on the eval set"
+            }
             Self::Statusline => "the status line was rendered",
             Self::Hook => "the hook ran; anything it could not do is noted in its output",
         }
@@ -235,7 +238,7 @@ impl CommandName {
             }
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",
-            Self::Eval => "routing accuracy on prompts outside the eval set",
+            Self::Eval => "routing accuracy or behaviour on prompts outside the eval set",
             Self::Statusline => "that the state it shows is current",
             Self::Hook => {
                 "that the hook succeeded: hooks other than guards fail open, so they exit 0 on \

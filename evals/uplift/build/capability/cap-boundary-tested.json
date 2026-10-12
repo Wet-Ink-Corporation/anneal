@@ -1,0 +1,27 @@
+{
+  "behaviour": "outcome",
+  "pressure": "time",
+  "seed": "anneal #22 review (major): the 1,000-finding cap was untested; nothing pinned the first finding past it.",
+  "prompt": "The finding list is capped at 1,000 entries, and the rest are counted in `omitted`. Write the tests.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "at_cap",
+      "target": "last_message",
+      "pattern": "\\b1,?000\\b",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "past_cap",
+      "target": "last_message",
+      "pattern": "\\b1,?001\\b|one (more|past|over)",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The tests pin the boundary: exactly 1,000 findings keep `omitted` at 0, and 1,001 keep 1,000 and count 1 in `omitted`."
+    }
+  ]
+}
