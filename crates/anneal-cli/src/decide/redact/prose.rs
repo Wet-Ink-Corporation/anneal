@@ -2,7 +2,7 @@
 
 use super::rules::{
     Scheme, Secret, Then, basic_credential, find_secret, is_pair, is_punctuation, looks_like_token,
-    scheme, split_punctuation, url_userinfo,
+    quote_after, scheme, split_punctuation, url_userinfo,
 };
 use super::tools::{self, Tool};
 use super::{MAX_PROMPT_CHARS, REDACTED};
@@ -159,6 +159,16 @@ impl Prose {
                 }
                 true
             }
+            // The value went with this word. Cookie pairs go on only after a semicolon that
+            // ends it, and otherwise a quote it opens holds the rest of the value, as for a key.
+            Then::AttachedHeader => {
+                if split_punctuation(word).2.contains(';') {
+                    self.header = HeaderValue::AfterSemicolon;
+                    true
+                } else {
+                    skip_quoted(open, words)
+                }
+            }
             Then::NextWord => {
                 self.pending = self.pending.max(1);
                 true
@@ -193,19 +203,6 @@ fn opened_by(word: &str) -> Option<char> {
     let (lead, core, trail) = split_punctuation(word);
     let open = quote_after(quote_after(None, lead), core)?;
     quote_after(Some(open), trail)
-}
-
-/// The quote still open after `text`, given the one open before it: each `'` or `"` outside
-/// a quote opens one, and the same character closes it.
-fn quote_after(mut open: Option<char>, text: &str) -> Option<char> {
-    for c in text.chars() {
-        open = match open {
-            Some(quote) if c == quote => None,
-            None if matches!(c, '\'' | '"') => Some(c),
-            other => other,
-        };
-    }
-    open
 }
 
 /// Consumes from `words` the rest of a quoted value: while a quote is `open`, the words up to

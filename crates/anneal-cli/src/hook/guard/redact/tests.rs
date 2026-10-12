@@ -641,6 +641,8 @@ fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
         "curl -H Cookie:a=1",
         "curl -H Cookie: a=1; b=2",
         "curl -H X-Api-Key:k",
+        "docker run -v db-password:/p alpine",
+        "git push origin fix-auth:main --force",
     ];
     let separators = [";", " ;", "&&", "||", "|", "&", "\n"];
     let nests: [(&str, &str); 6] = [
@@ -772,4 +774,66 @@ fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
         redact("open https://host:8080?to=a@b"),
         "open https://<redacted>@b"
     );
+}
+
+// Review round 1 of the #89 follow-up.
+
+#[test]
+fn an_attached_header_value_hides_only_its_own_word() {
+    let cases = [
+        (
+            "docker run -v db-password:/p alpine rm -rf /p",
+            "docker run -v db-password:<redacted> alpine rm -rf /p",
+        ),
+        (
+            "git push origin fix-auth:main --force",
+            "git push origin fix-auth:<redacted> --force",
+        ),
+        ("curl -H X-Api-Key:k u", "curl -H X-Api-Key:<redacted> u"),
+        (
+            "bash -c 'curl -H Cookie:a=1 b=2 rm -rf /p'",
+            "bash -c 'curl -H Cookie:<redacted> b=2 rm -rf /p'",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_cookie_pair_whose_value_holds_a_blank_or_semicolon_stays_readable() {
+    let cases = [
+        (
+            "bash -c 'curl -H Cookie: a=1; c=\"rm -rf ~\"'",
+            "bash -c 'curl -H Cookie: <redacted>; c=\"rm -rf ~\"'",
+        ),
+        (
+            "bash -c \"curl -H 'Cookie: a=1; c='rm -rf ~'\"",
+            "bash -c \"curl -H 'Cookie: <redacted>; c='rm -rf ~'\"",
+        ),
+        (
+            "bash -c 'curl -H Cookie: a=1; c=\"x;rm -rf ~\"'",
+            "bash -c 'curl -H Cookie: <redacted>; c=\"x;rm -rf ~\"'",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_quoted_cookie_pair_value_is_hidden_and_a_command_after_the_header_is_not() {
+    let cases = [
+        (
+            "curl -H 'Cookie: a=1; b=\"2\"'",
+            "curl -H 'Cookie: <redacted>; <redacted>'",
+        ),
+        (
+            "bash -c \"curl -H 'Cookie: a=1; sid=S';dropdb production\"",
+            "bash -c \"curl -H 'Cookie: <redacted>; <redacted>;dropdb production\"",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
 }

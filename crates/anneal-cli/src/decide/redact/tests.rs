@@ -259,7 +259,7 @@ fn every_cookie_pair_is_redacted_however_it_is_written() {
     let cases = [
         (
             "set Cookie:a=x; sid=S now",
-            "set Cookie:<redacted> <redacted> <redacted>",
+            "set Cookie:<redacted> <redacted> now",
         ),
         (
             "send \"Cookie:a=x; sid=S\" now",
@@ -310,5 +310,36 @@ fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
     assert_eq!(
         safe_prompt("open https://host:8080?to=a@b now"),
         "open https://<redacted>@b now"
+    );
+}
+
+// Review round 1 of the #89 follow-up.
+
+#[test]
+fn an_attached_header_value_hides_only_its_own_word() {
+    let cases = [
+        (
+            "push fix-auth:main --force now",
+            "push fix-auth:<redacted> --force now",
+        ),
+        (
+            "run docker run -v db-password:/p alpine rm -rf /p",
+            "run docker run -v db-password:<redacted> alpine rm -rf /p",
+        ),
+        (
+            "send X-Api-Key:k to u now",
+            "send X-Api-Key:<redacted> to u now",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
+fn a_cookie_pair_whose_value_opens_a_quote_it_does_not_close_stays_readable() {
+    assert_eq!(
+        safe_prompt("send Cookie: a=1; b=2; c='rm -rf ~' now"),
+        "send Cookie: <redacted>; <redacted>; c='rm -rf ~' now"
     );
 }

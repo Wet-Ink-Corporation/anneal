@@ -15,10 +15,13 @@
 //!   only when what stays readable before it closes every quote it opens; otherwise the inside
 //!   of the quote is scanned and finds it there.
 //! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
-//!   `Cookie:`, or `Cookie:a=1` with its value attached), every word to the end of its simple
-//!   command or quote; inside a quote or substitution, the `name=value` words after a `;` too
-//!   (`"Cookie: a=1; b=2"`, `sid="S"`), but no other word, so no header hides the next
-//!   command; the word after `Bearer`, and after `Basic` unless
+//!   `Cookie:`), every word to the end of its simple command or quote. A header-shaped name
+//!   with its value attached (`Cookie:a=1`, `X-Api-Key:k`, but also `db-password:/p`) hides
+//!   only that value. Inside a quote or substitution, the `name=value` words after a `;` that
+//!   ends either are hidden too (`"Cookie: a=1; b=2"`, `"Cookie:a=1; sid=\"S\""`), but no
+//!   other word, nor a pair whose value holds a substitution, escape, blank, `;` or a quote it
+//!   does not close, so no header hides a command; the word after `Bearer`, and after `Basic`
+//!   unless
 //!   `decide::redact::basic_credential` says it cannot be one.
 //! - **Subcommand arguments.** The word after `vault login` (`decide::redact::tools`).
 //! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
@@ -115,6 +118,10 @@ enum Pending {
     BasicWord,
     /// Every word is a secret, to the end of the simple command: a header's value.
     Rest,
+    /// The word before was a header with its value attached (`Cookie:a=1`): the next word is
+    /// read as usual, and only a `;` inside a quote or substitution leads on to the header's
+    /// other cookie pairs ([`Pending::Pairs`]).
+    AttachedValue,
     /// After a `;` that ended a header's value inside a quote or substitution: each
     /// `name=value` word is a secret (the other pairs of `"Cookie: a=1; b=2"`); the first other
     /// word is read as usual, so it ends this.
@@ -182,11 +189,16 @@ impl Scanner<'_, '_> {
     /// `name=value` words after it stay hidden ([`Pending::Pairs`]).
     fn end_command(&mut self, separator: char) {
         self.pending = match self.pending {
-            Pending::Rest | Pending::Pairs if self.depth > 0 && separator == ';' => Pending::Pairs,
+            Pending::Rest | Pending::AttachedValue | Pending::Pairs
+                if self.depth > 0 && separator == ';' =>
+            {
+                Pending::Pairs
+            }
             Pending::Nothing
             | Pending::Word
             | Pending::BasicWord
             | Pending::Rest
+            | Pending::AttachedValue
             | Pending::Pairs => Pending::Nothing,
         };
         self.tool = None;
@@ -306,7 +318,7 @@ impl Scanner<'_, '_> {
             return self.redact_rest();
         };
         let hidden = match pending {
-            Pending::Nothing => false,
+            Pending::Nothing | Pending::AttachedValue => false,
             Pending::Word => true,
             Pending::BasicWord => basic_credential(raw),
             Pending::Rest => {
@@ -371,6 +383,7 @@ impl Scanner<'_, '_> {
             Then::Nothing => {}
             Then::NextWord => self.pending = Pending::Word,
             Then::Header => self.pending = Pending::Rest,
+            Then::AttachedHeader => self.pending = Pending::AttachedValue,
         }
     }
 

@@ -289,17 +289,21 @@ than too little:
   is a path, not a key (`auth::tests` stays);
 - a header: a credential-named key ending its word in `:` (`"X-Api-Key: …"`,
   `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), any `Authorization:` (any letter
-  case, `Proxy-Authorization:` too), or a header-shaped credential name with its value
-  attached (`Cookie:a=1;`, `X-Api-Key:k`: `Cookie`, or a name with a `-` inside that ends in a
-  credential word, so a refspec such as `auth-fix:main` keeps its next words), hides its own
-  value and every word after it up to the end of the simple command or quote it is in:
-  `-H "Authorization: Bearer x"` becomes `-H "Authorization: <redacted> <redacted>"`. Every
-  separator (`;`, `&`, `|`, a newline) ends it, so it never hides the next command, in a
-  `bash -c '…'`, `eval "…"`, `$( )` or backtick body too; only inside a quote or
-  substitution, the `name=value` words right after a `;` stay hidden (`"Cookie: a=1; b=2"`
-  becomes `"Cookie: <redacted>; <redacted>"`), read through the punctuation around them, so a
+  case, `Proxy-Authorization:` too), hides its own value and every word after it up to the
+  end of the simple command or quote it is in: `-H "Authorization: Bearer x"` becomes
+  `-H "Authorization: <redacted> <redacted>"`. A header-shaped credential name with its value
+  attached (`Cookie`, or a name with a `-` inside that ends in a credential word:
+  `Cookie:a=1`, `X-Api-Key:k`) hides only that value, since such a name may be no header at
+  all: `docker run -v db-password:/p alpine rm -rf /p` keeps `alpine rm -rf /p`, and
+  `git push origin fix-auth:main --force` keeps `--force`. Every separator (`;`, `&`, `|`, a
+  newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
+  `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
+  `name=value` words right after a `;` that ends either form stay hidden
+  (`"Cookie: a=1; b=2"` and `"Cookie:a=1; b=2"` become `"Cookie: <redacted>; <redacted>"`
+  and `"Cookie:<redacted>; <redacted>"`), read through the punctuation around them, so a
   quoted value (`sid="S"`) or a quote closing the header's own (`'Cookie: a=1; sid=S'` inside
-  `bash -c "…"`) counts too, but not a word holding a substitution or escape (`b=$(…)`),
+  `bash -c "…"`) counts too, but not a word holding a substitution or escape (`b=$(…)`) or
+  whose value holds a blank or a `;` or opens a quote it does not close (`c="rm -rf ~"`),
   which could run a command. The first word after a `;` that is not such a pair is read as
   usual, and so stays readable, as does every word after it: `"Cookie: a=1; Secure; b=2"`
   keeps `Secure; b=2`. The words after the header in its own simple command stay hidden;
