@@ -83,14 +83,14 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 | `worktree:<worktree>` | every event with a `worktree` (`mode_set`, `repro_red` and `test_run` are selected by it) |
 | `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red` |
 | `plan:<plan>` | `plan_approved`, `grill_confirmed` |
-| `pr:<number>` | `verdict_set`, `round_started` |
+| `pr:<number>` | `verdict_set`, `round_started` (with a `pr`) |
 | `point:<point>` | `gate_blocked`, `stop_blocked` |
 | `agent:<agent type>` | `subagent_status` |
 | `migration:<id>` | `migrate.wave.started`, `migrate.wave.done`, `migrate.contract` |
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 7)
+## Event registry (version 8)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
@@ -100,7 +100,8 @@ the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verif
 `reviewed` and the fields `source`, `sha`, `patch_id` and `base` to `verdict_set` (#33,
 `docs/verdict.md`); version 7 added `migrate.wave.started`, `migrate.wave.done` and
 `migrate.contract` and the `migration:` tag (#35, `docs/migrate.md`), whose dotted names are
-the story's.
+the story's; version 8 added `ticket` to `round_started` and made its `pr` optional (#36,
+`docs/brief.md`).
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -110,7 +111,7 @@ the story's.
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
 | `repro_red` | `task` string, `test` string (the failing reproduction); `anneal repro record` sets the envelope's `worktree` ([preconditions.md](preconditions.md)) | `task:` |
 | `verdict_set` | `pr` number, `verdict` `tests_verified`/`reviewed`/`approved` (levels, lowest first) or `changes_requested`/`noise_only` (review outcomes), `source?` `local`/`review_plugin`/`human`, `sha?` string (the full commit the verdict is for), `patch_id?` string (`git patch-id --verbatim` of `git diff <base>...<sha>`; null for an empty diff), `base?` string (the base ref as given); written by `anneal verdict set`, see [verdict.md](verdict.md) | `pr:` |
-| `round_started` | `pr` number, `round` number (from 1) | `pr:` |
+| `round_started` | `pr?` number (required before version 8), `ticket?` string (registry v8: the ticket of a fix-loop round, written by `anneal round start`), `round` number (from 1); see [brief.md](brief.md) | `pr:` when `pr` is set; a ticket round has none and is read by type |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
 | `subagent_status` | `agent` string (the subagent's type, `unknown` when the ledger cannot tag it), `agent_id?` string, `status?` `done`/`done_with_concerns`/`needs_context`/`blocked`, `violation?` string (what is wrong with its status block, one line), `missing` string array (required sections absent; `[]` when none), `duration_ms?` integer and `tokens?` object (`input`, `output`, `cache_read`, `cache_creation`) from its transcript; written by `anneal hook status` | `agent:` |

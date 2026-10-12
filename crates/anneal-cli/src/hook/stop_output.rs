@@ -2,7 +2,8 @@
 //! `reason`, the event's `additionalContext`, and a `systemMessage` for the one `ERROR` line
 //! of a hook that failed open. Nothing at all when there is nothing to say. The injection-scan
 //! hook writes its `additionalContext` and `systemMessage` through it too, never a `decision`.
-//! The context-monitor (`PostToolBatch`) and handoff (`PreCompact`) hooks write the same shape.
+//! The context-monitor (`PostToolBatch`), handoff (`PreCompact`) and standing-orders
+//! (`SubagentStart`) hooks write the same shape.
 
 use std::io::{self, Write};
 
@@ -32,7 +33,7 @@ struct Specific {
 
 impl StopOutput {
     /// An empty output for the hook event `event` (`Stop`, `SubagentStop`, `PostToolBatch`,
-    /// `PostToolUse` or `PreCompact`).
+    /// `PostToolUse`, `PreCompact` or `SubagentStart`).
     pub(crate) const fn new(event: &'static str) -> Self {
         Self {
             decision: None,

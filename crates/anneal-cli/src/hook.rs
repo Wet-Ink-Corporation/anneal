@@ -3,13 +3,14 @@
 //!
 //! Hooks fail open: a hook's own failures are reported in its output (or as an `ERROR` line on
 //! stderr when stdout cannot be written) and it still exits 0. Only a usage error exits 2. The
-//! exception is a guard (`hook guard`, `hook preconditions`, `hook merge-gate`, or any hook
-//! passed `--fail-closed`),
+//! exception is a guard (`hook guard`, `hook preconditions`, `hook merge-gate`, `hook brief`,
+//! or any hook passed `--fail-closed`),
 //! which fails closed: it denies what it cannot judge, and exits 2 when its decision cannot be
 //! written.
 //! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
 
 pub(crate) mod bootstrap;
+pub(crate) mod brief;
 #[cfg(test)]
 pub(crate) mod clef_fake;
 pub(crate) mod completeness;
@@ -23,6 +24,7 @@ pub(crate) mod preconditions;
 mod prompt;
 pub(crate) mod route;
 pub(crate) mod ruled_before;
+pub(crate) mod standing_orders;
 pub(crate) mod status;
 mod stop_output;
 mod transcript;
@@ -94,11 +96,16 @@ pub enum HookName {
     /// `PreCompact`: write `.continue-here` (phase, task N of M, open gates, ledger) at the
     /// worktree root for the next session start; fails open
     Handoff,
+    /// `PreToolUse` (Agent): deny a spawn whose prompt names no valid brief, and any spawn
+    /// from inside a subagent that is not an orchestrate lead; fails closed
+    Brief,
+    /// `SubagentStart`: add `.anneal/standing-orders.md` to the subagent's context; fails open
+    StandingOrders,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
@@ -111,6 +118,8 @@ impl HookName {
         Self::InjectionScan,
         Self::ContextMonitor,
         Self::Handoff,
+        Self::Brief,
+        Self::StandingOrders,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -129,6 +138,8 @@ impl HookName {
             Self::InjectionScan => "injection-scan",
             Self::ContextMonitor => "context-monitor",
             Self::Handoff => "handoff",
+            Self::Brief => "brief",
+            Self::StandingOrders => "standing-orders",
         }
     }
 
@@ -146,8 +157,9 @@ impl HookName {
             | Self::RuledBefore
             | Self::InjectionScan
             | Self::ContextMonitor
-            | Self::Handoff => false,
-            Self::Guard | Self::Preconditions | Self::MergeGate => true,
+            | Self::Handoff
+            | Self::StandingOrders => false,
+            Self::Guard | Self::Preconditions | Self::MergeGate | Self::Brief => true,
         }
     }
 }
@@ -191,6 +203,8 @@ where
         HookName::InjectionScan => injection_scan::run(env, out),
         HookName::ContextMonitor => context_monitor::run(env, out),
         HookName::Handoff => handoff::run(env, out),
+        HookName::Brief => brief::run(env, out),
+        HookName::StandingOrders => standing_orders::run(env, out),
     }
 }
 

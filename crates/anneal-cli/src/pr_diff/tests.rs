@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use super::{Budget, DiffError, default_base, numstat, patch_id, resolve_commit};
+use super::{
+    Budget, DiffError, TextLimits, default_base, diff_text, is_ancestor, numstat, patch_id,
+    resolve_commit,
+};
 use crate::test_repo::{ScratchRepo, Setup};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -189,4 +192,51 @@ fn a_budget_caps_a_wait_at_what_is_left_of_it() {
         (lock, Duration::ZERO, lock),
         "a ledger lock wait never outlasts the hook's budget"
     );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn a_base_is_an_ancestor_of_its_feature_but_not_of_a_sibling_branch() -> Setup<()> {
+    let repo = ScratchRepo::new()?;
+    let base = repo.head()?;
+    let feature = repo.feature()?;
+    repo.git(&["checkout", "-q", "main"])?;
+    repo.write("docs/other.md", "elsewhere\n")?;
+    let sibling = repo.commit("sibling")?;
+
+    let answers = (
+        is_ancestor(repo.path(), &base, &feature, TIMEOUT)?,
+        is_ancestor(repo.path(), &feature, &feature, TIMEOUT)?,
+        is_ancestor(repo.path(), &sibling, &feature, TIMEOUT)?,
+    );
+
+    assert_eq!(
+        answers,
+        (true, true, false),
+        "the base and the head itself are ancestors; a commit off to the side is not"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn the_diff_text_is_the_change_from_the_base_and_none_over_the_cap() -> Setup<()> {
+    let repo = ScratchRepo::new()?;
+    let feature = repo.feature()?;
+
+    let limits = |max_bytes| TextLimits {
+        timeout: TIMEOUT,
+        max_bytes,
+    };
+
+    let text = diff_text(repo.path(), "main", &feature, limits(64 * 1024))?;
+    let capped = diff_text(repo.path(), "main", &feature, limits(10))?;
+
+    let text = String::from_utf8(text.ok_or("within the cap")?)?;
+    assert!(
+        text.starts_with("diff --git a/src/lib.rs b/src/lib.rs\n") && text.contains("+    42\n"),
+        "the feature's change, a/ and b/ prefixes: {text}"
+    );
+    assert_eq!(capped, None, "over the cap: no partial diff");
+    Ok(())
 }

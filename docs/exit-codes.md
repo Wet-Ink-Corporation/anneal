@@ -188,7 +188,16 @@ A green result proves the migration step was recorded in order: a wave started o
 | 0 | ok |
 | 2 | bad range |
 
-A green result proves the brief was built from the given commit range. It does **not** prove that the brief is complete or its summary accurate.
+A green result proves the brief and its review package were written from a range rooted at the base. It does **not** prove that the brief is complete or its fields right: run anneal lint brief, and read it.
+
+## `anneal round start|status`
+
+| Code | Meaning |
+|---|---|
+| 0 | a round may run (start: recorded) |
+| 3 | park: five rounds ran; start records nothing |
+
+A green result proves the ticket's round count was read from the ledger, and for start the next round was recorded. It does **not** prove that the round's work was done, or that the agent and model it names were used.
 
 ## `anneal decide`
 

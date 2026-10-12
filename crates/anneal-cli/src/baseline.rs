@@ -236,8 +236,8 @@ fn write_and_sync(mut file: File, bytes: &[u8]) -> io::Result<()> {
 
 /// Writes `bytes` to a temporary file unique to this writer (`<path>.<pid>.<n>.tmp`), syncs it,
 /// and renames it over `path`, so readers see the old file or the new one, never a mix. On
-/// failure the temporary file is removed.
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// failure the temporary file is removed. `brief build` writes its files with it too.
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let (temporary, file) = create_temporary(|| temporary_path(path))?;
     // `write_and_sync` consumes the file, so it is closed before the rename (Windows needs that).
     let written = write_and_sync(file, bytes).and_then(|()| fs::rename(&temporary, path));

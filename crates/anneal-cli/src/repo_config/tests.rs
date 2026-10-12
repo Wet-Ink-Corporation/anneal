@@ -1,5 +1,54 @@
-use super::{CONFIG_PATH, FileError, GateConfigError, MAX_SENSITIVE_GLOBS, gate, gate_from_text};
+use super::{
+    CONFIG_PATH, DEFAULT_LEADS, FileError, GateConfigError, LeadsError, MAX_LEADS,
+    MAX_SENSITIVE_GLOBS, gate, gate_from_text, leads_from_text, orchestrate_leads,
+};
 use crate::glob::Glob;
+
+#[test]
+fn with_no_config_only_the_orchestrate_lead_may_spawn_from_a_subagent() {
+    let root = tempfile::tempdir().expect("a temporary directory");
+
+    let leads = orchestrate_leads(root.path()).expect("an absent file is the default");
+
+    assert_eq!(leads, ["orchestrate-lead"], "the default allowlist");
+    assert_eq!(DEFAULT_LEADS, ["orchestrate-lead"], "documented default");
+}
+
+#[test]
+fn orchestrate_leads_are_read_beside_other_keys_and_default_when_absent() {
+    let configured = leads_from_text(
+        r#"{"review": {"require_plugin": true},
+            "orchestrate": {"leads": ["lead", "anneal:orchestrate-lead"]}}"#,
+    );
+    let absent = leads_from_text(r#"{"orchestrate": {}}"#);
+
+    assert_eq!(
+        (configured.expect("valid"), absent.expect("valid").len()),
+        (
+            vec!["lead".to_owned(), "anneal:orchestrate-lead".to_owned()],
+            1
+        ),
+        "configured leads replace the default; no leads key keeps it"
+    );
+}
+
+#[test]
+fn leads_that_are_not_a_list_of_names_or_too_many_are_refused() {
+    let not_a_list = leads_from_text(r#"{"orchestrate": {"leads": "lead"}}"#);
+    let misspelt = leads_from_text(r#"{"orchestrate": {"lead": ["x"]}}"#);
+    let names: Vec<String> = (0..=MAX_LEADS).map(|n| format!("\"l{n}\"")).collect();
+    let too_many = leads_from_text(&format!(
+        r#"{{"orchestrate": {{"leads": [{}]}}}}"#,
+        names.join(",")
+    ));
+
+    assert!(
+        matches!(not_a_list, Err(LeadsError::Json(_))),
+        "{not_a_list:?}"
+    );
+    assert!(matches!(misspelt, Err(LeadsError::Json(_))), "{misspelt:?}");
+    assert!(matches!(too_many, Err(LeadsError::TooMany)), "{too_many:?}");
+}
 
 #[test]
 fn with_no_config_the_review_plugin_is_not_required_and_no_glob_is_added() {

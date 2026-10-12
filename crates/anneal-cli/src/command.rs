@@ -37,6 +37,8 @@ pub enum CommandName {
     Migrate,
     /// `anneal brief`
     Brief,
+    /// `anneal round`: the fix-loop round counter per ticket
+    Round,
     /// `anneal decide`
     Decide,
     /// `anneal calibrate`
@@ -60,7 +62,7 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -77,6 +79,7 @@ impl CommandName {
         Self::Perf,
         Self::Migrate,
         Self::Brief,
+        Self::Round,
         Self::Decide,
         Self::Calibrate,
         Self::Eval,
@@ -104,6 +107,7 @@ impl CommandName {
             Self::Perf => "perf",
             Self::Migrate => "migrate",
             Self::Brief => "brief",
+            Self::Round => "round",
             Self::Decide => "decide",
             Self::Calibrate => "calibrate",
             Self::Eval => "eval",
@@ -152,7 +156,13 @@ impl CommandName {
                 "the migration step was recorded in order: a wave started once and done after \
                  its start, or the contract with every wave done"
             }
-            Self::Brief => "the brief was built from the given commit range",
+            Self::Brief => {
+                "the brief and its review package were written from a range rooted at the base"
+            }
+            Self::Round => {
+                "the ticket's round count was read from the ledger, and for start the next round \
+                 was recorded"
+            }
             Self::Decide => "the decision was obtained and recorded",
             Self::Calibrate => "the calibration run completed and was recorded",
             Self::Eval => "skill routing accuracy is at or above its bound on the eval set",
@@ -193,7 +203,12 @@ impl CommandName {
                 "that the waves migrated the data correctly or completely: the ledger records \
                  what was reported"
             }
-            Self::Brief => "that the brief is complete or its summary accurate",
+            Self::Brief => {
+                "that the brief is complete or its fields right: run anneal lint brief, and read it"
+            }
+            Self::Round => {
+                "that the round's work was done, or that the agent and model it names were used"
+            }
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",
             Self::Eval => "routing accuracy on prompts outside the eval set",

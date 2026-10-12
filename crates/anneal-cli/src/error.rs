@@ -9,6 +9,8 @@ use std::io;
 use anneal_ledger::{StoreError, TimestampError};
 
 use crate::baseline::BaselineError;
+use crate::brief::BriefError;
+use crate::brief::ticket::TicketError;
 use crate::calibrate::CalibrateError;
 use crate::command::CommandName;
 use crate::dag::DagError;
@@ -106,9 +108,21 @@ pub enum CliError {
     /// `anneal migrate` could not read the migration's events.
     #[error(transparent)]
     Migrate(#[from] MigrateError),
+    /// `anneal brief build` could not read its range or write its files.
+    #[error(transparent)]
+    Brief(#[from] BriefError),
     /// stdout or stderr could not be written.
     #[error("writing output")]
     Output(#[source] io::Error),
+}
+
+/// A `--ticket` that is not a plain ticket name is a usage error.
+impl From<TicketError> for CliError {
+    fn from(error: TicketError) -> Self {
+        Self::Usage {
+            reason: error.to_string(),
+        }
+    }
 }
 
 impl CliError {
@@ -138,6 +152,7 @@ impl CliError {
             Self::Rollout(error) => error.code(),
             Self::Perf(error) => error.code(),
             Self::Migrate(error) => error.code(),
+            Self::Brief(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }

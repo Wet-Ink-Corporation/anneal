@@ -12,6 +12,10 @@
 //! skip-rule's defaults (`ship::skip_rule::DEFAULT_SENSITIVE`), never replacing them. Each
 //! reader ignores the other readers' keys, but `review` and `ship` are read strictly, so a
 //! misspelt switch is an error rather than its default.
+//!
+//! `orchestrate.leads` (default `["orchestrate-lead"]`, at most 64): the subagent types the
+//! brief hook lets spawn from inside a subagent (`orchestrate_leads`); a configured list
+//! replaces the default, and `orchestrate` is read strictly too.
 
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -162,6 +166,72 @@ pub(crate) fn gate_from_text(text: &str) -> Result<GateConfig, GateConfigError> 
         require_plugin: dto.review.require_plugin,
         sensitive_globs,
     })
+}
+
+/// The `agent_type`s that may spawn a subagent from inside a subagent when the config names
+/// none (`orchestrate.leads`).
+pub(crate) const DEFAULT_LEADS: [&str; 1] = ["orchestrate-lead"];
+
+/// Most names `orchestrate.leads` may list (H-13).
+pub(crate) const MAX_LEADS: usize = 64;
+
+/// The key the brief hook reads; the rest of the file belongs to other readers.
+#[derive(Debug, Default, Deserialize)]
+struct LeadsDto {
+    #[serde(default)]
+    orchestrate: OrchestrateDto,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrchestrateDto {
+    #[serde(default)]
+    leads: Option<Vec<String>>,
+}
+
+/// Why `orchestrate.leads` could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum LeadsError {
+    /// The file could not be read.
+    #[error(transparent)]
+    File(#[from] FileError),
+    /// Not a JSON object, or `orchestrate` is not as documented.
+    #[error("{CONFIG_PATH}: `orchestrate` must be {{\"leads\": [<agent type>, ...]}}")]
+    Json(#[source] serde_json::Error),
+    /// `orchestrate.leads` lists more than `MAX_LEADS` (64) names.
+    #[error("{CONFIG_PATH}: orchestrate.leads lists more than {MAX_LEADS} names")]
+    TooMany,
+}
+
+/// The orchestrate leads from the config in the worktree `root`: the `agent_type`s allowed to
+/// spawn subagents from inside a subagent. [`DEFAULT_LEADS`] when the file or the key is
+/// absent; a configured list replaces it.
+///
+/// # Errors
+/// The [`LeadsError`] when the file cannot be read or `orchestrate` is not valid.
+pub(crate) fn orchestrate_leads(root: &Path) -> Result<Vec<String>, LeadsError> {
+    match read_text(root)? {
+        Some(text) => leads_from_text(&text),
+        None => Ok(default_leads()),
+    }
+}
+
+/// The orchestrate leads from the config `text`.
+///
+/// # Errors
+/// As [`orchestrate_leads`], for the setting.
+pub(crate) fn leads_from_text(text: &str) -> Result<Vec<String>, LeadsError> {
+    let dto: LeadsDto = serde_json::from_str(text).map_err(LeadsError::Json)?;
+    match dto.orchestrate.leads {
+        Some(leads) if leads.len() > MAX_LEADS => Err(LeadsError::TooMany),
+        Some(leads) => Ok(leads),
+        None => Ok(default_leads()),
+    }
+}
+
+/// [`DEFAULT_LEADS`], owned.
+fn default_leads() -> Vec<String> {
+    DEFAULT_LEADS.map(str::to_owned).to_vec()
 }
 
 #[cfg(test)]

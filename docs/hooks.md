@@ -45,8 +45,8 @@ Hooks fail open. `anneal hook <id>` notes its failures in its output, or in one 
 stderr when stdout cannot be written, and exits 0. Only a usage error exits 2, which is why the
 manifest test runs every entry's arguments through the binary.
 
-Guards fail closed. A guard (`hook guard`, `hook preconditions`, `hook merge-gate`, or any hook
-passed `--fail-closed`) denies what it
+Guards fail closed. A guard (`hook guard`, `hook preconditions`, `hook merge-gate`, `hook brief`,
+or any hook passed `--fail-closed`) denies what it
 cannot judge. When its output cannot be written it exits 2 with one `ERROR` line, which Claude
 Code reads as "block". Its entry passes `--fail-closed` and sets `onFailure: "block"`, so a crash
 or a timeout blocks too.
@@ -485,3 +485,34 @@ file. The bootstrap injects it at the next session start. It never blocks compac
 creates a ledger and writes nothing outside a git repository; what it cannot read is listed in
 the note and in one `ERROR` line as the `systemMessage` (which Claude Code discards for
 `PreCompact`). See `docs/handoff.md`.
+
+## `brief` (PreToolUse)
+
+Matcher `Agent`, `timeout` 5 s, `onFailure: "block"`, arguments `hook brief --fail-closed`. It
+reads Claude Code's `PreToolUse` input on stdin (at most 4 MiB; it uses `tool_name`,
+`tool_input.prompt`, `agent_id`, `agent_type`, `session_id` and `cwd`). Any other tool is
+allowed silently. No brief, no spawn: the prompt must hold exactly one `Brief: <path>` line
+naming a file under `.anneal/briefs/` of the worktree (relative, no `..`, `.`, `\` or absolute
+path, resolved with symlinks to a regular file of at most 256 KiB inside that directory) that
+passes `anneal lint brief`. A call with `agent_id` set runs inside a subagent and is denied
+unless its `agent_type` is listed in `orchestrate.leads` of `.anneal/config.json` (default
+`["orchestrate-lead"]`); an allowed lead's spawn still needs its brief. A denial is one
+`ERROR brief: ...` line naming what is missing (the fields `lint brief` reports, or the
+`anneal brief build` command), plus a `gate_blocked` event (`point` is `brief.<check>`: `nested`,
+`no-brief`, `path`, `invalid`, `bad-input` or `unjudged`) in an existing ledger; it never
+creates one. Unreadable input, a cwd outside a git worktree, and a setting or brief it cannot
+read are denied; git and ledger reads share 3.5 s from the hook's start. See
+[brief.md](brief.md).
+
+## `standing-orders` (SubagentStart)
+
+No matcher (every agent type), `timeout` 5 s, `onFailure: "continue"`. It reads Claude Code's
+`SubagentStart` input on stdin (at most 64 KiB; it uses `cwd`) and adds the repository's
+`.anneal/standing-orders.md` (at the worktree root, or under `cwd` outside git) to the
+subagent's context as `additionalContext`, headed `Standing orders for every subagent
+(.anneal/standing-orders.md):`. With no file it writes nothing. A file over 16 KiB, or a path
+that is not a regular file or cannot be read, injects nothing, never a part, and is one
+`ERROR standing-orders: ...` line as `systemMessage`. `SubagentStart` cannot block, and the hook
+always exits 0 (only a usage error exits 2). Claude Code injects the context once per subagent
+and again after the subagent's auto-compaction; context over 10,000 characters is moved to a
+file with a preview.

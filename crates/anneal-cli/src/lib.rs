@@ -40,9 +40,14 @@
 //! - [`watch`]: `anneal watch pr|ci|deploy`, a long poll of a pull request, a commit's checks
 //!   or a deployment that exits with one code per blocker.
 //! - [`pr_diff`]: the bounded git reads of a pull request's diff (commits, base, patch id,
-//!   numstat) that `verdict`, `ship` and the merge gate share.
+//!   numstat, ancestry, the diff's text) that `verdict`, `ship`, `brief` and the merge gate
+//!   share.
 //! - [`repo_config`]: `.anneal/config.json`, read within a size cap (`check_fast`,
-//!   `review.require_plugin`, `ship.sensitive_globs`).
+//!   `review.require_plugin`, `ship.sensitive_globs`, `orchestrate.leads`).
+//! - [`brief`]: `anneal brief build`, a subagent's nine-field brief and its review package
+//!   under `.anneal/briefs/`.
+//! - [`round`]: `anneal round start|status`, a ticket's fix-loop round counter read from the
+//!   ledger.
 //! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
 //! - [`statusline`]: `anneal statusline`, Claude Code's status line, which saves each
 //!   session's context usage for the context-monitor hook.
@@ -55,6 +60,7 @@
 
 pub mod adr;
 pub mod baseline;
+pub mod brief;
 pub mod calibrate;
 pub mod cli;
 pub mod command;
@@ -87,6 +93,7 @@ mod release_check;
 pub mod repo_config;
 pub mod repro;
 pub mod rollout;
+pub mod round;
 pub mod rulings;
 pub mod ship;
 pub mod statusline;

@@ -15,7 +15,7 @@ use crate::tag::TagKey;
 
 /// The version of the event registry this build reads and writes. Bumped when an event type
 /// or a payload field is added.
-pub const REGISTRY_VERSION: u32 = 7;
+pub const REGISTRY_VERSION: u32 = 8;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -207,8 +207,9 @@ impl LedgerEvent {
             }
             Self::PlanApproved(PlanApproved { plan, .. })
             | Self::GrillConfirmed(GrillConfirmed { plan, .. }) => Some(Cow::Borrowed(plan)),
-            Self::VerdictSet(VerdictSet { pr, .. })
-            | Self::RoundStarted(RoundStarted { pr, .. }) => Some(Cow::Owned(pr.to_string())),
+            Self::VerdictSet(VerdictSet { pr, .. }) => Some(Cow::Owned(pr.to_string())),
+            // A ticket round has no pull request, so no subject tag.
+            Self::RoundStarted(RoundStarted { pr, .. }) => pr.map(|pr| Cow::Owned(pr.to_string())),
             Self::GateBlocked(GateBlocked { point, .. })
             | Self::StopBlocked(StopBlocked { point, .. }) => Some(Cow::Borrowed(point)),
             Self::SubagentStatus(SubagentStatus { agent, .. }) => Some(Cow::Borrowed(agent)),
@@ -350,11 +351,18 @@ pub struct VerdictSet {
     pub base: Option<String>,
 }
 
-/// `round_started`: a review round started on a pull request. Subject tag `pr:`.
+/// `round_started`: a review or fix-loop round started, on a pull request or a ticket.
+///
+/// Subject tag `pr:` when `pr` is set; a ticket round has no subject tag and is found by its
+/// type and `ticket` (`anneal round`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoundStarted {
-    /// The pull request number.
-    pub pr: u64,
+    /// The pull request number; optional since registry v8, required before.
+    #[serde(default)]
+    pub pr: Option<u64>,
+    /// The ticket the round is for, as given to `anneal round start --ticket` (registry v8).
+    #[serde(default)]
+    pub ticket: Option<String>,
     /// The round number, from 1.
     pub round: u32,
 }
@@ -483,7 +491,7 @@ pub struct MigrateContract {
 mod tests {
     use super::{
         AgentStatus, EventKind, GrillConfirmed, LedgerEvent, MigrateContract, MigrateWave, Mode,
-        ModeSet, REGISTRY_VERSION, SubagentStatus, TestOutcome, TestRun, TokenUsage,
+        ModeSet, REGISTRY_VERSION, RoundStarted, SubagentStatus, TestOutcome, TestRun, TokenUsage,
         UnknownEventKind, Verdict, VerdictSet, VerdictSource,
     };
     use crate::tag::TagKey;
@@ -802,11 +810,56 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_7() {
+    fn the_registry_is_version_8() {
         assert_eq!(
-            REGISTRY_VERSION, 7,
+            REGISTRY_VERSION, 8,
             "the migrate.wave.started, migrate.wave.done and migrate.contract types were added \
-             in version 7"
+             in version 7, round_started's ticket (with pr optional) in version 8"
+        );
+    }
+
+    #[test]
+    fn round_started_carries_a_ticket_without_a_pull_request() {
+        let value = json!({"type": "round_started", "pr": null, "ticket": "36", "round": 2});
+
+        let event: LedgerEvent = serde_json::from_value(value.clone()).expect("registered");
+
+        assert_eq!(
+            event,
+            LedgerEvent::RoundStarted(RoundStarted {
+                pr: None,
+                ticket: Some("36".to_owned()),
+                round: 2,
+            }),
+            "ticket and round are read"
+        );
+        assert_eq!(
+            serde_json::to_value(&event).expect("serialises"),
+            value,
+            "and written back under the same keys"
+        );
+        assert_eq!(event.subject_value(), None, "no pull request, no pr: tag");
+    }
+
+    #[test]
+    fn a_round_started_written_before_ticket_still_reads_with_its_pull_request() {
+        let event: LedgerEvent =
+            serde_json::from_value(json!({"type": "round_started", "pr": 7, "round": 1}))
+                .expect("registry v6 shape");
+
+        assert_eq!(
+            event.subject_value().as_deref(),
+            Some("7"),
+            "the pr: tag is kept"
+        );
+        assert_eq!(
+            event,
+            LedgerEvent::RoundStarted(RoundStarted {
+                pr: Some(7),
+                ticket: None,
+                round: 1,
+            }),
+            "the ticket defaults to none"
         );
     }
 

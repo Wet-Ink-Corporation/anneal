@@ -1,9 +1,10 @@
 //! The diff a pull request makes, `git diff <base>...<head>`.
 //!
 //! It is taken from the merge base, so commits the base gained since do not count, and read by
-//! the bounded git calls `verdict`, `ship` and the merge gate share: commit resolution, the
-//! default base, the diff's `git patch-id --verbatim` and its `--numstat`. Each call takes a
-//! timeout and caps what it keeps (H-13).
+//! the bounded git calls `verdict`, `ship`, `brief build` and the merge gate share: commit
+//! resolution, the default base, ancestry (`is_ancestor`), the diff's `git patch-id
+//! --verbatim`, its `--numstat` and its text (`diff_text`). Each call takes a timeout and caps
+//! what it keeps (H-13).
 //!
 //! The diff's options are fixed so the same change always gives the same patch id: no colour,
 //! external diff, text conversion or rename detection, every submodule change shown whatever
@@ -385,6 +386,73 @@ pub(crate) fn numstat(
         });
     }
     Ok(output.stdout)
+}
+
+/// Whether the commit `ancestor` is an ancestor of `descendant` (a commit is its own
+/// ancestor), by `git merge-base --is-ancestor`. Pass full commit ids, so no argument reads as
+/// an option.
+///
+/// # Errors
+/// The [`DiffError`] when git cannot run, does not finish in time, or fails (an unknown
+/// commit).
+pub(crate) fn is_ancestor(
+    root: &Path,
+    ancestor: &str,
+    descendant: &str,
+    timeout: Duration,
+) -> Result<bool, DiffError> {
+    let args = ["merge-base", "--is-ancestor", ancestor, descendant];
+    let output = paths::run_git_capped(root, &args, timeout, SMALL_OUTPUT_BYTES)?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(DiffError::Failed {
+            what: "merge-base --is-ancestor",
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        }),
+    }
+}
+
+/// How long a diff read may take and how much of it is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextLimits {
+    /// git is killed after this.
+    pub(crate) timeout: Duration,
+    /// Most bytes of diff kept; a longer diff is not read as a partial one.
+    pub(crate) max_bytes: u64,
+}
+
+/// The text of `git diff <base>...<head>` with the fixed options, except `--binary` (a binary
+/// file is one "Binary files differ" line); `None` when it is longer than `limits.max_bytes`,
+/// never a partial diff.
+///
+/// # Errors
+/// The [`DiffError`] when git cannot run, fails or does not finish in time.
+pub(crate) fn diff_text(
+    root: &Path,
+    base: &str,
+    head: &str,
+    limits: TextLimits,
+) -> Result<Option<Vec<u8>>, DiffError> {
+    let TextLimits {
+        timeout,
+        max_bytes: max,
+    } = limits;
+    let range = format!("{base}...{head}");
+    let mut args: Vec<&str> = DIFF_OPTIONS
+        .into_iter()
+        .filter(|option| *option != "--binary")
+        .collect();
+    args.extend([range.as_str(), "--"]);
+    let output = paths::run_git_capped(root, &args, timeout, max.saturating_add(1))?;
+    if !output.status.success() {
+        return Err(DiffError::Failed {
+            what: "diff",
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    let within = u64::try_from(output.stdout.len()).is_ok_and(|len| len <= max);
+    Ok(within.then_some(output.stdout))
 }
 
 /// git in `root`, its messages untranslated.

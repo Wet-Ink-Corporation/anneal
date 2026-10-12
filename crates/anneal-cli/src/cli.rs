@@ -12,6 +12,7 @@ use std::io::Write;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
+use crate::brief::{self, BriefArgs};
 use crate::calibrate::{self, CalibrateArgs, CalibrateEnv};
 use crate::command::CommandName;
 use crate::dag::{self, DagArgs};
@@ -34,6 +35,7 @@ use crate::perf::{self, PerfArgs};
 use crate::plan::{self, PlanArgs};
 use crate::repro::{self, ReproArgs};
 use crate::rollout::{self, RolloutArgs};
+use crate::round::{self, RoundArgs};
 use crate::ship::{self, ShipArgs};
 use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
@@ -107,9 +109,12 @@ pub enum Command {
     /// Track an expand, migrate, contract migration wave by wave
     #[command(after_help = command_help(CommandName::Migrate))]
     Migrate(MigrateArgs),
-    /// Build a brief from a commit range
+    /// Build a ticket's brief and review package from a range rooted at a base
     #[command(after_help = command_help(CommandName::Brief))]
-    Brief(Stub),
+    Brief(BriefArgs),
+    /// Start a ticket's next fix-loop round, or print its round count and what comes next
+    #[command(after_help = command_help(CommandName::Round))]
+    Round(RoundArgs),
     /// Ask a Clef decision point and record the answer
     #[command(after_help = command_help(CommandName::Decide))]
     Decide(DecideArgs),
@@ -170,6 +175,7 @@ impl Command {
             Self::Perf(_) => CommandName::Perf,
             Self::Migrate(_) => CommandName::Migrate,
             Self::Brief(_) => CommandName::Brief,
+            Self::Round(_) => CommandName::Round,
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
@@ -200,6 +206,7 @@ impl Command {
             | Self::Perf(_)
             | Self::Migrate(_)
             | Self::Brief(_)
+            | Self::Round(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
             | Self::Eval(_) => OnFailure::Exit,
@@ -322,9 +329,8 @@ fn dispatch<O: Write, E: Write>(
         Command::Rollout(args) => rollout::run(args, out),
         Command::Perf(args) => perf::run(args, &mut ProcessRunner, out),
         Command::Migrate(args) => run_migrate(args, out),
-        Command::Brief(_) => Err(CliError::NotImplemented {
-            command: command.name(),
-        }),
+        Command::Brief(args) => run_brief(args, out),
+        Command::Round(args) => run_round(args, out),
     }
 }
 
@@ -386,6 +392,18 @@ fn run_statusline<O: Write, E: Write>(out: &mut O, err: &mut E) -> Result<Code, 
         out,
         err,
     )
+}
+
+/// `anneal round` from the process's working directory, with its environment for the ledger.
+fn run_round<O: Write>(args: &RoundArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    round::run(args, &cwd, |var| std::env::var_os(var), out)
+}
+
+/// `anneal brief` from the process's working directory.
+fn run_brief<O: Write>(args: &BriefArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    brief::run(args, &cwd, out)
 }
 
 /// `anneal calibrate` with the process's working directory and environment.

@@ -1,0 +1,120 @@
+# Briefs, review packages and fix-loop rounds
+
+No brief, no spawn. A subagent gets files, not pasted text: a brief that says what to do and
+how the work is judged, and, for a reviewer or a fixer, a review package with the diff and that
+same contract. Fix loops are bounded by a counter in the ledger, not by an agent's memory.
+
+## The nine fields
+
+Every brief has these nine sections, in this order. The set lives in one table in code
+(`crates/anneal-cli/src/brief/fields.rs`); renaming a field there renames it for
+`brief build`, `lint brief`, the brief hook and the review package.
+
+| Field | Key (`--field`) | Purpose |
+|---|---|---|
+| Goal | `goal` | The outcome the subagent delivers, in one or two sentences. |
+| Repository | `repository` | The worktree it works in and the base its change starts from. |
+| Owned scope | `owned-scope` | The files, modules or commands it owns and may change. |
+| Do not touch | `do-not-touch` | The paths, interfaces and decisions it must leave as they are. |
+| Invariants | `invariants` | The data shapes and rules that must still hold when it is done. |
+| Success criteria | `success-criteria` | How the caller judges the work finished. |
+| Verification | `verification` | The commands it runs to check its work, and what they must show. |
+| Edits allowed | `edits-allowed` | Whether it may change files (yes or no), with the no-revert rule. |
+| Return contract | `return-contract` | What its final report must hold. |
+
+The set is re-authored from the public pstack's worker brief (`kashyab12/uni-pstack`,
+`pstack/references/delegation.md`; see `CREDITS.md`). The story asked for the brief fields of
+pstack's `orchestrate.md`, which was out of reach, so this set is a default recorded as an open
+decision for Ryan, not a copy of `orchestrate.md`.
+
+## `anneal brief build`
+
+```text
+anneal brief build --ticket <id> --base <ref> [--field <key>=<text>]... [--waits-on-ci]
+```
+
+It writes two files under the worktree root, replacing earlier ones:
+
+- `.anneal/briefs/<id>.md`, the brief: a title, the review package's path, the nine fields,
+  then a `## Volatile` section with the base and head commits, `cacheTtl: 1h` when
+  `--waits-on-ci` is passed (a fix-loop subagent that waits on CI), and the build time. What
+  stays the same comes first and what changes on every build last, so a prompt that starts with
+  the stable part keeps its cache.
+- `.anneal/briefs/<id>.review.md`, the review package: the contract (the nine fields) and
+  `git diff <base>...HEAD` in a fenced block, then the same volatile section. A diff over 4 MiB
+  is not included; the package names the `git diff` command that shows it instead, and the
+  envelope sets `data.diff_omitted`.
+
+`--ticket` is a plain id used for file names: an issue number (`36`) or a dag ticket id
+(`003-auth`), 1 to 64 ASCII letters, digits, `.`, `_` or `-`, not starting with `.`. Nothing is
+fetched from a tracker.
+
+A field not given is written as an HTML comment naming its purpose, which `lint brief` does not
+count as content, except `repository` (the worktree root and the base) and `return-contract`
+(files changed, what was done, the verification and its result, risks or blockers). The
+`edits-allowed` text is followed by the no-revert rule: never revert, reset or overwrite a
+change you did not make. `data.empty_fields` lists the fields still to fill.
+
+The range guard is rooted at the base: the base must name a commit, `HEAD` must name one, and
+the base must be an ancestor of `HEAD`. Otherwise it exits 2 with one `brief/range` finding and
+writes nothing. A usage error (a bad ticket or field, outside a worktree) also exits 2 but with
+nothing on stdout.
+
+## `anneal lint brief <file>`
+
+Exit 0 when each of the nine fields is one `## <heading>` section with content, else 1 with one
+finding per problem: `field-missing` (no section; line 0), `field-empty` (only blank lines,
+comments or fenced text) and `field-repeated` (a second section, at its line). Headings match
+in any ASCII letter case; other sections, such as `## Volatile`, are allowed.
+
+## The brief hook
+
+`anneal hook brief` is a fail-closed `PreToolUse` hook on the Agent tool (see
+[hooks.md](hooks.md)). A spawn's prompt names its brief on one line:
+
+```text
+Brief: .anneal/briefs/36.md
+```
+
+The path is relative to the worktree root, under `.anneal/briefs/`, with no `..`, `.`, `\` or
+absolute form, and it must resolve, symlinks included, to a regular file of at most 256 KiB
+inside that directory that passes `lint brief`. A spawn from inside a subagent (its input has
+`agent_id`) is denied unless its `agent_type` is an orchestrate lead:
+
+```json
+{"orchestrate": {"leads": ["orchestrate-lead"]}}
+```
+
+in `.anneal/config.json`; the list replaces the default, `["orchestrate-lead"]`, and holds at
+most 64 names. A plugin's agent reports a plugin-scoped type (`anneal:orchestrate-lead`), so
+list that form for one.
+
+## Standing orders
+
+`anneal hook standing-orders` (`SubagentStart`, fail open) adds `.anneal/standing-orders.md`
+at the worktree root to every subagent's context. It is silent when the file is missing and
+injects nothing, with one `ERROR` line as `systemMessage`, when it is over 16 KiB or not a
+regular file. Claude Code moves context over 10,000 characters to a file and passes a preview,
+so keep orders meant to be read whole under that.
+
+## Fix-loop rounds
+
+```text
+anneal round start --ticket <id> [--session <id>]
+anneal round status --ticket <id>
+```
+
+A ticket's round count is the highest `round` among its `round_started` events (registry v8:
+`{"type": "round_started", "ticket": "36", "round": 2}`), so it survives compaction and
+restarts. `start` appends the next round, first writer wins (it reads again when another round
+started in between); `status` reads and never creates a ledger. `data.next` says what the round
+does:
+
+| Round | `next` | What the orchestrator does |
+|---|---|---|
+| 1 to 3 | `same-agent` | Send the review package back to the same agent. |
+| 4 and 5 | `fresh-agent` | Spawn a fresh agent one model tier up through `context: fork` with a named subagent; never `model:` in frontmatter. |
+| after 5 | `park` | Stop the fix loop and park the ticket to weigh-in (#37). |
+
+Both exit 0 while a round may run and 3 (`park`) once five rounds ran; `start` then records
+nothing. For `status`, `next` is the round after the count; for `start`, the round it recorded.
