@@ -39,7 +39,7 @@ use self::spans::{
     word_end,
 };
 use super::shell::MAX_NESTING;
-use crate::decide::redact::rules::secret_assignment_prefix;
+use crate::decide::redact::rules::{is_pair, secret_assignment_prefix};
 use crate::decide::redact::tools::{self, Tool};
 use crate::decide::redact::{
     REDACTED, Scheme, Secret, Then, basic_credential, find_secret, looks_like_token, scheme,
@@ -49,10 +49,6 @@ use crate::decide::state::cut_chars;
 
 /// Characters that open a quote or substitution: a word part holding none is plain text.
 const QUOTING: [char; 6] = ['\'', '"', '`', '$', '\\', '('];
-
-/// The [`QUOTING`] characters that substitute or escape rather than only quote: a word holding
-/// one may run a command, so a cookie pair ([`is_pair`]) holds none.
-const SUBSTITUTING: [char; 4] = ['`', '$', '\\', '('];
 
 /// Most characters of the command kept, after redaction; a longer one ends in `…`. The same as
 /// `decide::state::MAX_STRING_CHARS`, so the compact state does not cut it again.
@@ -402,22 +398,6 @@ fn plain_token(raw: &str) -> Option<(&str, &str)> {
     }
     let (lead, core, trail) = split_punctuation(raw);
     looks_like_token(core).then_some((lead, trail))
-}
-
-/// A `name=value` word (`b=2`), as the pairs of a cookie are, read through the punctuation
-/// around it: only quotes before a name of letters, digits, `_` and `-` (so not an option), a
-/// value that may be quoted (`sid="S"`) or end in a quote that closes an outer one (`sid=S'`),
-/// and no substitution or escape anywhere, so a hidden pair never hides a command.
-fn is_pair(raw: &str) -> bool {
-    let (lead, core, _) = split_punctuation(raw);
-    !raw.contains(SUBSTITUTING)
-        && lead.chars().all(|c| matches!(c, '\'' | '"'))
-        && core.split_once('=').is_some_and(|(name, _)| {
-            !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        })
 }
 
 /// Copies a word whose spans are all closed, scanning the inside of each quote or

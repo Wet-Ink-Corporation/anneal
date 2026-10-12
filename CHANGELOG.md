@@ -4,7 +4,7 @@ All notable changes to anneal are recorded here. A release renames `## Unrelease
 
 ## Unreleased
 
-- Redaction (guard and prose): a cookie or other header-shaped credential with its value attached (`Cookie:a=x; sid=S`, `X-Api-Key:k`) hides the rest of its value, and a cookie pair after a `;` with a quoted value (`sid="S"`) or ending in a closing quote (`sid=S'` inside `bash -c "…"`) is hidden too; still no command after a separator is hidden. `docs/guard.md` now notes that a non-pair word after a `;` in a header value ends the hidden pairs, and that `https://host:8080?to=a@b` loses `host:8080?to=a`.
+- Redaction (guard and prose): a cookie or other header-shaped credential with its value attached (`Cookie:a=x; sid=S`, `X-Api-Key:k`) hides the rest of its value, every cookie pair after an unquoted header in prose is hidden (`Cookie: a=1; b=2; c=3`), and a cookie pair after a `;` with a quoted value (`sid="S"`) or ending in a closing quote (`sid=S'` inside `bash -c "…"`) is hidden too; still no command after a separator is hidden. `docs/guard.md` now notes that a non-pair word after a `;` in a header value ends the hidden pairs, and that `https://host:8080?to=a@b` loses `host:8080?to=a`.
 
 ## 0.0.1 — 2026-10-12
 

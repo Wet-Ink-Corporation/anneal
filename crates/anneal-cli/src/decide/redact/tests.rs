@@ -280,6 +280,31 @@ fn every_cookie_pair_is_redacted_however_it_is_written() {
 }
 
 #[test]
+fn every_cookie_pair_after_an_unquoted_header_is_redacted() {
+    assert_eq!(
+        safe_prompt("send Cookie: a=1; b=2; c=3; d=\"4\" now"),
+        "send Cookie: <redacted>; <redacted>; <redacted>; <redacted>\" now"
+    );
+}
+
+#[test]
+fn the_first_word_after_a_header_semicolon_that_is_no_pair_ends_the_pairs() {
+    let cases = [
+        (
+            "send Cookie: a=1; b=2; Secure; d=4 now",
+            "send Cookie: <redacted>; <redacted>; Secure; d=4 now",
+        ),
+        (
+            "send Cookie: a=1; b=2; c=$(rm) now",
+            "send Cookie: <redacted>; <redacted>; c=$(rm) now",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
 fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
     // Accepted over-redaction (wi-434adf): `host:8080?to=a` reads like `user:pass?X`.
     assert_eq!(

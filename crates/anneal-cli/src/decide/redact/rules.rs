@@ -325,6 +325,23 @@ pub(crate) fn is_credential(name: &str) -> bool {
     })
 }
 
+/// Characters that substitute or escape in a shell word rather than only quote: a word holding
+/// one may run a command, so a cookie pair ([`is_pair`]) holds none.
+const SUBSTITUTING: [char; 4] = ['`', '$', '\\', '('];
+
+/// A `name=value` word (`b=2`), as the pairs of a cookie are, read through the punctuation
+/// around it: only quotes before a name of letters, digits, `_` and `-` (so not an option), a
+/// value that may be quoted (`sid="S"`) or end in a quote that closes an outer one (`sid=S'`),
+/// and no substitution or escape anywhere, so a hidden pair never hides a command.
+pub(crate) fn is_pair(word: &str) -> bool {
+    let (lead, core, _) = split_punctuation(word);
+    !word.contains(SUBSTITUTING)
+        && lead.chars().all(|c| matches!(c, '\'' | '"'))
+        && core
+            .split_once('=')
+            .is_some_and(|(name, _)| !name.is_empty() && name.chars().all(is_key_char))
+}
+
 /// `word` split into its leading punctuation, its core and its trailing punctuation, so that
 /// `("ghp_…"),` is read as `ghp_…`.
 pub(crate) fn split_punctuation(word: &str) -> (&str, &str, &str) {

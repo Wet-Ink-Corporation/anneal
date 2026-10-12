@@ -317,7 +317,10 @@ Shared behaviour:
   end, what one word says about the next is carried across words: a header name
   (`Authorization:`, `X-Api-Key:`, `Cookie:`, or one with its value attached, as in
   `Cookie:a=1;`) hides the words through its quote when it opens one (`"Cookie: s=1; t=2"`),
-  else its next two words (scheme and credential); a quote
+  else its next two words (scheme and credential) and, while each word of its value ends in
+  `;`, the `name=value` pairs after them (`Cookie: a=1; b=2; c=3` hides all three; the first
+  other word, such as `Secure;`, ends it, and a pair holding `$`, a backtick, `\` or `(` is
+  no pair); a quote
   opened before a name, in a value or by a hidden word is redacted through the word that
   closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
   `DB_PASS=<redacted> then go`, `TOKEN=abc"def ghi" then go` becomes
