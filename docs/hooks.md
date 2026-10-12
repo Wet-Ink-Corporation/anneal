@@ -315,8 +315,15 @@ Shared behaviour:
   `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, `hvs.`, `hvb.` and `eyJ` prefixes, AWS access
   key ids, and opaque words of 32 or more letters and digits mixed). Since prose has no command
   end, what one word says about the next is carried across words: a header name
-  (`Authorization:`, `X-Api-Key:`, `Cookie:`) hides the words through its quote when it
-  opens one (`"Cookie: s=1; t=2"`), else its next two words (scheme and credential); a quote
+  (`Authorization:`, `X-Api-Key:`, `Cookie:`) hides the words through its quote when it opens
+  one (`"Cookie: s=1; t=2"`), else its next two words (scheme and credential) and, while each
+  word of its value ends in `;`, the `name=value` pairs after them (`Cookie: a=1; b=2; c=3`
+  hides all three; the first other word, such as `Secure;`, ends it, and a pair holding `$`,
+  a backtick, `\`, `(` or a `;` inside, or opening a quote it does not close, is no pair). A
+  header-shaped name with its value attached (`Cookie:a=1;`, `X-Api-Key:k`, but also
+  `fix-auth:main`) hides only that value, and the pairs after it only when it ends in `;`
+  (`set Cookie:a=x; sid=S now` keeps `now`, `push fix-auth:main --force` keeps `--force`); a
+  quote
   opened before a name, in a value or by a hidden word is redacted through the word that
   closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
   `DB_PASS=<redacted> then go`, `TOKEN=abc"def ghi" then go` becomes

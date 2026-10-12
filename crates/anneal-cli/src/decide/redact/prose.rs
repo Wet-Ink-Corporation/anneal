@@ -1,8 +1,8 @@
 //! Prose as Clef sees it: [`safe_prompt`].
 
 use super::rules::{
-    Scheme, Secret, Then, basic_credential, find_secret, is_punctuation, looks_like_token, scheme,
-    split_punctuation, url_userinfo,
+    Scheme, Secret, Then, basic_credential, find_secret, is_pair, is_punctuation, looks_like_token,
+    quote_after, scheme, split_punctuation, url_userinfo,
 };
 use super::tools::{self, Tool};
 use super::{MAX_PROMPT_CHARS, REDACTED};
@@ -48,6 +48,33 @@ struct Prose {
     after_basic: bool,
     /// The last known tool named, whose secret options are redacted from then on.
     tool: Option<Tool>,
+    /// Where the word before stands in an unquoted header's value.
+    header: HeaderValue,
+}
+
+/// Where a word stands in the value of a header outside quotes, whose words [`Prose::pending`]
+/// counts; a quoted one runs to its close instead ([`Prose::header_quote`]).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum HeaderValue {
+    /// Not in a header's value.
+    #[default]
+    Outside,
+    /// In a header's value.
+    Inside,
+    /// In a header's value, after a word ending in `;`: a `name=value` word next is another
+    /// cookie pair ([`is_pair`]), so the value goes on; the first other word ends it.
+    AfterSemicolon,
+}
+
+impl HeaderValue {
+    /// Where a word of a header's value, `trail` its trailing punctuation, leaves the next.
+    fn after(trail: &str) -> Self {
+        if trail.contains(';') {
+            Self::AfterSemicolon
+        } else {
+            Self::Inside
+        }
+    }
 }
 
 impl Prose {
@@ -55,7 +82,12 @@ impl Prose {
     /// closes, so the rest of the prompt went with it.
     fn word<'p>(&mut self, word: &'p str, words: &mut impl Iterator<Item = &'p str>) -> bool {
         let (lead, core, trail) = split_punctuation(word);
-        if self.hides(core) {
+        let header = std::mem::take(&mut self.header);
+        let pair = header == HeaderValue::AfterSemicolon && is_pair(word);
+        if self.hides(core) || pair {
+            if pair || (header != HeaderValue::Outside && self.pending > 0) {
+                self.header = HeaderValue::after(trail);
+            }
             self.safe.push_str(lead);
             self.safe.push_str(REDACTED);
             self.safe.push_str(trail);
@@ -123,8 +155,19 @@ impl Prose {
                     self.header_quote = open;
                 } else {
                     self.pending = HEADER_WORDS;
+                    self.header = HeaderValue::after(split_punctuation(word).2);
                 }
                 true
+            }
+            // The value went with this word. Cookie pairs go on only after a semicolon that
+            // ends it, and otherwise a quote it opens holds the rest of the value, as for a key.
+            Then::AttachedHeader => {
+                if split_punctuation(word).2.contains(';') {
+                    self.header = HeaderValue::AfterSemicolon;
+                    true
+                } else {
+                    skip_quoted(open, words)
+                }
             }
             Then::NextWord => {
                 self.pending = self.pending.max(1);
@@ -160,19 +203,6 @@ fn opened_by(word: &str) -> Option<char> {
     let (lead, core, trail) = split_punctuation(word);
     let open = quote_after(quote_after(None, lead), core)?;
     quote_after(Some(open), trail)
-}
-
-/// The quote still open after `text`, given the one open before it: each `'` or `"` outside
-/// a quote opens one, and the same character closes it.
-fn quote_after(mut open: Option<char>, text: &str) -> Option<char> {
-    for c in text.chars() {
-        open = match open {
-            Some(quote) if c == quote => None,
-            None if matches!(c, '\'' | '"') => Some(c),
-            other => other,
-        };
-    }
-    open
 }
 
 /// Consumes from `words` the rest of a quoted value: while a quote is `open`, the words up to

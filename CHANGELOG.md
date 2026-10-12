@@ -4,6 +4,8 @@ All notable changes to anneal are recorded here. A release renames `## Unrelease
 
 ## Unreleased
 
+- Redaction (guard and prose): a cookie or other header-shaped credential with its value attached (`Cookie:a=x; sid=S`, `X-Api-Key:k`) hides that value and, after a `;`, the cookie pairs that follow, but no other word (`docker run -v db-password:/p alpine rm -rf /p` and `git push origin fix-auth:main --force` keep their commands readable), a cookie pair whose value holds a blank or `;` or opens an unclosed quote is not hidden (`c='rm -rf ~'`), every cookie pair after an unquoted header in prose is hidden (`Cookie: a=1; b=2; c=3`), and a cookie pair after a `;` with a quoted value (`sid="S"`) or ending in a closing quote (`sid=S'` inside `bash -c "…"`) is hidden too; still no command after a separator is hidden. `docs/guard.md` now notes that a non-pair word after a `;` in a header value ends the hidden pairs, and that `https://host:8080?to=a@b` loses `host:8080?to=a`.
+
 ## 0.0.1 — 2026-10-12
 
 - Plugin skeleton: marketplace and plugin manifests with `userConfig` (`cf_account_id`, `cf_api_token` as a secret, `clef_mode`), empty hooks manifest, and the `libexec` launchers (`anneal`, `anneal.cmd`) that pick the build for the platform and fall back to PATH.

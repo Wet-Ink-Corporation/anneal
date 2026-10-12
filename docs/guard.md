@@ -288,14 +288,25 @@ than too little:
   `//registry/:_authToken=x`, `{"password":"x"}`, `pass:x`): the rest of that word. A `::`
   is a path, not a key (`auth::tests` stays);
 - a header: a credential-named key ending its word in `:` (`"X-Api-Key: …"`,
-  `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), or any `Authorization:` (any letter
-  case, `Proxy-Authorization:` too), hides every word after it up to the end of the simple
-  command or quote it is in: `-H "Authorization: Bearer x"` becomes `-H "Authorization:
-  <redacted> <redacted>"`. Every separator (`;`, `&`, `|`, a newline) ends it, so it never
-  hides the next command, in a `bash -c '…'`, `eval "…"`, `$( )` or backtick body too; only
-  inside a quote or substitution, the plain `name=value` words right after a `;` stay hidden
-  (`"Cookie: a=1; b=2"` becomes `"Cookie: <redacted>; <redacted>"`), and the first other word
-  is read as usual. The words after the header in its own simple command stay hidden;
+  `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), any `Authorization:` (any letter
+  case, `Proxy-Authorization:` too), hides its own value and every word after it up to the
+  end of the simple command or quote it is in: `-H "Authorization: Bearer x"` becomes
+  `-H "Authorization: <redacted> <redacted>"`. A header-shaped credential name with its value
+  attached (`Cookie`, or a name with a `-` inside that ends in a credential word:
+  `Cookie:a=1`, `X-Api-Key:k`) hides only that value, since such a name may be no header at
+  all: `docker run -v db-password:/p alpine rm -rf /p` keeps `alpine rm -rf /p`, and
+  `git push origin fix-auth:main --force` keeps `--force`. Every separator (`;`, `&`, `|`, a
+  newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
+  `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
+  `name=value` words right after a `;` that ends either form stay hidden
+  (`"Cookie: a=1; b=2"` and `"Cookie:a=1; b=2"` become `"Cookie: <redacted>; <redacted>"`
+  and `"Cookie:<redacted>; <redacted>"`), read through the punctuation around them, so a
+  quoted value (`sid="S"`) or a quote closing the header's own (`'Cookie: a=1; sid=S'` inside
+  `bash -c "…"`) counts too, but not a word holding a substitution or escape (`b=$(…)`) or
+  whose value holds a blank or a `;` or opens a quote it does not close (`c="rm -rf ~"`),
+  which could run a command. The first word after a `;` that is not such a pair is read as
+  usual, and so stays readable, as does every word after it: `"Cookie: a=1; Secure; b=2"`
+  keeps `Secure; b=2`. The words after the header in its own simple command stay hidden;
 - the value of every option, one dash or two, whose name holds a credential word, attached or
   as the next word (`--token=x`, `--password x`, `-storepass x`, `-passout pass:x`), except
   one whose name ends in `-stdin`, `-file` or `-env`, whose value is not on the command line
@@ -309,7 +320,9 @@ than too little:
 - the userinfo of every URL, up to the last `@` before the path or query, so a `#` in a
   password is covered (`https://user:p#ss@host` becomes `https://<redacted>@host`), and so is
   a `?` when a `:` comes before it and an `@` after it (`https://user:p?X@host`), while
-  `https://host?to=a@b` stays; `git@host:repo` is not a URL and stays;
+  `https://host?to=a@b` stays; `git@host:repo` is not a URL and stays. A port before the
+  query reads like a password, so `https://host:8080?to=a@b` becomes `https://<redacted>@b`, an
+  accepted over-redaction;
 - an unquoted word that looks like a token: a known prefix (`sk-`, `ghp_`, `gho_`, `ghu_`,
   `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, Vault's `hvs.` and `hvb.`, `eyJ`),
   an AWS access key id, or 32 or more letters and digits mixed (a full commit hash too);
@@ -342,8 +355,9 @@ finds it there. The word rules live in `decide::redact`, shared with the prompt 
 credential, for a tool not listed above (`sometool -k s3cret`); a header whose name names no
 credential (`-H "X-Signature: …"`); a secret that is just a word in a non-credential position
 (`echo hunter2 | login`), which includes the tools that take a password as a positional
-argument (`htpasswd -b file user pass`, `cf auth user pass`); a cookie pair after a `;` that is
-not a plain `name=value` word; and a secret inside a file the command reads.
+argument (`htpasswd -b file user pass`, `cf auth user pass`); a header value's word after a `;`
+that is not a `name=value` pair, and every word after it (`"Cookie: a=1; Secure; sid=S"` keeps
+`sid=S`); and a secret inside a file the command reads.
 
 **Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
 on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in

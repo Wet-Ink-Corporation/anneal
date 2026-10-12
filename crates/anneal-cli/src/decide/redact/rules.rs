@@ -8,7 +8,9 @@
 //! 2. a credential-named key anywhere in it, before `=` or `:` with optional quotes between
 //!    (`--from-literal=password=x`, `-Dpassword=x`, `/:_authToken=x`, `{"password":"x"}`,
 //!    `X-Api-Key:`, `"Authorization":`); a key with nothing after its `:`, or an
-//!    `Authorization` one, is a header whose value runs on ([`Then::Header`]);
+//!    `Authorization` one, is a header whose value runs on ([`Then::Header`]); a header-shaped
+//!    one with text after its `:` (`Cookie:a=1;`, `X-Api-Key:k`) hides only that text, and
+//!    after a `;` that ends it the cookie pairs that follow ([`Then::AttachedHeader`]);
 //! 3. a secret option of a known tool ([`super::tools`]);
 //! 4. an option, one dash or two, whose name names a credential (`--password x`,
 //!    `-storepass x`): the next word is its value, unless the name says the value is read
@@ -83,6 +85,10 @@ pub(crate) enum Then {
     /// A header's value runs on: to the end of its quote or command in the guard, through its
     /// quote or the next two words in prose.
     Header,
+    /// A header-shaped key's value is attached to its word (`Cookie:a=1`, `X-Api-Key:k`): that
+    /// word alone is the secret, unless a `;` ends it, after which the next `name=value` words
+    /// are the header's other cookie pairs ([`is_pair`]).
+    AttachedHeader,
 }
 
 /// A secret found in a word: write [`Secret::shown`], then the redaction mark when
@@ -154,8 +160,14 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         let then = if rest.starts_with('=') {
             Then::Nothing
         } else if rest.starts_with(':') && !rest.starts_with("::") {
-            let header = kept >= word.len() || name.to_ascii_lowercase().contains("authorization");
-            if header { Then::Header } else { Then::Nothing }
+            let lower = name.to_ascii_lowercase();
+            if kept >= word.len() || lower.contains("authorization") {
+                Then::Header
+            } else if is_header_name(&lower) {
+                Then::AttachedHeader
+            } else {
+                Then::Nothing
+            }
         } else {
             continue;
         };
@@ -164,6 +176,17 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         }
     }
     None
+}
+
+/// Whether a credential key's name, `lower` in ASCII lower case, has the shape of an HTTP
+/// header, so a value attached to its `:` may go on in cookie pairs after a `;` (`Cookie:a=1;`):
+/// `cookie`, or a name with a `-` inside it that ends in a credential word (`X-Api-Key`,
+/// `PRIVATE-TOKEN`, `Set-Cookie`). Such a name may be no header (`db-password:/p`,
+/// `fix-auth:main`), so its attached value hides only its own word ([`Then::AttachedHeader`]).
+fn is_header_name(lower: &str) -> bool {
+    lower == "cookie"
+        || (lower.trim_start_matches('-').contains('-')
+            && CREDENTIAL_WORDS.iter().any(|word| lower.ends_with(word)))
 }
 
 /// Rule 3: a known tool's secret option, read with shell quotes removed (`'-pX'`).
@@ -309,6 +332,43 @@ pub(crate) fn is_credential(name: &str) -> bool {
             })
         })
     })
+}
+
+/// Characters that substitute or escape in a shell word rather than only quote: a word holding
+/// one may run a command, so a cookie pair ([`is_pair`]) holds none.
+const SUBSTITUTING: [char; 4] = ['`', '$', '\\', '('];
+
+/// A `name=value` word (`b=2`), as the pairs of a cookie are, read through the punctuation
+/// around it: only quotes before a name of letters, digits, `_` and `-` (so not an option), a
+/// value that may be quoted (`sid="S"`) or end in a quote that closes an outer one (`sid=S'`),
+/// and no substitution or escape anywhere, so a hidden pair never hides a command. Its value,
+/// quotes included, holds no blank or `;` and closes any quote it opens (`c='rm -rf ~'` is no
+/// pair, read whole or split into words), so it cannot hold a command either.
+pub(crate) fn is_pair(word: &str) -> bool {
+    let (lead, core, trail) = split_punctuation(word);
+    !word.contains(SUBSTITUTING)
+        && lead.chars().all(|c| matches!(c, '\'' | '"'))
+        && core.split_once('=').is_some_and(|(name, value)| {
+            // A quote in the trailing punctuation alone closes an outer one (`sid=S'`).
+            let open = quote_after(None, value);
+            !name.is_empty()
+                && name.chars().all(is_key_char)
+                && !value.contains(|c: char| c.is_whitespace() || c == ';')
+                && (open.is_none() || quote_after(open, trail).is_none())
+        })
+}
+
+/// The quote still open after `text`, given the one open before it: each `'` or `"` outside
+/// a quote opens one, and the same character closes it.
+pub(crate) fn quote_after(mut open: Option<char>, text: &str) -> Option<char> {
+    for c in text.chars() {
+        open = match open {
+            Some(quote) if c == quote => None,
+            None if matches!(c, '\'' | '"') => Some(c),
+            other => other,
+        };
+    }
+    open
 }
 
 /// `word` split into its leading punctuation, its core and its trailing punctuation, so that
