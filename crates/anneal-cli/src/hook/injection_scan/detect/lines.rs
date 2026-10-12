@@ -132,40 +132,64 @@ fn tool_call_on_line(text: &str, line_start: usize, line: &str) -> bool {
     })
 }
 
-/// Adds a hit for each line that holds a Unicode tag character or a bidi embedding, override
-/// or isolate control, or two or more zero-width characters. A zero-width joiner or non-joiner
-/// between two characters outside ASCII (emoji sequences, Persian, Indic scripts) is not
-/// counted, nor is a byte-order mark that starts the text.
+/// Adds a hit for each line that holds a Unicode tag character (U+E0000..U+E007F) or a bidi
+/// embedding, override or isolate control, or two or more other default-ignorable characters
+/// ([`super::is_ignorable`]). Some uses in ordinary text are not counted:
+///
+/// - a byte-order mark that starts the text;
+/// - a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two
+///   visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction
+///   text), where an emoji presentation selector counts as part of its emoji;
+/// - an emoji presentation selector (U+FE0E, U+FE0F) right after a visible character outside
+///   ASCII, or right before the keycap mark U+20E3 (`1️⃣`);
+/// - a soft hyphen between two letters.
 pub(super) fn hidden_characters(text: &str, found: &mut Scan) {
     for (index, line) in text.split('\n').enumerate() {
-        let mut zero_width = 0_usize;
+        let mut counted = 0_usize;
         let mut hard = false;
         let mut previous: Option<char> = None;
         let mut chars = line.chars().peekable();
         while let Some(c) = chars.next() {
+            let next = chars.peek().copied();
             match c {
                 '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {
                     hard = true;
                 }
-                '\u{200C}' | '\u{200D}' => {
-                    let joins = |c: Option<char>| c.is_some_and(|c| !c.is_ascii());
-                    if !(joins(previous) && joins(chars.peek().copied())) {
-                        zero_width = zero_width.saturating_add(1);
-                    }
-                }
                 '\u{FEFF}' if index == 0 && previous.is_none() => {}
-                '\u{200B}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' => {
-                    zero_width = zero_width.saturating_add(1);
-                }
+                '\u{200C}'..='\u{200F}' if joins(previous) && joins(next) => {}
+                '\u{FE0E}' | '\u{FE0F}'
+                    if previous.is_some_and(visible_outside_ascii) || next == Some(KEYCAP) => {}
+                '\u{00AD}' if letter(previous) && letter(next) => {}
+                _ if super::is_ignorable(c) => counted = counted.saturating_add(1),
                 _ => {}
             }
             previous = Some(c);
         }
-        if hard || zero_width >= 2 {
+        if hard || counted >= 2 {
             found.add(Hit {
                 kind: Kind::HiddenCharacters,
                 line: index.saturating_add(1),
             });
         }
     }
+}
+
+/// The combining enclosing keycap, which follows a digit, `#` or `*` and its presentation
+/// selector in a keycap emoji.
+const KEYCAP: char = '\u{20E3}';
+
+/// Whether `c` prints something and is outside ASCII.
+fn visible_outside_ascii(c: char) -> bool {
+    !c.is_ascii() && !super::is_ignorable(c)
+}
+
+/// Whether a joiner or directional mark next to `c` sits in text outside ASCII: `c` is a
+/// visible character outside ASCII, or an emoji presentation selector that belongs to one.
+fn joins(c: Option<char>) -> bool {
+    c.is_some_and(|c| matches!(c, '\u{FE0E}' | '\u{FE0F}') || visible_outside_ascii(c))
+}
+
+/// Whether `c` is a visible letter.
+fn letter(c: Option<char>) -> bool {
+    c.is_some_and(|c| c.is_alphabetic() && !super::is_ignorable(c))
 }

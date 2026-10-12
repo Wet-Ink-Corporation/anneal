@@ -1,7 +1,7 @@
 //! Words and punctuation of scanned text, with their line and HTML comment.
 //!
-//! Invisible characters (zero-width, bidi controls, tag characters, soft hyphens) are dropped
-//! without ending a word, so `ig<U+200B>nore` reads as `ignore`. Words are lowercased; an
+//! Default-ignorable characters (zero-width, bidi controls, variation selectors, fillers, tag
+//! characters, soft hyphens; [`super::is_ignorable`]) are dropped without ending a word, so `ig<U+200B>nore` reads as `ignore`. Words are lowercased; an
 //! apostrophe between letters stays in the word (`don't`), and `’` reads as `'`.
 
 /// One word (a run of alphanumeric characters, lowercased) or one punctuation character.
@@ -15,22 +15,6 @@ pub(super) struct Token {
     pub(super) line: usize,
     /// The index of the HTML comment (`<!-- ... -->`) holding it, counted from 0.
     pub(super) comment: Option<usize>,
-}
-
-/// Whether `c` renders as nothing: zero-width spaces and joiners, the word joiner and other
-/// invisible operators, the byte-order mark, bidi embedding, override and isolate controls,
-/// Unicode tag characters and the soft hyphen.
-const fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-            | '\u{E0000}'..='\u{E007F}'
-    )
 }
 
 /// The tokens of a text, and the line each of its HTML comments opens on.
@@ -62,7 +46,7 @@ pub(super) fn tokenize(text: &str) -> Tokens {
             lexer.flush();
             lexer.comment = None;
             skip = 2;
-        } else if is_invisible(c) {
+        } else if super::is_ignorable(c) {
             // Dropped without ending the word.
         } else if c.is_alphanumeric() {
             lexer.push_char(c);

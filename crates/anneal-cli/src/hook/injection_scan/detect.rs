@@ -70,34 +70,51 @@ impl Scan {
     }
 }
 
-/// Whether `c` is a Unicode format, line separator or paragraph separator character
-/// (categories Cf, Zl and Zp, Unicode 15.1, and the whole tag block U+E0000..U+E007F): it
-/// prints nothing or breaks a line, so a place holding one is shown escaped. Every character
-/// the word scanner drops as invisible is one.
-pub(crate) const fn is_format(c: char) -> bool {
+/// Whether `c` is a Unicode default-ignorable code point (`Default_Ignorable_Code_Point`,
+/// Unicode 15.1): a renderer shows nothing for it. This is the one table the scan uses for
+/// invisible characters: the word scanner drops them without ending a word, the
+/// hidden-character check counts them, and a named place escapes them.
+pub(crate) const fn is_ignorable(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'
-            | '\u{0600}'..='\u{0605}'
+            | '\u{034F}'
             | '\u{061C}'
-            | '\u{06DD}'
-            | '\u{070F}'
-            | '\u{0890}'..='\u{0891}'
-            | '\u{08E2}'
-            | '\u{180E}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
             | '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
             | '\u{FEFF}'
-            | '\u{FFF9}'..='\u{FFFB}'
-            | '\u{110BD}'
-            | '\u{110CD}'
-            | '\u{13430}'..='\u{1343F}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFF8}'
             | '\u{1BCA0}'..='\u{1BCA3}'
             | '\u{1D173}'..='\u{1D17A}'
-            | '\u{E0000}'..='\u{E007F}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
+}
+
+/// Whether `c` prints nothing or breaks a line: a default-ignorable code point
+/// ([`is_ignorable`]), or one of the other format, line separator and paragraph separator
+/// characters (categories Cf, Zl and Zp, Unicode 15.1). A place holding one is shown escaped.
+pub(crate) const fn is_unprintable(c: char) -> bool {
+    is_ignorable(c)
+        || matches!(
+            c,
+            '\u{0600}'..='\u{0605}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{2028}'..='\u{2029}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+        )
 }
 
 /// Scans `text` for instruction-shaped passages.

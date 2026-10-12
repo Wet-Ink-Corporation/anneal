@@ -36,8 +36,11 @@ moving it is a manifest change. It is not declared there because
 ## Heuristics
 
 Hand-written matchers, no regular expressions. Words are read lowercased, with invisible
-characters (zero-width, bidi, tag characters, soft hyphen) dropped first, so `ig<U+200B>nore`
-reads as `ignore`.
+characters dropped first, so `ig<U+200B>nore` reads as `ignore`. Invisible means Unicode's
+`Default_Ignorable_Code_Point` set (Unicode 15.1: zero-width characters, bidi controls,
+variation selectors, Hangul fillers, Mongolian selectors, the soft hyphen, tag characters and
+the rest of U+E0000..U+E0FFF), held in one table (`detect::is_ignorable`) that the word reader,
+the hidden-character check and the place escaping share.
 
 | Kind | Matches |
 |---|---|
@@ -46,7 +49,7 @@ reads as `ignore`.
 | Hidden comment | An HTML comment (`<!-- ... -->`) holding any phrase above (weak ones need no address there), or naming an AI, saying `you` and holding a directive verb (`must`, `should`, `run`, `send`, `ignore`, ...). Reported on the comment's first line. |
 | Markup | Chat-template and tool-call markup outside code fences: `<\|im_start\|>`, `[INST]`, `<<SYS>>`, `<system-reminder>`, `<function_calls>`, `<invoke name=`, `<tool_use>`, ... |
 | Tool-call JSON | `"tool_use"`, `"tool_calls"`, `"tool_call"` or `"function_call"` followed within 400 bytes by `"name"` and `"input"`, `"arguments"` or `"parameters"`, outside code fences. |
-| Hidden characters | A line with a Unicode tag character or a bidi embedding, override or isolate control, or two or more zero-width characters. A zero-width joiner or non-joiner between two characters outside ASCII (emoji sequences, Persian, Indic scripts) and a byte-order mark that starts the text do not count. |
+| Hidden characters | A line with a Unicode tag character (U+E0000..U+E007F) or a bidi embedding, override or isolate control, or two or more other invisible characters. Not counted: a byte-order mark that starts the text; a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction text), an emoji presentation selector counting as part of its emoji; an emoji presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII or right before the keycap mark U+20E3 (`1️⃣`); a soft hyphen between two letters. A run of selectors after one emoji still counts from the second, so bytes smuggled in variation selectors are seen. |
 
 Code fences (three backticks or tildes) hide markup and tool-call JSON only when closed: when
 the text ends inside a fence, the lines after its opener are scanned as unfenced, so an opener
@@ -54,20 +57,21 @@ with no close cannot silence the rest of a file.
 
 The note names the first hit by call, then line, and counts every hit in the batch. It never
 quotes the content, which would put the instruction back in front of the model. The path or URL
-it names is treated as untrusted too: when the place itself scans as a hit (an injection phrase,
-tag characters, a bidi override) the note says `a Read result` or `a WebFetch result` instead;
-otherwise control characters become spaces and format, line and paragraph separator characters
-(Unicode Cf, Zl, Zp, such as U+200B or U+2028) are written escaped, as `\u{2028}`. The place is
+it names is treated as untrusted too: when the place itself, or its percent-decoded form, scans as a
+hit (an injection phrase, tag characters, a bidi override) the note says `a Read result` or `a WebFetch result` instead;
+otherwise control characters become spaces, and invisible characters (the table above) and
+the other format, line and paragraph separator characters (Unicode Cf, Zl, Zp, such as U+2028)
+are written escaped, as `\u{2028}` or `\u{e0100}`. The place is
 cut to 512 bytes.
 
 ## Corpus and false-positive rate
 
-`crates/anneal-cli/tests/fixtures/injection/` holds 15 positives and 15 benign lookalikes
+`crates/anneal-cli/tests/fixtures/injection/` holds 15 positives and 16 benign lookalikes
 (installation guides, a security policy, an agent charter and a changelog that say "you must"
 and "you must now", lint and tooling comments, tool-call JSON and chat markup inside code fences,
-emoji and Persian text with zero-width joiners, a `pom.xml` with `<system>`, prose about prompts
+emoji and Persian text with zero-width joiners, emoji with presentation selectors, keycaps and flags, soft hyphens and right-to-left marks, a `pom.xml` with `<system>`, prose about prompts
 and LLMs, and notes that say "the branch you are now in" next to "Claude"). `tests/it/hook_injection_scan.rs` runs each through the built binary and asserts every
-positive is flagged and no benign file is: at the time of writing, 15/15 true positives and 0/15
+positive is flagged and no benign file is: at the time of writing, 15/15 true positives and 0/16
 false positives (a false-positive rate of 0%). A false positive found in use becomes a benign
 fixture before the heuristic changes; `b15-session-notes.md` came from running the hook over the
 636 Markdown, Rust and configuration files of this repository and weigh-in, which flagged six:

@@ -183,7 +183,7 @@ fn location(content: &Content<'_>, line: usize) -> String {
     let place = content
         .place
         .map(cut_place)
-        .filter(|place| detect::scan(place).first.is_none())
+        .filter(|place| is_clean(place))
         .map_or_else(
             || match content.tool {
                 Tool::Read => "a Read result".to_owned(),
@@ -201,6 +201,39 @@ fn location(content: &Content<'_>, line: usize) -> String {
     }
 }
 
+/// Whether `place` can be repeated in the note: neither it nor its percent-decoded form holds
+/// anything the scan finds.
+fn is_clean(place: &str) -> bool {
+    detect::scan(place).first.is_none()
+        && (!place.contains('%') || detect::scan(&percent_decoded(place)).first.is_none())
+}
+
+/// `place` with each `%XX` escape decoded to its byte, read as UTF-8 (invalid sequences become
+/// U+FFFD). A `%` without two hex digits after it stays as it is.
+fn percent_decoded(place: &str) -> String {
+    let mut bytes = Vec::with_capacity(place.len());
+    let mut rest = place.as_bytes();
+    while let Some((&byte, after)) = rest.split_first() {
+        if let (b'%', [high, low, tail @ ..]) = (byte, after)
+            && let Some((high, low)) = hex(*high).zip(hex(*low))
+        {
+            bytes.push(high.saturating_mul(16).saturating_add(low));
+            rest = tail;
+        } else {
+            bytes.push(byte);
+            rest = after;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// The value of an ASCII hex digit.
+fn hex(digit: u8) -> Option<u8> {
+    char::from(digit)
+        .to_digit(16)
+        .and_then(|value| u8::try_from(value).ok())
+}
+
 /// `place` cut to [`MAX_PLACE_BYTES`], at a character boundary.
 fn cut_place(place: &str) -> &str {
     let cut = place.floor_char_boundary(MAX_PLACE_BYTES);
@@ -208,14 +241,15 @@ fn cut_place(place: &str) -> &str {
 }
 
 /// `place` as one printable line: control characters (`\n`, U+0085 and the rest of Cc) as
-/// spaces, and format, line and paragraph separator characters ([`detect::is_format`]) as
-/// escaped code points (`\u{2028}`), so nothing in a path or URL is relayed unseen.
+/// spaces, and default-ignorable, format, line and paragraph separator characters
+/// ([`detect::is_unprintable`]) as escaped code points (`\u{2028}`), so nothing in a path or URL
+/// is relayed unseen.
 fn one_line(place: &str) -> String {
     let mut line = String::with_capacity(place.len());
     for c in place.chars() {
         if c.is_control() {
             line.push(' ');
-        } else if detect::is_format(c) {
+        } else if detect::is_unprintable(c) {
             line.extend(c.escape_unicode());
         } else {
             line.push(c);
