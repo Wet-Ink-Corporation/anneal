@@ -168,10 +168,18 @@ pub const ROLLOUT_GO: Code = Code::new(0, "go");
 pub const ROLLOUT_HOLD: Code = Code::new(1, "hold");
 /// `rollout decide`: roll back.
 pub const ROLLOUT_ROLLBACK: Code = Code::new(2, "rollback");
-/// `perf noise`: keep the change.
-pub const PERF_KEEP: Code = Code::new(0, "keep");
-/// `perf noise`: revert the change.
-pub const PERF_REVERT: Code = Code::new(1, "revert");
+/// `perf noise`: keep the change (faster beyond the noise); `perf sample`: run times saved.
+pub const PERF_KEEP: Code = Code::new(0, "keep (sample: saved)");
+/// `perf noise`: revert the change (neutral or slower).
+pub const PERF_REVERT: Code = Code::new(1, "revert: neutral or slower");
+/// `migrate start|done|contract`: the step was recorded.
+pub const MIGRATE_RECORDED: Code = Code::new(0, "recorded");
+/// `migrate contract`: a wave is still open, so nothing is recorded.
+pub const MIGRATE_WAVE_OPEN: Code =
+    Code::new(1, "contract: a wave is still open; nothing recorded");
+/// `migrate start|done|contract`: the step is out of order (a wave started twice, done while
+/// not open, after the contract, or a contract with no wave done); nothing is recorded.
+pub const MIGRATE_REFUSED: Code = Code::new(3, "out of order; nothing recorded");
 /// `brief build`: the commit range is invalid.
 pub const BRIEF_BAD_RANGE: Code = Code::new(2, "bad range");
 /// `decide`: Clef answered and the decision was logged; `decide label`: the label was
@@ -247,7 +255,9 @@ impl CommandCodes {
             ),
             CommandName::Ship => ("skip-rule", &[SHIP_SKIP, SHIP_FULL_REVIEW]),
             CommandName::Rollout => ("decide", &[ROLLOUT_GO, ROLLOUT_HOLD, ROLLOUT_ROLLBACK]),
-            CommandName::Perf => ("noise", &[PERF_KEEP, PERF_REVERT]),
+            CommandName::Perf => ("noise|sample", &[PERF_KEEP, PERF_REVERT]),
+            // No scope: `start|done|contract` would widen the help's title column.
+            CommandName::Migrate => ("", &[MIGRATE_RECORDED, MIGRATE_WAVE_OPEN, MIGRATE_REFUSED]),
             CommandName::Brief => ("build", &[OK, BRIEF_BAD_RANGE]),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),

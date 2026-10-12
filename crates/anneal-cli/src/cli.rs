@@ -27,9 +27,13 @@ use crate::grill::{self, GrillArgs};
 use crate::hook::{self, HookArgs, HookEnv};
 use crate::ledger::{self, LedgerArgs};
 use crate::lint::{self, LintArgs};
+use crate::migrate::{self, MigrateArgs};
 use crate::mode::{self, ModeArgs};
+use crate::perf::runner::ProcessRunner;
+use crate::perf::{self, PerfArgs};
 use crate::plan::{self, PlanArgs};
 use crate::repro::{self, ReproArgs};
+use crate::rollout::{self, RolloutArgs};
 use crate::ship::{self, ShipArgs};
 use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
@@ -96,10 +100,13 @@ pub enum Command {
     Ship(ShipArgs),
     /// Decide go, hold or rollback for a rollout
     #[command(after_help = command_help(CommandName::Rollout))]
-    Rollout(Stub),
+    Rollout(RolloutArgs),
     /// Tell a performance change from run-to-run noise
     #[command(after_help = command_help(CommandName::Perf))]
-    Perf(Stub),
+    Perf(PerfArgs),
+    /// Track an expand, migrate, contract migration wave by wave
+    #[command(after_help = command_help(CommandName::Migrate))]
+    Migrate(MigrateArgs),
     /// Build a brief from a commit range
     #[command(after_help = command_help(CommandName::Brief))]
     Brief(Stub),
@@ -135,7 +142,7 @@ enum OnFailure {
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
-/// the future syntax (`anneal rollout decide ...`) gets 64, not a usage error.
+/// the future syntax (`anneal brief build ...`) gets 64, not a usage error.
 #[derive(Debug, Args)]
 pub struct Stub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -161,6 +168,7 @@ impl Command {
             Self::Ship(_) => CommandName::Ship,
             Self::Rollout(_) => CommandName::Rollout,
             Self::Perf(_) => CommandName::Perf,
+            Self::Migrate(_) => CommandName::Migrate,
             Self::Brief(_) => CommandName::Brief,
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
@@ -190,6 +198,7 @@ impl Command {
             | Self::Ship(_)
             | Self::Rollout(_)
             | Self::Perf(_)
+            | Self::Migrate(_)
             | Self::Brief(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
@@ -303,28 +312,38 @@ fn dispatch<O: Write, E: Write>(
         Command::Eval(args) => eval::run(args, out),
         Command::Decide(args) => run_decide(args, out),
         Command::Calibrate(args) => run_calibrate(args, out, err),
-        Command::Hook(args) => {
-            let env = HookEnv {
-                stdin: std::io::stdin().lock(),
-                current_dir: std::env::current_dir,
-                lookup: |var: &str| std::env::var_os(var),
-            };
-            hook::run(args, env, out)
-                .map(|()| exit_codes::HOOK_DONE)
-                .map_err(CliError::Output)
-        }
+        Command::Hook(args) => run_hook(args, out),
         Command::Ship(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             ship::run(args, &cwd, out)
         }
         Command::Watch(args) => run_watch(args, out),
         Command::Statusline(StatuslineArgs) => run_statusline(out, err),
-        Command::Rollout(_) | Command::Perf(_) | Command::Brief(_) => {
-            Err(CliError::NotImplemented {
-                command: command.name(),
-            })
-        }
+        Command::Rollout(args) => rollout::run(args, out),
+        Command::Perf(args) => perf::run(args, &mut ProcessRunner, out),
+        Command::Migrate(args) => run_migrate(args, out),
+        Command::Brief(_) => Err(CliError::NotImplemented {
+            command: command.name(),
+        }),
     }
+}
+
+/// `anneal hook` with the process's stdin, working directory and environment.
+fn run_hook<O: Write>(args: &HookArgs, out: &mut O) -> Result<Code, CliError> {
+    let env = HookEnv {
+        stdin: std::io::stdin().lock(),
+        current_dir: std::env::current_dir,
+        lookup: |var: &str| std::env::var_os(var),
+    };
+    hook::run(args, env, out)
+        .map(|()| exit_codes::HOOK_DONE)
+        .map_err(CliError::Output)
+}
+
+/// `anneal migrate` from the process's working directory, with its environment for the ledger.
+fn run_migrate<O: Write>(args: &MigrateArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    migrate::run(args, &cwd, |var| std::env::var_os(var), out)
 }
 
 /// `anneal decide` with the process's environment, the system clock and the transport.

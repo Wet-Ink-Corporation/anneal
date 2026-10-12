@@ -1,0 +1,7 @@
+{
+  "metrics": {
+    "error_rate": {"better": "lower", "hold": 0.01, "rollback": 0.05},
+    "p99_ms": {"better": "lower", "hold": 300, "rollback": 500},
+    "success_rate": {"better": "higher", "hold": 0.999, "rollback": 0.99}
+  }
+}

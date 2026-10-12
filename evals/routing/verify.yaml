@@ -22,3 +22,6 @@ near_misses:
     - get the plan approved before any task starts
   grill:
     - this request is vague, question me in rounds
+  ship:
+    - open the pull request and merge it once the review verdict is in
+    - roll out the verified change and decide go or no-go

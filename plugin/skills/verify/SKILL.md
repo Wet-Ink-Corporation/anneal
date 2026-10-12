@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Use when work is about to be called done, fixed or passing, even if the tests ran earlier; prove it with a fresh test run and a doubt pass first. Do NOT use for a failure whose cause is unknown (use `diagnose`), splitting a spec into tasks (use `plan`) or opening the pull request (that is `ship`).
+description: Use when work is about to be called done, fixed or passing, even if the tests ran earlier; prove it with a fresh test run and a doubt pass first. Do NOT use for a failure whose cause is unknown (use `diagnose`), splitting a spec into tasks (use `plan`) or opening the pull request (use `ship`).
 ---
 
 # Verify

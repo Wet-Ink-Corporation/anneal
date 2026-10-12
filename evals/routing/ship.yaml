@@ -1,0 +1,25 @@
+# evals/routing/ship.yaml: prompts for the `ship` skill.
+positives:
+  - open the pull request and get a review verdict
+  - merge the pull request once the review verdict is in
+  - is this change safe to roll out? decide go or no-go
+  - widen the rollout to 5% or decide to hold it
+  - the canary error rate went up, should we roll back the rollout
+  - run the schema migration in waves, then contract
+  - write the rollback for this release before we merge
+  - "ship it: review, merge and roll out"
+  - does this pull request need a full review or the light one
+  - is the speed-up in this change real or noise before we merge
+near_misses:
+  verify:
+    - prove the change works before I call it done
+    - run the tests fresh before saying it passes
+    - do a doubt pass on the finished work
+  diagnose:
+    - the deploy failed and nobody knows why, reproduce it
+    - the migration test fails unexpectedly, find the root cause
+  build:
+    - build the next approved task test-first
+    - write the failing test for the rollout flag task, then make it green
+  plan:
+    - split the migration spec into tasks with their blockers

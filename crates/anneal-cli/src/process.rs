@@ -2,7 +2,7 @@
 //! shared by `git` (`paths`, and `floor_guard` through `paths::run_git_capped`), `gh`
 //! (`dag::tracker::github`'s `GhCli`, which `watch` uses too) and the test command of `task
 //! done` (`task::run_command`, which pipes nothing: its child writes straight to anneal's
-//! stderr).
+//! stderr). `perf noise` times its runs with `wait_or_kill_every`.
 
 use std::io::{self, Read};
 use std::process::{Child, ExitStatus, Output};
@@ -99,6 +99,16 @@ fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, WaitError> {
 /// before each poll, so an exit first seen after the deadline is a timeout, and a zero
 /// timeout always is.
 fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, WaitError> {
+    wait_or_kill_every(child, timeout, POLL_INTERVAL)
+}
+
+/// As `wait_or_kill`, checking every `poll`: `perf noise` times its runs with a finer
+/// interval than the 5 ms the other callers need.
+pub(crate) fn wait_or_kill_every(
+    child: &mut Child,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<ExitStatus, WaitError> {
     let started = Instant::now();
     loop {
         if started.elapsed() >= timeout {
@@ -112,7 +122,7 @@ fn wait_or_kill(child: &mut Child, timeout: Duration) -> Result<ExitStatus, Wait
             // Kill it: the reader threads would otherwise wait on its pipes forever.
             Err(error) => return Err(kill_after(child, error)),
         }
-        thread::sleep(POLL_INTERVAL);
+        thread::sleep(poll);
     }
 }
 

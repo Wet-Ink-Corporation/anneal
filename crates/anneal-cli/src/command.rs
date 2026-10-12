@@ -33,6 +33,8 @@ pub enum CommandName {
     Rollout,
     /// `anneal perf`
     Perf,
+    /// `anneal migrate`: an expand, migrate, contract migration's waves in the ledger
+    Migrate,
     /// `anneal brief`
     Brief,
     /// `anneal decide`
@@ -58,7 +60,7 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -73,6 +75,7 @@ impl CommandName {
         Self::Ship,
         Self::Rollout,
         Self::Perf,
+        Self::Migrate,
         Self::Brief,
         Self::Decide,
         Self::Calibrate,
@@ -99,6 +102,7 @@ impl CommandName {
             Self::Ship => "ship",
             Self::Rollout => "rollout",
             Self::Perf => "perf",
+            Self::Migrate => "migrate",
             Self::Brief => "brief",
             Self::Decide => "decide",
             Self::Calibrate => "calibrate",
@@ -140,7 +144,14 @@ impl CommandName {
             Self::Watch => "the pull request, CI run or deploy reached green within the timeout",
             Self::Ship => "the change meets the rule for skipping a full review",
             Self::Rollout => "the rollout metrics are within their bounds",
-            Self::Perf => "the measured change is not a regression beyond run-to-run noise",
+            Self::Perf => {
+                "the change is faster than the baseline beyond run-to-run noise (the 95% \
+                 interval of the difference is below zero); for sample, its run times were saved"
+            }
+            Self::Migrate => {
+                "the migration step was recorded in order: a wave started once and done after \
+                 its start, or the contract with every wave done"
+            }
             Self::Brief => "the brief was built from the given commit range",
             Self::Decide => "the decision was obtained and recorded",
             Self::Calibrate => "the calibration run completed and was recorded",
@@ -178,6 +189,10 @@ impl CommandName {
             Self::Ship => "that the change is free of defects",
             Self::Rollout => "that the metrics capture what users experience",
             Self::Perf => "performance on hardware or workloads that were not measured",
+            Self::Migrate => {
+                "that the waves migrated the data correctly or completely: the ledger records \
+                 what was reported"
+            }
             Self::Brief => "that the brief is complete or its summary accurate",
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",

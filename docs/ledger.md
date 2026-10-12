@@ -86,10 +86,11 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 | `pr:<number>` | `verdict_set`, `round_started` |
 | `point:<point>` | `gate_blocked`, `stop_blocked` |
 | `agent:<agent type>` | `subagent_status` |
+| `migration:<id>` | `migrate.wave.started`, `migrate.wave.done`, `migrate.contract` |
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 6)
+## Event registry (version 7)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
@@ -97,7 +98,9 @@ version 3 added `exit`, `duration_ms` and `timeout_secs` to `test_run` (#22, `do
 version 4 added `mode_set` (#23, `docs/preconditions.md`); version 5 added `subagent_status` and
 the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verified` and
 `reviewed` and the fields `source`, `sha`, `patch_id` and `base` to `verdict_set` (#33,
-`docs/verdict.md`).
+`docs/verdict.md`); version 7 added `migrate.wave.started`, `migrate.wave.done` and
+`migrate.contract` and the `migration:` tag (#35, `docs/migrate.md`), whose dotted names are
+the story's.
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -112,6 +115,9 @@ the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verif
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
 | `subagent_status` | `agent` string (the subagent's type, `unknown` when the ledger cannot tag it), `agent_id?` string, `status?` `done`/`done_with_concerns`/`needs_context`/`blocked`, `violation?` string (what is wrong with its status block, one line), `missing` string array (required sections absent; `[]` when none), `duration_ms?` integer and `tokens?` object (`input`, `output`, `cache_read`, `cache_creation`) from its transcript; written by `anneal hook status` | `agent:` |
 | `mode_set` | `mode` `build`/`diagnose`/`off`, `clean` boolean (no change, untracked files included, at entry), `plan?` string and `tree?` string (build: paths relative to the worktree root, `/`-separated); the latest one for a worktree is its mode, see [preconditions.md](preconditions.md) | `worktree:` (from the envelope) |
+| `migrate.wave.started` | `migration` string (the migration's id), `wave` integer (from 1); see [migrate.md](migrate.md) | `migration:` |
+| `migrate.wave.done` | `migration` string, `wave` integer | `migration:` |
+| `migrate.contract` | `migration` string | `migration:` |
 
 ## Commands
 
