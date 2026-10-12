@@ -289,19 +289,32 @@ than too little:
   is a path, not a key (`auth::tests` stays);
 - a header: a credential-named key ending its word in `:` (`"X-Api-Key: …"`,
   `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), or any `Authorization:` (any letter
-  case, `Proxy-Authorization:` too), hides every word after it up to the end of the quote or
-  simple command it is in (inside a quote, a `;` does not end it): `-H "Authorization: Bearer
-  x"` becomes `-H "Authorization: <redacted> <redacted>"`;
+  case, `Proxy-Authorization:` too), hides every word after it up to the end of the simple
+  command or quote it is in: `-H "Authorization: Bearer x"` becomes `-H "Authorization:
+  <redacted> <redacted>"`. Every separator (`;`, `&`, `|`, a newline) ends it, so it never
+  hides the next command, in a `bash -c '…'`, `eval "…"`, `$( )` or backtick body too; only
+  inside a quote or substitution, the plain `name=value` words right after a `;` stay hidden
+  (`"Cookie: a=1; b=2"` becomes `"Cookie: <redacted>; <redacted>"`), and the first other word
+  is read as usual. The words after the header in its own simple command stay hidden;
 - the value of every option, one dash or two, whose name holds a credential word, attached or
-  as the next word (`--token=x`, `--password x`, `-storepass x`, `-passout pass:x`);
+  as the next word (`--token=x`, `--password x`, `-storepass x`, `-passout pass:x`), except
+  one whose name ends in `-stdin`, `-file` or `-env`, whose value is not on the command line
+  (`docker login --password-stdin -u me` keeps `-u me`);
+- the word after a configuration key naming a credential, a whole word of letters, digits,
+  `-`, `_` and `.` that holds a `.` or `_` and is not an option (`aws configure set
+  aws_secret_access_key x`, `git config user.password x`), with the same exceptions; a file
+  named like one (`cat id_token.txt out`) costs its next word;
 - the word after `Bearer`, and the word after `Basic` unless it is plain lower-case letters
   (`basic usage` stays);
 - the userinfo of every URL, up to the last `@` before the path or query, so a `#` in a
-  password is covered (`https://user:p#ss@host` becomes `https://<redacted>@host`);
-  `git@host:repo` is not a URL and stays;
+  password is covered (`https://user:p#ss@host` becomes `https://<redacted>@host`), and so is
+  a `?` when a `:` comes before it and an `@` after it (`https://user:p?X@host`), while
+  `https://host?to=a@b` stays; `git@host:repo` is not a URL and stays;
 - an unquoted word that looks like a token: a known prefix (`sk-`, `ghp_`, `gho_`, `ghu_`,
-  `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, `eyJ`), an AWS access key id, or 32
-  or more letters and digits mixed (a full commit hash too);
+  `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, Vault's `hvs.` and `hvb.`, `eyJ`),
+  an AWS access key id, or 32 or more letters and digits mixed (a full commit hash too);
+- the word after `vault login`, whatever it is (a legacy `s.` token has no prefix worth
+  matching alone; `vault login -method=userpass` costs that option);
 - the options whose value is a secret though their name names none, for the tools known to
   take them (`decide::redact::tools`), from the tool's name (its last path component, quotes
   and backslashes removed, so `sudo /usr/bin/mysql`, `"mysql"` and `\mysql` count) to the end
@@ -311,7 +324,8 @@ than too little:
   (`-su x`) or as the next word, and `--user` and `--proxy-user`; `-p` for `sshpass` and the
   MongoDB tools; `-a` for `redis-cli`; `-P` for `sqlcmd` and `bcp`; `-w` for the OpenLDAP
   clients; `-U` (`user%pass`) for `smbclient`, `rpcclient` and `smbcacls`; `-p` after `login`
-  for `docker`, `podman`, `nerdctl` and `helm`; `-b` and `--body` after `secret` for `gh`.
+  for `docker`, `podman`, `nerdctl` and `helm`; `-p` for `twine`, and after `login` for `az`;
+  `-b` and `--body` after `secret` for `gh`.
   Other tools' short options stay readable (`mkdir -p`, `docker run -p 8080:80`);
 - the inside of quotes and substitutions, scanned as text: `'…'`, `$'…'`, `$( )` and backticks
   as a command, `"…"` with double-quote rules (there `'` and `$'` are plain characters);
@@ -327,7 +341,9 @@ finds it there. The word rules live in `decide::redact`, shared with the prompt 
 (`docs/hooks.md`). Known gaps: an option whose value is a secret but whose name names no
 credential, for a tool not listed above (`sometool -k s3cret`); a header whose name names no
 credential (`-H "X-Signature: …"`); a secret that is just a word in a non-credential position
-(`echo hunter2 | login`); and a secret inside a file the command reads.
+(`echo hunter2 | login`), which includes the tools that take a password as a positional
+argument (`htpasswd -b file user pass`, `cf auth user pass`); a cookie pair after a `;` that is
+not a plain `name=value` word; and a secret inside a file the command reads.
 
 **Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
 on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in

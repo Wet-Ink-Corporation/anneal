@@ -307,11 +307,12 @@ Shared behaviour:
   punctuation such as a quote or bracket: an environment-style or credential-named assignment
   (its name's own quotes stripped, as in `export "API_KEY"=x`), a credential-named key
   anywhere in a word (`--from-literal=password=x`, `{"password":"x"}`, `/:_authToken=x`), a
-  credential-named option (`--password x`, `-storepass x`), the secret options of the known
-  tools named earlier in the prompt (`mysql -p<redacted>`, `docker login -p <redacted>`,
-  quotes around the option removed), the word after `Bearer` (and after `Basic` unless it is
+  credential-named option or configuration key (`--password x`, `-storepass x`,
+  `user.password x`; not `--password-stdin`), the secret options of the known tools named
+  earlier in the prompt (`mysql -p<redacted>`, `docker login -p <redacted>`, quotes around the
+  option removed) and the word after `vault login`, the word after `Bearer` (and after `Basic` unless it is
   plain lower-case letters), the userinfo of a URL, and obvious tokens (`sk-`, `ghp_`, `gho_`,
-  `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-` and `eyJ` prefixes, AWS access
+  `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, `hvs.`, `hvb.` and `eyJ` prefixes, AWS access
   key ids, and opaque words of 32 or more letters and digits mixed). Since prose has no command
   end, what one word says about the next is carried across words: a header name
   (`Authorization:`, `X-Api-Key:`, `Cookie:`) hides the words through its quote when it

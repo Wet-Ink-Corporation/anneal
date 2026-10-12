@@ -135,15 +135,17 @@ impl Prose {
     }
 
     /// Notes what a readable word says about the next ones: a scheme, a known tool, or its
-    /// subcommand.
+    /// subcommand (which may take a secret argument).
     fn note(&mut self, core: &str) {
         match scheme(core) {
             Some(Scheme::Bearer) => self.pending = self.pending.max(1),
             Some(Scheme::Basic) => self.after_basic = true,
             None => {}
         }
-        if let Some(tool) = self.tool.as_mut() {
-            tool.note(core);
+        if let Some(tool) = self.tool.as_mut()
+            && tool.note(core)
+        {
+            self.pending = self.pending.max(1);
         }
         if let Some(tool) = tools::known(core) {
             self.tool = Some(tool);

@@ -211,3 +211,43 @@ fn a_quoted_option_value_is_redacted_through_its_close() {
         "curl -u \"<redacted> x"
     );
 }
+
+// Review round 2 of #89.
+
+#[test]
+fn a_credential_config_key_has_its_next_word_redacted() {
+    assert_eq!(
+        safe_prompt("set aws_secret_access_key X and git config user.password Y now"),
+        "set aws_secret_access_key <redacted> and git config user.password <redacted> now"
+    );
+}
+
+#[test]
+fn twine_and_az_login_passwords_are_redacted() {
+    assert_eq!(
+        safe_prompt("twine upload -p pw dist and az login -u me -p pw2 now"),
+        "twine upload -p <redacted> dist and az login -u me -p <redacted> now"
+    );
+}
+
+#[test]
+fn a_vault_token_is_redacted() {
+    assert_eq!(
+        safe_prompt("vault login s.abcdefgh now, or use hvs.CAESIabcdef"),
+        "vault login <redacted> now, or use <redacted>"
+    );
+}
+
+#[test]
+fn a_credential_option_read_from_stdin_or_a_file_takes_no_value() {
+    let prompt = "run docker login --password-stdin -u me ghcr.io";
+    assert_eq!(safe_prompt(prompt), prompt);
+}
+
+#[test]
+fn url_userinfo_holding_a_question_mark_is_redacted() {
+    assert_eq!(
+        safe_prompt("clone https://user:p?X@host/x now"),
+        "clone https://<redacted>@host/x now"
+    );
+}

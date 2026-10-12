@@ -9,14 +9,17 @@
 //!   the value of an environment-style or credential-named assignment (`TOKEN=x`,
 //!   `"API_KEY"=x`; lower-case operands such as `dd of=/dev/sda` stay readable, they are what
 //!   Clef judges), of a credential-named key inside a word (`--from-literal=password=x`,
-//!   `{"password":"x"}`), of a credential-named option (`--password x`, `-storepass x`), and of
+//!   `{"password":"x"}`), of a credential-named option or configuration key (`--password x`,
+//!   `-storepass x`, `user.password x`; not `--password-stdin`), and of
 //!   a known tool's secret option (`mysql -pX`, `docker login -p x`). A word's secret is taken
 //!   only when what stays readable before it closes every quote it opens; otherwise the inside
 //!   of the quote is scanned and finds it there.
 //! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
-//!   `Cookie:`), every word to the end of its quote or simple command (inside a quote, a `;`
-//!   does not end it); the word after `Bearer`, and after `Basic` unless
-//!   `decide::redact::basic_credential` says it cannot be one.
+//!   `Cookie:`), every word to the end of its simple command or quote; inside a quote or
+//!   substitution, the `name=value` words after a `;` too (`"Cookie: a=1; b=2"`), but no other
+//!   word, so no header hides the next command; the word after `Bearer`, and after `Basic`
+//!   unless `decide::redact::basic_credential` says it cannot be one.
+//! - **Subcommand arguments.** The word after `vault login` (`decide::redact::tools`).
 //! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
 //!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
 //! - **Quoted text is scanned too**: the inside of `'…'`, `$'…'`, `$( )` and backticks as a
@@ -109,8 +112,12 @@ enum Pending {
     Word,
     /// The next word follows `Basic`: a secret unless `basic_credential` says it cannot be.
     BasicWord,
-    /// Every word is a secret: an `Authorization:` header's value.
+    /// Every word is a secret, to the end of the simple command: a header's value.
     Rest,
+    /// After a `;` that ended a header's value inside a quote or substitution: each
+    /// `name=value` word is a secret (the other pairs of `"Cookie: a=1; b=2"`); the first other
+    /// word is read as usual, so it ends this.
+    Pairs,
 }
 
 /// Redacts the inside of a closed span; whatever it leaves unclosed is already redacted and
@@ -145,11 +152,11 @@ impl Scanner<'_, '_> {
                 ' ' | '\t' => self.copy_to(next),
                 '\n' => {
                     self.copy_to(next);
-                    self.end_command();
+                    self.end_command(c);
                     self.heredoc_bodies()
                 }
                 ';' | '&' | '|' | '(' | ')' => {
-                    self.end_command();
+                    self.end_command(c);
                     self.copy_to(next)
                 }
                 '<' | '>' => self.redirection(c),
@@ -168,12 +175,19 @@ impl Scanner<'_, '_> {
         }
     }
 
-    /// At a command separator: what one simple command said about its words ends there. Inside
-    /// a quote a header's value goes on (`"Cookie: a=1; b=2"`): the quote is its end.
-    fn end_command(&mut self) {
-        if !(self.depth > 0 && self.pending == Pending::Rest) {
-            self.pending = Pending::Nothing;
-        }
+    /// At the command separator `separator`: what one simple command said about its words ends
+    /// there, so no secret rule hides a command word. Inside a quote or substitution a `;` after
+    /// a header's value may instead sit between its pairs (`"Cookie: a=1; b=2"`), so the
+    /// `name=value` words after it stay hidden ([`Pending::Pairs`]).
+    fn end_command(&mut self, separator: char) {
+        self.pending = match self.pending {
+            Pending::Rest | Pending::Pairs if self.depth > 0 && separator == ';' => Pending::Pairs,
+            Pending::Nothing
+            | Pending::Word
+            | Pending::BasicWord
+            | Pending::Rest
+            | Pending::Pairs => Pending::Nothing,
+        };
         self.tool = None;
     }
 
@@ -298,6 +312,13 @@ impl Scanner<'_, '_> {
                 self.pending = Pending::Rest;
                 true
             }
+            Pending::Pairs => {
+                let pair = is_pair(raw);
+                if pair {
+                    self.pending = Pending::Pairs;
+                }
+                pair
+            }
         };
         if hidden {
             self.out.push_str(REDACTED);
@@ -329,8 +350,10 @@ impl Scanner<'_, '_> {
                 None => Pending::Nothing,
             };
         }
-        if let Some(tool) = self.tool.as_mut() {
-            tool.note(raw);
+        if let Some(tool) = self.tool.as_mut()
+            && tool.note(raw)
+        {
+            self.pending = Pending::Word;
         }
         if let Some(tool) = tools::known(raw) {
             self.tool = Some(tool);
@@ -374,6 +397,19 @@ fn plain_token(raw: &str) -> Option<(&str, &str)> {
     }
     let (lead, core, trail) = split_punctuation(raw);
     looks_like_token(core).then_some((lead, trail))
+}
+
+/// A plain `name=value` word (`b=2`), as the pairs of a cookie are: a name of letters, digits,
+/// `_` and `-` that is not an option, and no quoting anywhere.
+fn is_pair(raw: &str) -> bool {
+    !raw.contains(QUOTING)
+        && raw.split_once('=').is_some_and(|(name, _)| {
+            !name.is_empty()
+                && !name.starts_with('-')
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
 }
 
 /// Copies a word whose spans are all closed, scanning the inside of each quote or

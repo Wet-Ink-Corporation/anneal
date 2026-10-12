@@ -587,3 +587,135 @@ fn a_path_separator_is_not_a_key() {
     let command = "cargo test auth::tests::login";
     assert_eq!(redact(command), command);
 }
+
+// Review round 2 of #89.
+
+#[test]
+fn a_header_in_a_shell_body_does_not_hide_the_next_command() {
+    let cases = [
+        (
+            "bash -c 'curl -H X-Api-Key: k; dropdb production'",
+            "bash -c 'curl -H X-Api-Key: <redacted>; dropdb production'",
+        ),
+        (
+            "x=$(echo token: a; kubectl delete ns prod)",
+            "x=$(echo token: <redacted>; kubectl delete ns prod)",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn cookie_pairs_after_a_semicolon_in_a_quote_stay_hidden_but_a_command_does_not() {
+    let cases = [
+        (
+            "curl -H 'Cookie: a=1; b=2; c=3' u",
+            "curl -H 'Cookie: <redacted>; <redacted>; <redacted>' u",
+        ),
+        (
+            "bash -c 'curl -H Cookie: a=1; b=2 rm -rf /tmp/x'",
+            "bash -c 'curl -H Cookie: <redacted>; <redacted> rm -rf /tmp/x'",
+        ),
+        (
+            "bash -c 'curl -H Cookie: a=1 | b=2 sh'",
+            "bash -c 'curl -H Cookie: <redacted> | b=2 sh'",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
+    // TST-06 by enumeration: every header form, before every separator, in every nesting.
+    let headers = [
+        "echo token:",
+        "echo token: a",
+        "curl -H X-Api-Key: k",
+        "curl -H Authorization: Bearer x",
+        "curl -H Cookie: a=1",
+        "printf %s Cookie:",
+    ];
+    let separators = [";", " ;", "&&", "||", "|", "&", "\n"];
+    let nests: [(&str, &str); 6] = [
+        ("", ""),
+        ("bash -c '", "'"),
+        ("bash -c \"", "\""),
+        ("x=$(", ")"),
+        ("x=`", "`"),
+        ("eval \"", "\""),
+    ];
+    for header in headers {
+        for separator in separators {
+            for (open, close) in nests {
+                let command = format!("{open}{header}{separator} dropdb production{close}");
+
+                let redacted = redact(&command);
+
+                assert!(
+                    redacted.contains("dropdb production"),
+                    "{command:?} became {redacted:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_credential_config_key_has_its_next_word_redacted() {
+    let cases = [
+        (
+            "aws configure set aws_secret_access_key X",
+            "aws configure set aws_secret_access_key <redacted>",
+        ),
+        (
+            "git config user.password X",
+            "git config user.password <redacted>",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn twine_and_az_login_passwords_are_redacted() {
+    let cases = [
+        (
+            "twine upload -u me -p pw dist/x",
+            "twine upload -u me -p <redacted> dist/x",
+        ),
+        ("az login -u me -p pw", "az login -u me -p <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_vault_token_is_redacted() {
+    let cases = [
+        ("vault login s.abcdefgh", "vault login <redacted>"),
+        ("echo hvs.CAESIabcdef", "echo <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_credential_option_read_from_stdin_or_a_file_takes_no_value() {
+    let command = "docker login --password-stdin -u me ghcr.io";
+    assert_eq!(redact(command), command);
+}
+
+#[test]
+fn url_userinfo_holding_a_question_mark_is_redacted() {
+    assert_eq!(
+        redact("curl https://user:p?X@host/x"),
+        "curl https://<redacted>@host/x"
+    );
+}

@@ -11,7 +11,11 @@
 //!    `Authorization` one, is a header whose value runs on ([`Then::Header`]);
 //! 3. a secret option of a known tool ([`super::tools`]);
 //! 4. an option, one dash or two, whose name names a credential (`--password x`,
-//!    `-storepass x`): the next word is its value.
+//!    `-storepass x`): the next word is its value, unless the name says the value is read
+//!    elsewhere (`--password-stdin`, `--password-file`, `--token-env`);
+//! 5. a whole word that is a dotted or underscored configuration key naming a credential
+//!    (`aws_secret_access_key x`, `user.password x`): the next word is its value, with the
+//!    same exceptions as rule 4.
 
 use std::borrow::Cow;
 
@@ -39,9 +43,13 @@ pub(crate) const CREDENTIAL_WORDS: [&str; 14] = [
 /// counts only when no letter follows it, so `authorization` is still a credential.
 const NOT_CREDENTIALS: [&str; 2] = ["author", "authors"];
 
+/// Endings of a credential-named option or key whose value is not on the command line.
+const READ_ELSEWHERE: [&str; 3] = ["-stdin", "-file", "-env"];
+
 /// Prefixes of well-known credential formats: `sk-` API keys, GitHub, Slack and GitLab tokens,
-/// and JSON web tokens (`eyJ`).
-const TOKEN_PREFIXES: [&str; 13] = [
+/// Vault service and batch tokens, and JSON web tokens (`eyJ`). Vault's legacy `s.` tokens are
+/// too plain a prefix; they are found as `vault login`'s argument ([`super::tools`]).
+const TOKEN_PREFIXES: [&str; 15] = [
     "sk-",
     "ghp_",
     "gho_",
@@ -54,6 +62,8 @@ const TOKEN_PREFIXES: [&str; 13] = [
     "xoxp-",
     "xoxs-",
     "glpat-",
+    "hvs.",
+    "hvb.",
     "eyJ",
 ];
 
@@ -95,6 +105,15 @@ impl<'w> Secret<'w> {
             then,
         })
     }
+
+    /// `word` kept whole, its value the next word.
+    fn before_next(word: &'w str) -> Self {
+        Self {
+            shown: Cow::Borrowed(word),
+            redacts: false,
+            then: Then::NextWord,
+        }
+    }
 }
 
 /// The first secret in `word` by the rules in the module documentation; `tool` is the known
@@ -106,6 +125,7 @@ pub(crate) fn find_secret(word: &str, tool: Option<Tool>) -> Option<Secret<'_>> 
     credential_key(word)
         .or_else(|| tool.and_then(|tool| tool_option(tool, word)))
         .or_else(|| credential_option(word))
+        .or_else(|| config_key(word))
 }
 
 /// Characters of a key or option name.
@@ -155,11 +175,7 @@ fn tool_option(tool: Tool, word: &str) -> Option<Secret<'_>> {
             redacts: true,
             then: Then::Nothing,
         }),
-        SecretOption::NextWord => Some(Secret {
-            shown: Cow::Borrowed(word),
-            redacts: false,
-            then: Then::NextWord,
-        }),
+        SecretOption::NextWord => Some(Secret::before_next(word)),
     }
 }
 
@@ -180,12 +196,27 @@ fn cut(plain: Cow<'_, str>, kept: usize) -> Option<Cow<'_, str>> {
 /// Rule 4: `-name` or `--name` naming a credential, with its value in the next word.
 fn credential_option(word: &str) -> Option<Secret<'_>> {
     let name = word.strip_prefix("--").or_else(|| word.strip_prefix('-'))?;
-    let option = !name.is_empty() && name.chars().all(is_key_char) && is_credential(name);
-    option.then_some(Secret {
-        shown: Cow::Borrowed(word),
-        redacts: false,
-        then: Then::NextWord,
-    })
+    let option = name.chars().all(is_key_char) && names_value_here(name);
+    option.then(|| Secret::before_next(word))
+}
+
+/// Rule 5: a configuration key naming a credential, alone in its word and set from the next
+/// one. A `.` or `_` marks it as a key, so a plain word such as `password` stays prose.
+fn config_key(word: &str) -> Option<Secret<'_>> {
+    let key = !word.starts_with('-')
+        && word.contains(['.', '_'])
+        && word.chars().all(|c| is_key_char(c) || c == '.')
+        && names_value_here(word);
+    key.then(|| Secret::before_next(word))
+}
+
+/// Whether `name` names a credential whose value is given on the command line, not read from
+/// standard input, a file or the environment ([`READ_ELSEWHERE`]).
+fn names_value_here(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.is_empty()
+        && is_credential(name)
+        && !READ_ELSEWHERE.iter().any(|ending| lower.ends_with(ending))
 }
 
 /// `word` without shell quotes and backslashes, borrowed when it has none.
@@ -349,8 +380,18 @@ pub(crate) fn url_userinfo(word: &str) -> Option<(usize, usize)> {
     word.match_indices("://").find_map(|(at, separator)| {
         let start = at.saturating_add(separator.len());
         let after = word.get(start..)?;
-        let authority = after.get(..after.find(['/', '?']).unwrap_or(after.len()))?;
-        let userinfo = authority.rfind('@').filter(|&len| len > 0)?;
+        let authority = after.get(..after.find('/').unwrap_or(after.len()))?;
+        let userinfo = without_query(authority).rfind('@').filter(|&len| len > 0)?;
         Some((start, start.saturating_add(userinfo)))
     })
+}
+
+/// The part of a URL's authority (`authority`, up to its path) that may hold userinfo: up to a
+/// `?` that starts the query, but through one inside a password, which a `user:` before it and
+/// an `@` after it show (`user:p?X@host`). `host?to=a@b` has no `:` before its `?`.
+fn without_query(authority: &str) -> &str {
+    match authority.split_once('?') {
+        Some((before, after)) if !(before.contains(':') && after.contains('@')) => before,
+        Some(_) | None => authority,
+    }
 }

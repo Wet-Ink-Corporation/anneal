@@ -1,5 +1,6 @@
 //! Options whose value is a secret although their name holds no credential word, for the tools
-//! known to take one on the command line (`mysql -pX`, `curl -u user:pass`, `docker login -p`).
+//! known to take one on the command line (`mysql -pX`, `curl -u user:pass`, `docker login -p`),
+//! and the subcommands whose first argument is one (`vault login s.…`).
 //! Credential-named options (`--password`, `-storepass`) need no row here: the shared rule in
 //! `decide::redact::rules` redacts their values for every program. Other tools' short options
 //! stay readable: `mkdir -p` and `docker run -p 8080:80` are what Clef judges.
@@ -29,6 +30,44 @@ struct Family {
     /// Long option names (without `--`) whose value is a secret.
     long: &'static [&'static str],
     value: Value,
+    /// Whether the word right after the subcommand is a secret (`vault login s.…`).
+    positional: bool,
+}
+
+impl Family {
+    /// A family whose secret options count everywhere.
+    const fn options(
+        names: &'static [&'static str],
+        letters: &'static [char],
+        long: &'static [&'static str],
+        value: Value,
+    ) -> Self {
+        Self {
+            names,
+            subcommand: None,
+            letters,
+            long,
+            value,
+            positional: false,
+        }
+    }
+
+    /// A family whose secret options count only after `subcommand`.
+    const fn under(
+        names: &'static [&'static str],
+        subcommand: &'static str,
+        letters: &'static [char],
+        long: &'static [&'static str],
+    ) -> Self {
+        Self {
+            names,
+            subcommand: Some(subcommand),
+            letters,
+            long,
+            value: Value::AttachedOrNext,
+            positional: false,
+        }
+    }
 }
 
 const MYSQL: [&str; 10] = [
@@ -66,76 +105,37 @@ const LDAP: [&str; 9] = [
 ];
 
 /// The known tools.
-static FAMILIES: [Family; 10] = [
+static FAMILIES: [Family; 13] = [
+    Family::options(&MYSQL, &['p'], &[], Value::Attached),
+    Family::options(
+        &["curl"],
+        &['u', 'U', 'b'],
+        &["user", "proxy-user"],
+        Value::AttachedOrNext,
+    ),
+    Family::options(&["sshpass"], &['p'], &[], Value::AttachedOrNext),
+    Family::options(&MONGO, &['p'], &[], Value::AttachedOrNext),
+    Family::options(&["redis-cli"], &['a'], &[], Value::AttachedOrNext),
+    Family::options(&["sqlcmd", "bcp"], &['P'], &[], Value::AttachedOrNext),
+    Family::options(&LDAP, &['w'], &[], Value::AttachedOrNext),
+    Family::options(
+        &["smbclient", "rpcclient", "smbcacls"],
+        &['U'],
+        &["user"],
+        Value::AttachedOrNext,
+    ),
+    Family::options(&["twine"], &['p'], &[], Value::AttachedOrNext),
+    Family::under(
+        &["docker", "podman", "nerdctl", "helm"],
+        "login",
+        &['p'],
+        &[],
+    ),
+    Family::under(&["az"], "login", &['p'], &[]),
+    Family::under(&["gh"], "secret", &['b'], &["body"]),
     Family {
-        names: &MYSQL,
-        subcommand: None,
-        letters: &['p'],
-        long: &[],
-        value: Value::Attached,
-    },
-    Family {
-        names: &["curl"],
-        subcommand: None,
-        letters: &['u', 'U', 'b'],
-        long: &["user", "proxy-user"],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["sshpass"],
-        subcommand: None,
-        letters: &['p'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &MONGO,
-        subcommand: None,
-        letters: &['p'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["redis-cli"],
-        subcommand: None,
-        letters: &['a'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["sqlcmd", "bcp"],
-        subcommand: None,
-        letters: &['P'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &LDAP,
-        subcommand: None,
-        letters: &['w'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["smbclient", "rpcclient", "smbcacls"],
-        subcommand: None,
-        letters: &['U'],
-        long: &["user"],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["docker", "podman", "nerdctl", "helm"],
-        subcommand: Some("login"),
-        letters: &['p'],
-        long: &[],
-        value: Value::AttachedOrNext,
-    },
-    Family {
-        names: &["gh"],
-        subcommand: Some("secret"),
-        letters: &['b'],
-        long: &["body"],
-        value: Value::AttachedOrNext,
+        positional: true,
+        ..Family::under(&["vault"], "login", &[], &[])
     },
 ];
 
@@ -172,11 +172,14 @@ pub(crate) fn known(word: &str) -> Option<Tool> {
 }
 
 impl Tool {
-    /// Arms the tool when `word` is its subcommand.
-    pub(crate) fn note(&mut self, word: &str) {
-        if self.family.subcommand == Some(dequote(word).as_ref()) {
-            self.armed = true;
+    /// Arms the tool when `word` is its subcommand. Returns whether the next word is a secret:
+    /// the argument of a subcommand that takes one (`vault login`), whatever it looks like.
+    pub(crate) fn note(&mut self, word: &str) -> bool {
+        if self.armed || self.family.subcommand != Some(dequote(word).as_ref()) {
+            return false;
         }
+        self.armed = true;
+        self.family.positional
     }
 
     /// Whether `word` (quotes already removed) is one of this tool's secret options, and where
