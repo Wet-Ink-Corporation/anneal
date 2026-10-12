@@ -29,11 +29,12 @@ use crate::decide::clock::Clock;
 use crate::decide::config::Mode;
 use crate::decide::in_process::{self, Prepared, Status};
 use crate::decide::point::{Point, Question};
+use crate::decide::redact::safe_prompt;
 use crate::decide::state::CompactState;
 use crate::decide::transport::Transport;
 use crate::error_chain::reason;
 use crate::hook::HookEnv;
-use crate::hook::prompt::{self, Budget, Input, InputError, Output, safe_prompt};
+use crate::hook::prompt::{self, Budget, Input, InputError, Output};
 use outcome::Session;
 use playbook::{Playbook, Size};
 

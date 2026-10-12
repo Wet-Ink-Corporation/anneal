@@ -7,8 +7,9 @@
 //!
 //! - **Assignments anywhere.** The value of every `NAME=value` (also `NAME+=`, `NAME[i]=` and
 //!   `NAME=(…)`), wherever it stands, when `NAME` looks like an environment variable (upper
-//!   case, `[A-Z_][A-Z0-9_]*`) or holds a credential word ([`CREDENTIAL_WORDS`], any letter
-//!   case). Lower-case operands such as `dd of=/dev/sda` stay readable: they are what Clef
+//!   case, `[A-Z_][A-Z0-9_]*`) or holds a credential word (`decide::redact::CREDENTIAL_WORDS`,
+//!   any letter case; the rule is `decide::redact::secret_assignment_prefix`, which the prose
+//!   redaction shares). Lower-case operands such as `dd of=/dev/sda` stay readable: they are what Clef
 //!   judges.
 //! - **Credential flags.** The value of a long option whose name holds a credential word, as
 //!   `--token=x` or `--token x`.
@@ -24,28 +25,12 @@
 //! span in the source.
 
 use super::shell::MAX_NESTING;
+use crate::decide::redact::{REDACTED, is_credential, secret_assignment_prefix};
 use crate::decide::state::cut_chars;
-
-/// What a redacted value is replaced with.
-pub(crate) const REDACTED: &str = "<redacted>";
 
 /// Most characters of the command kept, after redaction; a longer one ends in `…`. The same as
 /// `decide::state::MAX_STRING_CHARS`, so the compact state does not cut it again.
 pub(crate) const MAX_COMMAND_CHARS: usize = crate::decide::state::MAX_STRING_CHARS;
-
-/// Words a credential name holds, compared in ASCII lower case.
-pub(crate) const CREDENTIAL_WORDS: [&str; 10] = [
-    "token",
-    "password",
-    "passwd",
-    "secret",
-    "apikey",
-    "api-key",
-    "api_key",
-    "credential",
-    "private-key",
-    "private_key",
-];
 
 /// `command` trimmed, with its secrets redacted, cut to [`MAX_COMMAND_CHARS`].
 pub(crate) fn redact(command: &str) -> String {
@@ -486,53 +471,6 @@ fn close_group(text: &str, mut pos: usize, close: char, depth: usize) -> Option<
 fn skip_escape(text: &str, pos: usize) -> usize {
     let next = after(pos, '\\');
     char_at(text, next).map_or(next, |escaped| after(next, escaped))
-}
-
-/// `NAME=`, `NAME+=`, `NAME[…]=` or `NAME[…]+=` at the start of `word`, through the `=`, when
-/// `NAME` is an environment-style name or holds a credential word. The prompt hooks
-/// (`hook::prompt`) apply the same rule to the words of a prompt.
-pub(crate) fn secret_assignment_prefix(word: &str) -> Option<&str> {
-    let name_len = word
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .unwrap_or(word.len());
-    let name = word.get(..name_len)?;
-    if !(is_name(name) && (is_env_name(name) || is_credential(name))) {
-        return None;
-    }
-    let mut end = name_len;
-    if word.get(end..)?.starts_with('[') {
-        let close = word.get(end..)?.find(']')?;
-        end = end.saturating_add(close).saturating_add(1);
-    }
-    let rest = word.get(end..)?;
-    let equals = if rest.starts_with("+=") {
-        2
-    } else if rest.starts_with('=') {
-        1
-    } else {
-        return None;
-    };
-    word.get(..end.saturating_add(equals))
-}
-
-/// A shell identifier.
-fn is_name(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// An environment-style name: `[A-Z_][A-Z0-9_]*`.
-fn is_env_name(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-}
-
-/// Whether a name holds a credential word, in any letter case.
-fn is_credential(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    CREDENTIAL_WORDS.iter().any(|word| name.contains(word))
 }
 
 #[cfg(test)]

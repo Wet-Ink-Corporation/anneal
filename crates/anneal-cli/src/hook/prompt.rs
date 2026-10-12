@@ -2,14 +2,10 @@
 //! time budget, and their output (one line of context and an `ERROR` line as `systemMessage`,
 //! each only when there is one).
 //!
-//! The prompt Clef sees is [`safe_prompt`]: whitespace collapsed, secrets replaced by
-//! `<redacted>`, and cut to [`MAX_PROMPT_CHARS`] (`decide::state::cut_chars`). A prompt is
-//! prose, not shell, so it gets the guard's assignment rule word by word
-//! (`guard::redact::secret_assignment_prefix`: an environment-style or credential-named
-//! `NAME=value`, the credential words shared through `guard::redact::CREDENTIAL_WORDS`) plus
-//! the rules prose needs: the word after `Bearer`, known token prefixes, AWS access key ids and
-//! long opaque words. It is a filter for the obvious cases, not a secret scanner; the log keeps
-//! only the state's hash, never the prompt.
+//! The prompt Clef sees is `decide::redact::safe_prompt`: whitespace collapsed, secrets
+//! replaced by `<redacted>`, and cut to 1,024 characters; the redaction rules live beside Clef's
+//! state in `decide::redact`, since `grill classify` shares them. The log keeps only the
+//! state's hash, never the prompt.
 //!
 //! A hook's time is its [`Budget`]: [`HOOK_BUDGET`] from its start, measured on the monotonic
 //! clock, so Clef is asked only while its whole timeout still fits.
@@ -22,44 +18,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::decide::client;
 use crate::decide::clock::Clock;
-use crate::decide::state::{MAX_STRING_CHARS, cut_chars};
-use crate::hook::guard::redact::{REDACTED, secret_assignment_prefix};
 use crate::hook::{StdinError, read_stdin};
 
 /// Most bytes of hook input read; a prompt rides in it (H-13).
 pub(crate) const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 
-/// Most characters of the prompt sent to Clef; a longer one ends in `…`. The compact state's own
-/// cap, as for the guard's command, so the state does not cut it again.
-pub(crate) const MAX_PROMPT_CHARS: usize = MAX_STRING_CHARS;
-
 /// How long a prompt hook may take: its `hooks.json` timeout is 5 s, and the rest is left for
 /// starting the process and writing the output.
 pub(crate) const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
-
-/// Prefixes of well-known credential formats: `sk-` API keys, GitHub, Slack and GitLab tokens,
-/// and JSON web tokens (`eyJ`).
-const TOKEN_PREFIXES: [&str; 13] = [
-    "sk-",
-    "ghp_",
-    "gho_",
-    "ghu_",
-    "ghs_",
-    "ghr_",
-    "github_pat_",
-    "xoxa-",
-    "xoxb-",
-    "xoxp-",
-    "xoxs-",
-    "glpat-",
-    "eyJ",
-];
-
-/// Shortest word a prefix rule redacts, so a bare `sk-` in prose is kept.
-const MIN_PREFIXED_TOKEN: usize = 8;
-
-/// Shortest word redacted for its shape alone: letters and digits mixed, no path separators.
-const MIN_OPAQUE_TOKEN: usize = 32;
 
 /// The fields of Claude Code's `UserPromptSubmit` input the hooks use; the rest are ignored.
 #[derive(Debug, Default, Deserialize)]
@@ -96,64 +62,6 @@ pub(crate) enum InputError {
 pub(crate) fn read_input<R: Read>(stdin: R) -> Result<Input, InputError> {
     let bytes = read_stdin(stdin, MAX_INPUT_BYTES)?;
     serde_json::from_slice(&bytes).map_err(InputError::Json)
-}
-
-/// The prompt as it may be sent to Clef: see the module documentation.
-pub(crate) fn safe_prompt(prompt: &str) -> String {
-    let mut safe = String::new();
-    let mut chars = 0_usize;
-    let mut after_bearer = false;
-    let mut words = prompt.split_whitespace();
-    while let Some(word) = words.next() {
-        let before = safe.len();
-        if !safe.is_empty() {
-            safe.push(' ');
-        }
-        // Punctuation around a word (`"TOKEN=x"`, `(KEY=y)`, `'ghp_…',`) hides neither an
-        // assignment nor a token.
-        let punctuation = |c: char| !(c.is_ascii_alphanumeric() || c == '_');
-        let rest = word.trim_start_matches(punctuation);
-        let lead = word
-            .get(..word.len().saturating_sub(rest.len()))
-            .unwrap_or("");
-        let core = rest.trim_end_matches(punctuation);
-        let trail = rest.get(core.len()..).unwrap_or("");
-        if after_bearer || looks_like_token(core) {
-            safe.push_str(lead);
-            safe.push_str(REDACTED);
-            safe.push_str(trail);
-        } else if let Some(assignment) = secret_assignment_prefix(rest) {
-            safe.push_str(lead);
-            safe.push_str(assignment);
-            safe.push_str(REDACTED);
-            let value = rest.get(assignment.len()..).unwrap_or("");
-            if !skip_quoted(value, &mut words) {
-                // An unclosed quote: everything after it may be the secret.
-                break;
-            }
-        } else {
-            safe.push_str(word);
-        }
-        after_bearer = word.eq_ignore_ascii_case("bearer");
-        let pushed = safe.get(before..).map_or(0, |piece| piece.chars().count());
-        chars = chars.saturating_add(pushed);
-        // Past the cap the rest would be cut anyway.
-        if chars > MAX_PROMPT_CHARS {
-            break;
-        }
-    }
-    cut_chars(&safe, MAX_PROMPT_CHARS)
-}
-
-/// Consumes from `words` the rest of a quoted assignment `value`: when it opens a quote (`'` or
-/// `"`) that its own word does not close, the words up to and including the one that does.
-/// Returns `false` when no word closes it, so the rest of the prompt went with it.
-fn skip_quoted<'p>(value: &str, words: &mut impl Iterator<Item = &'p str>) -> bool {
-    let mut chars = value.chars();
-    let Some(quote @ ('\'' | '"')) = chars.next() else {
-        return true;
-    };
-    chars.as_str().contains(quote) || words.any(|word| word.contains(quote))
 }
 
 /// A prompt hook's time: [`HOOK_BUDGET`] from the hook's start, on the monotonic clock.
@@ -193,24 +101,6 @@ impl Budget {
             ))
         }
     }
-}
-
-/// A known credential prefix, an AWS access key id, or a long opaque word.
-fn looks_like_token(word: &str) -> bool {
-    let prefixed = word.len() >= MIN_PREFIXED_TOKEN
-        && TOKEN_PREFIXES.iter().any(|prefix| word.starts_with(prefix));
-    let aws = word.len() == 20
-        && word.starts_with("AKIA")
-        && word
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
-    let opaque = word.len() >= MIN_OPAQUE_TOKEN
-        && word
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-+=".contains(&b))
-        && word.bytes().any(|b| b.is_ascii_digit())
-        && word.bytes().any(|b| b.is_ascii_alphabetic());
-    prefixed || aws || opaque
 }
 
 /// A `UserPromptSubmit` hook's output: at most one line of context and one `ERROR` line.
@@ -266,7 +156,9 @@ impl Output {
 mod tests {
     use std::time::Duration;
 
-    use super::{Budget, HOOK_BUDGET, MAX_PROMPT_CHARS, Output, safe_prompt};
+    use super::{Budget, HOOK_BUDGET, Output};
+    // The redaction moved to `decide::redact` (#32); its tests stay here, unchanged.
+    use crate::decide::redact::{MAX_PROMPT_CHARS, safe_prompt};
     use crate::hook::clef_fake::Stepping;
 
     #[test]

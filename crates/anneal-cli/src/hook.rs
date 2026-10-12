@@ -10,7 +10,7 @@
 
 pub(crate) mod bootstrap;
 #[cfg(test)]
-mod clef_fake;
+pub(crate) mod clef_fake;
 pub(crate) mod completeness;
 pub(crate) mod fast_check;
 pub(crate) mod guard;

@@ -56,7 +56,8 @@ pub enum Command {
     /// Append to, query and tail the event ledger
     #[command(after_help = command_help(CommandName::Ledger))]
     Ledger(LedgerArgs),
-    /// List a design tree's open frontier, or record the human's confirmation of it
+    /// List a design tree's open frontier, classify a question with Clef D7, or record the
+    /// human's confirmation of the tree
     #[command(after_help = command_help(CommandName::Grill))]
     Grill(GrillArgs),
     /// Mark a task done once its tests are green
@@ -265,10 +266,7 @@ fn dispatch<O: Write, E: Write>(
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             ledger::run(args, &cwd, |var| std::env::var_os(var), out)
         }
-        Command::Grill(args) => {
-            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-            grill::run(args, &cwd, |var| std::env::var_os(var), out)
-        }
+        Command::Grill(args) => run_grill(args, out),
         Command::Plan(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             plan::run(args, &cwd, |var| std::env::var_os(var), out)
@@ -331,6 +329,21 @@ fn run_decide<O: Write>(args: &DecideArgs, out: &mut O) -> Result<Code, CliError
         clock: &SystemClock::new(),
     };
     decide::run(args, &env, out)
+}
+
+/// `anneal grill` with the process's working directory and environment, the system clock and
+/// the transport `grill classify` asks Clef D7 through.
+fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    // No HTTP client is a dependency yet (H-16, pending): D7 is unreachable, so `classify`
+    // logs the miss and leaves the tree as the model wrote it.
+    let env = DecideEnv {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        transport: &NoHttpClient,
+        clock: &SystemClock::new(),
+    };
+    grill::run(args, &env, out)
 }
 
 /// `anneal calibrate` with the process's working directory and environment.

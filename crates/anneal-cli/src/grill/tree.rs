@@ -40,6 +40,47 @@ pub struct TreeFile {
     pub nodes: Vec<Node>,
 }
 
+impl TreeFile {
+    /// Reads the bytes of a design tree file as written, its nodes in file order. Only the
+    /// size, the format version and the shape are checked; [`DesignTree::validate`] checks
+    /// the rest.
+    ///
+    /// # Errors
+    /// [`TreeProblem::TooLarge`] past [`MAX_TREE_BYTES`], [`TreeProblem::Version`] for another
+    /// format version, [`TreeProblem::Json`] for bytes that are not a design tree.
+    pub fn read(bytes: &[u8]) -> Result<Self, Vec<TreeProblem>> {
+        if bytes.len() > MAX_TREE_BYTES {
+            return Err(vec![TreeProblem::TooLarge {
+                limit: MAX_TREE_BYTES,
+            }]);
+        }
+        // The version is read leniently first, so a tree from another version is reported as
+        // such even when its other fields changed. A probe that fails (not JSON, no version)
+        // is not lost: the strict parse below fails too and reports why.
+        if let Ok(VersionProbe { version }) = serde_json::from_slice(bytes)
+            && version != FORMAT_VERSION
+        {
+            return Err(vec![TreeProblem::Version { found: version }]);
+        }
+        serde_json::from_slice(bytes).map_err(|error| {
+            vec![TreeProblem::Json {
+                reason: error.to_string(),
+            }]
+        })
+    }
+
+    /// Sets the `is_decision` of the first node with `id` to `probability` (Clef D7's
+    /// estimate) and returns true, or returns false when no node has `id`.
+    #[must_use]
+    pub fn set_is_decision(&mut self, id: &str, probability: f64) -> bool {
+        let Some(node) = self.nodes.iter_mut().find(|node| node.id == id) else {
+            return false;
+        };
+        node.is_decision = probability;
+        true
+    }
+}
+
 /// Just the format version, read without rejecting unknown fields.
 #[derive(Debug, Deserialize)]
 struct VersionProbe {
@@ -304,29 +345,20 @@ pub struct DesignTree {
 }
 
 impl DesignTree {
-    /// Parses and validates the bytes of a design tree file.
+    /// Parses and validates the bytes of a design tree file: [`TreeFile::read`], then
+    /// [`DesignTree::validate`].
     ///
     /// # Errors
     /// Every [`TreeProblem`] found; validation goes on past the first one where it can.
     pub fn parse(bytes: &[u8]) -> Result<Self, Vec<TreeProblem>> {
-        if bytes.len() > MAX_TREE_BYTES {
-            return Err(vec![TreeProblem::TooLarge {
-                limit: MAX_TREE_BYTES,
-            }]);
-        }
-        // The version is read leniently first, so a tree from another version is reported as
-        // such even when its other fields changed. A probe that fails (not JSON, no version)
-        // is not lost: the strict parse below fails too and reports why.
-        if let Ok(VersionProbe { version }) = serde_json::from_slice(bytes)
-            && version != FORMAT_VERSION
-        {
-            return Err(vec![TreeProblem::Version { found: version }]);
-        }
-        let mut file: TreeFile = serde_json::from_slice(bytes).map_err(|error| {
-            vec![TreeProblem::Json {
-                reason: error.to_string(),
-            }]
-        })?;
+        Self::validate(TreeFile::read(bytes)?)
+    }
+
+    /// Validates a design tree file read by [`TreeFile::read`], sorting its nodes by id.
+    ///
+    /// # Errors
+    /// Every [`TreeProblem`] found; validation goes on past the first one where it can.
+    pub fn validate(mut file: TreeFile) -> Result<Self, Vec<TreeProblem>> {
         file.nodes.sort_by(|a, b| a.id.cmp(&b.id));
         let mut problems = check::problems(&file);
         // Only a well-formed graph is walked: ids unique, every dependency a node.

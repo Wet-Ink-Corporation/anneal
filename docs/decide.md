@@ -21,6 +21,9 @@ on or misconfigured for a point, so a hook can stay silent without reading or cr
 and `Prepared::label` appends the row `decide label` would. The `route` (D3) and
 `ruled-before` (D6) hooks ask through `client::ask_recording` with no `input` (their rows keep
 only the state's hash) and act on an answer only when its row was logged (`docs/hooks.md`).
+`anneal grill classify` (D7, #32) asks through `client::ask`, which fails rather than hand
+back an answer it could not log, and writes the answer into the design tree only in enforce
+mode (`docs/grill.md`).
 
 ## Transport
 
@@ -173,3 +176,12 @@ the fifth is dropped, so the log holds at most 80 MiB; when two calls rotate at 
 that finds the live file already gone carries on and appends to a new one. `anneal calibrate`
 reads the rotated files as well as the live one, joins the labels to their decisions and
 scores each point (`docs/calibrate.md`).
+
+**Release 4's exit check.** One session must leave rows for D1 (the guard), D3 (route), D6
+(ruled-before) and D7 (`grill classify`) in this log, and `anneal calibrate` must read all four.
+`cargo test` runs it twice: in process with a fake Clef that answers (`release_check` in the
+crate's unit tests: one answered row per question, D7's labelled `no`), and through the built
+binary, where every row is unreachable (`tests/it/release_check.rs`). To check a real session,
+configure an account (the default mode is `shadow`), work through a prompt, a Bash call and a
+grill round, then run `anneal calibrate`: each of the four points reports `n` or `unanswered`
+of at least 1.

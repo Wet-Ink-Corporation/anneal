@@ -26,6 +26,7 @@ mod lint_terms;
 mod paths;
 mod plan;
 mod preconditions;
+mod release_check;
 mod repo_gates;
 mod repro;
 #[cfg(test)]

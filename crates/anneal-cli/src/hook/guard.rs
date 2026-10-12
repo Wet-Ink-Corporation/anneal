@@ -28,7 +28,8 @@ use crate::decide::clock::{Clock, SystemClock};
 use crate::decide::transport::{NoHttpClient, Transport};
 use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
 use crate::paths::{self, PathError};
-use clef::Ports;
+/// What [`run_with`] reaches Clef and time through, so its callers can name it.
+pub(crate) use clef::Ports;
 use denylist::{Context, Verdict};
 
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
