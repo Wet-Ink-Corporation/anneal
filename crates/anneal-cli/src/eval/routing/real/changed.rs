@@ -3,8 +3,10 @@
 //! The router sees each model-invoked skill's `name`, `description` and `when_to_use`, so a
 //! run is needed when one of those changed in the working tree since `REF`, a skill was added
 //! or removed, or a skill's `disable-model-invocation` flipped. A body edit is not a routing
-//! change. Anything that cannot be read on either side counts as a change, so a doubtful
-//! comparison runs the suite rather than skipping it.
+//! change. A skill file that cannot be read (or whose frontmatter does not parse) on one side
+//! only counts as a change; one unreadable on both sides compares equal, as nothing the
+//! router could read changed. Tier 1's checks run first, so a working-tree skill that does
+//! not read stops the run (exit 2) before this comparison is made.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -94,7 +96,8 @@ fn routing_of(bytes: Option<Vec<u8>>) -> Option<Routing> {
 ///
 /// # Errors
 /// [`ChangedError::Unresolved`] when `base` names no commit; [`ChangedError::Git`] when git
-/// cannot be run; [`ChangedError::Skills`] when the directory cannot be listed.
+/// cannot be run; [`ChangedError::List`] when the directory cannot be listed;
+/// [`ChangedError::Read`] when a working-tree skill file cannot be read.
 pub(crate) fn changed(skills: &Path, base: &str) -> Result<bool, ChangedError> {
     let commit = format!("{base}^{{commit}}");
     let resolved = git(
@@ -156,7 +159,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<Option<Vec<u8>>, ChangedError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChangedError, changed};
+    use super::{ChangedError, changed, routing_of};
     use crate::test_repo::{ScratchRepo, Setup};
 
     const PLAN: &str = "---\nname: plan\ndescription: Use when planning tasks.\n---\n\nBody.\n";
@@ -247,5 +250,19 @@ mod tests {
             "{refused:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_skill_unreadable_on_both_sides_is_no_change_but_on_one_side_is() {
+        let unreadable = routing_of(Some(b"no frontmatter".to_vec()));
+        let too_large = routing_of(None);
+        let listed = routing_of(Some(
+            b"---\nname: plan\ndescription: Plans work.\n---\n".to_vec(),
+        ));
+
+        assert_eq!(
+            (unreadable == too_large, unreadable == listed),
+            (true, false)
+        );
     }
 }

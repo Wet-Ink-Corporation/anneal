@@ -4,9 +4,9 @@
 //! before anything is spent. Each positive prompt then runs under Claude Code's router through
 //! `claude plugin eval` (the `drive::Router` port, adapted by `claude`), in batches of three
 //! until its should-fire interval settles (`schedule`) or the cost cap or time limit is
-//! reached. Each skill's pooled rates are then held to the bars (`tally`, `wilson`): a 95%
-//! Wilson lower bound of at least 0.70 on its own prompts, and an upper bound of at most 0.20
-//! on its siblings' prompts.
+//! reached. Each skill is then held to the bars (`tally`, `wilson`): every one of its own
+//! prompts settles with a 95% Wilson lower bound of at least 0.70, and the upper bound pooled
+//! over its siblings' prompts is at most 0.20.
 
 mod args;
 mod changed;
@@ -138,6 +138,9 @@ pub enum RouterError {
     /// The temporary eval workspace could not be prepared, read or removed.
     #[error("preparing the eval workspace")]
     Workspace(#[source] io::Error),
+    /// `claude plugin eval` could not be waited on or killed.
+    #[error("waiting for claude plugin eval")]
+    Wait(#[source] io::Error),
     /// The plugin's manifest could not be read for its name.
     #[error("reading the plugin manifest")]
     Manifest(#[source] JsonFileError),
@@ -177,6 +180,7 @@ impl RouterError {
             Self::Workspace(_) => exit_codes::INTERNAL,
             Self::Cleanup { code, .. } => *code,
             Self::Spawn { .. }
+            | Self::Wait(_)
             | Self::Manifest(_)
             | Self::Failed { .. }
             | Self::Unreadable(_)
@@ -208,8 +212,13 @@ pub(crate) enum Stop {
 pub(crate) struct Ran {
     /// Runs by case name.
     pub(crate) runs: BTreeMap<String, Vec<Run>>,
-    /// The batch's cost in US dollars, as the router reported it.
+    /// The batch's cost in US dollars, as the router reported it (never negative).
     pub(crate) cost_usd: f64,
+    /// True when the batch was killed before it reported its cost, so `cost_usd` (then 0)
+    /// is less than it spent.
+    pub(crate) cost_is_lower_bound: bool,
+    /// Runs that ended in error and still count as trials (see `result`).
+    pub(crate) counted_errors: u32,
     /// Why the batch stopped short, if it did.
     pub(crate) stop: Option<Stop>,
 }
@@ -217,9 +226,11 @@ pub(crate) struct Ran {
 /// What one run of a prompt under the real router showed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Run {
-    /// The run did not finish (a timeout, a crash): no evidence either way.
+    /// The run ended in an error before routing was decided (a timeout or a crash with no
+    /// skill fired): no evidence either way.
     Errored,
-    /// The run finished.
+    /// The run decided routing: it finished, ran out of turns, or fired a skill before its
+    /// error.
     Done {
         /// The skills it invoked, by name.
         fired: Vec<String>,
@@ -235,5 +246,26 @@ impl Run {
             Self::Errored => None,
             Self::Done { fired, .. } => Some(fired.iter().any(|name| name == skill)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::RouterError;
+    use crate::exit_codes;
+
+    #[test]
+    fn a_failure_to_wait_for_claude_is_a_router_failure_not_a_workspace_one() {
+        let error = RouterError::Wait(io::Error::other("interrupted"));
+
+        assert_eq!(
+            (error.code(), error.to_string()),
+            (
+                exit_codes::EVAL_ROUTER_FAILED,
+                "waiting for claude plugin eval".to_owned()
+            )
+        );
     }
 }

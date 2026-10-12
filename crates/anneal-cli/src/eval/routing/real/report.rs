@@ -4,8 +4,8 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use super::schedule::{Next, next};
-use super::tally::{Probe, Rate, SkillResult, confusion, per_skill};
+use super::schedule::{Count, Next, next};
+use super::tally::{Probe, Rate, SkillResult, confusion, failed, per_skill};
 use super::wilson::Bar;
 use super::{RealOutcome, Run, Stop};
 use crate::command::CommandName;
@@ -23,9 +23,10 @@ struct Data<'a> {
     prompts: usize,
     runs: usize,
     errored: usize,
+    counted_errors: u32,
     rounds: u32,
-    cost_usd: f64,
-    max_cost_usd: f64,
+    #[serde(flatten)]
+    spend: Spend,
     complete: bool,
     unsettled: usize,
     stop: Option<&'a Stop>,
@@ -35,6 +36,17 @@ struct Data<'a> {
     cases: Vec<CaseRow<'a>>,
     confusion: &'a Confusion<'a>,
     table: Vec<String>,
+}
+
+/// What the run spent, flattened into `data`.
+#[derive(Debug, Serialize)]
+struct Spend {
+    /// As the router reported it.
+    cost_usd: f64,
+    /// A batch was killed before it reported its cost, so `cost_usd` is less than was spent.
+    cost_is_lower_bound: bool,
+    /// The cap.
+    max_cost_usd: f64,
 }
 
 /// One prompt's line of the report.
@@ -103,9 +115,19 @@ pub(crate) fn report<O: Write>(outcome: &RealOutcome, out: &mut O) -> Result<Cod
         prompts: outcome.probes.len(),
         runs: outcome.probes.iter().map(|probe| probe.runs.len()).sum(),
         errored: outcome.probes.iter().map(errored).sum(),
+        counted_errors: outcome
+            .drove
+            .as_ref()
+            .map_or(0, |drove| drove.counted_errors),
         rounds: outcome.drove.as_ref().map_or(0, |drove| drove.rounds),
-        cost_usd: outcome.drove.as_ref().map_or(0.0, |drove| drove.spent_usd),
-        max_cost_usd: outcome.max_cost_usd,
+        spend: Spend {
+            cost_usd: outcome.drove.as_ref().map_or(0.0, |drove| drove.spent_usd),
+            cost_is_lower_bound: outcome
+                .drove
+                .as_ref()
+                .is_some_and(|drove| drove.cost_is_lower_bound),
+            max_cost_usd: outcome.max_cost_usd,
+        },
         complete: ran && unsettled == 0,
         unsettled,
         stop: outcome.drove.as_ref().and_then(|drove| drove.stop.as_ref()),
@@ -147,10 +169,15 @@ fn code(outcome: &RealOutcome, results: &[SkillResult<'_>], unsettled: usize) ->
 fn findings(outcome: &RealOutcome, results: &[SkillResult<'_>], unsettled: usize) -> Vec<Finding> {
     let mut findings: Vec<Finding> = outcome.problems.iter().map(problem_finding).collect();
     for result in results {
-        for rate in [result.should_fire, result.should_not] {
-            if !rate.met() {
-                findings.push(rate_finding(result.skill, rate));
-            }
+        findings.extend(
+            outcome
+                .probes
+                .iter()
+                .filter(|probe| probe.skill == result.skill && failed(probe))
+                .map(prompt_finding),
+        );
+        if !result.should_not.met() {
+            findings.push(should_not_finding(result.skill, result.should_not));
         }
     }
     if unsettled > 0 {
@@ -175,30 +202,49 @@ fn findings(outcome: &RealOutcome, results: &[SkillResult<'_>], unsettled: usize
     findings
 }
 
-fn rate_finding(skill: &str, rate: Rate) -> Finding {
-    let (key, whose, bound) = match rate.bar {
-        Bar::ShouldFire => ("should-fire", "its own prompts", "lower"),
-        Bar::ShouldNot => ("should-not", "other skills' prompts", "upper"),
-    };
-    let interval = rate.interval.map_or_else(
+/// The finding for a prompt that failed its should-fire bar.
+fn prompt_finding(probe: &Probe) -> Finding {
+    let rate = Rate::new(Bar::ShouldFire, Count::of(&probe.runs, &probe.skill));
+    let place = format!("{}:{}", probe.file, probe.line);
+    Finding::new(
+        format!("eval/routing/should-fire:{}:{place}", probe.skill),
+        format!(
+            "`{}` fired in {} of {} finished runs of its prompt at {place}: {}",
+            probe.skill,
+            rate.count.fired,
+            rate.count.trials,
+            bound(rate)
+        ),
+    )
+}
+
+/// The finding for a skill that missed its pooled should-not bar.
+fn should_not_finding(skill: &str, rate: Rate) -> Finding {
+    Finding::new(
+        format!("eval/routing/should-not:{skill}"),
+        format!(
+            "`{skill}` fired in {} of {} finished runs of other skills' prompts: {}",
+            rate.count.fired,
+            rate.count.trials,
+            bound(rate)
+        ),
+    )
+}
+
+/// The bound of `rate`'s interval its bar is judged on, against the threshold.
+fn bound(rate: Rate) -> String {
+    rate.interval.map_or_else(
         || "no finished run, so no interval".to_owned(),
         |interval| {
-            let value = match rate.bar {
-                Bar::ShouldFire => interval.lower(),
-                Bar::ShouldNot => interval.upper(),
+            let (side, value) = match rate.bar {
+                Bar::ShouldFire => ("lower", interval.lower()),
+                Bar::ShouldNot => ("upper", interval.upper()),
             };
             format!(
-                "95% Wilson {bound} bound {value:.3} against {:.2}",
+                "95% Wilson {side} bound {value:.3} against {:.2}",
                 rate.threshold
             )
         },
-    );
-    Finding::new(
-        format!("eval/routing/{key}:{skill}"),
-        format!(
-            "`{skill}` fired in {} of {} finished runs of {whose}: {interval}",
-            rate.count.fired, rate.count.trials
-        ),
     )
 }
 
@@ -228,6 +274,8 @@ mod tests {
                 spent_usd: 1.25,
                 rounds: 1,
                 stop,
+                cost_is_lower_bound: false,
+                counted_errors: 0,
             }),
             skipped: false,
             cleanup: None,
@@ -288,10 +336,52 @@ mod tests {
                 1,
                 vec![
                     "eval/routing/should-not:plan",
-                    "eval/routing/should-fire:spec",
+                    "eval/routing/should-fire:spec:spec.yaml:3",
                     "eval/routing/should-not:spec"
                 ]
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failing_prompt_finding_names_its_place_and_interval()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_, envelope) = emitted(&outcome([fired("plan", 12), fired("plan", 12)], None))?;
+
+        assert_eq!(
+            envelope["findings"]
+                .as_array()
+                .and_then(|f| {
+                    f.iter()
+                        .find(|f| f["key"] == "eval/routing/should-fire:spec:spec.yaml:3")
+                })
+                .map(|f| &f["message"]),
+            Some(&serde_json::json!(
+                "`spec` fired in 0 of 12 finished runs of its prompt at spec.yaml:3: \
+                 95% Wilson lower bound 0.000 against 0.70"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_killed_batch_makes_the_cost_a_lower_bound_and_counted_errors_are_reported()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut killed = outcome([fired("plan", 3), fired("spec", 3)], Some(Stop::TimeLimit));
+        if let Some(drove) = killed.drove.as_mut() {
+            drove.cost_is_lower_bound = true;
+            drove.counted_errors = 2;
+        }
+
+        let (_, envelope) = emitted(&killed)?;
+
+        assert_eq!(
+            (
+                &envelope["data"]["cost_is_lower_bound"],
+                &envelope["data"]["counted_errors"]
+            ),
+            (&serde_json::json!(true), &serde_json::json!(2))
         );
         Ok(())
     }

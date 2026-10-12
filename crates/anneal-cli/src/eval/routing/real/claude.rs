@@ -6,6 +6,13 @@
 //! and runs the CLI with stdin closed, stdout discarded and stderr into a file (nothing is
 //! piped, so a grandchild that outlives a killed child blocks nothing), within what is left of
 //! the time limit. The result is read from the file `--json` names.
+//!
+//! At the time limit only `claude` itself is killed and reaped. Sessions it started as child
+//! processes, if any, keep running until their own 180 s timeout and may still spend, so a
+//! killed batch's cost is unknown and the run's `cost_usd` is reported as a lower bound.
+//! Killing the whole process group would need `kill(2)` on a negative pid, which std does
+//! not offer and this crate has no dependency for (H-01, H-16); putting `claude` in its own
+//! group without that would only stop a terminal's Ctrl-C reaching it.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -15,9 +22,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::drive::{Batch, Router};
-use super::result::{self, ResultDto};
+use super::result;
 use super::suite::{Graders, case};
 use super::workspace::Workspace;
 use super::{Ran, RouterError, Stop};
@@ -132,7 +140,7 @@ impl Router for ClaudeRouter<'_> {
             .time_limit
             .saturating_sub(self.started.elapsed());
         if left.is_zero() {
-            return Ok(stopped(Stop::TimeLimit));
+            return Ok(stopped(Spend::Nothing));
         }
         self.write_cases(batch)?;
         let root = self.workspace.root();
@@ -153,8 +161,8 @@ impl Router for ClaudeRouter<'_> {
         // Nothing is piped, so the wait returns once the child itself is reaped.
         let status = match process::wait_with_deadline(&mut child, left, 0, "claude") {
             Ok(output) => output.status,
-            Err(WaitError::Timeout) => return Ok(stopped(Stop::TimeLimit)),
-            Err(WaitError::Io(error)) => return Err(RouterError::Workspace(error)),
+            Err(WaitError::Timeout) => return Ok(stopped(Spend::Unknown)),
+            Err(WaitError::Io(error)) => return Err(RouterError::Wait(error)),
         };
         let result_path = root.join(format!("result-{}.json", batch.round));
         if !result_path.is_file() {
@@ -163,18 +171,33 @@ impl Router for ClaudeRouter<'_> {
                 stderr: tail(&stderr_path).map_err(RouterError::Workspace)?,
             });
         }
-        let dto: ResultDto =
+        let value: Value =
             json_file::read(&result_path, MAX_RESULT_BYTES).map_err(RouterError::Unreadable)?;
-        Ok(result::read(dto, self.plugin, self.graders)?)
+        Ok(result::read(
+            result::parse(value)?,
+            self.plugin,
+            self.graders,
+        )?)
     }
 }
 
-/// A batch that ran nothing and stopped for `stop`.
-fn stopped(stop: Stop) -> Ran {
+/// What a batch stopped by the time limit spent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spend {
+    /// It launched nothing.
+    Nothing,
+    /// It was killed before it reported its cost.
+    Unknown,
+}
+
+/// A batch stopped by the time limit, with no runs.
+fn stopped(spend: Spend) -> Ran {
     Ran {
         runs: std::collections::BTreeMap::new(),
         cost_usd: 0.0,
-        stop: Some(stop),
+        cost_is_lower_bound: spend == Spend::Unknown,
+        counted_errors: 0,
+        stop: Some(Stop::TimeLimit),
     }
 }
 

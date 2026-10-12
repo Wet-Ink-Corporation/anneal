@@ -2,11 +2,13 @@
 //! into runs: pure, no I/O.
 //!
 //! The DTO names only the fields read and ignores the rest, so additions to the format do not
-//! break the reader; the schema version is checked first.
+//! break the reader. [`parse`] reads the schema version alone first, so a result in another
+//! version is reported as such whatever its shape.
 
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::suite::{ANSWERED, Graders};
 use super::{Ran, Run, Stop};
@@ -15,6 +17,18 @@ use super::{Ran, Run, Stop};
 const SCHEMA_VERSION: u32 = 1;
 /// Plugin problems that mean the with-plugin arm ran without the plugin.
 const NOT_LOADED: [&str; 3] = ["manifest_invalid", "disabled_by_default", "will_not_load"];
+/// What a run's error holds when the run used its turns up (Claude Code's `error_max_turns`
+/// result, which `claude plugin eval` reports as `exit <code>: Reached maximum number of
+/// turns (<n>)`). Matching text is fragile: if the wording changes, such runs fall back to
+/// the rule for other errors.
+const OUT_OF_TURNS: &str = "Reached maximum number of turns (";
+
+/// The schema version alone, read before the rest.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionDto {
+    schema_version: u32,
+}
 
 /// `aggregate-result.json`, the fields read.
 #[derive(Debug, Deserialize)]
@@ -66,13 +80,22 @@ struct GraderDto {
 }
 
 /// Why a result says nothing about routing.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ResultError {
     /// The result is in a schema version this does not read.
     #[error("the result is schema version {version}; this anneal reads version 1")]
     Schema {
         /// The version found.
         version: u32,
+    },
+    /// The result is version 1 but not in its shape.
+    #[error("the result is not in the shape of schema version 1")]
+    Malformed(#[source] serde_json::Error),
+    /// The result reports a negative cost, so the spend cannot be tracked.
+    #[error("the result reports a negative cost ({cost_usd} USD)")]
+    NegativeCost {
+        /// The cost reported.
+        cost_usd: f64,
     },
     /// The run could not authenticate with the model provider.
     #[error("claude could not authenticate (no credentials or a rejected key)")]
@@ -85,11 +108,26 @@ pub enum ResultError {
     },
 }
 
+/// The result in `value`: its schema version first, then, only for version 1, the rest.
+///
+/// # Errors
+/// [`ResultError::Schema`] for another version, [`ResultError::Malformed`] for no version or
+/// a version 1 result of another shape.
+pub(crate) fn parse(value: Value) -> Result<ResultDto, ResultError> {
+    let version = VersionDto::deserialize(&value).map_err(ResultError::Malformed)?;
+    if version.schema_version != SCHEMA_VERSION {
+        return Err(ResultError::Schema {
+            version: version.schema_version,
+        });
+    }
+    ResultDto::deserialize(value).map_err(ResultError::Malformed)
+}
+
 /// The runs of `result`, by case name, for the plugin named `plugin` judged by `graders`.
 ///
 /// # Errors
-/// [`ResultError`] when the schema version is not 1, authentication failed, or the plugin did
-/// not load.
+/// [`ResultError`] when the schema version is not 1, the cost is negative, authentication
+/// failed, or the plugin did not load.
 pub(crate) fn read(
     result: ResultDto,
     plugin: &str,
@@ -98,6 +136,11 @@ pub(crate) fn read(
     if result.schema_version != SCHEMA_VERSION {
         return Err(ResultError::Schema {
             version: result.schema_version,
+        });
+    }
+    if result.cost_usd < 0.0 {
+        return Err(ResultError::NegativeCost {
+            cost_usd: result.cost_usd,
         });
     }
     let stop = match (result.partial, result.partial_reason.as_deref()) {
@@ -118,37 +161,49 @@ pub(crate) fn read(
         }
         Some(_) => {}
     }
-    let runs: BTreeMap<String, Vec<Run>> = result
-        .cases
-        .into_iter()
-        .map(|case| {
-            let runs = case
-                .arms
-                .with
-                .into_iter()
-                .map(|run| to_run(&run, graders))
-                .collect();
-            (case.name, runs)
-        })
-        .collect();
+    let mut counted_errors: u32 = 0;
+    let mut runs: BTreeMap<String, Vec<Run>> = BTreeMap::new();
+    for case in result.cases {
+        let case_runs = case
+            .arms
+            .with
+            .iter()
+            .map(|run| {
+                let judged = to_run(run, graders);
+                if run.error.is_some() && matches!(judged, Run::Done { .. }) {
+                    counted_errors = counted_errors.saturating_add(1);
+                }
+                judged
+            })
+            .collect();
+        runs.insert(case.name, case_runs);
+    }
     Ok(Ran {
         runs,
         cost_usd: result.cost_usd,
+        cost_is_lower_bound: false,
+        counted_errors,
         stop,
     })
 }
 
-/// One run: the skills whose grader passed. A run that reports an error is evidence only when
-/// a skill fired: the `Skill` call is in its trace, and `claude plugin eval` grades the trace
-/// of a run that ended in error too (a run that fired a skill and then ran out of turns is the
-/// common case). An error with no skill fired says nothing either way.
+/// One run: the skills whose grader passed. `claude plugin eval` grades the trace of a run
+/// that ended in error too, so an error is judged by its kind:
+/// - a run that ran out of turns ([`OUT_OF_TURNS`]) has decided routing, since the `Skill`
+///   call comes first or not at all, so it counts with whatever fired, nothing included;
+/// - any other error (a timeout, a crash) counts only when a skill fired, its `Skill` call
+///   being in the trace, and otherwise says nothing either way (weigh-in default wi-b4a3b0).
 fn to_run(run: &RunDto, graders: &Graders<'_>) -> Run {
     let passed = || run.graders.iter().filter(|g| g.passed);
     let mut fired: Vec<String> = passed()
         .filter_map(|g| graders.skill_of(&g.name))
         .map(str::to_owned)
         .collect();
-    if run.error.is_some() && fired.is_empty() {
+    let decided = run
+        .error
+        .as_deref()
+        .is_none_or(|error| error.contains(OUT_OF_TURNS) || !fired.is_empty());
+    if !decided {
         return Run::Errored;
     }
     fired.sort_unstable();
@@ -163,7 +218,7 @@ fn to_run(run: &RunDto, graders: &Graders<'_>) -> Run {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{ResultDto, ResultError, read};
+    use super::{ResultDto, ResultError, parse, read};
     use crate::eval::routing::real::suite::Graders;
     use crate::eval::routing::real::{Run, Stop};
 
@@ -269,6 +324,83 @@ mod tests {
             }])
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_run_that_ran_out_of_turns_is_a_trial_whatever_fired_and_is_counted_as_such()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let skills = skills();
+        let graders = Graders::new("anneal", &skills);
+        let dto = result(
+            None,
+            loaded(),
+            one_case(vec![
+                run(Some("exit 1: Reached maximum number of turns (2)"), &[]),
+                run(
+                    Some("exit 1: Reached maximum number of turns (2) · stderr: x"),
+                    &["fired-plan"],
+                ),
+                run(Some("timed out after 180s"), &["fired-spec"]),
+                run(Some("timed out after 180s"), &[]),
+                run(None, &["fired-plan"]),
+            ]),
+        )?;
+
+        let ran = read(dto, "anneal", &graders)?;
+
+        let done = |fired: &[&str]| Run::Done {
+            fired: fired.iter().map(|s| (*s).to_owned()).collect(),
+            answered: false,
+        };
+        assert_eq!(
+            ran.runs.get("prompt-001"),
+            Some(&vec![
+                done(&[]),
+                done(&["plan"]),
+                done(&["spec"]),
+                Run::Errored,
+                done(&["plan"]),
+            ]),
+            "out of turns: routing was decided; another error counts only when a skill fired"
+        );
+        assert_eq!(ran.counted_errors, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn a_negative_cost_is_an_error() -> Result<(), Box<dyn std::error::Error>> {
+        let skills = skills();
+        let graders = Graders::new("anneal", &skills);
+        let dto = parse(json!({
+            "schemaVersion": 1,
+            "costUsd": -0.5,
+            "partial": false,
+            "suite": {"plugins": loaded()},
+            "cases": []
+        }))?;
+
+        assert!(matches!(
+            read(dto, "anneal", &graders),
+            Err(ResultError::NegativeCost { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn the_schema_version_is_checked_before_the_rest_of_the_result() {
+        let other_shape = json!({"schemaVersion": 2, "runs": {"something": "else"}});
+
+        assert!(matches!(
+            parse(other_shape),
+            Err(ResultError::Schema { version: 2 })
+        ));
+    }
+
+    #[test]
+    fn a_result_of_the_right_version_and_wrong_shape_is_malformed() {
+        let wrong = json!({"schemaVersion": 1, "costUsd": "free"});
+
+        assert!(matches!(parse(wrong), Err(ResultError::Malformed(_))));
     }
 
     #[test]

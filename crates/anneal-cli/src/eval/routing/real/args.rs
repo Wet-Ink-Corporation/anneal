@@ -9,7 +9,8 @@ use super::claude::Options;
 use crate::error::CliError;
 
 /// The cost cap when `--max-cost-usd` is not given, in US dollars.
-pub(crate) const DEFAULT_MAX_COST_USD: f64 = 5.0;
+/// A full run of the repository's suite is capped at $25 (Ryan, wi-92bc1b).
+pub(crate) const DEFAULT_MAX_COST_USD: f64 = 25.0;
 /// The time limit when `--timeout` is not given.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3600);
 /// Runs at once when `--concurrency` is not given.
@@ -31,10 +32,12 @@ pub struct RealArgs {
     /// Which router to measure: `lexical` (Tier 1) or `claude` (Tier 2, runs a model)
     #[arg(long, value_enum, default_value_t = RouterKind::Lexical)]
     pub router: RouterKind,
-    /// The `claude` program [default: `claude` on PATH]
+    /// The `claude` program [default: `claude` on PATH]; on Windows an npm install is
+    /// `claude.cmd`, so pass its full path
     #[arg(long, value_name = "PATH")]
     pub claude: Option<PathBuf>,
-    /// The most the whole run may spend, in US dollars [default: 5]
+    /// The cost cap in US dollars: no batch starts once it is spent, though the runs already
+    /// in flight can overshoot it [default: 25]
     #[arg(long, value_name = "USD", value_parser = cost_cap)]
     pub max_cost_usd: Option<f64>,
     /// The most the whole run may take, in seconds [default: 3600]

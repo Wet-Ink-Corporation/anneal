@@ -50,6 +50,11 @@ pub(crate) struct Drove {
     pub(crate) rounds: u32,
     /// Why the run stopped before every prompt settled, if it did.
     pub(crate) stop: Option<Stop>,
+    /// True when a batch was killed before it reported its cost, so `spent_usd` is less than
+    /// was spent.
+    pub(crate) cost_is_lower_bound: bool,
+    /// Runs that ended in error and still counted as trials.
+    pub(crate) counted_errors: u32,
 }
 
 /// The name of the case for the prompt at `index` of the probes.
@@ -95,6 +100,8 @@ pub(crate) fn drive<R: Router>(
         spent_usd: 0.0,
         rounds: 0,
         stop: None,
+        cost_is_lower_bound: false,
+        counted_errors: 0,
     };
     for round in 1..=MAX_ROUNDS {
         let pending = pending(probes);
@@ -123,10 +130,17 @@ pub(crate) fn drive<R: Router>(
             }
         };
         drove.rounds = round;
-        if ran.cost_usd.is_finite() && ran.cost_usd > 0.0 {
-            drove.spent_usd += ran.cost_usd;
-        }
-        let Ran { mut runs, stop, .. } = ran;
+        let Ran {
+            mut runs,
+            cost_usd,
+            cost_is_lower_bound,
+            counted_errors,
+            stop,
+        } = ran;
+        // `result::read` refuses a negative cost and JSON has no infinity or NaN.
+        drove.spent_usd += cost_usd;
+        drove.cost_is_lower_bound |= cost_is_lower_bound;
+        drove.counted_errors = drove.counted_errors.saturating_add(counted_errors);
         for index in pending {
             if let (Some(probe), Some(new)) =
                 (probes.get_mut(index), runs.remove(&case_name(index)))
@@ -186,6 +200,8 @@ mod tests {
             Ok(Ran {
                 runs,
                 cost_usd: BATCH_COST,
+                cost_is_lower_bound: false,
+                counted_errors: 0,
                 stop: None,
             })
         }
@@ -294,6 +310,8 @@ mod tests {
                         .map(|name| (name, fired("plan", 1)))
                         .collect(),
                     cost_usd: 5.0,
+                    cost_is_lower_bound: false,
+                    counted_errors: 0,
                     stop: Some(Stop::CostCap),
                 })
             }
@@ -308,6 +326,51 @@ mod tests {
                 probes.iter().map(|p| p.runs.len()).collect::<Vec<_>>()
             ),
             (Some(Stop::CostCap), vec![1, 0])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_killed_batch_makes_the_spend_a_lower_bound_and_counted_errors_add_up()
+    -> Result<(), RouterError> {
+        /// Round 1 costs 0.50 with two errored runs counted; round 2 is killed.
+        struct KilledSecond;
+        impl Router for KilledSecond {
+            fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
+                Ok(if batch.round == 1 {
+                    Ran {
+                        runs: batch
+                            .cases
+                            .iter()
+                            .map(|c| (c.name.clone(), fired("plan", 3)))
+                            .collect(),
+                        cost_usd: 0.5,
+                        cost_is_lower_bound: false,
+                        counted_errors: 2,
+                        stop: None,
+                    }
+                } else {
+                    Ran {
+                        runs: BTreeMap::new(),
+                        cost_usd: 0.0,
+                        cost_is_lower_bound: true,
+                        counted_errors: 0,
+                        stop: Some(Stop::TimeLimit),
+                    }
+                })
+            }
+        }
+
+        let drove = drive(&mut KilledSecond, &mut probes(), 5.0)?;
+
+        assert_eq!(
+            (
+                drove.spent_usd,
+                drove.cost_is_lower_bound,
+                drove.counted_errors,
+                drove.stop
+            ),
+            (0.5, true, 2, Some(Stop::TimeLimit))
         );
         Ok(())
     }
@@ -331,6 +394,8 @@ mod tests {
                         .map(|c| (c.name.clone(), fired("plan", 3)))
                         .collect(),
                     cost_usd: 0.1,
+                    cost_is_lower_bound: false,
+                    counted_errors: 0,
                     stop: None,
                 })
             }

@@ -175,34 +175,127 @@ done
 printf '{"schemaVersion":1,"costUsd":0.25,"partial":false,"suite":{"plugins":[{"name":"fixture","path":"%s"}]},"cases":[%s]}' "$plugin" "$cases" > "$out"
 "#;
 
+/// A run of `anneal eval routing --router claude` against a fake `claude`, with its own
+/// `TMPDIR` so the test can see what the run left behind there.
+#[cfg(unix)]
+struct FakeRun {
+    output: Output,
+    /// Holds the fake and its log.
+    dir: tempfile::TempDir,
+    /// The run's `TMPDIR`.
+    tmp: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl FakeRun {
+    /// Runs the fixture set `pass` against a `claude` that is the shell script `script`, with
+    /// `args` after `--claude <fake>`.
+    fn new(script: &str, args: &[&str]) -> Result<Self, Box<dyn Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let tmp = tempfile::tempdir()?;
+        let claude = dir.path().join("claude");
+        std::fs::write(&claude, script)?;
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))?;
+        let output = Command::new(env!("CARGO_BIN_EXE_anneal"))
+            .args(["eval", "routing", "--skills"])
+            .arg(fixtures().join("skills"))
+            .arg("--fixtures")
+            .arg(fixtures().join("pass"))
+            .args(["--router", "claude", "--claude"])
+            .arg(&claude)
+            .args(args)
+            .env("FAKE_CLAUDE_LOG", dir.path().join("claude.log"))
+            .env("TMPDIR", tmp.path())
+            .output()?;
+        Ok(Self { output, dir, tmp })
+    }
+
+    /// What the fake logged.
+    fn log(&self) -> std::io::Result<String> {
+        std::fs::read_to_string(self.dir.path().join("claude.log"))
+    }
+
+    /// The names left in the run's `TMPDIR`: its eval workspace should be gone.
+    fn left_in_tmp(&self) -> std::io::Result<Vec<String>> {
+        std::fs::read_dir(self.tmp.path())?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect()
+    }
+}
+
+/// A `claude` that says why on stderr and exits 1 without writing a result.
+#[cfg(unix)]
+const FAILING_CLAUDE: &str =
+    "#!/bin/sh\necho 'starting up' >&2\necho 'Error: not logged in' >&2\nexit 1\n";
+
+/// A `claude` that never finishes, so only the time limit ends it.
+#[cfg(unix)]
+const HANGING_CLAUDE: &str = "#!/bin/sh\nexec sleep 30\n";
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_claude_that_fails_without_a_result_exits_4_with_its_stderr_and_leaves_no_workspace()
+-> TestResult {
+    let run = FakeRun::new(FAILING_CLAUDE, &[])?;
+
+    let stderr = std::str::from_utf8(&run.output.stderr)?;
+    assert_eq!(run.output.status.code(), Some(4), "{stderr}");
+    assert!(run.output.stdout.is_empty(), "nothing on stdout");
+    assert!(
+        stderr.starts_with("ERROR eval: ")
+            && stderr.contains("Error: not logged in")
+            && stderr.lines().count() == 1,
+        "{stderr:?}"
+    );
+    assert_eq!(run.left_in_tmp()?, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_claude_that_outlives_the_time_limit_is_stopped_and_the_run_is_incomplete() -> TestResult {
+    let run = FakeRun::new(HANGING_CLAUDE, &["--timeout", "1"])?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(run.output.status.code(), Some(3), "{envelope}");
+    assert_eq!(
+        (
+            &envelope["data"]["stop"],
+            &envelope["data"]["runs"],
+            &envelope["data"]["complete"],
+            &envelope["data"]["cost_is_lower_bound"],
+        ),
+        (
+            &json!({"kind": "time-limit"}),
+            &json!(0),
+            &json!(false),
+            &json!(true)
+        ),
+        "the killed batch's spend is unknown"
+    );
+    assert_eq!(run.left_in_tmp()?, Vec::<String>::new());
+    Ok(())
+}
+
 #[test]
 #[cfg(unix)]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_router_that_always_fires_plan_passes_plans_should_fire_bar_only() -> TestResult {
-    use std::os::unix::fs::PermissionsExt;
+    let run = FakeRun::new(FAKE_CLAUDE, &[])?;
+    let output = &run.output;
 
-    let dir = tempfile::tempdir()?;
-    let claude = dir.path().join("claude");
-    std::fs::write(&claude, FAKE_CLAUDE)?;
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))?;
-    let log = dir.path().join("claude.log");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_anneal"))
-        .args(["eval", "routing", "--skills"])
-        .arg(fixtures().join("skills"))
-        .arg("--fixtures")
-        .arg(fixtures().join("pass"))
-        .args(["--router", "claude", "--claude"])
-        .arg(&claude)
-        .env("FAKE_CLAUDE_LOG", &log)
-        .output()?;
-
-    let envelope = envelope(&output)?;
+    let envelope = envelope(output)?;
     assert_eq!(output.status.code(), Some(1), "below bound: {envelope}");
+    assert_eq!(run.left_in_tmp()?, Vec::<String>::new());
     assert_eq!(
-        std::fs::read_to_string(&log)?,
-        "anneal-routing-1 5.00 3\nanneal-routing-2 4.75 3\nanneal-routing-3 4.50 3\n",
-        "24 prompts, then plan's 8 twice more until 9 of 9; each batch gets what is left"
+        run.log()?,
+        "anneal-routing-1 25.00 3\nanneal-routing-2 24.75 3\nanneal-routing-3 24.50 3\n",
+        "the default $25 cap (wi-92bc1b); 24 prompts, then plan's 8 twice more until 9 of 9; \
+         each batch gets what is left"
     );
     let skills: Vec<(Value, Value, Value)> = envelope["data"]["per_skill"]
         .as_array()

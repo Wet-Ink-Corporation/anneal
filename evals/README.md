@@ -83,9 +83,11 @@ The lexical proxy can lie. Tier 2 measures how often each skill really fires und
 
 ```sh
 anneal eval routing --router claude [--skills plugin/skills] [--fixtures evals/routing] \
-  [--max-cost-usd 5] [--timeout 3600] [--concurrency 4] [--model <model>] \
+  [--max-cost-usd 25] [--timeout 3600] [--concurrency 4] [--model <model>] \
   [--claude <path>] [--trust-plugin] [--changed-since <ref>]
 ```
+
+`claude` is found on `PATH`; on Windows an npm install is `claude.cmd`, which is not found that way, so pass `--claude <path to claude.cmd>`.
 
 It reads and checks the Tier 1 fixtures exactly as Tier 1 does; any problem exits 2 before anything runs or is spent. The plugin is the parent of `--skills` (`plugin/skills` is in `plugin`). Its directory is copied into a fresh temporary workspace, since `claude plugin eval` reads cases from below the plugin and writes results there; the repository is never written, and the workspace is removed at the end.
 
@@ -95,30 +97,30 @@ It reads and checks the Tier 1 fixtures exactly as Tier 1 does; any problem exit
 - **The router.** `claude plugin eval <copy> --eval-dir anneal-routing-<round> --json <file> --runs 3 --ablation none --threshold 0 --max-cost-usd <left> --no-publish --no-scaffold --concurrency <n>`, plus `--model` and `--trust-plugin` when given. There is no baseline arm: without the plugin no anneal skill can fire. stdin is closed, stdout discarded and stderr kept in the workspace for the error message.
 - **Negatives.** Every run of a skill's positive is a should-fire trial for that skill and a should-not trial for every other skill, so the negatives are the siblings' positives and the runs give a confusion matrix. Near misses are Tier 1's; they are not run here.
 - **Sequential re-runs.** Each prompt runs 3 times. While its should-fire interval straddles 0.70 it runs 3 more, up to 12; once the interval is wholly at or above 0.70, or wholly below it, it stops. A perfect prompt settles at 9 of 9 (lower bound 0.701), a prompt that never fires at 0 of 3.
-- **Cost cap.** Each batch gets `--max-cost-usd` minus what earlier batches cost, rounded down to the cent, and none starts with less than a cent left. `claude plugin eval` checks the ceiling before each run, so the overrun is bounded by the runs in flight.
-- **Time limit.** `--timeout` (default 3600 s) bounds all batches together; a batch still running at the limit is killed and its runs are lost (agent runs it had already started end at their own 180 s timeout).
-- **Errored runs.** `claude plugin eval` grades the trace of a run that ended in error too, so a run that fired a skill and then ran out of turns still counts as firing it. A run that ended in error with no skill fired (a timeout, a crash) is no evidence either way: it is counted, not a trial, but it counts toward a prompt's 12.
+- **Cost cap.** `--max-cost-usd` defaults to 25 US dollars, enough for a full run (wi-92bc1b). It is a cap on starting work, not a hard ceiling: each batch gets `--max-cost-usd` minus what earlier batches cost, rounded down to the cent, and none starts with less than a cent left. `claude plugin eval` checks the ceiling before each run, so the overrun is bounded by the runs in flight.
+- **Time limit.** `--timeout` (default 3600 s) bounds all batches together; a batch still running at the limit is killed and its runs are lost. Only `claude` itself is killed: sessions it started as child processes, if any, end at their own 180 s timeout and may still spend. The killed batch never reports its cost, so `data.cost_usd` is then a lower bound (`data.cost_is_lower_bound: true`).
+- **Errored runs.** `claude plugin eval` grades the trace of a run that ended in error too, and an error is judged by its kind. A run that ran out of turns (its error holds `Reached maximum number of turns (`) has decided routing, since the `Skill` call comes first or not at all, so it is a trial with whatever fired, nothing included. Any other error (a timeout, a crash) counts as a trial only when a skill fired; with none fired it is no evidence either way: it is not a trial, but it counts toward a prompt's 12 (weigh-in default wi-b4a3b0). `data.counted_errors` is how many runs ended in error and still counted. Telling the kinds apart rests on Claude Code's wording, so if it changes, out-of-turns runs fall back to the rule for other errors.
 
 ### The bar
 
-The 95% Wilson score interval (z = 1.959964) of the runs pooled per skill:
+The 95% Wilson score interval (z = 1.959964):
 
-- **should fire**: the skill's own prompts; the lower bound must be 0.70 or higher.
-- **should not**: every other skill's prompts; the upper bound must be 0.20 or lower.
+- **should fire, per prompt**: each of the skill's own prompts must settle with a lower bound of 0.70 or higher. A prompt that settles below it, or still straddles it after 12 runs, fails its skill, with one finding per prompt (`eval/routing/should-fire:<skill>:<file>:<line>`). The rate pooled over the skill's prompts is reported (`should_fire`) but is not the bar: a skill whose other prompts fire every time would otherwise hide a prompt that never does.
+- **should not, pooled**: every other skill's prompts together; the upper bound must be 0.20 or lower. This bar cannot be per prompt: a single prompt's 0 of 12 has an upper bound of 0.242, so no one prompt could ever meet 0.20.
 
-For example, 21 of 27 is 0.778 with a lower bound of 0.592, short of 0.70; 27 of 27 has 0.875. A skill passes when both bars are met.
+For example, 21 of 27 is 0.778 with a lower bound of 0.592, short of 0.70; 9 of 9 has 0.701. A skill passes when every one of its prompts meets the should-fire bar and its should-not bar is met.
 
 ### Exit codes and report
 
 | Code | Meaning |
 |---|---|
 | 0 | every skill meets both bars, or `--changed-since` found no routing change (`data.skipped`) |
-| 1 | below bound: a skill misses a bar |
+| 1 | below bound: a prompt misses its should-fire bar, or a skill its should-not bar |
 | 2 | invalid fixtures or skills (nothing ran) |
 | 3 | incomplete: the cost cap, the time limit or a failed later batch left a prompt unsettled |
 | 4 | the router could not run: `claude` missing or failing without a result, no credentials, the plugin not loaded in the run, an unreadable result |
 
-The envelope's `data` holds the counts (`skills`, `prompts`, `runs`, `errored`, `rounds`, `unsettled`), `cost_usd` and `max_cost_usd`, `complete`, `stop` (why it stopped early), `per_skill` (each skill's `should_fire` and `should_not`: bar, threshold, `fired`, `trials`, `interval`, `position`, plus `answered` and `passed`), `cases` (each prompt's runs and whether it settled) and the confusion table as a map (`confusion`) and as text (`table`): rows are the expected skill, columns the skill that fired, plus `(none)`, `(several)` and `(error)` when they occur. Each missed bar is a finding, as is an incomplete run.
+The envelope's `data` holds the counts (`skills`, `prompts`, `runs`, `errored`, `counted_errors`, `rounds`, `unsettled`), `cost_usd`, `cost_is_lower_bound` and `max_cost_usd`, `complete`, `stop` (why it stopped early), `per_skill` (each skill's `should_fire` and `should_not`: bar, threshold, `fired`, `trials`, `interval`, `position`, plus `prompts_met`, `prompts_failed`, `answered` and `passed`), `cases` (each prompt's runs and whether it settled) and the confusion table as a map (`confusion`) and as text (`table`): rows are the expected skill, columns the skill that fired, plus `(none)`, `(several)` and `(error)` when they occur. Each failing prompt and each missed should-not bar is a finding, as is an incomplete run.
 
 ```sh
 anneal eval routing --router claude --trust-plugin | jq -r '.data.table[]'
@@ -126,7 +128,7 @@ anneal eval routing --router claude --trust-plugin | jq -r '.data.table[]'
 
 ### `--changed-since <ref>`
 
-The suite costs money, so a pull request runs it only when routing could have changed: a model-invoked skill's `name`, `description` or `when_to_use` differs in the working tree from `<ref>`, a skill was added or removed, or `disable-model-invocation` flipped. Otherwise it exits 0 with `data.skipped: true` and runs nothing. A file that cannot be read on either side counts as a change.
+The suite costs money, so a pull request runs it only when routing could have changed: a model-invoked skill's `name`, `description` or `when_to_use` differs in the working tree from `<ref>`, a skill was added or removed, or `disable-model-invocation` flipped. Otherwise it exits 0 with `data.skipped: true` and runs nothing. A skill file that cannot be read (or whose frontmatter does not parse) on one side only counts as a change; one unreadable on both sides compares equal. A working-tree skill that does not read already stops the run at Tier 1's checks (exit 2).
 
 ### CI (pending)
 
