@@ -88,13 +88,29 @@ fn fresh_dir() -> io::Result<PathBuf> {
             "anneal-eval-routing-{}-{nanos}-{attempt}",
             std::process::id()
         ));
-        match fs::create_dir(&path) {
+        match create_private_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = error,
             Err(error) => return Err(error),
         }
     }
     Err(last)
+}
+
+/// Makes the directory at `path`, on unix readable, writable and searchable by its owner
+/// only (0700), so no other local account can plant files or links in a workspace that sits
+/// in the shared temporary directory.
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+/// Makes the directory at `path`; elsewhere the temporary directory is already per user.
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
 }
 
 /// Copies the directory `from` to the new directory `to`, file by file, within `limits`.
@@ -129,6 +145,8 @@ pub(crate) fn copy_tree(from: &Path, to: &Path, limits: Limits) -> io::Result<()
                         format!("the plugin holds more than {} bytes", limits.bytes),
                     ));
                 }
+                // The source is the user's own repository, so a link swapped in after the
+                // type check, or a file growing past the count, is accepted as low risk.
                 fs::copy(&path, &copy)?;
             } else {
                 return Err(io::Error::new(
@@ -152,6 +170,21 @@ mod tests {
     use super::{Limits, Workspace, copy_tree};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    #[cfg(unix)]
+    fn the_workspace_is_private_to_its_owner() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = tempfile::tempdir()?;
+
+        let workspace = Workspace::create(source.path())?;
+
+        let mode = fs::metadata(workspace.root())?.permissions().mode() & 0o777;
+        workspace.finish()?;
+        assert_eq!(mode, 0o700, "{mode:o}");
+        Ok(())
+    }
 
     #[test]
     fn the_plugin_is_copied_into_a_fresh_directory_that_finish_removes() -> TestResult {

@@ -247,6 +247,7 @@ fn a_claude_that_fails_without_a_result_exits_4_with_its_stderr_and_leaves_no_wo
     assert!(
         stderr.starts_with("ERROR eval: ")
             && stderr.contains("Error: not logged in")
+            && stderr.contains("its spend is unknown")
             && stderr.lines().count() == 1,
         "{stderr:?}"
     );
@@ -258,7 +259,11 @@ fn a_claude_that_fails_without_a_result_exits_4_with_its_stderr_and_leaves_no_wo
 #[cfg(unix)]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_claude_that_outlives_the_time_limit_is_stopped_and_the_run_is_incomplete() -> TestResult {
-    let run = FakeRun::new(HANGING_CLAUDE, &["--timeout", "1"])?;
+    // The clock starts before the plugin copy, which takes milliseconds for the fixture; 2 s
+    // leaves room for a slow runner to reach the first batch, so the batch is killed (spend
+    // unknown) rather than never launched (the `Spend::Nothing` path, unit-tested in
+    // `real::claude`). The fake sleeps 30 s, far past it.
+    let run = FakeRun::new(HANGING_CLAUDE, &["--timeout", "2"])?;
 
     let envelope = envelope(&run.output)?;
     assert_eq!(run.output.status.code(), Some(3), "{envelope}");

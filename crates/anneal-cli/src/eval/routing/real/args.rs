@@ -29,7 +29,9 @@ pub enum RouterKind {
 /// The Tier 2 flags; each but `--router` needs `--router claude`.
 #[derive(Debug, Clone, Default, Args)]
 pub struct RealArgs {
-    /// Which router to measure: `lexical` (Tier 1) or `claude` (Tier 2, runs a model)
+    /// Which router to measure: `lexical` (Tier 1) or `claude` (Tier 2, runs a model; a run
+    /// whose temporary workspace could not be removed still exits 0, with an
+    /// `eval/routing/cleanup` finding)
     #[arg(long, value_enum, default_value_t = RouterKind::Lexical)]
     pub router: RouterKind,
     /// The `claude` program [default: `claude` on PATH]; on Windows an npm install is

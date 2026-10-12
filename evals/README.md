@@ -89,6 +89,8 @@ anneal eval routing --router claude [--skills plugin/skills] [--fixtures evals/r
 
 `claude` is found on `PATH`; on Windows an npm install is `claude.cmd`, which is not found that way, so pass `--claude <path to claude.cmd>`.
 
+**Run it in a container.** `claude plugin eval` loads the plugin copy with its `hooks/hooks.json`, and those hooks run on the host, outside the eval sandbox, with your user's rights. That holds for a local run as much as for CI, so run Tier 2 in a container (as the CI job below does) unless you trust every hook of the plugin under test.
+
 It reads and checks the Tier 1 fixtures exactly as Tier 1 does; any problem exits 2 before anything runs or is spent. The plugin is the parent of `--skills` (`plugin/skills` is in `plugin`). Its directory is copied into a fresh temporary workspace, since `claude plugin eval` reads cases from below the plugin and writes results there; the repository is never written, and the workspace is removed at the end.
 
 ### How it runs
@@ -98,7 +100,8 @@ It reads and checks the Tier 1 fixtures exactly as Tier 1 does; any problem exit
 - **Negatives.** Every run of a skill's positive is a should-fire trial for that skill and a should-not trial for every other skill, so the negatives are the siblings' positives and the runs give a confusion matrix. Near misses are Tier 1's; they are not run here.
 - **Sequential re-runs.** Each prompt runs 3 times. While its should-fire interval straddles 0.70 it runs 3 more, up to 12; once the interval is wholly at or above 0.70, or wholly below it, it stops. A perfect prompt settles at 9 of 9 (lower bound 0.701), a prompt that never fires at 0 of 3.
 - **Cost cap.** `--max-cost-usd` defaults to 25 US dollars, enough for a full run (wi-92bc1b). It is a cap on starting work, not a hard ceiling: each batch gets `--max-cost-usd` minus what earlier batches cost, rounded down to the cent, and none starts with less than a cent left. `claude plugin eval` checks the ceiling before each run, so the overrun is bounded by the runs in flight.
-- **Time limit.** `--timeout` (default 3600 s) bounds all batches together; a batch still running at the limit is killed and its runs are lost. Only `claude` itself is killed: sessions it started as child processes, if any, end at their own 180 s timeout and may still spend. The killed batch never reports its cost, so `data.cost_usd` is then a lower bound (`data.cost_is_lower_bound: true`).
+- **Time limit.** `--timeout` (default 3600 s) bounds the whole run from before the plugin copy, all batches together; a batch still running at the limit is killed and its runs are lost. Only `claude` itself is killed: sessions it started as child processes, if any, end at their own 180 s timeout and may still spend. The killed batch never reports its cost, so `data.cost_usd` is then a lower bound (`data.cost_is_lower_bound: true`), as it is after a later batch that failed once `claude` had run. When the first batch fails that way the run exits 4 and its `ERROR` line says the spend is unknown.
+- **Checked results.** A case that reports more runs than its batch asked for is refused (an error on the first batch, a failed batch later, its runs dropped), so no prompt settles on runs no batch paid for. The workspace is made private to its owner (mode 0700 on unix) and each batch's stderr log is a fresh file, so another local account cannot plant files or links in it.
 - **Errored runs.** `claude plugin eval` grades the trace of a run that ended in error too, and an error is judged by its kind. A run that ran out of turns (its error holds `Reached maximum number of turns (`) has decided routing, since the `Skill` call comes first or not at all, so it is a trial with whatever fired, nothing included. Any other error (a timeout, a crash) counts as a trial only when a skill fired; with none fired it is no evidence either way: it is not a trial, but it counts toward a prompt's 12 (weigh-in default wi-b4a3b0). `data.counted_errors` is how many runs ended in error and still counted. Telling the kinds apart rests on Claude Code's wording, so if it changes, out-of-turns runs fall back to the rule for other errors.
 
 ### The bar
@@ -114,7 +117,7 @@ For example, 21 of 27 is 0.778 with a lower bound of 0.592, short of 0.70; 9 of 
 
 | Code | Meaning |
 |---|---|
-| 0 | every skill meets both bars, or `--changed-since` found no routing change (`data.skipped`) |
+| 0 | every skill meets both bars, or `--changed-since` found no routing change (`data.skipped`); a run whose temporary workspace could not be removed still exits 0, with an `eval/routing/cleanup` finding naming why |
 | 1 | below bound: a prompt misses its should-fire bar, or a skill its should-not bar |
 | 2 | invalid fixtures or skills (nothing ran) |
 | 3 | incomplete: the cost cap, the time limit or a failed later batch left a prompt unsettled |

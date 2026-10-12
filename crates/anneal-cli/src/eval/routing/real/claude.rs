@@ -15,7 +15,7 @@
 //! group without that would only stop a terminal's Ctrl-C reaching it.
 
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -87,7 +87,8 @@ pub(crate) struct ClaudeRouter<'a> {
 
 impl<'a> ClaudeRouter<'a> {
     /// A router over a fresh copy of the plugin at `plugin_dir`, named `plugin`, whose runs
-    /// are judged by `graders`. The time limit starts now.
+    /// are judged by `graders`. The time limit starts now, before the copy, so `--timeout`
+    /// bounds the whole run.
     ///
     /// # Errors
     /// [`RouterError::Workspace`] when the workspace cannot be made or the plugin copied.
@@ -97,12 +98,13 @@ impl<'a> ClaudeRouter<'a> {
         plugin: &'a str,
         graders: &'a Graders<'a>,
     ) -> Result<Self, RouterError> {
+        let started = Instant::now();
         Ok(Self {
             options,
             workspace: Workspace::create(plugin_dir).map_err(RouterError::Workspace)?,
             plugin,
             graders,
-            started: Instant::now(),
+            started,
         })
     }
 
@@ -145,7 +147,12 @@ impl Router for ClaudeRouter<'_> {
         self.write_cases(batch)?;
         let root = self.workspace.root();
         let stderr_path = root.join(format!("stderr-{}.log", batch.round));
-        let stderr = File::create(&stderr_path).map_err(RouterError::Workspace)?;
+        // A fresh file only: never one planted in the workspace, nor a link it follows.
+        let stderr = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&stderr_path)
+            .map_err(RouterError::Workspace)?;
         let mut child = Command::new(self.options.program)
             .args(arguments(&self.options, root, batch))
             .current_dir(root)
@@ -168,7 +175,7 @@ impl Router for ClaudeRouter<'_> {
         if !result_path.is_file() {
             return Err(RouterError::Failed {
                 status: status.to_string(),
-                stderr: tail(&stderr_path).map_err(RouterError::Workspace)?,
+                stderr: stderr_tail(&stderr_path),
             });
         }
         let value: Value =
@@ -249,6 +256,12 @@ pub(crate) fn budget_arg(budget_usd: f64) -> String {
     format!("{:.2}", (budget_usd * 100.0).floor() / 100.0)
 }
 
+/// [`tail`] of the log at `path`, or a placeholder naming why it could not be read, so a
+/// failed `claude` is still reported as such.
+fn stderr_tail(path: &Path) -> String {
+    tail(path).unwrap_or_else(|error| format!("(stderr unreadable: {error})"))
+}
+
 /// The last non-blank line of the file at `path`, within its last [`STDERR_TAIL_BYTES`],
 /// control characters dropped and cut to [`STDERR_TAIL_CHARS`]; `(no stderr)` when empty.
 fn tail(path: &Path) -> io::Result<String> {
@@ -276,8 +289,12 @@ mod tests {
     use std::ffi::OsString;
     use std::path::Path;
 
-    use super::{Options, arguments, budget_arg};
-    use crate::eval::routing::real::drive::Batch;
+    use std::time::Duration;
+
+    use super::{ClaudeRouter, Options, arguments, budget_arg, stderr_tail};
+    use crate::eval::routing::real::Stop;
+    use crate::eval::routing::real::drive::{Batch, BatchCase, Router};
+    use crate::eval::routing::real::suite::Graders;
 
     #[test]
     fn a_batch_runs_the_suite_once_per_round_with_the_budget_left() {
@@ -286,7 +303,7 @@ mod tests {
             model: Some("haiku"),
             concurrency: 4,
             trust_plugin: true,
-            time_limit: std::time::Duration::from_secs(60),
+            time_limit: Duration::from_secs(60),
         };
 
         let root = Path::new("w");
@@ -341,5 +358,54 @@ mod tests {
             [budget_arg(5.0), budget_arg(0.019), budget_arg(1.999)],
             ["5.00", "0.01", "1.99"]
         );
+    }
+
+    #[test]
+    fn with_no_time_left_a_batch_launches_nothing_and_its_spend_is_exact()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let plugin = tempfile::tempdir()?;
+        std::fs::write(plugin.path().join("README.md"), "plugin")?;
+        let skills = vec!["plan".to_owned()];
+        let graders = Graders::new("fixture", &skills);
+        let options = Options {
+            // Never started: no time is left.
+            program: Path::new("no-such-claude"),
+            model: None,
+            concurrency: 1,
+            trust_plugin: false,
+            time_limit: Duration::ZERO,
+        };
+        let batch = Batch {
+            round: 1,
+            cases: vec![BatchCase {
+                name: "prompt-001".to_owned(),
+                prompt: "plan it",
+            }],
+            runs: 3,
+            budget_usd: 5.0,
+        };
+        let mut router = ClaudeRouter::new(options, plugin.path(), "fixture", &graders)?;
+
+        let ran = router.run(&batch);
+        router.finish()?;
+
+        let ran = ran?;
+        assert_eq!(
+            (
+                ran.runs.len(),
+                ran.cost_usd,
+                ran.cost_is_lower_bound,
+                ran.stop
+            ),
+            (0, 0.0, false, Some(Stop::TimeLimit))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unreadable_stderr_log_is_named_in_the_failure_rather_than_replacing_it() {
+        let tail = stderr_tail(Path::new("no/such/stderr.log"));
+
+        assert!(tail.starts_with("(stderr unreadable: "), "{tail}");
     }
 }

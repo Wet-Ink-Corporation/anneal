@@ -114,12 +114,34 @@ pub(crate) fn evaluate(
                 .map(|error| crate::error_chain::reason(&error));
             Ok(outcome)
         }
-        (Err(error), Ok(())) => Err(RoutingError::Router(error)),
-        (Err(error), Err(removing)) => Err(RoutingError::Router(RouterError::Cleanup {
+        (Err(error), Ok(())) => Err(RoutingError::Router(spend_unknown(error))),
+        (Err(error), Err(removing)) => {
+            let error = spend_unknown(error);
+            Err(RoutingError::Router(RouterError::Cleanup {
+                code: error.code(),
+                error: Box::new(error),
+                removing: Box::new(removing),
+            }))
+        }
+    }
+}
+
+/// `error` from the first batch, marked [`RouterError::SpendUnknown`] when `claude` had
+/// started and so may have spent before it failed.
+fn spend_unknown(error: RouterError) -> RouterError {
+    match error {
+        RouterError::Wait(_)
+        | RouterError::Failed { .. }
+        | RouterError::Unreadable(_)
+        | RouterError::Result(_) => RouterError::SpendUnknown {
             code: error.code(),
             error: Box::new(error),
-            removing: Box::new(removing),
-        })),
+        },
+        RouterError::Spawn { .. }
+        | RouterError::Workspace(_)
+        | RouterError::Manifest(_)
+        | RouterError::SpendUnknown { .. }
+        | RouterError::Cleanup { .. } => error,
     }
 }
 
@@ -158,6 +180,16 @@ pub enum RouterError {
     /// Its result says nothing about routing.
     #[error(transparent)]
     Result(#[from] ResultError),
+    /// The first batch failed after `claude` had started, so it may have spent money that no
+    /// result reported.
+    #[error("claude plugin eval ran, so its spend is unknown")]
+    SpendUnknown {
+        /// The failure.
+        #[source]
+        error: Box<RouterError>,
+        /// Its exit code, which the mark keeps.
+        code: Code,
+    },
     /// The router failed, and removing the workspace afterwards failed too.
     #[error("{error}; removing the eval workspace also failed")]
     Cleanup {
@@ -178,7 +210,7 @@ impl RouterError {
     pub const fn code(&self) -> Code {
         match self {
             Self::Workspace(_) => exit_codes::INTERNAL,
-            Self::Cleanup { code, .. } => *code,
+            Self::Cleanup { code, .. } | Self::SpendUnknown { code, .. } => *code,
             Self::Spawn { .. }
             | Self::Wait(_)
             | Self::Manifest(_)
@@ -266,6 +298,32 @@ mod tests {
                 exit_codes::EVAL_ROUTER_FAILED,
                 "waiting for claude plugin eval".to_owned()
             )
+        );
+    }
+
+    #[test]
+    fn a_first_batch_that_failed_after_claude_started_says_its_spend_is_unknown() {
+        let started = RouterError::Failed {
+            status: "exit status: 1".to_owned(),
+            stderr: "Error: not logged in".to_owned(),
+        };
+        let not_started = RouterError::Spawn {
+            program: "claude".into(),
+            source: io::Error::from(io::ErrorKind::NotFound),
+        };
+
+        let started = super::spend_unknown(started);
+        let not_started = super::spend_unknown(not_started);
+
+        let reason = crate::error_chain::reason(&started);
+        assert!(
+            reason.contains("spend is unknown") && reason.contains("Error: not logged in"),
+            "{reason}"
+        );
+        assert_eq!(started.code(), exit_codes::EVAL_ROUTER_FAILED);
+        assert!(
+            !crate::error_chain::reason(&not_started).contains("spend is unknown"),
+            "nothing ran, so nothing was spent"
         );
     }
 }

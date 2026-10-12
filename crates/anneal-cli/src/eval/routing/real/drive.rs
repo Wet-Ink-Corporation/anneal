@@ -2,7 +2,7 @@
 
 use super::schedule::{BATCH, MAX_RUNS, Next, next};
 use super::tally::Probe;
-use super::{Ran, RouterError, Stop};
+use super::{Ran, ResultError, RouterError, Stop};
 use crate::error_chain;
 
 /// The least budget, in US dollars, worth launching a batch for.
@@ -85,6 +85,42 @@ fn cases<'a>(probes: &'a [Probe], indexes: &[usize]) -> Vec<BatchCase<'a>> {
         .collect()
 }
 
+/// The first case of `ran` reporting more than `asked` runs, as the error that refuses it.
+fn over_asked(ran: &Ran, asked: u32) -> Option<ResultError> {
+    let asked_runs = usize::try_from(asked).unwrap_or(usize::MAX);
+    ran.runs
+        .iter()
+        .find(|(_, runs)| runs.len() > asked_runs)
+        .map(|(case, runs)| ResultError::TooManyRuns {
+            // The error outlives the batch's result, so it owns the case name.
+            case: case.clone(),
+            runs: runs.len(),
+            asked,
+        })
+}
+
+/// Adds the checked batch `ran` to `drove` and its runs to the `pending` probes, returning
+/// why the batch stopped short, if it did.
+fn take(drove: &mut Drove, probes: &mut [Probe], pending: &[usize], ran: Ran) -> Option<Stop> {
+    let Ran {
+        mut runs,
+        cost_usd,
+        cost_is_lower_bound,
+        counted_errors,
+        stop,
+    } = ran;
+    // `result::read` refuses a negative cost and JSON has no infinity or NaN.
+    drove.spent_usd += cost_usd;
+    drove.cost_is_lower_bound |= cost_is_lower_bound;
+    drove.counted_errors = drove.counted_errors.saturating_add(counted_errors);
+    for &index in pending {
+        if let (Some(probe), Some(new)) = (probes.get_mut(index), runs.remove(&case_name(index))) {
+            probe.runs.extend(new);
+        }
+    }
+    stop
+}
+
 /// Runs `probes` through `router` in batches of [`BATCH`] until each settles (see
 /// [`next`]) or `cap_usd` is spent, appending each batch's runs to its probe.
 ///
@@ -123,31 +159,29 @@ pub(crate) fn drive<R: Router>(
             Ok(ran) => ran,
             Err(error) if round == 1 => return Err(error),
             Err(error) => {
+                // `claude` may have run and spent before failing; its cost is unknown.
+                drove.cost_is_lower_bound = true;
                 drove.stop = Some(Stop::Failed {
                     reason: error_chain::reason(&error),
                 });
                 break;
             }
         };
-        drove.rounds = round;
-        let Ran {
-            mut runs,
-            cost_usd,
-            cost_is_lower_bound,
-            counted_errors,
-            stop,
-        } = ran;
-        // `result::read` refuses a negative cost and JSON has no infinity or NaN.
-        drove.spent_usd += cost_usd;
-        drove.cost_is_lower_bound |= cost_is_lower_bound;
-        drove.counted_errors = drove.counted_errors.saturating_add(counted_errors);
-        for index in pending {
-            if let (Some(probe), Some(new)) =
-                (probes.get_mut(index), runs.remove(&case_name(index)))
-            {
-                probe.runs.extend(new);
+        if let Some(padded) = over_asked(&ran, batch.runs) {
+            let error = RouterError::Result(padded);
+            if round == 1 {
+                return Err(error);
             }
+            // The batch reported its cost, so the spend stays exact; its runs are dropped.
+            drove.spent_usd += ran.cost_usd;
+            drove.rounds = round;
+            drove.stop = Some(Stop::Failed {
+                reason: error_chain::reason(&error),
+            });
+            break;
         }
+        drove.rounds = round;
+        let stop = take(&mut drove, probes, &pending, ran);
         if stop.is_some() {
             drove.stop = stop;
             break;
@@ -162,7 +196,7 @@ mod tests {
 
     use super::{Batch, Router, drive};
     use crate::eval::routing::real::tally::Probe;
-    use crate::eval::routing::real::{Ran, RouterError, Run, Stop};
+    use crate::eval::routing::real::{Ran, ResultError, RouterError, Run, Stop};
 
     /// A router that answers each batch with `answer`, recording every batch it got as
     /// `(case names, runs, budget)`.
@@ -372,6 +406,90 @@ mod tests {
             ),
             (0.5, true, 2, Some(Stop::TimeLimit))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_case_with_more_runs_than_asked_is_refused() {
+        /// Answers round `from` and later with 12 runs per case of a 3-run batch.
+        struct Padded {
+            from: u32,
+        }
+        impl Router for Padded {
+            fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
+                let runs = if batch.round >= self.from { 12 } else { 3 };
+                Ok(Ran {
+                    runs: batch
+                        .cases
+                        .iter()
+                        .map(|c| (c.name.clone(), fired("plan", runs)))
+                        .collect(),
+                    cost_usd: 0.25,
+                    cost_is_lower_bound: false,
+                    counted_errors: 0,
+                    stop: None,
+                })
+            }
+        }
+
+        let first = drive(&mut Padded { from: 1 }, &mut probes(), 5.0);
+        let mut later_probes = probes();
+        let later = drive(&mut Padded { from: 2 }, &mut later_probes, 5.0);
+
+        assert!(
+            matches!(
+                &first,
+                Err(RouterError::Result(ResultError::TooManyRuns {
+                    runs: 12,
+                    asked: 3,
+                    ..
+                }))
+            ),
+            "{first:?}"
+        );
+        assert!(
+            matches!(&later, Ok(drove) if matches!(&drove.stop, Some(Stop::Failed { reason }) if reason.contains("12 runs"))),
+            "{later:?}"
+        );
+        assert_eq!(
+            later_probes
+                .iter()
+                .map(|p| p.runs.len())
+                .collect::<Vec<_>>(),
+            [3, 3],
+            "the padded batch's runs are not kept"
+        );
+    }
+
+    #[test]
+    fn a_later_batch_that_fails_makes_the_spend_a_lower_bound() -> Result<(), RouterError> {
+        /// Round 1 costs 0.50; round 2 fails after `claude` may have spent.
+        struct FailsSecond;
+        impl Router for FailsSecond {
+            fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
+                if batch.round > 1 {
+                    return Err(RouterError::Failed {
+                        status: "exit status: 1".to_owned(),
+                        stderr: "boom".to_owned(),
+                    });
+                }
+                Ok(Ran {
+                    runs: batch
+                        .cases
+                        .iter()
+                        .map(|c| (c.name.clone(), fired("plan", 3)))
+                        .collect(),
+                    cost_usd: 0.5,
+                    cost_is_lower_bound: false,
+                    counted_errors: 0,
+                    stop: None,
+                })
+            }
+        }
+
+        let drove = drive(&mut FailsSecond, &mut probes(), 5.0)?;
+
+        assert_eq!((drove.spent_usd, drove.cost_is_lower_bound), (0.5, true));
         Ok(())
     }
 

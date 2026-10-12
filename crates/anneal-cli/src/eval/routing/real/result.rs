@@ -91,6 +91,17 @@ pub enum ResultError {
     /// The result is version 1 but not in its shape.
     #[error("the result is not in the shape of schema version 1")]
     Malformed(#[source] serde_json::Error),
+    /// A case reports more runs than the batch asked for, which would settle its prompt (or
+    /// narrow a sibling's should-not interval) on runs no batch paid for.
+    #[error("case {case} reports {runs} runs; the batch asked for {asked}")]
+    TooManyRuns {
+        /// The case's name.
+        case: String,
+        /// The runs it reported.
+        runs: usize,
+        /// The runs the batch asked for.
+        asked: u32,
+    },
     /// The result reports a negative cost, so the spend cannot be tracked.
     #[error("the result reports a negative cost ({cost_usd} USD)")]
     NegativeCost {
