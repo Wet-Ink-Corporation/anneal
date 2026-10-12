@@ -150,7 +150,7 @@ where
             clock,
             budget,
         };
-        ground(&mut found, reply, &lookup, clef);
+        ground(&mut found, reply, &lookup, &clef);
     }
     let session = Session {
         id: input.session_id.as_deref(),
@@ -169,7 +169,7 @@ fn ground<T, C>(
     found: &mut Findings,
     reply: &str,
     lookup: impl Fn(&str) -> Option<OsString>,
-    clef: grounded::Clef<'_, T, C>,
+    clef: &grounded::Clef<'_, T, C>,
 ) where
     T: Transport + Sync,
     C: Clock + Sync,

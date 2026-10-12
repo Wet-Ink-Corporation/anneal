@@ -5,10 +5,12 @@ use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
 
-use super::{RiskArgs, VerifyAction, VerifyArgs, run};
+use super::{RiskArgs, VerifyAction, VerifyArgs, VerifyError, run};
 use crate::decide::DecideEnv;
 use crate::decide::point::Point;
 use crate::decide::transport::{ClefRequest, Transport, TransportError};
+use crate::error_chain::reason;
+use crate::floor_guard::FloorError;
 use crate::hook::clef_fake::{Fixed, TestResult, World, block_the_log, reply};
 use crate::test_repo::ScratchRepo;
 
@@ -125,6 +127,22 @@ fn in_enforce_a_skip_with_no_trigger_exits_3() -> TestResult {
 }
 
 #[test]
+fn configured_enforce_inside_the_shadow_period_still_sends_a_skip_to_review() -> TestResult {
+    let world = World::enforce_configured_in_shadow_period()?;
+    let repo = changed(&[("src/parser.rs", "fn parse() {}\n")])?;
+
+    let (code, envelope) = risk(&world, &repo, &Endpoint::scoring(0.1))?;
+
+    assert_eq!(code, 0, "{envelope}");
+    assert_eq!(envelope["data"]["doubt_review"], json!(true));
+    assert_eq!(envelope["data"]["triggers"], json!([]));
+    assert_eq!(envelope["data"]["clef"]["action"], json!("skip"));
+    assert_eq!(envelope["data"]["clef"]["enforce"], json!(false));
+    assert_eq!(envelope["data"]["clef"]["mode"], json!("shadow"));
+    Ok(())
+}
+
+#[test]
 fn in_enforce_a_trigger_overrides_a_skip() -> TestResult {
     let world = World::enforcing(Point::D5)?;
     let repo = changed(&[("src/auth.rs", "fn login() {}\n")])?;
@@ -165,6 +183,24 @@ fn an_empty_change_asks_nothing() -> TestResult {
     assert!(clef.models().is_empty(), "nothing to ask about");
     assert_eq!(envelope["data"]["clef"]["clef"], json!("not_asked"));
     Ok(())
+}
+
+#[test]
+fn a_change_that_cannot_be_read_is_reported_in_verify_risks_own_words() {
+    let no_base = VerifyError::Change(FloorError::NoDefaultBase);
+    let no_commit = VerifyError::Change(FloorError::BaseNotFound {
+        base: "nope".to_owned(),
+    });
+
+    assert_eq!(
+        reason(&no_base),
+        "verify risk: reading the change: no base: neither origin/main nor main resolves; pass \
+         --base <ref>"
+    );
+    assert_eq!(
+        reason(&no_commit),
+        "verify risk: reading the change: base nope does not resolve to a commit"
+    );
 }
 
 #[test]

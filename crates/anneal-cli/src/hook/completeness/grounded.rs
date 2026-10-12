@@ -1,9 +1,9 @@
 //! Clef D4 in the Stop hook: is each required section of the final report present and grounded?
 //!
 //! Asked only after the deterministic checks, only in a worktree, and only for a reply holding a
-//! status block (a `Status:` line): one `noul present_and_grounded` question per required section
-//! of [`block::SECTIONS`] (an absent section is asked with empty text, so Clef judges presence
-//! too), all at once on scoped threads, through `decide`'s own code (`decide::in_process`, then
+//! status block (its last `Status:` line carries a known status word): one
+//! `noul present_and_grounded` question per required section of [`block::SECTIONS`] (an absent
+//! section is asked with empty text, so Clef judges presence too), all at once on scoped threads, through `decide`'s own code (`decide::in_process`, then
 //! `client::ask_recording`), so the thresholds, model (`clef`), log, modes and shadow count are
 //! the command's. Clef gets the section's text and the worktree's newest ledger events, each
 //! through `safe_prompt`; the rows keep no input.
@@ -78,21 +78,11 @@ pub(super) struct Clef<'h, T, C> {
     pub(super) budget: Budget,
 }
 
-// Two references and a `Copy` budget: copyable whatever `T` and `C` are, which a derive would
-// not allow.
-impl<T, C> Clone for Clef<'_, T, C> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T, C> Copy for Clef<'_, T, C> {}
-
 /// Asks D4 about `report` and returns what the hook adds: see the module documentation.
 pub(super) fn judge<T, C>(
     report: &Report<'_>,
     lookup: impl Fn(&str) -> Option<OsString>,
-    clef: Clef<'_, T, C>,
+    clef: &Clef<'_, T, C>,
 ) -> Judged
 where
     T: Transport + Sync,
@@ -120,7 +110,7 @@ fn ask<T, C>(
     report: &Report<'_>,
     sections: &[(&'static str, String)],
     lookup: impl Fn(&str) -> Option<OsString>,
-    clef: Clef<'_, T, C>,
+    clef: &Clef<'_, T, C>,
 ) -> Judged
 where
     T: Transport + Sync,
@@ -134,10 +124,6 @@ where
             return Judged { block: None, notes };
         }
     };
-    if let Err(note) = clef.budget.fits_clef(clef.clock) {
-        notes.push(format!("D4: {note}"));
-        return Judged { block: None, notes };
-    }
     let evidence = match evidence(report.store, report.worktree) {
         Ok(evidence) => evidence,
         Err(why) => {
@@ -162,6 +148,11 @@ where
             Err(error) => notes.push(format!("D4: the {section} state: {}", reason(&error))),
         }
     }
+    // Checked last, right before the calls, so the ledger read cannot eat into Clef's time.
+    if let Err(note) = clef.budget.fits_clef(clef.clock) {
+        notes.push(format!("D4: {note}"));
+        return Judged { block: None, notes };
+    }
     let below = ask_all(&prepared, &states, clef)
         .into_iter()
         .filter_map(|(section, asked)| blocking(section, asked, &mut notes))
@@ -177,14 +168,14 @@ where
 fn ask_all<'c, T, C>(
     prepared: &'c Prepared,
     states: &[(&'static str, CompactState)],
-    clef: Clef<'_, T, C>,
+    clef: &Clef<'_, T, C>,
 ) -> Vec<(&'static str, Result<Asked<'c>, String>)>
 where
     T: Transport + Sync,
     C: Clock + Sync,
 {
     let setup = prepared.setup();
-    let Clef {
+    let &Clef {
         transport, clock, ..
     } = clef;
     thread::scope(|scope| {

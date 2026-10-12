@@ -242,7 +242,8 @@ more tool calls, is not seen.
 | grounded | Clef D4, in effect enforce, finds a required section of the reply's status block not present and grounded (P(yes) below 0.50) | `completeness.grounded` |
 
 **Clef D4** is asked after the checks above, in a worktree, and only when the final message holds
-a status block (a `Status:` line). Each required section (`Gate`, `Review`, `Changed`,
+a status block (its last `Status:` line starts with `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT` or
+`BLOCKED`; a prose "Status: …" line is not one). Each required section (`Gate`, `Review`, `Changed`,
 `Decisions needed`, `Not verified`, as `hook::status::block::SECTIONS`) is one
 `noul present_and_grounded` question on the `clef` model, all asked at once; an absent section is
 asked with empty text, so Clef judges presence as well as grounding. Clef gets the section's text
@@ -256,7 +257,8 @@ In shadow (the default), off, misconfigured or with Clef unreachable, timed out 
 badly, the hook's output is exactly what it would be without D4. D4's other failures (the
 thresholds or anneal home, the budget, a row that could not be logged) join the `ERROR` line only
 when D4 is configured `enforce`; a Clef failure never blocks. Each section's answer advances D4's
-shadow count, so 10 stops with a report reach its 50. Its outcome label, a human pushing back with
+shadow count, so a stop with a report adds up to five; the five calls run at once and can lose an
+increment between them, which only lengthens the shadow period. Its outcome label, a human pushing back with
 "not done", is given by hand (`anneal decide label <id> no` after such a pushback, `yes` when the
 report stood; the id from the decision log) until a later story labels it automatically.
 

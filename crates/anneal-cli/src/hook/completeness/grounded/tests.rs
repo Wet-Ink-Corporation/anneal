@@ -92,7 +92,7 @@ fn judged_at(
         clock,
         budget: Budget::start_for(clock, STOP_BUDGET),
     };
-    judge(&report, |name: &str| world.lookup(name), clef)
+    judge(&report, |name: &str| world.lookup(name), &clef)
 }
 
 fn judged(world: &World, reply: &str, endpoint: &Endpoint) -> Judged {
@@ -166,6 +166,25 @@ fn in_shadow_no_section_blocks_and_nothing_is_noted_though_every_answer_is_logge
     assert!(
         rows.iter().all(|row| row["action"] == json!("block")),
         "the action is recorded for calibration: {rows:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn configured_enforce_inside_the_shadow_period_never_blocks() -> TestResult {
+    let world = World::enforce_configured_in_shadow_period()?;
+
+    let judged = judged(&world, REPORT, &Endpoint::answering(0.0, 0.0));
+
+    assert_eq!(judged.block, None, "fewer than 50 answers: still shadow");
+    let rows = d4_rows(&world)?;
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["mode"] == json!("shadow"))
+            .count(),
+        5,
+        "each row records the shadow mode in effect: {rows:?}"
     );
     Ok(())
 }

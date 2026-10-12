@@ -72,6 +72,19 @@ fn shadow_never_changes_the_stop_output_whatever_clef_answers() -> TestResult {
 }
 
 #[test]
+fn configured_enforce_inside_the_shadow_period_never_changes_the_stop_output() -> TestResult {
+    let repo = ScratchRepo::new()?;
+    let off = stop(&World::new(&[])?, &repo, REPORT, &Answering { yes: 0.0 })?;
+    let world = World::enforce_configured_in_shadow_period()?;
+
+    let output = stop(&world, &repo, REPORT, &Answering { yes: 0.0 })?;
+
+    assert_eq!(output, off, "enforce counts only after 50 answers");
+    assert_eq!(world.rows()?.len(), 5, "every section was still asked");
+    Ok(())
+}
+
+#[test]
 fn an_enforcing_d4_block_names_the_section_and_counts_toward_the_cap_of_two() -> TestResult {
     let repo = ScratchRepo::new()?;
     let world = World::enforcing(Point::D4)?;

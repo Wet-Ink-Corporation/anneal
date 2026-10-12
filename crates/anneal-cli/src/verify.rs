@@ -28,6 +28,7 @@ use crate::decide::clock::Clock;
 use crate::decide::transport::Transport;
 use crate::envelope::Envelope;
 use crate::error::CliError;
+use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
 use crate::floor_guard::FloorError;
 use crate::floor_guard::change::{self, WorkingChange};
@@ -62,9 +63,10 @@ pub struct RiskArgs {
 /// Why `anneal verify risk` could not judge the change.
 #[derive(Debug, thiserror::Error)]
 pub enum VerifyError {
-    /// The change could not be read whole: not a repository, no base, a git failure.
-    #[error("verify risk: reading the change")]
-    Change(#[source] FloorError),
+    /// The change could not be read whole: not a repository, no base, a git failure. Shown in
+    /// `verify risk`'s own words, not as `floor-guard`'s.
+    #[error("verify risk: reading the change: {}", change_failure(.0))]
+    Change(FloorError),
     /// A default sensitive glob does not compile (a test keeps them valid).
     #[error("verify risk: a default sensitive glob")]
     Glob(#[source] GlobError),
@@ -78,6 +80,29 @@ impl VerifyError {
         match self {
             Self::Change(_) => exit_codes::VERIFY_TOOL_ERROR,
             Self::Glob(_) => exit_codes::INTERNAL,
+        }
+    }
+}
+
+/// What went wrong reading the change, in `verify risk`'s words: each of [`FloorError`]'s
+/// reasons without its `floor-guard:` prefix, and the causes of the two that have one.
+/// Exhaustive, so a new reason has to choose its wording.
+fn change_failure(error: &FloorError) -> String {
+    match error {
+        FloorError::Git(source) => reason(source),
+        FloorError::BaseNotFound { base } => format!("base {base} does not resolve to a commit"),
+        FloorError::NoDefaultBase => {
+            "no base: neither origin/main nor main resolves; pass --base <ref>".to_owned()
+        }
+        FloorError::NoMergeBase { base, stderr } => {
+            format!("HEAD and {base} have no merge base: {stderr}")
+        }
+        FloorError::GitFailed { what, stderr } => format!("git {what} failed: {stderr}"),
+        FloorError::TooLarge { what, max } => {
+            format!("git {what} printed more than {max} bytes; refusing a partial check")
+        }
+        FloorError::Read { path, source } => {
+            format!("reading {}: {}", path.display(), reason(source))
         }
     }
 }

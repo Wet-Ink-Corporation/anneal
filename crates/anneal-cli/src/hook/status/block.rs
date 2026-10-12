@@ -89,13 +89,25 @@ pub(crate) fn parse(message: &str) -> Parsed {
 /// Each section of [`SECTIONS`] with its text in the last status block of `message`, in report
 /// order: the text after its key, then its continuation lines up to a blank line, a code fence
 /// or the next key, joined by spaces; empty for a section the block lacks. `None` when
-/// `message` has no `Status:` line, so it is not a report.
+/// `message` is not a report: it has no `Status:` line, or its last one does not start with a
+/// status word of [`STATUSES`] (a prose "Status: …" line), as [`parse`] reads it.
 pub(crate) fn section_texts(message: &str) -> Option<Vec<(&'static str, String)>> {
     let raw: Vec<&str> = message.lines().collect();
     let lines: Vec<String> = raw.iter().map(|line| plain(line)).collect();
     let status_at = lines
         .iter()
         .rposition(|line| value(line, "Status").is_some())?;
+    let word = first_word(
+        lines
+            .get(status_at)
+            .and_then(|line| value(line, "Status"))?,
+    );
+    if !STATUSES
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case(word))
+    {
+        return None;
+    }
     let rest = lines.get(status_at.saturating_add(1)..).unwrap_or_default();
     let raw_rest = raw.get(status_at.saturating_add(1)..).unwrap_or_default();
     let is_key = |line: &str| {
@@ -331,6 +343,31 @@ Not verified: none";
             section_texts("Gate: green\nChanged: a"),
             None,
             "sections without a Status: line are not a report"
+        );
+    }
+
+    #[test]
+    fn section_texts_is_none_when_the_last_status_line_is_prose() {
+        let prose = "Status: the build is still running\nGate: green\nChanged: a";
+        let prose_last = "Status: DONE\nGate: green\n\nStatus: waiting on CI, see above\n";
+
+        assert_eq!(section_texts(prose), None, "no status word: not a report");
+        assert_eq!(
+            section_texts(prose_last),
+            None,
+            "the last Status: line decides, as in `parse`"
+        );
+    }
+
+    #[test]
+    fn section_texts_reads_a_block_whose_status_word_is_known_in_any_case() {
+        let texts = section_texts("Status: blocked: waiting on CI\nGate: fmt ok\n")
+            .expect("BLOCKED is a known status");
+
+        assert_eq!(
+            texts.first(),
+            Some(&("Gate", "fmt ok".to_owned())),
+            "{texts:?}"
         );
     }
 }
