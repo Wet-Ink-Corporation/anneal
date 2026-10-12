@@ -68,12 +68,17 @@ The context is, in order:
    and `anneal lint skills <skills> --index docs/bootstrap-index.md` accepts it. `lint skills`
    runs its index rule only when it lints at least one skill; `plugin/skills` has none yet, so
    the test (`lint_skills_accepts_the_committed_index`) lints a fixture skill.
-2. **The live state**, only when it changed for this session (volatile last): the newest five
+2. **`.continue-here`**, the note the `handoff` hook writes before a compaction, every time it
+   exists at the worktree root (a regular file of at most 32 KiB whose head the hook recorded),
+   framed as data, with the injection scan's line on a hit; see `docs/handoff.md`.
+3. **The status-line hint**, once per anneal home, while no status line has saved context usage
+   (`context-usage.json`), so the context monitor is off; see `docs/handoff.md`.
+4. **The live state**, only when it changed for this session (volatile last): the newest five
    ledger events. The ledger is found as `anneal ledger` finds it (`$ANNEAL_STORE`, else the git
    common dir, else `.anneal/` in the folder). With no ledger file there is no live state, and
    the bootstrap never creates one. A ledger that cannot be read gives a one-line reason instead.
-3. **Notes**, one line each, for anything that failed (unreadable input, no working directory,
-   the sessions file).
+5. **Notes**, one line each, for anything that failed (unreadable input, no working directory,
+   the sessions file, `.continue-here`, recording the hint).
 
 An empty (zero-length) ledger file counts as no ledger: opening it would give it the schema.
 
@@ -82,7 +87,8 @@ output, index included. So the live-state lookup is bounded well under it: git m
 find the ledger (`anneal ledger` allows 10 s), and each ledger statement waits at most 0.5 s for
 another process's lock (the store's default is 10 s per statement). Opening the ledger and
 reading its tail run about ten statements, so even a stuck writer costs about 5 s, and the worst
-case is about 7 s plus reading stdin and writing the sessions file. A lookup that runs out of
+case is about 9 s (with the 2 s git call that finds `.continue-here`) plus reading stdin and
+writing the sessions file. A lookup that runs out of
 time becomes the one-line "could not be read" note, and the index still arrives.
 
 What each session was shown is kept beside the ledger in `bootstrap-sessions.json`: a hash of
@@ -453,3 +459,29 @@ ruling-specific confirmation (an `AskUserQuestion` answer, or a `/anneal:reopen 
 that records `ruling_reopened` in the ledger) labels it `none` (overridden), and any other next
 prompt labels it with the ruling's id (it held). Until then D6 is labelled only by hand with
 `anneal decide label`.
+
+## `context-monitor` (PostToolBatch)
+
+No matcher, 5 s timeout, `onFailure: continue`, role `scaffolding`. Hooks receive no context
+usage, so it reads the reading `anneal statusline` saved for the session in the anneal home
+(`context-usage.json`) and keeps the level each session last reached (`context-monitor.json`).
+It warns once (`additionalContext`) when usage rises past 60% of the auto-compact window and
+stops once (`decision: "block"`, which ends the agentic loop before the next model call) when
+it rises past 75%; falling below a threshold re-arms it. With no reading (no status line
+configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
+answers a `PostToolUse` input as `PostToolUse`. Its own failures are one `ERROR` line as the
+`systemMessage`, never a block. It sits under `PostToolBatch`, not `PostToolUse *`, so it runs
+once per batch and no per-call entry exists. See `docs/handoff.md`.
+
+## `handoff` (PreCompact)
+
+No matcher (manual and automatic compactions), 30 s timeout, `onFailure: continue`, role
+`scaffolding`. Before Claude Code compacts, it writes `.continue-here` at the worktree root,
+excluded from git through the repository's `info/exclude` and recorded by hash in the anneal
+home: the anneal mode, the build plan's current task ("task N of M"), the open gates
+(the Stop hook's checks, run in process with no reply), a one-line summary of the ledger's
+newest events and the `/compact` instructions, keeping any `## Notes` section of the previous
+file. The bootstrap injects it at the next session start. It never blocks compaction, never
+creates a ledger and writes nothing outside a git repository; what it cannot read is listed in
+the note and in one `ERROR` line as the `systemMessage` (which Claude Code discards for
+`PreCompact`). See `docs/handoff.md`.

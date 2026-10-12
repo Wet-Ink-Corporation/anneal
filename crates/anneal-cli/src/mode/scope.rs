@@ -3,6 +3,7 @@
 //! symlinks before calling in), and ASCII letters match in any case, as the guard's protected
 //! paths do (APFS and NTFS are case-insensitive by default).
 
+use crate::context::note::CONTINUE_HERE;
 use crate::floor_guard::is_test_path;
 
 /// Top-level directories of the worktree that hold plans, ledger state and scratch work, never
@@ -18,7 +19,8 @@ const DOC_EXTENSIONS: [&str; 3] = ["md", "txt", "rst"];
 pub(crate) enum PathKind {
     /// The plan or the design tree recorded when build mode was entered.
     Artifact,
-    /// Under `.temper/`, `.anneal/`, `tmp/` or `scratch/` at the worktree root.
+    /// Under `.temper/`, `.anneal/`, `tmp/` or `scratch/` at the worktree root, or the handoff
+    /// note `.continue-here` there.
     Scratch,
     /// A prose document: `*.md`, `*.txt` or `*.rst`.
     Doc,
@@ -91,6 +93,9 @@ pub(crate) fn classify(path: &str, artifacts: &[&str]) -> PathKind {
     if let Some((top, _)) = lower.split_once('/')
         && SCRATCH_DIRS.contains(&top)
     {
+        return PathKind::Scratch;
+    }
+    if lower == CONTINUE_HERE {
         return PathKind::Scratch;
     }
     let extension = lower.rsplit_once('.').map(|(_, extension)| extension);

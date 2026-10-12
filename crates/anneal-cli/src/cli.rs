@@ -31,6 +31,7 @@ use crate::mode::{self, ModeArgs};
 use crate::plan::{self, PlanArgs};
 use crate::repro::{self, ReproArgs};
 use crate::ship::{self, ShipArgs};
+use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
 use crate::watch::{self, WatchArgs};
@@ -111,9 +112,10 @@ pub enum Command {
     /// Run evaluation suites, such as skill routing
     #[command(after_help = command_help(CommandName::Eval))]
     Eval(EvalArgs),
-    /// Render the Claude Code status line
+    /// Render the Claude Code status line and save the context usage for the context monitor
+    /// (fails open, like a hook)
     #[command(after_help = command_help(CommandName::Statusline))]
-    Statusline(Stub),
+    Statusline(StatuslineArgs),
     /// Run a plugin hook (hooks.json calls these; they fail open unless passed --fail-closed,
     /// and the guard and preconditions hooks always fail closed)
     #[command(after_help = command_help(CommandName::Hook))]
@@ -173,7 +175,7 @@ impl Command {
     const fn on_failure(&self) -> OnFailure {
         match self {
             Self::Hook(args) if args.fails_closed() => OnFailure::FailClosed,
-            Self::Hook(_) => OnFailure::FailOpen,
+            Self::Hook(_) | Self::Statusline(_) => OnFailure::FailOpen,
             Self::Ledger(_)
             | Self::Grill(_)
             | Self::Task(_)
@@ -191,8 +193,7 @@ impl Command {
             | Self::Brief(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
-            | Self::Eval(_)
-            | Self::Statusline(_) => OnFailure::Exit,
+            | Self::Eval(_) => OnFailure::Exit,
         }
     }
 }
@@ -202,8 +203,8 @@ impl Command {
 ///
 /// On success `err` stays empty, except for `anneal calibrate`'s short human summary, written
 /// after its envelope; on failure it gets exactly one `ERROR <reason>` line and the code is the
-/// error's documented code, never 0. The one exception is `anneal hook`, which fails open:
-/// after the `ERROR` line it still exits 0 (only its usage errors exit 2). A guard
+/// error's documented code, never 0. The exceptions are `anneal hook` and `anneal statusline`,
+/// which fail open: after the `ERROR` line they still exit 0 (only usage errors exit 2). A guard
 /// (`hook guard`, or a hook passed `--fail-closed`) fails closed instead: it exits 2.
 pub fn run<I, T, O, E>(args: I, mut out: O, mut err: E) -> Code
 where
@@ -317,7 +318,8 @@ fn dispatch<O: Write, E: Write>(
             ship::run(args, &cwd, out)
         }
         Command::Watch(args) => run_watch(args, out),
-        Command::Rollout(_) | Command::Perf(_) | Command::Brief(_) | Command::Statusline(_) => {
+        Command::Statusline(StatuslineArgs) => run_statusline(out, err),
+        Command::Rollout(_) | Command::Perf(_) | Command::Brief(_) => {
             Err(CliError::NotImplemented {
                 command: command.name(),
             })
@@ -355,6 +357,16 @@ fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> 
 fn run_watch<O: Write>(args: &WatchArgs, out: &mut O) -> Result<Code, CliError> {
     let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
     watch::run(args, &cwd, |var| std::env::var_os(var), out)
+}
+
+/// `anneal statusline` with the process's stdin and environment.
+fn run_statusline<O: Write, E: Write>(out: &mut O, err: &mut E) -> Result<Code, CliError> {
+    statusline::run(
+        std::io::stdin().lock(),
+        |var| std::env::var_os(var),
+        out,
+        err,
+    )
 }
 
 /// `anneal calibrate` with the process's working directory and environment.

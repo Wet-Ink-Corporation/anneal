@@ -12,7 +12,7 @@
 //! one `ERROR` line as the `systemMessage`. See `docs/injection-scan.md`.
 
 mod content;
-mod detect;
+pub(crate) mod detect;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};

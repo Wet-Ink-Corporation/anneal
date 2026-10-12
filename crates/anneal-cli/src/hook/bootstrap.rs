@@ -1,10 +1,13 @@
 //! `anneal hook bootstrap`: the `SessionStart` hook.
 //!
 //! It reads Claude Code's `SessionStart` input on stdin and writes one `SessionStart` output object
-//! on stdout whose `additionalContext` is the [`index`] (stable, every time), then the live
-//! state from the ledger when it changed for this session (volatile, last). Every failure
-//! becomes a one-line note in that context: the hook fails open.
+//! on stdout whose `additionalContext` is the [`index`] (stable, every time), then the
+//! worktree's `.continue-here` note when there is one (the `handoff` hook writes it before a
+//! compaction), then a one-time status-line setup hint while no status line saves context
+//! usage, then the live state from the ledger when it changed for this session (volatile,
+//! last). Every failure becomes a one-line note in that context: the hook fails open.
 
+mod compaction;
 pub(crate) mod index;
 mod state;
 
@@ -120,24 +123,32 @@ fn context(
             )),
         ),
     };
-    let (state, state_note) = match input.cwd {
-        Some(cwd) => fresh_state(input.session_id.as_deref(), &cwd, lookup),
-        None => match current_dir() {
-            Ok(cwd) => fresh_state(input.session_id.as_deref(), &cwd, lookup),
-            Err(error) => (
-                None,
-                Some(format!(
-                    "anneal skipped the live state: reading the working directory: {error}"
-                )),
-            ),
-        },
+    let cwd = match input.cwd {
+        Some(cwd) => Ok(cwd),
+        None => current_dir(),
+    };
+    let (handoff, handoff_note) = match &cwd {
+        Ok(cwd) => compaction::continue_here(cwd, GIT_TIMEOUT, &lookup),
+        // The live state's note below already says the working directory cannot be read.
+        Err(_) => (None, None),
+    };
+    let (hint, hint_note) = compaction::statusline_hint(&lookup);
+    let (state, state_note) = match &cwd {
+        Ok(cwd) => fresh_state(input.session_id.as_deref(), cwd, lookup),
+        Err(error) => (
+            None,
+            Some(format!(
+                "anneal skipped the live state: reading the working directory: {error}"
+            )),
+        ),
     };
     let mut text = index::index();
-    if let Some(state) = state {
+    for section in [handoff, hint, state].into_iter().flatten() {
         text.push('\n');
-        text.push_str(&state);
+        text.push_str(&section);
     }
-    for note in [input_note, state_note].into_iter().flatten() {
+    let notes = [input_note, handoff_note, hint_note, state_note];
+    for note in notes.into_iter().flatten() {
         text.push('\n');
         text.push_str(&note);
         text.push('\n');

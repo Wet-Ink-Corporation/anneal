@@ -289,6 +289,19 @@ pub(crate) fn read_state_bytes(path: &Path) -> Result<Option<Vec<u8>>, BaselineE
     }
 }
 
+/// Writes `text` to `path` through [`write_atomically`], so a reader never sees half of it.
+/// The parent directory must exist.
+///
+/// # Errors
+/// [`BaselineError::Io`] when the file cannot be written.
+pub(crate) fn write_text_atomically(path: &Path, text: &str) -> Result<(), BaselineError> {
+    write_atomically(path, text.as_bytes()).map_err(|source| BaselineError::Io {
+        op: "writing",
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 /// Writes `value` as pretty JSON to `path`, creating its parent directory, through
 /// [`write_atomically`], so a reader never sees a half-written snapshot.
 ///
