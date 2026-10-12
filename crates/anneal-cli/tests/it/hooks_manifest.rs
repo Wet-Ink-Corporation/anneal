@@ -427,6 +427,25 @@ fn only_entry(name: HookName) -> Result<Placed, Box<dyn Error>> {
 }
 
 #[test]
+fn the_injection_scan_hook_runs_once_per_batch_with_a_short_timeout_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::InjectionScan)?;
+    assert_eq!(
+        event,
+        HookEvent::PostToolBatch,
+        "after each batch's Read and WebFetch results, before the next model request"
+    );
+    assert_eq!(matcher, "", "PostToolBatch takes no matcher");
+    assert_eq!(hook.args, ["hook", "injection-scan"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "never blocks");
+    assert_eq!(hook.timeout, 2, "a short timeout");
+    Ok(())
+}
+
+#[test]
 fn the_completeness_hook_runs_on_every_stop_and_fails_open() -> TestResult {
     let Placed {
         event,

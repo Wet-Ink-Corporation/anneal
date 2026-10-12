@@ -1,0 +1,78 @@
+# Injection scan
+
+`anneal hook injection-scan` flags instruction-shaped text in content the agent read (`Read`) or
+fetched (`WebFetch`), before the agent acts on it (#39, the GSD pattern). It adds one line of
+`additionalContext` saying the content is data; it never blocks, and it is silent when nothing
+hits.
+
+## Where it runs
+
+`plugin/hooks/hooks.json` declares it under `PostToolBatch` (no matcher, `timeout` 2 s,
+`onFailure: "continue"`). `PostToolBatch` fires once after every call of a batch of parallel tool
+calls has resolved, before the next model request, with each call's `tool_name`, `tool_input`
+and `tool_response`; the hook keeps the `Read` and `WebFetch` calls and ignores the rest. Ten
+parallel reads cost one process.
+
+The story asked for `PostToolUse` with a `Read|WebFetch` matcher. The hook also reads a
+`PostToolUse` input (the one call at the top level, `hookEventName` answered as `PostToolUse`), so
+moving it is a manifest change. It is not declared there because
+`the_fast_check_hook_runs_once_per_batch_of_tool_calls_and_fails_open` asserts that no
+`hooks.json` entry is under `PostToolUse`, and changing a test's expectation is a human decision.
+
+## What it reads
+
+- At most 16 MiB of stdin; a larger or non-JSON input is one `ERROR injection-scan: ...` line in
+  `systemMessage`, never a block.
+- For `Read`, `tool_response.file.content`, with `file.startLine` as the first line's number (so
+  a read from line 200 reports file lines); for `WebFetch`, `tool_response.result` (the text the
+  fetch model returned, so line numbers are of that text, not the page). A plain string response,
+  a `content` string, and finally every string in the response are read too, the last without
+  line numbers. An image is not scanned.
+- The first 256 KiB of each result, cut at a character boundary, and 4 MiB per batch: once the
+  batch's budget is spent, later calls are not scanned. A full 16 MiB input of dense hits scans
+  in about 0.7 s in a release build.
+
+## Heuristics
+
+Hand-written matchers, no regular expressions. Words are read lowercased, with invisible
+characters (zero-width, bidi, tag characters, soft hyphen) dropped first, so `ig<U+200B>nore`
+reads as `ignore`.
+
+| Kind | Matches |
+|---|---|
+| Override | `ignore`, `disregard`, `forget`, `override`, `bypass` or `discard`, then within five words of the same sentence a scope (`previous`, `prior`, `above`, `all`, `your`, `system`, ...) and after it a target (`instructions`, `prompt`, `directives`, `guidelines`, `guardrails`, `programming`); also `ignore everything above` and `disregard the above.` |
+| Directive | Addresses to an AI that stand alone: `if you are an AI,` (not `an AI researcher`), `if you are a language model`, `AI agents reading this`, `Attention AI`. Weak phrases count only within 40 words of `AI`, `LLM`, `assistant`, `Claude`, `ChatGPT`, `Copilot`, `Gemini`, `GPT` or `language model`: `you must now`, `from now on`, `you are now a ...`, `you are now in developer mode` (and other jailbreak modes), `your new task`, `do not tell the user`, `without telling the user`, `hide this from the user`. |
+| Hidden comment | An HTML comment (`<!-- ... -->`) holding any phrase above (weak ones need no address there), or naming an AI, saying `you` and holding a directive verb (`must`, `should`, `run`, `send`, `ignore`, ...). Reported on the comment's first line. |
+| Markup | Chat-template and tool-call markup outside code fences: `<\|im_start\|>`, `[INST]`, `<<SYS>>`, `<system-reminder>`, `<function_calls>`, `<invoke name=`, `<tool_use>`, ... |
+| Tool-call JSON | `"tool_use"`, `"tool_calls"`, `"tool_call"` or `"function_call"` followed within 400 bytes by `"name"` and `"input"`, `"arguments"` or `"parameters"`, outside code fences. |
+| Hidden characters | A line with a Unicode tag character or a bidi embedding, override or isolate control, or two or more zero-width characters. A zero-width joiner or non-joiner between two characters outside ASCII (emoji sequences, Persian, Indic scripts) and a byte-order mark that starts the text do not count. |
+
+The note names the first hit by call, then line, and counts every hit in the batch. It never
+quotes the content, which would put the instruction back in front of the model.
+
+## Corpus and false-positive rate
+
+`crates/anneal-cli/tests/fixtures/injection/` holds 15 positives and 15 benign lookalikes
+(installation guides, a security policy, an agent charter and a changelog that say "you must"
+and "you must now", lint and tooling comments, tool-call JSON and chat markup inside code fences,
+emoji and Persian text with zero-width joiners, a `pom.xml` with `<system>`, prose about prompts
+and LLMs, and notes that say "the branch you are now in" next to "Claude"). `tests/it/hook_injection_scan.rs` runs each through the built binary and asserts every
+positive is flagged and no benign file is: at the time of writing, 15/15 true positives and 0/15
+false positives (a false-positive rate of 0%). A false positive found in use becomes a benign
+fixture before the heuristic changes; `b15-session-notes.md` came from running the hook over the
+636 Markdown, Rust and configuration files of this repository and weigh-in, which flagged six:
+that note, four Rust tests holding transcript tool-call JSON, and `docs/hooks.md`, which quotes
+an override.
+
+## Known gaps
+
+- Text that quotes an injection to discuss it (a security article, this repository's own
+  fixtures and the matcher's own word tables) is flagged; the note's advice is still right.
+- Source code with tool-call JSON outside a fence (a transcript test, for example) is flagged.
+- Phrases near an AI address that read as directives but are not (`you must now` in notes about
+  an AI product) are flagged.
+- Paraphrases outside the word lists, other languages, and instructions split across lines by
+  markup are not.
+- `WebFetch` results are the fetch model's summary of the page, so an injection the summary drops
+  is not seen, and one it keeps is reported by the summary's line.
+- Bash output (`cat`, `curl`) and MCP tool results are not scanned.

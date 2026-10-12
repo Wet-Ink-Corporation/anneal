@@ -1,0 +1,143 @@
+//! Line heuristics: chat and tool-call markup, tool-call JSON (both outside code fences), and
+//! hidden characters.
+
+use super::{Hit, Kind, Scan};
+
+/// Chat-template and tool-call markup, lowercase: a model's own turn and call delimiters have
+/// no business in fetched content.
+const MARKUP: [&str; 19] = [
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
+    "<|endoftext|>",
+    "[inst]",
+    "[/inst]",
+    "<<sys>>",
+    "<system-reminder>",
+    "</system-reminder>",
+    "<function_calls>",
+    "</function_calls>",
+    "<invoke name=",
+    "<tool_use>",
+    "</tool_use>",
+    "<tool_call>",
+    "</tool_call>",
+    "<tool_result>",
+];
+
+/// JSON keys and values that open a tool call.
+const TOOL_CALL_KEYS: [&str; 4] = [
+    "\"tool_use\"",
+    "\"tool_calls\"",
+    "\"tool_call\"",
+    "\"function_call\"",
+];
+/// What a tool call names besides the tool.
+const TOOL_CALL_ARGUMENTS: [&str; 3] = ["\"input\"", "\"arguments\"", "\"parameters\""];
+/// Bytes after a [`TOOL_CALL_KEYS`] match looked at for `"name"` and the arguments.
+const TOOL_CALL_REACH: usize = 400;
+
+/// Adds the markup and tool-call JSON hits on the lines of `text` outside code fences, at most
+/// one of each kind per line.
+pub(super) fn markup(text: &str, found: &mut Scan) {
+    let mut fence: Option<char> = None;
+    let mut start = 0_usize;
+    for (index, line) in text.split('\n').enumerate() {
+        let number = index.saturating_add(1);
+        let line_start = start;
+        start = start.saturating_add(line.len()).saturating_add(1);
+        let trimmed = line.trim_start();
+        if let Some(open) = fence {
+            if starts_with_fence(trimmed) == Some(open) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(open) = starts_with_fence(trimmed) {
+            fence = Some(open);
+            continue;
+        }
+        let lower = line.to_ascii_lowercase();
+        if MARKUP.iter().any(|needle| lower.contains(needle)) {
+            found.add(Hit {
+                kind: Kind::Markup,
+                line: number,
+            });
+        }
+        if tool_call_on_line(text, line_start, line) {
+            found.add(Hit {
+                kind: Kind::ToolCallJson,
+                line: number,
+            });
+        }
+    }
+}
+
+/// The fence character when `trimmed` opens or closes a code fence (three backticks or tildes).
+fn starts_with_fence(trimmed: &str) -> Option<char> {
+    if trimmed.starts_with("```") {
+        Some('`')
+    } else if trimmed.starts_with("~~~") {
+        Some('~')
+    } else {
+        None
+    }
+}
+
+/// Whether `line`, which starts at byte `line_start` of `text`, opens a tool call: a
+/// [`TOOL_CALL_KEYS`] match followed within [`TOOL_CALL_REACH`] bytes by `"name"` and one of
+/// [`TOOL_CALL_ARGUMENTS`].
+fn tool_call_on_line(text: &str, line_start: usize, line: &str) -> bool {
+    TOOL_CALL_KEYS.iter().any(|key| {
+        line.match_indices(key).any(|(offset, _)| {
+            let from = line_start.saturating_add(offset);
+            let to = text.floor_char_boundary(from.saturating_add(TOOL_CALL_REACH));
+            text.get(from..to).is_some_and(|window| {
+                window.contains("\"name\"")
+                    && TOOL_CALL_ARGUMENTS
+                        .iter()
+                        .any(|arguments| window.contains(arguments))
+            })
+        })
+    })
+}
+
+/// Adds a hit for each line that holds a Unicode tag character or a bidi embedding, override
+/// or isolate control, or two or more zero-width characters. A zero-width joiner or non-joiner
+/// between two characters outside ASCII (emoji sequences, Persian, Indic scripts) is not
+/// counted, nor is a byte-order mark that starts the text.
+pub(super) fn hidden_characters(text: &str, found: &mut Scan) {
+    for (index, line) in text.split('\n').enumerate() {
+        let mut zero_width = 0_usize;
+        let mut hard = false;
+        let mut previous: Option<char> = None;
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {
+                    hard = true;
+                }
+                '\u{200C}' | '\u{200D}' => {
+                    let joins = |c: Option<char>| c.is_some_and(|c| !c.is_ascii());
+                    if !(joins(previous) && joins(chars.peek().copied())) {
+                        zero_width = zero_width.saturating_add(1);
+                    }
+                }
+                '\u{FEFF}' if index == 0 && previous.is_none() => {}
+                '\u{200B}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' => {
+                    zero_width = zero_width.saturating_add(1);
+                }
+                _ => {}
+            }
+            previous = Some(c);
+        }
+        if hard || zero_width >= 2 {
+            found.add(Hit {
+                kind: Kind::HiddenCharacters,
+                line: index.saturating_add(1),
+            });
+        }
+    }
+}

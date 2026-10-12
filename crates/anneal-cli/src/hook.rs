@@ -15,6 +15,7 @@ pub(crate) mod clef_fake;
 pub(crate) mod completeness;
 pub(crate) mod fast_check;
 pub(crate) mod guard;
+pub(crate) mod injection_scan;
 pub(crate) mod merge_gate;
 pub(crate) mod preconditions;
 mod prompt;
@@ -82,11 +83,14 @@ pub enum HookName {
     /// `PreToolUse` (Bash): deny `gh pr merge` without a fresh tests-verified verdict, and
     /// without a review verdict unless the skip-rule skips the change; fails closed
     MergeGate,
+    /// `PostToolBatch`: note instruction-shaped text in `Read` and `WebFetch` results; never
+    /// blocks
+    InjectionScan,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
@@ -96,6 +100,7 @@ impl HookName {
         Self::Route,
         Self::RuledBefore,
         Self::MergeGate,
+        Self::InjectionScan,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -111,6 +116,7 @@ impl HookName {
             Self::Route => "route",
             Self::RuledBefore => "ruled-before",
             Self::MergeGate => "merge-gate",
+            Self::InjectionScan => "injection-scan",
         }
     }
 
@@ -125,7 +131,8 @@ impl HookName {
             | Self::Completeness
             | Self::Status
             | Self::Route
-            | Self::RuledBefore => false,
+            | Self::RuledBefore
+            | Self::InjectionScan => false,
             Self::Guard | Self::Preconditions | Self::MergeGate => true,
         }
     }
@@ -167,6 +174,7 @@ where
             ruled_before::run(env, &UreqTransport::new(), &SystemClock::new(), out)
         }
         HookName::MergeGate => merge_gate::run(env, out),
+        HookName::InjectionScan => injection_scan::run(env, out),
     }
 }
 
