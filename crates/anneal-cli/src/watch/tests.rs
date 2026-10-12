@@ -222,6 +222,55 @@ fn exit_6_when_the_merge_gate_would_deny_the_head() {
 }
 
 #[test]
+fn exit_6_for_a_draft_even_when_the_merge_gate_would_allow_it() {
+    let ran = run(
+        &["pr", "7"],
+        &green("pull-draft.json"),
+        &FakeGate::default(),
+    );
+
+    assert_eq!(ran.code, 6);
+    assert_eq!(
+        ran.envelope["data"]["blockers"],
+        json!([{"kind": "draft", "pr": 7, "url": "https://github.com/octo/app/pull/7"}])
+    );
+    assert_eq!(keys(&ran.envelope), ["watch/draft:7"]);
+}
+
+#[test]
+fn exit_6_naming_the_merge_state_when_github_still_blocks_once_everything_passed() {
+    let ran = run(
+        &["pr", "7"],
+        &green("pull-blocked.json"),
+        &FakeGate::default(),
+    );
+
+    assert_eq!(ran.code, 6);
+    assert_eq!(
+        ran.envelope["data"]["blockers"],
+        json!([{
+            "kind": "merge_state",
+            "pr": 7,
+            "state": "blocked",
+            "url": "https://github.com/octo/app/pull/7",
+        }])
+    );
+    assert_eq!(keys(&ran.envelope), ["watch/merge-state:blocked"]);
+}
+
+#[test]
+fn exit_5_while_github_reports_the_pull_request_unstable() {
+    let ran = run(
+        &["pr", "7", "--timeout", "30"],
+        &green("pull-unstable.json"),
+        &FakeGate::default(),
+    );
+
+    assert_eq!(ran.code, 5);
+    assert_eq!(keys(&ran.envelope), ["watch/pending:merge-state:unstable"]);
+}
+
+#[test]
 fn exit_7_with_nothing_on_stdout_when_gh_cannot_be_queried() {
     let gh = FakeGh::new().failing("", "gh: HTTP 401: Bad credentials");
 
@@ -264,6 +313,7 @@ fn a_pull_request_still_running_is_polled_again_until_clear() {
 #[test]
 fn a_commit_s_failing_checks_exit_4_naming_the_ref_and_repository() {
     let gh = FakeGh::new()
+        .route("/commits/main?", &["commit.json"])
         .route("/check-runs", &["check-runs-cancelled.json"])
         .route("/status", &["status-failure.json"]);
 
@@ -286,6 +336,7 @@ fn a_commit_s_failing_checks_exit_4_naming_the_ref_and_repository() {
 #[test]
 fn a_commit_with_passing_checks_exits_0_and_never_asks_the_gate() {
     let gh = FakeGh::new()
+        .route("/commits/main?", &["commit.json"])
         .route("/check-runs", &["check-runs-neutral.json"])
         .route("/status", &["status-none.json"]);
     let gate = FakeGate::denying("never asked");

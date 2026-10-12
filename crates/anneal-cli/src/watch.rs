@@ -163,6 +163,13 @@ pub enum WatchError {
         /// The target, as `pull request 7` or `commit main`.
         what: String,
     },
+    /// A ref that is empty, `.` or `..`: as a path segment it would name another endpoint, and
+    /// git allows none of them as a ref.
+    #[error("{git_ref:?} is not a branch, tag or commit")]
+    BadRef {
+        /// The ref as given.
+        git_ref: String,
+    },
     /// More items than are read, so the target cannot be judged whole.
     #[error("more {what} than the {limit} anneal reads")]
     TooMany {
@@ -182,6 +189,7 @@ impl WatchError {
             | Self::Json { .. }
             | Self::Closed { .. }
             | Self::Missing { .. }
+            | Self::BadRef { .. }
             | Self::TooMany { .. } => exit_codes::WATCH_QUERY,
         }
     }

@@ -58,6 +58,26 @@ fn when_graphql_is_refused_the_proxy_s_thread_route_is_read_instead() {
 }
 
 #[test]
+fn a_proxy_list_as_long_as_the_cap_fails_since_it_may_have_been_cut_short() {
+    let gh = FakeGh::new()
+        .failing("graphql", REFUSED)
+        .route("/ccr/review_threads", &["ccr-threads-too-many.json"]);
+
+    let result = unresolved(&gh, 7, PR_URL);
+
+    assert!(
+        matches!(
+            result,
+            Err(WatchError::TooMany {
+                what: "review threads",
+                limit: MAX_THREADS
+            })
+        ),
+        "the route gives no total, so 100 threads may be the first 100 of more: {result:?}"
+    );
+}
+
+#[test]
 fn when_both_fail_the_graphql_failure_is_reported() {
     let gh = FakeGh::new()
         .failing("graphql", REFUSED)

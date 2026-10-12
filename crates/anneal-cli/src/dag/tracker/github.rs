@@ -100,20 +100,6 @@ impl FromStr for Repo {
     }
 }
 
-impl Repo {
-    /// The owner, before the `/`.
-    #[must_use]
-    pub fn owner(&self) -> &str {
-        &self.owner
-    }
-
-    /// The repository's name, after the `/`.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
 impl fmt::Display for Repo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner, self.name)

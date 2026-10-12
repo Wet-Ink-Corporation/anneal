@@ -2,7 +2,7 @@
 //!
 //! A blocker settles the watch at once; pending work makes it poll again. The exit code of a
 //! blocked watch is the lowest code among its blockers (conflict 2, threads 3, checks and
-//! deployments 4, gate 6), and every blocker is listed.
+//! deployments 4, draft, merge state and the merge gate 6), and every blocker is listed.
 
 use serde::Serialize;
 
@@ -72,6 +72,25 @@ pub(crate) enum Blocker {
         /// Its log or target page.
         url: Option<String>,
     },
+    /// The pull request is a draft, which GitHub does not merge.
+    Draft {
+        /// The pull request number.
+        pr: u64,
+        /// Its web address.
+        url: String,
+    },
+    /// GitHub refuses the merge for a reason the checks and threads read do not show: branch
+    /// protection still `blocked` once every check passed and every thread is resolved (a
+    /// required review, or a required check that never reported), `behind`, or a state this
+    /// version does not know.
+    MergeState {
+        /// The pull request number.
+        pr: u64,
+        /// GitHub's `mergeable_state`.
+        state: String,
+        /// Its web address.
+        url: String,
+    },
     /// The merge gate would deny a merge of the head.
     Gate {
         /// The gate's check id (`no-verdict`, `stale`, `review`, ...).
@@ -88,7 +107,9 @@ impl Blocker {
             Self::Conflict { .. } => exit_codes::WATCH_CONFLICT,
             Self::Thread { .. } => exit_codes::WATCH_THREADS,
             Self::Check { .. } | Self::Deployment { .. } => exit_codes::WATCH_CHECKS,
-            Self::Gate { .. } => exit_codes::WATCH_GATE,
+            Self::Draft { .. } | Self::MergeState { .. } | Self::Gate { .. } => {
+                exit_codes::WATCH_GATE
+            }
         }
     }
 
@@ -121,6 +142,19 @@ impl Blocker {
                 format!("watch/deployment:{id}"),
                 format!("deployment {id} is {state}{}", at(url.as_deref())),
             ),
+            Self::Draft { pr, url } => Finding::new(
+                format!("watch/draft:{pr}"),
+                format!(
+                    "pull request {pr} is a draft ({url}); mark it ready with gh pr ready {pr}"
+                ),
+            ),
+            Self::MergeState { pr, state, url } => Finding::new(
+                format!("watch/merge-state:{state}"),
+                format!(
+                    "GitHub will not merge pull request {pr} (mergeable_state {state}, {url}): \
+                     a branch protection rule, such as a required review or check, is not met"
+                ),
+            ),
             Self::Gate { check, reason } => {
                 Finding::new(format!("watch/gate:{check}"), reason.as_str())
             }
@@ -143,6 +177,12 @@ pub(crate) enum Pending {
     NoChecks,
     /// GitHub has not computed whether the pull request merges cleanly.
     Mergeable,
+    /// GitHub does not yet allow the merge (`mergeable_state` `blocked` while checks still run,
+    /// or `unstable`).
+    MergeState {
+        /// GitHub's `mergeable_state`.
+        state: String,
+    },
     /// A deployment not yet finished, or with no status yet.
     Deployment {
         /// The deployment id.
@@ -167,6 +207,10 @@ impl Pending {
             Self::Mergeable => Finding::new(
                 "watch/pending:mergeable",
                 "GitHub has not yet computed whether the pull request merges cleanly",
+            ),
+            Self::MergeState { state } => Finding::new(
+                format!("watch/pending:merge-state:{state}"),
+                format!("GitHub still reports the pull request {state}"),
             ),
             Self::Deployment { id, state } => Finding::new(
                 format!("watch/pending:deployment:{id}"),

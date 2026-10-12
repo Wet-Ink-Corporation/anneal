@@ -30,6 +30,7 @@ case "$*" in
   *graphql*) cat "$FAKE_GH_THREADS" ;;
   */check-runs*) cat "$FAKE_GH_CHECKS" ;;
   */status*) cat "$FAKE_GH_STATUS" ;;
+  */commits/*) cat "$FAKE_GH_COMMIT" ;;
   */pulls/*)
     cat "$FAKE_GH_PULL"
     if [ -n "$FAKE_GH_INTERRUPT" ]; then
@@ -70,7 +71,8 @@ impl FakeGhDir {
             .env("PATH", path)
             .env_remove("FAKE_GH_FAIL")
             .env_remove("FAKE_GH_INTERRUPT")
-            .env_remove("GH_REPO");
+            .env_remove("GH_REPO")
+            .env("FAKE_GH_COMMIT", fixture_path("commit.json"));
         for (variable, file) in fixtures {
             command.env(variable, fixture_path(file));
         }

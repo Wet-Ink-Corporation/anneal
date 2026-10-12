@@ -275,6 +275,7 @@ fn more_checks_than_are_read_fail_rather_than_judge_part_of_them() {
 #[test]
 fn a_commit_s_failed_check_run_and_status_block_and_its_ref_is_escaped_in_the_path() {
     let gh = FakeGh::new()
+        .route("/commits/feature%2Fx%20%7Bowner%7D?", &["commit.json"])
         .route("/check-runs", &["check-runs-cancelled.json"])
         .route("/status", &["status-failure.json"]);
     let repo = "octo/app".parse().expect("valid");
@@ -301,14 +302,17 @@ fn a_commit_s_failed_check_run_and_status_block_and_its_ref_is_escaped_in_the_pa
     );
     assert_eq!(
         gh.calls.borrow().first().map(String::as_str),
-        Some("repos/octo/app/commits/feature%2Fx%20%7Bowner%7D/check-runs?per_page=100"),
+        Some("repos/octo/app/commits/feature%2Fx%20%7Bowner%7D?per_page=1"),
         "a ref can neither leave its path segment nor fill a gh placeholder"
     );
 }
 
 #[test]
 fn a_ref_that_names_no_commit_is_a_query_error() {
-    let gh = FakeGh::new().missing("/check-runs").missing("/status");
+    let gh = FakeGh::new()
+        .missing("/commits/no-such-branch?")
+        .missing("/check-runs")
+        .missing("/status");
 
     let result = CommitWatch {
         gh: &gh,
@@ -321,4 +325,173 @@ fn a_ref_that_names_no_commit_is_a_query_error() {
         matches!(&result, Err(WatchError::Missing { what }) if what == "commit no-such-branch"),
         "{result:?}"
     );
+}
+
+#[test]
+fn a_commit_watch_resolves_its_ref_once_and_reads_both_lists_by_that_commit() {
+    let gh = FakeGh::new()
+        .route("/commits/main?", &["commit.json"])
+        .route("/check-runs", &["check-runs-pass.json"])
+        .route("/status", &["status-pass.json"]);
+
+    let snapshot = CommitWatch {
+        gh: &gh,
+        repo: RepoRef::Current,
+        git_ref: "main",
+    }
+    .poll()
+    .expect("the fixtures read");
+
+    assert_eq!(snapshot.head.as_deref(), Some(HEAD), "the resolved commit");
+    assert_eq!(
+        *gh.calls.borrow(),
+        vec![
+            "repos/{owner}/{repo}/commits/main?per_page=1".to_owned(),
+            format!("repos/{{owner}}/{{repo}}/commits/{HEAD}/check-runs?per_page=100"),
+            format!("repos/{{owner}}/{{repo}}/commits/{HEAD}/status?per_page=100"),
+        ],
+        "a ref that moves between the two reads cannot mix two commits"
+    );
+}
+
+#[test]
+fn an_empty_or_dot_ref_is_refused_before_anything_is_read() {
+    for git_ref in ["", ".", ".."] {
+        let gh = FakeGh::new();
+
+        let result = CommitWatch {
+            gh: &gh,
+            repo: RepoRef::Current,
+            git_ref,
+        }
+        .poll();
+
+        assert!(
+            matches!(&result, Err(WatchError::BadRef { git_ref: refused }) if refused == git_ref),
+            "{git_ref:?}: {result:?}"
+        );
+        assert!(gh.calls.borrow().is_empty(), "{git_ref:?} reached gh");
+        assert_eq!(
+            result.map_err(|error| error.code().value()).err(),
+            Some(7),
+            "a query error"
+        );
+    }
+}
+
+fn merge_state(state: &str) -> Blocker {
+    Blocker::MergeState {
+        pr: 7,
+        state: state.to_owned(),
+        url: PR_URL.to_owned(),
+    }
+}
+
+#[test]
+fn a_draft_blocks_as_a_gate_and_the_merge_gate_is_not_asked() {
+    let gate = FakeGate::default();
+
+    let snapshot = poll_pr(&green("pull-draft.json"), &gate).expect("the fixtures read");
+
+    assert_eq!(
+        snapshot.blockers,
+        vec![Blocker::Draft {
+            pr: 7,
+            url: PR_URL.to_owned()
+        }]
+    );
+    assert!(gate.judged.borrow().is_empty(), "a draft cannot be merged");
+}
+
+#[test]
+fn blocked_while_checks_still_run_is_pending() {
+    let gh = pull_request(
+        "pull-blocked.json",
+        "check-runs-running.json",
+        "status-pass.json",
+        "threads-none.json",
+    );
+
+    let snapshot = poll_pr(&gh, &FakeGate::default()).expect("the fixtures read");
+
+    assert_eq!(snapshot.blockers, Vec::new());
+    assert!(
+        snapshot.pending.contains(&Pending::MergeState {
+            state: "blocked".to_owned()
+        }),
+        "{:?}",
+        snapshot.pending
+    );
+}
+
+#[test]
+fn blocked_once_every_check_passed_and_no_thread_is_open_is_branch_protection() {
+    let gate = FakeGate::default();
+
+    let snapshot = poll_pr(&green("pull-blocked.json"), &gate).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (vec![merge_state("blocked")], Vec::new())
+    );
+    assert!(gate.judged.borrow().is_empty(), "GitHub already refuses it");
+}
+
+#[test]
+fn unstable_is_pending_even_when_every_check_read_passed() {
+    let gate = FakeGate::default();
+
+    let snapshot = poll_pr(&green("pull-unstable.json"), &gate).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (
+            Vec::new(),
+            vec![Pending::MergeState {
+                state: "unstable".to_owned()
+            }]
+        )
+    );
+    assert!(gate.judged.borrow().is_empty(), "the gate waits");
+}
+
+#[test]
+fn dirty_is_a_conflict_even_before_mergeable_is_computed() {
+    let snapshot = poll_pr(&green("pull-dirty-unknown.json"), &FakeGate::default())
+        .expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (
+            vec![Blocker::Conflict {
+                pr: 7,
+                url: PR_URL.to_owned()
+            }],
+            Vec::new()
+        )
+    );
+}
+
+#[test]
+fn has_hooks_is_clear_and_judged_by_the_gate() {
+    let gate = FakeGate::default();
+
+    let snapshot = poll_pr(&green("pull-has-hooks.json"), &gate).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers.len(), snapshot.pending.len()),
+        (0, 0),
+        "has_hooks merges as clean does"
+    );
+    assert_eq!(gate.judged.borrow().len(), 1, "the gate saw the head");
+}
+
+#[test]
+fn any_other_merge_state_blocks_as_a_gate_naming_it() {
+    let gate = FakeGate::default();
+
+    let snapshot = poll_pr(&green("pull-behind.json"), &gate).expect("the fixtures read");
+
+    assert_eq!(snapshot.blockers, vec![merge_state("behind")]);
+    assert!(gate.judged.borrow().is_empty(), "GitHub already refuses it");
 }

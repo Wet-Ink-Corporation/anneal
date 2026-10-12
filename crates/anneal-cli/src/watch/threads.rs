@@ -5,7 +5,8 @@
 //! route of their GitHub proxy (`repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`). When the
 //! GraphQL query fails, that route is read instead; when it fails too (as it does anywhere but
 //! behind that proxy), the GraphQL failure is the error. At most [`MAX_THREADS`] threads are
-//! read; more fail the poll rather than judge part of them (H-13).
+//! read; more fail the poll rather than judge part of them (H-13). The proxy's list carries no
+//! total, so a list of [`MAX_THREADS`] or more from it fails too: it may have been cut short.
 
 use serde::Deserialize;
 
@@ -95,7 +96,8 @@ fn from_proxy(body: &[u8], pr_url: &str) -> Result<Vec<Blocker>, WatchError> {
             what: "the review threads",
             source,
         })?;
-    if threads.len() > MAX_THREADS {
+    // The route gives no total, so a full list may be the first page of a longer one.
+    if threads.len() >= MAX_THREADS {
         return Err(too_many());
     }
     Ok(threads
