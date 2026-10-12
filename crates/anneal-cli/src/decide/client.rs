@@ -36,7 +36,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(2);
 /// How many answered decisions a point runs in shadow before `enforce` takes effect.
 pub const AUTO_SHADOW_DECISIONS: u64 = 50;
 
-/// The Workers AI REST base; the URL is `<base>/<account>/ai/run/<model>`.
+/// The Workers AI REST base; the URL is `<base>/<account>/ai/run/<model>`. A loopback
+/// [`ClefConfig::endpoint`] replaces it in tests.
 pub const ACCOUNTS_URL: &str = "https://api.cloudflare.com/client/v4/accounts";
 
 /// Most options of a choice (H-13).
@@ -367,7 +368,8 @@ impl<'s> Call<'_, 's> {
         };
         let request = ClefRequest {
             url: format!(
-                "{ACCOUNTS_URL}/{}/ai/run/{}",
+                "{}/{}/ai/run/{}",
+                config.endpoint().unwrap_or(ACCOUNTS_URL),
                 self.account,
                 self.rules.model()
             ),

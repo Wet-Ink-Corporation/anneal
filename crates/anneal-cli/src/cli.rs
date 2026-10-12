@@ -16,7 +16,7 @@ use crate::calibrate::{self, CalibrateArgs, CalibrateEnv};
 use crate::command::CommandName;
 use crate::dag::{self, DagArgs};
 use crate::decide::clock::SystemClock;
-use crate::decide::transport::NoHttpClient;
+use crate::decide::transport::http::UreqTransport;
 use crate::decide::{self, DecideArgs, DecideEnv};
 use crate::error::CliError;
 use crate::eval::{self, EvalArgs};
@@ -320,12 +320,10 @@ fn dispatch<O: Write, E: Write>(
 /// `anneal decide` with the process's environment, the system clock and the transport.
 fn run_decide<O: Write>(args: &DecideArgs, out: &mut O) -> Result<Code, CliError> {
     let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-    // No HTTP client is a dependency yet (H-16, pending): every call is unreachable, so
-    // `decide` exits 5 and callers apply their fallback.
     let env = DecideEnv {
         cwd: &cwd,
         lookup: |var: &str| std::env::var_os(var),
-        transport: &NoHttpClient,
+        transport: &UreqTransport::new(),
         clock: &SystemClock::new(),
     };
     decide::run(args, &env, out)
@@ -335,12 +333,10 @@ fn run_decide<O: Write>(args: &DecideArgs, out: &mut O) -> Result<Code, CliError
 /// the transport `grill classify` asks Clef D7 through.
 fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> {
     let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-    // No HTTP client is a dependency yet (H-16, pending): D7 is unreachable, so `classify`
-    // logs the miss and leaves the tree as the model wrote it.
     let env = DecideEnv {
         cwd: &cwd,
         lookup: |var: &str| std::env::var_os(var),
-        transport: &NoHttpClient,
+        transport: &UreqTransport::new(),
         clock: &SystemClock::new(),
     };
     grill::run(args, &env, out)

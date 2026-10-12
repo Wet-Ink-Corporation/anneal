@@ -4,6 +4,7 @@ mod calibrate;
 mod cli;
 mod dag;
 mod decide;
+mod decide_http;
 mod design_tree_schema;
 mod dry_run;
 mod eval_routing;

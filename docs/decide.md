@@ -46,14 +46,23 @@ ignored. A missing probability, a number outside 0..=1, `success: false` or a bo
 JSON is a bad response, and so are noul or choice probabilities that do not sum to 1 within
 0.05 (noul's `no` may be left out, as 1 - `yes`; when given, it counts).
 
-**No HTTP client yet.** Adding one is a pending dependency decision (H-16; ureq 3 with rustls is
-the recommended option), so the binary is built with a transport that reports every call as
-unreachable ("no HTTP client configured (pending dependency decision)"). Until it lands,
-`decide` with an account always exits 5. Every point starts in shadow and unanswered calls do
-not count toward the 50 that end it, so no caller acts on Clef yet: the guard's D1 logs an
-unreachable row and leaves its verdict unchanged. The network sits behind the `Transport` port
-(`decide::transport`), so the adapter is one new module wired in `cli` (for `decide`) and in
-`hook::guard::run` (for D1).
+**The HTTP transport.** The binary reaches Workers AI through `decide::transport::http`, a
+ureq 3 adapter of the `Transport` port with rustls and Mozilla's bundled roots (`webpki-roots`),
+wired in `cli` (for `decide` and `grill classify`) and in the guard, route and ruled-before
+hooks. Each call is one `POST` bounded by the 2 s timeout from DNS to the last body byte. It
+follows no redirect (a 3xx is a bad response, so the token never goes to another host), takes
+no proxy from `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`, and reads at most 64 KiB of body
+(more is a bad response). A non-2xx status is a bad response (`HTTP <code>`); a refused or
+failed connection, DNS or TLS failure is unreachable; past the timeout is timed out. Reasons
+are fixed strings: no error, row or envelope holds the token, the URL or ureq's own message.
+Every point still starts in shadow, so no caller acts on Clef until a point has 50 answered
+decisions and is configured `enforce`.
+
+`ANNEAL_CLEF_URL` replaces the accounts URL (`https://api.cloudflare.com/client/v4/accounts`)
+for tests. It is accepted only as `http://` on `127.0.0.1`, `[::1]` or `localhost`, with an
+optional port and path; any other value is a malformed configuration (exit 5 with the
+fallback, nothing sent or logged). The binary tests set it to `http://127.0.0.1:0`, which
+refuses at once, or to a fake Workers AI on a loopback port, so no test reaches the network.
 
 ## Configuration
 

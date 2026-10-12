@@ -5,6 +5,10 @@
 //! `[A-Za-z0-9_]` turned into `_`. An empty account means Clef is off. The mode is
 //! `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`, spaces around the
 //! parts ignored; empty or unset is `shadow`, the manifest's default.
+//!
+//! [`ENDPOINT_VAR`] (`ANNEAL_CLEF_URL`) replaces the Workers AI accounts URL for tests. It is
+//! accepted only as `http://` on `127.0.0.1`, `[::1]` or `localhost`, so it cannot send the
+//! token off the machine; any other value is [`ConfigError::Endpoint`].
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -21,6 +25,12 @@ pub const ACCOUNT_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID";
 pub const TOKEN_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN";
 /// `userConfig.clef_mode`: `off`, `shadow` or `enforce`, with per-point overrides.
 pub const MODE_VAR: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
+
+/// Test-only override of the Workers AI accounts URL; loopback `http://` only.
+pub const ENDPOINT_VAR: &str = "ANNEAL_CLEF_URL";
+
+/// The hosts [`ENDPOINT_VAR`] may name.
+const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "[::1]", "localhost"];
 
 /// Longest account id.
 const MAX_ACCOUNT_BYTES: usize = 64;
@@ -85,6 +95,11 @@ pub enum ConfigError {
         /// The value as set.
         value: String,
     },
+    /// The endpoint override is not a loopback `http://` URL.
+    #[error(
+        "{ENDPOINT_VAR} must be http:// on 127.0.0.1, [::1] or localhost, with an optional port and path"
+    )]
+    Endpoint,
 }
 
 /// The account, token and mode a decision runs with.
@@ -94,6 +109,7 @@ pub struct ClefConfig {
     token: Option<ApiToken>,
     global: Mode,
     overrides: BTreeMap<Point, Mode>,
+    endpoint: Option<String>,
 }
 
 impl ClefConfig {
@@ -101,7 +117,8 @@ impl ClefConfig {
     ///
     /// # Errors
     /// [`ConfigError`] for a value that is not UTF-8, an account that is not alphanumeric, a
-    /// token unfit for a header, or a mode that does not parse.
+    /// token unfit for a header, a mode that does not parse, or an endpoint override that is
+    /// not a loopback `http://` URL.
     pub fn from_env(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
         let read = |var: &'static str| -> Result<Option<String>, ConfigError> {
             match lookup(var) {
@@ -127,11 +144,15 @@ impl ClefConfig {
             None => (Mode::Shadow, BTreeMap::new()),
             Some(value) => parse_mode(&value).ok_or(ConfigError::Mode { value })?,
         };
+        let endpoint = read(ENDPOINT_VAR)?
+            .map(|value| loopback_base(&value).ok_or(ConfigError::Endpoint))
+            .transpose()?;
         Ok(Self {
             account,
             token,
             global,
             overrides,
+            endpoint,
         })
     }
 
@@ -147,11 +168,40 @@ impl ClefConfig {
         self.token.as_ref()
     }
 
+    /// The test endpoint that replaces the Workers AI accounts URL, if [`ENDPOINT_VAR`] is set:
+    /// a loopback `http://` base without a trailing `/`.
+    #[must_use]
+    pub fn endpoint(&self) -> Option<&str> {
+        self.endpoint.as_deref()
+    }
+
     /// The configured mode of `point`: its override, else the global mode.
     #[must_use]
     pub fn mode(&self, point: Point) -> Mode {
         self.overrides.get(&point).copied().unwrap_or(self.global)
     }
+}
+
+/// `value` without one trailing `/`, when it is `http://`, a loopback host, an optional port
+/// (1 to 5 digits, at most 65535) and an optional path of `[A-Za-z0-9._~/-]`; else `None`.
+fn loopback_base(value: &str) -> Option<String> {
+    let rest = value.strip_prefix("http://")?;
+    let (authority, path) = rest
+        .find('/')
+        .map_or((rest, ""), |slash| rest.split_at(slash));
+    let port = LOOPBACK_HOSTS
+        .into_iter()
+        .find_map(|host| authority.strip_prefix(host))?;
+    let port_ok = port.is_empty()
+        || port.strip_prefix(':').is_some_and(|digits| {
+            (1..=5).contains(&digits.len())
+                && digits.bytes().all(|byte| byte.is_ascii_digit())
+                && digits.parse::<u16>().is_ok()
+        });
+    let path_ok = path
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"._~/-".contains(&byte));
+    (port_ok && path_ok).then(|| value.strip_suffix('/').unwrap_or(value).to_owned())
 }
 
 /// `<global>[,<point>=<mode>]...`, or `None` when it does not parse.
@@ -172,7 +222,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::ffi::OsString;
 
-    use super::{ACCOUNT_VAR, ClefConfig, ConfigError, MODE_VAR, Mode, TOKEN_VAR};
+    use super::{ACCOUNT_VAR, ClefConfig, ConfigError, ENDPOINT_VAR, MODE_VAR, Mode, TOKEN_VAR};
     use crate::decide::point::Point;
     use crate::decide::transport::ApiToken;
 
@@ -276,6 +326,67 @@ mod tests {
         assert!(matches!(error, ConfigError::Token));
         assert!(!error.to_string().contains(leaked), "{error}");
         assert!(!format!("{error:?}").contains(leaked), "{error:?}");
+    }
+
+    #[test]
+    fn without_an_endpoint_override_there_is_none() -> Result<(), ConfigError> {
+        assert_eq!(config(&[])?.endpoint(), None);
+        assert_eq!(config(&[(ENDPOINT_VAR, "")])?.endpoint(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn a_loopback_http_endpoint_is_taken_without_a_trailing_slash() -> Result<(), ConfigError> {
+        for (value, base) in [
+            ("http://127.0.0.1:8080", "http://127.0.0.1:8080"),
+            ("http://127.0.0.1:0/", "http://127.0.0.1:0"),
+            ("http://[::1]:9/accounts", "http://[::1]:9/accounts"),
+            ("http://localhost", "http://localhost"),
+            (
+                "http://localhost:65535/a/b-c_d.e/",
+                "http://localhost:65535/a/b-c_d.e",
+            ),
+        ] {
+            assert_eq!(
+                config(&[(ENDPOINT_VAR, value)])?.endpoint(),
+                Some(base),
+                "{value}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_endpoint_off_the_loopback_host_is_refused() {
+        for value in [
+            "https://api.cloudflare.com/client/v4/accounts",
+            "https://127.0.0.1:8080",
+            "http://127.0.0.2",
+            "http://127.0.0.1.example.com",
+            "http://localhost.example.com/",
+            "http://localhost@example.com",
+            "http://user@127.0.0.1",
+            "http://example.com/127.0.0.1",
+            "http://127.0.0.1:99999",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:8x",
+            "http://[::1",
+            "http://127.0.0.1/a b",
+            "http://127.0.0.1/a?b",
+            "http://127.0.0.1/a#b",
+            "ftp://127.0.0.1",
+            "127.0.0.1:8080",
+        ] {
+            assert!(
+                matches!(config(&[(ENDPOINT_VAR, value)]), Err(ConfigError::Endpoint)),
+                "{value:?} is refused"
+            );
+        }
+    }
+
+    #[test]
+    fn the_endpoint_variable_is_anneals_own() {
+        assert_eq!(ENDPOINT_VAR, "ANNEAL_CLEF_URL");
     }
 
     #[test]

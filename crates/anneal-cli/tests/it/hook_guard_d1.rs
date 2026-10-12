@@ -1,5 +1,6 @@
-//! Clef D1 in `anneal hook guard` through the built binary, whose only transport reports every
-//! call unreachable: shadow mode logs and allows, enforce mode falls back to an ask.
+//! Clef D1 in `anneal hook guard` through the built binary, with Clef at a loopback port that
+//! refuses (`anneal_in`), so every call is unreachable: shadow mode logs and allows, enforce
+//! mode falls back to an ask.
 
 use std::error::Error;
 use std::fs;

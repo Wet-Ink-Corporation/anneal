@@ -36,6 +36,9 @@ thiserror = { version = "2.0.21", default-features = false, features = ["std"] }
 time = { version = "0.3.55", default-features = false, features = ["std", "formatting", "parsing"] }
 # A current-thread runtime drives happenstance's async API from synchronous code.
 tokio = { version = "1.53.2", default-features = false, features = ["rt"] }
+# Clef's HTTP transport (#28): blocking, rustls with bundled Mozilla roots, no gzip or proxy
+# features. Ryan, 2026-10-12.
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"                                  # H-01

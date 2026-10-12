@@ -109,9 +109,8 @@ An allowed command gets no output. A denied one gets
 ledger (`point` is `guard.<rule>`), recorded within the hook's budget (git 1 s, 500 ms per
 ledger statement). Unreadable input, and commands it cannot read or model, are denied. What
 the denylist does not decide is asked of Clef D1 (`noul destructive_or_irreversible`, #30) in
-process, its command redacted: in shadow mode (the default, and the only mode in effect until the
-HTTP client lands: `NoHttpClient` makes every call unreachable, and unanswered calls do not end
-the shadow period) the would-be action is
+process, its command redacted: in shadow mode (the default, and the mode in effect for each
+point's first 50 answered decisions, even when `enforce` is configured) the would-be action is
 logged and the verdict is unchanged; in enforce mode 0.90 or more denies (rule `destructive`),
 0.40 or more asks (`"permissionDecision": "ask"`), less defers, and no answer asks; D1 set to
 enforce that cannot run asks, and an answer that cannot be logged never becomes an allow. With
@@ -290,8 +289,7 @@ Shared behaviour:
   point's rule gives its acting action (`hint`, `surface`). The fixed wording comes first and
   the volatile part (skill, ruling) last.
 - **No answer** (unreachable, timed out, bad response): the row is logged and the hook is
-  silent. The binary has no HTTP client yet, so today every call is unreachable. Each call is
-  bounded by `decide`'s 2 s timeout.
+  silent. Each call is bounded by `decide`'s 2 s timeout.
 - **Not logged**: an answer whose row (or answered count) could not be written is never acted
   on, in enforce mode too: nothing is injected, route keeps nothing to label, and the failure is
   the hook's `ERROR` line. Unlike the guard, a prompt hook has no safe action to keep, so silence

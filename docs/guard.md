@@ -262,10 +262,9 @@ says is left rather than assumed. A lock held past the first statement can still
 | D1 cannot run (the anneal home, the plugin's thresholds file, `counts.json`, the log or the clock fails), configured `enforce` | an ask decision naming the failure (`Clef D1 could not run`) |
 | D1 cannot run, any other mode | as without D1 (nothing to report it in: an allow has no output; `anneal decide` with the same environment shows the error) |
 
-**Nothing changes for users yet.** The only transport is `NoHttpClient` (no HTTP client is a
-dependency yet, `docs/decide.md`), so a configured Clef is always unreachable; unanswered calls
-do not count toward the shadow period, so D1 stays in shadow and the guard's verdict is the
-denylist's. Enforcing D1 needs the HTTP client and 50 answered decisions.
+**Shadow first.** D1 reaches Workers AI over HTTPS (`docs/decide.md`), and every answer is
+logged, but the verdict stays the denylist's until D1 is configured `enforce` and has 50
+answered decisions; unanswered calls do not count toward them.
 
 **Redaction** (`hook::guard::redact`). The command Clef gets (state
 `{"tool": "Bash", "input": {"command": ...}}`) and the row keeps (its `input` field) is

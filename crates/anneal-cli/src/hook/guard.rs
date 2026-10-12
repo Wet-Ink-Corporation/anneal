@@ -25,7 +25,8 @@ use anneal_ledger::{EventEnvelope, LedgerEvent, Store, StoreError, Timestamp, Ti
 use serde::Deserialize;
 
 use crate::decide::clock::{Clock, SystemClock};
-use crate::decide::transport::{NoHttpClient, Transport};
+use crate::decide::transport::Transport;
+use crate::decide::transport::http::UreqTransport;
 use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
 use crate::paths::{self, PathError};
 /// What [`run_with`] reaches Clef and time through, so its callers can name it.
@@ -197,8 +198,8 @@ enum RecordError {
 /// Runs the guard: reads the input from `env.stdin`, decides (the denylist, then Clef D1 for a
 /// Bash command it left undecided), and on a denial records it in the ledger (resolved from the
 /// input's `cwd`, or `env.current_dir`, and `env.lookup`) and writes the deny decision to
-/// `out`; an ask writes the ask decision. Clef is reached through [`NoHttpClient`], the only
-/// transport so far. Pass `&mut out` to keep the writer.
+/// `out`; an ask writes the ask decision. Clef is reached over HTTPS through
+/// [`UreqTransport`]. Pass `&mut out` to keep the writer.
 ///
 /// # Errors
 /// Only the I/O error from writing `out`; every failure of the denylist's input denies.
@@ -211,7 +212,7 @@ where
 {
     let clock = SystemClock::new();
     let ports = Ports {
-        transport: &NoHttpClient,
+        transport: &UreqTransport::new(),
         clock: &clock,
     };
     run_with(env, &ports, out)
