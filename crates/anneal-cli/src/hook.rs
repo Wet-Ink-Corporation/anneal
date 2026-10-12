@@ -31,7 +31,7 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use crate::decide::clock::SystemClock;
-use crate::decide::transport::NoHttpClient;
+use crate::decide::transport::http::UreqTransport;
 
 /// Arguments of `anneal hook`.
 #[derive(Debug, Args)]
@@ -155,10 +155,10 @@ where
         HookName::FastCheck => fast_check::run(env, out),
         HookName::Completeness => completeness::run(env, out),
         HookName::Status => status::run(env, out),
-        // No HTTP client is a dependency yet (H-16, pending): every call is unreachable and
-        // these hooks stay silent, as `anneal decide` exits 5.
-        HookName::Route => route::run(env, &NoHttpClient, &SystemClock::new(), out),
-        HookName::RuledBefore => ruled_before::run(env, &NoHttpClient, &SystemClock::new(), out),
+        HookName::Route => route::run(env, &UreqTransport::new(), &SystemClock::new(), out),
+        HookName::RuledBefore => {
+            ruled_before::run(env, &UreqTransport::new(), &SystemClock::new(), out)
+        }
     }
 }
 

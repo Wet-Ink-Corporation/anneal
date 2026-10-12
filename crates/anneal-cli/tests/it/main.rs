@@ -1,9 +1,17 @@
 //! Integration tests for the `anneal` binary, compiled as one test binary (TST-02).
 
+// `ANNEAL_CLEF_URL`, which keeps these tests off the network, is honoured only with
+// debug assertions (#28); a release-profile run would send fake tokens to Workers AI.
+#[cfg(not(debug_assertions))]
+compile_error!(
+    "the integration tests need a debug build: ANNEAL_CLEF_URL is honoured only with debug_assertions"
+);
+
 mod calibrate;
 mod cli;
 mod dag;
 mod decide;
+mod decide_http;
 mod design_tree_schema;
 mod dry_run;
 mod eval_routing;

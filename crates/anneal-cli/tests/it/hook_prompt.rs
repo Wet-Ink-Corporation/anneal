@@ -1,6 +1,6 @@
 //! `anneal hook route` and `anneal hook ruled-before`, the `UserPromptSubmit` hooks, through
-//! the built binary. Its transport has no HTTP client, so Clef is always unreachable: the hooks
-//! log the miss and stay silent, and with Clef off they touch nothing.
+//! the built binary. `anneal_in` points Clef at a loopback port that refuses, so Clef is always
+//! unreachable: the hooks log the miss and stay silent, and with Clef off they touch nothing.
 
 use std::error::Error;
 use std::io::Write as _;

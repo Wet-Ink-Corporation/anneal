@@ -1,6 +1,7 @@
-//! `anneal decide` through the built binary. The binary has no HTTP client yet (a pending
-//! dependency decision), so every configured call is unreachable: it must exit 5, log the row
-//! as unreachable, and never show the token. The 2 s budget is checked in process, with a
+//! `anneal decide` through the built binary. `anneal_in` points Clef at a loopback port that
+//! refuses, so every configured call is unreachable: it must exit 5, log the row as
+//! unreachable, and never show the token (an answered call is in `decide_http`). The 2 s budget
+//! is checked in process, with a
 //! fake clock (`decide::client::tests`), not with the wall clock here.
 
 use std::error::Error;

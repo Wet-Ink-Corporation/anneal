@@ -13,6 +13,11 @@ allow = [
   "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
   "ISC", "Unicode-3.0", "Zlib", "CC0-1.0", "MPL-2.0",
 ]
+# Mozilla's root certificates, bundled for ureq's rustls TLS (#28); scoped to this crate only.
+# Ryan, 2026-10-12 (card "Bundled roots").
+exceptions = [
+  { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
+]
 
 [bans]
 multiple-versions = "warn"
@@ -24,7 +29,7 @@ deny = [
   # that still use them. When a newly approved dependency pulls one in (`cargo tree -i <crate>`),
   # add the crate that uses it here as part of that H-16 decision.
   { name = "lazy_static", wrappers = ["sharded-slab"], reason = "MOD-03: use std::sync::LazyLock" },
-  { name = "once_cell", wrappers = ["insta", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "MOD-03: use std::sync::{OnceLock, LazyLock}" },
+  { name = "once_cell", wrappers = ["insta", "rustls", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "MOD-03: use std::sync::{OnceLock, LazyLock}" },
   { name = "failure", reason = "unmaintained; use thiserror" },
   { name = "error-chain", reason = "unmaintained; use thiserror" },
 ]

@@ -1,7 +1,8 @@
 //! Release 4's exit check through the built binary: in one anneal home, the guard (D1), route
 //! (D3), ruled-before (D6) and `grill classify` (D7) each log a row, and `anneal calibrate`
-//! reads all four points. The binary has no HTTP client, so every row is unreachable; the
-//! answered run, with a fake Clef, is `release_check` in the crate's unit tests.
+//! reads all four points. `anneal_in` points Clef at a loopback port that refuses, so every row
+//! is unreachable; the answered run, with a fake Clef, is `release_check` in the crate's unit
+//! tests.
 
 use std::error::Error;
 use std::io::Write as _;
@@ -141,7 +142,7 @@ fn one_session_logs_d1_d3_d6_and_d7_and_calibrate_reads_all_four() -> TestResult
     assert_eq!(
         [&classified["data"]["clef"], &classified["data"]["written"]],
         [&json!("no_answer"), &json!(false)],
-        "no HTTP client: D7 falls back to the model's estimate"
+        "Clef unreachable: D7 falls back to the model's estimate"
     );
     assert_eq!(calibrated.status.code(), Some(0), "{calibrated:?}");
     assert_eq!(
