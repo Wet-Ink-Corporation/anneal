@@ -28,7 +28,7 @@ use serde::de::{DeserializeOwned, IgnoredAny};
 
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::dag::tracker::{Tickets, Tracker, TrackerError};
-pub use gh::{GH_TIMEOUT, GhApi, GhCli, GhError, MAX_GH_OUTPUT};
+pub use gh::{Field, GH_TIMEOUT, GhApi, GhCli, GhError, GhGraphql, MAX_GH_OUTPUT};
 
 /// Issues asked for per page (GitHub's maximum).
 pub const PER_PAGE: usize = 100;
@@ -97,6 +97,20 @@ impl FromStr for Repo {
             }),
             _ => Err(RepoError(text.to_owned())),
         }
+    }
+}
+
+impl Repo {
+    /// The owner, before the `/`.
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// The repository's name, after the `/`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 

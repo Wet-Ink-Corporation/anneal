@@ -1,4 +1,5 @@
-//! The `gh` port ([`GhApi`]) and its real adapter ([`GhCli`]).
+//! The `gh` ports ([`GhApi`] for REST, [`GhGraphql`] for read-only GraphQL queries) and their
+//! real adapter ([`GhCli`]), shared by `dag`'s GitHub tracker and `anneal watch`.
 
 use std::ffi::OsString;
 use std::io;
@@ -99,8 +100,65 @@ impl Default for GhCli {
 
 impl GhApi for GhCli {
     fn get(&self, endpoint: &str) -> Result<Vec<u8>, GhError> {
+        self.run(endpoint, ["api", "--method", "GET", endpoint])
+    }
+}
+
+/// One variable of a GraphQL query, as `gh api graphql` takes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field<'a> {
+    /// `-f name=value`: sent as a string as given, never read as a number, a placeholder or a
+    /// file. Anything that comes from the command line goes this way.
+    Raw(&'a str, &'a str),
+    /// `-F name=value`: gh turns integers and `true`/`false`/`null` into JSON values, fills in
+    /// `{owner}`, `{repo}` and `{branch}` from the current directory's repository, and reads a
+    /// value starting with `@` from a file, so only values anneal builds itself go this way.
+    Typed(&'a str, &'a str),
+}
+
+/// Read-only GraphQL queries: the port `anneal watch` reads pull requests and checks through.
+pub trait GhGraphql {
+    /// The response body of the GraphQL `query` with `fields` as its variables. A query reads;
+    /// a mutation is never sent.
+    ///
+    /// # Errors
+    /// A [`GhError`] when the call fails (GitHub reporting an error in the query is a failure
+    /// of the call) or its answer is unusable.
+    fn graphql(&self, query: &str, fields: &[Field<'_>]) -> Result<Vec<u8>, GhError>;
+}
+
+impl GhGraphql for GhCli {
+    fn graphql(&self, query: &str, fields: &[Field<'_>]) -> Result<Vec<u8>, GhError> {
+        self.run("graphql", graphql_args(query, fields))
+    }
+}
+
+/// The arguments of `gh api graphql` for `query` and `fields`.
+pub(super) fn graphql_args(query: &str, fields: &[Field<'_>]) -> Vec<OsString> {
+    let mut args = Vec::with_capacity(fields.len().saturating_add(2).saturating_mul(2));
+    args.extend(["api", "graphql", "-f"].map(OsString::from));
+    args.push(OsString::from(format!("query={query}")));
+    for field in fields {
+        let (flag, name, value) = match field {
+            Field::Raw(name, value) => ("-f", name, value),
+            Field::Typed(name, value) => ("-F", name, value),
+        };
+        args.push(OsString::from(flag));
+        args.push(OsString::from(format!("{name}={value}")));
+    }
+    args
+}
+
+impl GhCli {
+    /// Runs `gh <args>` with prompts and colour off, within the timeout and output cap; the
+    /// answer of a call that exits 0. `endpoint` names the call in errors.
+    fn run<I, S>(&self, endpoint: &str, args: I) -> Result<Vec<u8>, GhError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
         let mut child = Command::new(&self.program)
-            .args(["api", "--method", "GET", endpoint])
+            .args(args)
             .env("GH_PROMPT_DISABLED", "1")
             .env("GH_NO_UPDATE_NOTIFIER", "1")
             .env("NO_COLOR", "1")

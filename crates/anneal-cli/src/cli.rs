@@ -33,6 +33,7 @@ use crate::repro::{self, ReproArgs};
 use crate::ship::{self, ShipArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
+use crate::watch::{self, WatchArgs};
 
 /// The flags clap answers by printing instead of running a command.
 const HELP_AND_VERSION: [&str; 4] = ["-h", "--help", "-V", "--version"];
@@ -88,7 +89,7 @@ pub enum Command {
     Verdict(VerdictArgs),
     /// Watch a pull request, CI run or deploy until it settles
     #[command(after_help = command_help(CommandName::Watch))]
-    Watch(Stub),
+    Watch(WatchArgs),
     /// Decide whether a change may skip full review
     #[command(after_help = command_help(CommandName::Ship))]
     Ship(ShipArgs),
@@ -132,7 +133,7 @@ enum OnFailure {
 }
 
 /// Arguments of a command that is not built yet. It accepts anything, so a caller already using
-/// the future syntax (`anneal watch pr ...`) gets 64, not a usage error.
+/// the future syntax (`anneal rollout decide ...`) gets 64, not a usage error.
 #[derive(Debug, Args)]
 pub struct Stub {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, hide = true)]
@@ -315,13 +316,12 @@ fn dispatch<O: Write, E: Write>(
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             ship::run(args, &cwd, out)
         }
-        Command::Watch(_)
-        | Command::Rollout(_)
-        | Command::Perf(_)
-        | Command::Brief(_)
-        | Command::Statusline(_) => Err(CliError::NotImplemented {
-            command: command.name(),
-        }),
+        Command::Watch(args) => run_watch(args, out),
+        Command::Rollout(_) | Command::Perf(_) | Command::Brief(_) | Command::Statusline(_) => {
+            Err(CliError::NotImplemented {
+                command: command.name(),
+            })
+        }
     }
 }
 
@@ -348,6 +348,13 @@ fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> 
         clock: &SystemClock::new(),
     };
     grill::run(args, &env, out)
+}
+
+/// `anneal watch` from the process's working directory, with its environment for the merge
+/// gate's ledger.
+fn run_watch<O: Write>(args: &WatchArgs, out: &mut O) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    watch::run(args, &cwd, |var| std::env::var_os(var), out)
 }
 
 /// `anneal calibrate` with the process's working directory and environment.

@@ -1,7 +1,8 @@
 //! Running a child process to completion within a deadline and with capped output (H-13),
 //! shared by `git` (`paths`, and `floor_guard` through `paths::run_git_capped`), `gh`
-//! (`dag::tracker::github`) and the test command of `task done` (`task::run_command`, which
-//! pipes nothing: its child writes straight to anneal's stderr).
+//! (`dag::tracker::github`'s `GhCli`, which `watch` uses too) and the test command of `task
+//! done` (`task::run_command`, which pipes nothing: its child writes straight to anneal's
+//! stderr).
 
 use std::io::{self, Read};
 use std::process::{Child, ExitStatus, Output};

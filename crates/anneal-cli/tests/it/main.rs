@@ -45,3 +45,6 @@ mod ship;
 mod support;
 mod task;
 mod verdict;
+// The fake `gh` is a shell script; `watch::tests` covers every exit code on every platform.
+#[cfg(unix)]
+mod watch;

@@ -128,6 +128,35 @@ fn other_tools_and_commands_without_a_merge_are_silent() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs git")]
+fn judging_a_head_with_no_verdict_or_one_git_cannot_find_denies_as_a_merge_would()
+-> crate::test_repo::Setup<()> {
+    use crate::pr_diff::Budget;
+    use crate::test_repo::ScratchRepo;
+
+    let repo = ScratchRepo::new()?;
+    let head = repo.git(&["rev-parse", "HEAD"])?;
+    let unknown = "0".repeat(40);
+    let budget = Budget::per_call(crate::paths::GIT_TIMEOUT);
+
+    let judge = |head: &str| {
+        let pinned = super::Pinned { pr: 7, head };
+        super::judge_head(repo.path(), |_: &str| None, pinned, budget)
+    };
+
+    let no_verdict = judge(&head);
+    let not_local = judge(&unknown);
+
+    let checks = [&no_verdict, &not_local].map(|denial| denial.as_ref().map(|d| d.check));
+    assert_eq!(
+        checks,
+        [Some(Check::NoVerdict), Some(Check::Unjudged)],
+        "{no_verdict:?} {not_local:?}"
+    );
+    Ok(())
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "runs git to find the ledger")]
 fn a_bash_input_without_a_command_is_denied() {
     let out = gate(br#"{"tool_name": "Bash", "cwd": "/nonexistent-anneal-test"}"#);

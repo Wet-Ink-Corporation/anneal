@@ -120,6 +120,16 @@ impl Denial {
             reason: format!("merge-gate: {reason}"),
         }
     }
+
+    /// The id of the check that denied, as in the `gate_blocked` point.
+    pub(crate) const fn check_id(&self) -> &'static str {
+        self.check.id()
+    }
+
+    /// The one-line reason, starting `merge-gate: `.
+    pub(crate) fn into_reason(self) -> String {
+        self.reason
+    }
 }
 
 /// The denial for a merge that could not be judged because `what` failed with `error`.
@@ -318,6 +328,48 @@ fn judge_merges(
         Ok(pulls) => pulls,
         Err(denial) => return Some(denial),
     };
+    with_gate(store, cwd, budget, |gate| {
+        pulls.into_iter().find_map(|pull| gate.judge(pull))
+    })
+}
+
+/// A merge of a pull request pinned to a head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Pinned<'a> {
+    /// The pull request number.
+    pub(crate) pr: u64,
+    /// The full commit id `--match-head-commit` would name.
+    pub(crate) head: &'a str,
+}
+
+/// The denial the gate would give `gh pr merge <pr> --match-head-commit <head>` (`pinned`) run
+/// from `cwd`; `None` when it would allow the merge. The ledger is the existing one seen from
+/// `cwd` (none means no verdict); a ledger, git or setting that cannot be read denies, as in
+/// the hook. `anneal watch pr` asks this of a pull request's head on GitHub.
+pub(crate) fn judge_head(
+    cwd: &Path,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    pinned: Pinned<'_>,
+    budget: Budget,
+) -> Option<Denial> {
+    let ledger = open_existing(cwd, lookup, budget);
+    let store = match &ledger {
+        Ok(store) => store.as_ref(),
+        Err(error) => return Some(unjudged("the ledger cannot be read", error)),
+    };
+    with_gate(store, cwd, budget, |gate| {
+        gate.judge_pinned(pinned.pr, ("--match-head-commit", pinned.head))
+    })
+}
+
+/// Runs `judge` with the gate of the worktree seen from `cwd`: its root, settings and
+/// sensitive globs, and the verdicts in `store`; or the denial for the one that cannot be read.
+fn with_gate(
+    store: Option<&Store>,
+    cwd: &Path,
+    budget: Budget,
+    judge: impl FnOnce(&Gate<'_>) -> Option<Denial>,
+) -> Option<Denial> {
     let root = match budget.next() {
         Ok(timeout) => paths::worktree_root_within(cwd, timeout),
         Err(error) => return Some(unjudged("no time is left for git", &error)),
@@ -345,7 +397,7 @@ fn judge_merges(
         rules: &rules,
         budget,
     };
-    pulls.into_iter().find_map(|pull| gate.judge(pull))
+    judge(&gate)
 }
 
 /// What one merge is judged with.
@@ -377,11 +429,16 @@ impl Gate<'_> {
             Ok(head) => head,
             Err(denial) => return Some(denial),
         };
-        let pr = pull.pr;
+        self.judge_pinned(pull.pr, ("--match-head-commit", head))
+    }
+
+    /// The denial for merging pull request `pr` pinned to `head` (the revision, and the flag
+    /// that gave it), if any.
+    fn judge_pinned(&self, pr: u64, head: (&'static str, &str)) -> Option<Denial> {
         let query = Query {
             root: self.root,
             pr,
-            head: ("--match-head-commit", head),
+            head,
             base: None,
             budget: self.budget,
         };
