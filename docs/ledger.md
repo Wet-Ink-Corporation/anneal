@@ -81,7 +81,7 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 |---|---|
 | `session:<session_id>` | every event with a `session_id` |
 | `worktree:<worktree>` | every event with a `worktree` (`mode_set`, `repro_red` and `test_run` are selected by it) |
-| `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red` |
+| `task:<task>` | `test_run` (when it names a task), `task_done`, `repro_red`; `weighin_parked`, `bridge.unavailable` and `orchestrate.ruled` (their `ticket`) |
 | `plan:<plan>` | `plan_approved`, `grill_confirmed` |
 | `pr:<number>` | `verdict_set`, `round_started` (with a `pr`) |
 | `point:<point>` | `gate_blocked`, `stop_blocked` |
@@ -90,7 +90,7 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 8)
+## Event registry (version 9)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
@@ -101,7 +101,8 @@ the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verif
 `docs/verdict.md`); version 7 added `migrate.wave.started`, `migrate.wave.done` and
 `migrate.contract` and the `migration:` tag (#35, `docs/migrate.md`), whose dotted names are
 the story's; version 8 added `ticket` to `round_started` and made its `pr` optional (#36,
-`docs/brief.md`).
+`docs/brief.md`); version 9 added `weighin_parked`, `bridge.unavailable` and
+`orchestrate.ruled` (#37, `docs/orchestrate.md`), the last two under dotted names as #35's.
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -119,6 +120,9 @@ the story's; version 8 added `ticket` to `round_started` and made its `pr` optio
 | `migrate.wave.started` | `migration` string (the migration's id), `wave` integer (from 1); see [migrate.md](migrate.md) | `migration:` |
 | `migrate.wave.done` | `migration` string, `wave` integer | `migration:` |
 | `migrate.contract` | `migration` string | `migration:` |
+| `weighin_parked` | `item_id` string (the weigh-in item, `wi-` and its id), `ticket` string (the ticket the call blocks), `decision?` string (the Clef D2 decision id, written only when set); written by `anneal orchestrate park` once per item and ticket. The decision is weigh-in's; see [orchestrate.md](orchestrate.md) | `task:` (the ticket) |
+| `bridge.unavailable` | `ticket` string, `reason` string (why weigh-in could not park the call, one line); written by `anneal orchestrate park`, which then exits 4 | `task:` (the ticket) |
+| `orchestrate.ruled` | `ticket` string, `what` string, `why` string, `cost_if_wrong` string, `decision?` string (as `weighin_parked`); written by `anneal orchestrate rule` | `task:` (the ticket) |
 
 ## Commands
 

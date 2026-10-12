@@ -115,6 +115,15 @@ the blueprint:
 | D6 ruled-before | clef-flash | choice `ruled_before` | 0.70 surface | none | fail_open |
 | D7 grill | clef-flash | noul `is_decision` | 0.50 ask_human | find_fact | fail_open |
 
+**D2** is asked by the `/orchestrate` skill about each judgment call
+(`anneal decide --point D2 --question noul --state <the call>`): at 0.50 or above it says
+`park`, below it `rule`. The skill parks (`anneal orchestrate park`, weigh-in with a default)
+only on `park` with `data.enforce: true`; in shadow, which is where D2 starts and stays for its
+first 50 answered decisions, and on exit 3 or 5, it rules and records the ruling
+(`anneal orchestrate rule`: what, why, cost if wrong). The decision's `data.id` goes with the
+park or ruling (`--decision`), so its outcome, the weigh-in ruling on the parked item, can be
+labelled later. See [orchestrate.md](orchestrate.md).
+
 Model aliases map to Workers AI ids in the file's `models` table (`clef-flash`, `clef`), so a
 model can change without a code change. The ids shipped are placeholders until the deployed
 models are named. D5's blueprint rule, an expected level of 2.0 or more on low/med/high/critical

@@ -48,6 +48,8 @@
 //!   under `.anneal/briefs/`.
 //! - [`round`]: `anneal round start|status`, a ticket's fix-loop round counter read from the
 //!   ledger.
+//! - [`orchestrate`]: `anneal orchestrate fan-out|park|rule`, the fan-out gate and one-way
+//!   calls parked in weigh-in (through the crate-private `weighin` bridge) or ruled on.
 //! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
 //! - [`statusline`]: `anneal statusline`, Claude Code's status line, which saves each
 //!   session's context usage for the context-monitor hook.
@@ -83,6 +85,7 @@ pub mod ledger;
 pub mod lint;
 pub mod migrate;
 pub mod mode;
+pub mod orchestrate;
 pub mod paths;
 pub mod perf;
 pub mod plan;
@@ -102,3 +105,4 @@ pub mod task;
 mod test_repo;
 pub mod verdict;
 pub mod watch;
+mod weighin;

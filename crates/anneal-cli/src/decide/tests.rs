@@ -118,6 +118,48 @@ fn a_decision_exits_0_with_its_action_and_mode() {
     assert_eq!(log.lines().count(), 1, "one row");
 }
 
+/// D2, `/orchestrate`'s question: is this call a one-way door?
+const D2: [&str; 6] = [
+    "--point",
+    "D2",
+    "--question",
+    "noul",
+    "--state",
+    r#"{"tool":"orchestrate","input":{"call":"share the cache across tenants"}}"#,
+];
+
+#[test]
+fn d2_parks_a_one_way_door_from_half_and_rules_below_it_in_shadow_by_default() {
+    let at_half = Endpoint(Ok(json!({"probabilities": {"yes": 0.5}})));
+    let below = Endpoint(Ok(json!({"probabilities": {"yes": 0.49}})));
+
+    let (half_code, half, _) = decide(&D2, &CONFIGURED, &at_half);
+    let (below_code, under, _) = decide(&D2, &CONFIGURED, &below);
+
+    assert_eq!((half_code.ok(), below_code.ok()), (Some(0), Some(0)));
+    assert_eq!(half["data"]["action"], json!("park"));
+    assert_eq!(half["data"]["threshold"], json!(0.5));
+    assert_eq!(under["data"]["action"], json!("rule"));
+    assert_eq!(half["data"]["mode"], json!("shadow"), "D2 starts in shadow");
+    assert_eq!(
+        half["data"]["enforce"],
+        json!(false),
+        "in shadow the orchestrator rules"
+    );
+}
+
+#[test]
+fn d2_without_an_answer_falls_back_to_failing_open() {
+    let unreachable = Endpoint(Err(TransportError::TimedOut {
+        after: Duration::from_secs(2),
+    }));
+
+    let (code, envelope, _) = decide(&D2, &CONFIGURED, &unreachable);
+
+    assert_eq!(code.ok(), Some(5));
+    assert_eq!(envelope["data"]["fallback"], json!("fail_open"));
+}
+
 #[test]
 fn no_answer_exits_5_with_the_fallback_and_one_finding() {
     let endpoint = Endpoint(Err(TransportError::TimedOut {

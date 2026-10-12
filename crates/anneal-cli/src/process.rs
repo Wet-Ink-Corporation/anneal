@@ -2,9 +2,10 @@
 //! shared by `git` (`paths`, and `floor_guard` through `paths::run_git_capped`), `gh`
 //! (`dag::tracker::github`'s `GhCli`, which `watch` uses too) and the test command of `task
 //! done` (`task::run_command`, which pipes nothing: its child writes straight to anneal's
-//! stderr). `perf noise` times its runs with `wait_or_kill_every`.
+//! stderr). `perf noise` times its runs with `wait_or_kill_every`, and the weigh-in bridge
+//! (`weighin::ProcessRunner`) pipes a batch to `weighin` with `wait_with_input`.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::process::{Child, ExitStatus, Output};
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
@@ -43,9 +44,49 @@ pub(crate) fn wait_with_deadline(
     cap: u64,
     label: &str,
 ) -> Result<Output, WaitError> {
+    wait_piped(child, None, Limits { timeout, cap }, label)
+}
+
+/// How long a child may run and how much of each output stream is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Limits {
+    /// Past this the child is killed and reaped.
+    pub(crate) timeout: Duration,
+    /// The bytes kept of each of stdout and stderr; the rest is read and dropped.
+    pub(crate) cap: u64,
+}
+
+/// As [`wait_with_deadline`], first handing `input` to the child's piped stdin on a named scoped
+/// thread (`<label>-stdin`) that closes the pipe when done, so the child sees the end of its
+/// input and a child that never reads cannot block the caller. A child that exits without
+/// reading it all is no error: its exit status says how it went. The writer is joined before
+/// this returns; past the timeout the killed child's pipe ends the write.
+pub(crate) fn wait_with_input(
+    child: &mut Child,
+    input: &[u8],
+    limits: Limits,
+    label: &str,
+) -> Result<Output, WaitError> {
+    wait_piped(child, Some(input), limits, label)
+}
+
+/// With `input`, writes it to the child's stdin when that is piped (without, stdin is left to
+/// the caller); drains its stdout and stderr, and waits within the limits.
+fn wait_piped(
+    child: &mut Child,
+    input: Option<&[u8]>,
+    Limits { timeout, cap }: Limits,
+    label: &str,
+) -> Result<Output, WaitError> {
+    let stdin = input.and_then(|_| child.stdin.take());
+    let input = input.unwrap_or_default();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     thread::scope(|scope| {
+        let writer = match spawn_writer(scope, format!("{label}-stdin"), stdin, input) {
+            Ok(handle) => handle,
+            Err(error) => return Err(kill_after(child, error)),
+        };
         let out_reader = match spawn_reader(scope, format!("{label}-stdout"), stdout, cap) {
             Ok(handle) => handle,
             Err(error) => return Err(kill_after(child, error)),
@@ -55,12 +96,43 @@ pub(crate) fn wait_with_deadline(
             Err(error) => return Err(kill_after(child, error)),
         };
         let status = wait_or_kill(child, timeout)?;
+        join_writer(writer)?;
         Ok(Output {
             status,
             stdout: join_reader(out_reader)?,
             stderr: join_reader(err_reader)?,
         })
     })
+}
+
+type Writer<'scope> = ScopedJoinHandle<'scope, io::Result<()>>;
+
+fn spawn_writer<'scope, W: Write + Send + 'scope>(
+    scope: &'scope Scope<'scope, '_>,
+    name: String,
+    pipe: Option<W>,
+    input: &'scope [u8],
+) -> io::Result<Writer<'scope>> {
+    thread::Builder::new()
+        .name(name)
+        .spawn_scoped(scope, move || {
+            let Some(mut pipe) = pipe else {
+                return Ok(());
+            };
+            match pipe.write_all(input) {
+                // The child exited, or closed its stdin, before reading it all.
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+                // Dropping the pipe closes it: the child reads the end of its input.
+                written => written,
+            }
+        })
+}
+
+fn join_writer(writer: Writer<'_>) -> Result<(), WaitError> {
+    writer
+        .join()
+        .map_err(|_panicked| WaitError::Io(io::Error::other("the input writer thread panicked")))?
+        .map_err(WaitError::Io)
 }
 
 type Reader<'scope> = ScopedJoinHandle<'scope, io::Result<Vec<u8>>>;
@@ -135,5 +207,83 @@ fn kill_after(child: &mut Child, error: io::Error) -> WaitError {
             error.kind(),
             format!("{error}; killing the process also failed: {kill_error}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    use super::{Limits, wait_with_input};
+
+    /// Thirty seconds and 1 KiB of each stream: ample for `git` on any runner.
+    const LIMITS: Limits = Limits {
+        timeout: Duration::from_secs(30),
+        cap: 1024,
+    };
+
+    #[test]
+    fn the_child_reads_its_input_from_stdin_and_its_output_is_kept() {
+        // git is on every platform the tests run on, and hashes exactly what stdin held.
+        let mut child = Command::new("git")
+            .args(["hash-object", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("git starts");
+
+        let output = wait_with_input(&mut child, b"hello\n", LIMITS, "git").expect("git finishes");
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"ce013625030ba8dba906f756967f9e9ca394464a\n");
+    }
+
+    #[test]
+    fn a_child_that_never_reads_its_input_still_finishes() {
+        // `git --version` ignores stdin; a large input must not block the caller.
+        let mut child = Command::new("git")
+            .arg("--version")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("git starts");
+
+        let output = wait_with_input(&mut child, &vec![b'x'; 1024 * 1024], LIMITS, "git")
+            .expect("git finishes");
+
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stdout.starts_with(b"git version"), "{output:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_joined() {
+        // `exec` leaves no shell holding the pipes; 2 MiB is far past any pipe buffer, so the
+        // writer blocks until the kill closes the read end.
+        let mut child = Command::new("sh")
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh starts");
+        let limits = Limits {
+            timeout: Duration::from_millis(200),
+            cap: 1024,
+        };
+
+        let result = wait_with_input(&mut child, &vec![b'x'; 2 * 1024 * 1024], limits, "sleep");
+
+        assert!(
+            matches!(result, Err(super::WaitError::Timeout)),
+            "{result:?}"
+        );
+        assert!(
+            child.try_wait().expect("waitable").is_some(),
+            "the child was reaped"
+        );
     }
 }

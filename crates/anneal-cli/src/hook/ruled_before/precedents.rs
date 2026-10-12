@@ -6,7 +6,9 @@
 //! list; a symlink is never followed) and then the weigh-in decision
 //! atoms in `.kb/_intake/decisions/*.md`, from their frontmatter only: `weighin_item` (the
 //! `wi-` id), `status` (only `accepted` counts) and `title` (else `question`) as the summary.
-//! An atom that does not read is skipped: the atoms are weigh-in's files, not anneal's.
+//! An atom that does not read is skipped: the atoms are weigh-in's files, not anneal's. The
+//! items weigh-in lists as decided (`weighin open --all --json`, read by the hook) join the
+//! atoms when no atom has their id yet, summarised as their question and the option decided.
 //!
 //! Bounds (H-13): the ruling store may hold at most [`MAX_DIR_ENTRIES`] entries and
 //! [`MAX_ATOM_FILES`] rulings; at most [`MAX_DIR_ENTRIES`] entries of the atoms directory are
@@ -25,6 +27,7 @@ use crate::decide::client::MAX_OPTIONS;
 use crate::decide::id::is_word;
 use crate::lint::skills::frontmatter;
 use crate::rulings::{self, ListLimits, RulingError};
+use crate::weighin::Decided;
 
 /// The atoms directory, relative to the repository root.
 const ATOMS_DIR: [&str; 3] = [".kb", "_intake", "decisions"];
@@ -89,22 +92,30 @@ pub(crate) enum PrecedentError {
     },
 }
 
-/// The precedents under the repository root `root`; see the module documentation.
+/// The precedents under the repository root `root`, with the items weigh-in has `decided`
+/// whose atoms are not written yet; see the module documentation.
 ///
 /// # Errors
 /// [`PrecedentError::Rulings`] for a ruling store that does not read,
 /// [`PrecedentError::Atoms`] for an atoms directory that cannot be listed.
-pub(crate) fn gather(root: &Path) -> Result<Vec<Precedent>, PrecedentError> {
+pub(crate) fn gather(root: &Path, decided: &[Decided]) -> Result<Vec<Precedent>, PrecedentError> {
     let limits = ListLimits {
         max_entries: MAX_DIR_ENTRIES,
         max_files: MAX_ATOM_FILES,
     };
     let rulings = rulings::list_within(&root.join(rulings::STORE_DIR), limits)?;
-    let cited: BTreeSet<&str> = rulings.iter().filter_map(|r| r.weigh_in_ref()).collect();
+    // An atom is not offered again under an offered ruling's id, or when a ruling cites it.
+    let taken: BTreeSet<&str> = rulings
+        .iter()
+        .map(rulings::Ruling::id)
+        .filter(|id| offerable(id))
+        .chain(rulings.iter().filter_map(|r| r.weigh_in_ref()))
+        .collect();
     // `rulings::list` refuses duplicate ids, so only the atoms can repeat one.
     let mut precedents: Vec<Precedent> = rulings
         .iter()
         .filter(|ruling| offerable(ruling.id()))
+        .take(MAX_PRECEDENTS)
         .map(|ruling| Precedent {
             id: ruling.id().to_owned(),
             summary: one_line(ruling.summary()),
@@ -112,14 +123,29 @@ pub(crate) fn gather(root: &Path) -> Result<Vec<Precedent>, PrecedentError> {
         .collect();
     let atoms_dir = ATOMS_DIR.iter().fold(root.to_path_buf(), |p, c| p.join(c));
     let mut atoms = accepted_atoms(&atoms_dir)?;
+    atoms.extend(
+        decided
+            .iter()
+            .filter(|item| offerable(item.id.as_str()))
+            .map(|item| {
+                let question = item.question.trim().trim_end_matches('?');
+                Precedent {
+                    id: item.id.as_str().to_owned(),
+                    summary: one_line(&format!("{question}: {}", item.option)),
+                }
+            }),
+    );
+    // A stable sort keeps the accepted atoms (read first) ahead of the decided items with
+    // their id, and `dedup_by` keeps the first of each id: the atom wins.
     atoms.sort_by(|a, b| a.id.cmp(&b.id));
-    for atom in atoms {
-        let fresh = precedents.iter().all(|taken| taken.id != atom.id);
-        if fresh && !cited.contains(atom.id.as_str()) {
-            precedents.push(atom);
-        }
-    }
-    precedents.truncate(MAX_PRECEDENTS);
+    atoms.dedup_by(|later, earlier| later.id == earlier.id);
+    let vacancies = MAX_PRECEDENTS.saturating_sub(precedents.len());
+    precedents.extend(
+        atoms
+            .into_iter()
+            .filter(|atom| !taken.contains(atom.id.as_str()))
+            .take(vacancies),
+    );
     Ok(precedents)
 }
 
@@ -196,6 +222,7 @@ mod tests {
         MAX_ATOM_FILES, MAX_PRECEDENTS, MAX_SUMMARY_BYTES, Precedent, PrecedentError, gather,
     };
     use crate::rulings::RulingError;
+    use crate::weighin::Decided;
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -237,7 +264,7 @@ mod tests {
     }
 
     fn ids(root: &Path) -> Result<Vec<String>, PrecedentError> {
-        Ok(gather(root)?
+        Ok(gather(root, &[])?
             .iter()
             .map(|precedent| precedent.id().to_owned())
             .collect())
@@ -248,7 +275,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         atom(root.path(), "wi-a53271", "accepted")?;
 
-        let found = gather(root.path())?;
+        let found = gather(root.path(), &[])?;
 
         let [precedent] = found.as_slice() else {
             panic!("one precedent: {found:?}");
@@ -346,7 +373,7 @@ mod tests {
             &format!("---\nid: long\nruled_at: 2026-10-11\nsummary: {long}\n---\n"),
         )?;
 
-        let found = gather(root.path())?;
+        let found = gather(root.path(), &[])?;
 
         let summary = found.first().map(Precedent::summary).unwrap_or_default();
         assert!(summary.len() <= MAX_SUMMARY_BYTES, "{}", summary.len());
@@ -367,7 +394,7 @@ mod tests {
             "no frontmatter\n",
         )?;
 
-        let error = gather(root.path()).expect_err("an invalid ruling");
+        let error = gather(root.path(), &[]).expect_err("an invalid ruling");
 
         assert!(matches!(error, PrecedentError::Rulings(_)), "{error:?}");
         Ok(())
@@ -380,7 +407,7 @@ mod tests {
             ruling(root.path(), &format!("r{n:03}"), "")?;
         }
 
-        let error = gather(root.path()).expect_err("over the bound");
+        let error = gather(root.path(), &[]).expect_err("over the bound");
 
         assert!(
             matches!(
@@ -399,7 +426,45 @@ mod tests {
     fn a_repository_with_neither_store_has_no_precedents() -> TestResult {
         let root = tempfile::tempdir()?;
 
-        assert!(gather(root.path())?.is_empty(), "nothing to offer");
+        assert!(gather(root.path(), &[])?.is_empty(), "nothing to offer");
+        Ok(())
+    }
+
+    #[test]
+    fn many_decided_items_are_offered_once_each_in_id_order_up_to_the_cap() -> TestResult {
+        let root = tempfile::tempdir()?;
+        atom(root.path(), "wi-000005", "accepted")?;
+        let decided: Vec<Decided> = (0..300)
+            .rev()
+            .chain([5, 7, 7])
+            .map(|n| Decided {
+                id: format!("wi-{n:06}").parse().expect("an id"),
+                question: format!("Question {n}?"),
+                option: "yes".to_owned(),
+            })
+            .collect();
+
+        let found = gather(root.path(), &decided)?;
+
+        let ids: Vec<&str> = found.iter().map(Precedent::id).collect();
+        let expected: Vec<String> = (0..MAX_PRECEDENTS).map(|n| format!("wi-{n:06}")).collect();
+        assert_eq!(ids, expected, "each id once, in id order, cut at the cap");
+        let atom_kept = found
+            .iter()
+            .find(|p| p.id() == "wi-000005")
+            .expect("offered");
+        assert_eq!(
+            atom_kept.summary(),
+            "Which licence: MIT OR Apache-2.0",
+            "the atom wins over the decided item with its id"
+        );
+        assert_eq!(
+            found
+                .iter()
+                .find(|p| p.id() == "wi-000007")
+                .map(Precedent::summary),
+            Some("Question 7: yes")
+        );
         Ok(())
     }
 }

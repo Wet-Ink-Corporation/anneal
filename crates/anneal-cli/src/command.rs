@@ -39,6 +39,8 @@ pub enum CommandName {
     Brief,
     /// `anneal round`: the fix-loop round counter per ticket
     Round,
+    /// `anneal orchestrate`: fan-out, and one-way calls parked in weigh-in or ruled on
+    Orchestrate,
     /// `anneal decide`
     Decide,
     /// `anneal calibrate`
@@ -62,7 +64,7 @@ pub struct Claim {
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -80,6 +82,7 @@ impl CommandName {
         Self::Migrate,
         Self::Brief,
         Self::Round,
+        Self::Orchestrate,
         Self::Decide,
         Self::Calibrate,
         Self::Eval,
@@ -108,6 +111,7 @@ impl CommandName {
             Self::Migrate => "migrate",
             Self::Brief => "brief",
             Self::Round => "round",
+            Self::Orchestrate => "orchestrate",
             Self::Decide => "decide",
             Self::Calibrate => "calibrate",
             Self::Eval => "eval",
@@ -163,6 +167,11 @@ impl CommandName {
                 "the ticket's round count was read from the ledger, and for start the next round \
                  was recorded"
             }
+            Self::Orchestrate => {
+                "fan-out: the frontier has at least 3 independent tickets; park: weigh-in \
+                 raised the call and deferred it with its default, and the ledger names the \
+                 item; rule: the ruling was recorded"
+            }
             Self::Decide => "the decision was obtained and recorded",
             Self::Calibrate => "the calibration run completed and was recorded",
             Self::Eval => "skill routing accuracy is at or above its bound on the eval set",
@@ -208,6 +217,10 @@ impl CommandName {
             }
             Self::Round => {
                 "that the round's work was done, or that the agent and model it names were used"
+            }
+            Self::Orchestrate => {
+                "that the tickets are worth running in parallel, that the call was one-way, or \
+                 that the ruling or the default is right"
             }
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",

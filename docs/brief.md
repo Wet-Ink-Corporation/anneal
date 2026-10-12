@@ -136,7 +136,7 @@ counting a cut history (a tag key for tickets would lift this; it is a registry 
 |---|---|---|
 | 1 to 3 | `same-agent` | Send the review package back to the same agent. |
 | 4 and 5 | `fresh-agent` | Spawn a fresh agent one model tier up through `context: fork` with a named subagent; never `model:` in frontmatter. |
-| after 5 | `park` | Stop the fix loop and park the ticket to weigh-in (#37). |
+| after 5 | `park` | Stop the fix loop and park the ticket to weigh-in with `anneal orchestrate park` ([orchestrate.md](orchestrate.md)). |
 
 Both exit 0 while a round may run and 3 (`park`) once five rounds ran; `start` then records
 nothing. For `status`, `next` is the round after the count; for `start`, the round it recorded.

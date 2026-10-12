@@ -186,6 +186,24 @@ pub const BRIEF_BAD_RANGE: Code = Code::new(2, "bad range");
 pub const ROUND_OK: Code = Code::new(0, "a round may run (start: recorded)");
 /// `round start|status`: five rounds ran, so the ticket is parked; start records nothing.
 pub const ROUND_PARK: Code = Code::new(3, "park: five rounds ran; start records nothing");
+/// `orchestrate fan-out`: fan out; `park`: parked in weigh-in; `rule`: recorded.
+pub const ORCHESTRATE_OK: Code = Code::new(0, "fan out (park: parked; rule: recorded)");
+/// `orchestrate fan-out`: the frontier has fewer than 3 independent tickets, or the graph
+/// fails its check; run the tickets one at a time.
+pub const ORCHESTRATE_NO_FAN_OUT: Code = Code::new(
+    3,
+    "fan-out: fewer than 3 independent tickets; nothing recorded",
+);
+/// `orchestrate park`: weigh-in could not park the call (no `weighin`, or it failed);
+/// `bridge.unavailable` was recorded and the orchestrator rules instead.
+pub const ORCHESTRATE_UNAVAILABLE: Code =
+    Code::new(4, "park: weigh-in unavailable (recorded); rule instead");
+/// `orchestrate`'s codes, in table order.
+const ORCHESTRATE_CODES: [Code; 3] = [
+    ORCHESTRATE_OK,
+    ORCHESTRATE_NO_FAN_OUT,
+    ORCHESTRATE_UNAVAILABLE,
+];
 /// `decide`: Clef answered and the decision was logged; `decide label`: the label was
 /// appended.
 pub const DECIDE_DECIDED: Code = Code::new(0, "decided and logged (label: appended)");
@@ -264,6 +282,8 @@ impl CommandCodes {
             CommandName::Migrate => ("", &[MIGRATE_RECORDED, MIGRATE_WAVE_OPEN, MIGRATE_REFUSED]),
             CommandName::Brief => ("build", &[OK, BRIEF_BAD_RANGE]),
             CommandName::Round => ("start|status", &[ROUND_OK, ROUND_PARK]),
+            // No scope: `fan-out|park|rule` would widen the help's title column.
+            CommandName::Orchestrate => ("", &ORCHESTRATE_CODES),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             CommandName::Eval => ("routing", &[OK, EVAL_BELOW_BOUND, EVAL_INVALID]),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
