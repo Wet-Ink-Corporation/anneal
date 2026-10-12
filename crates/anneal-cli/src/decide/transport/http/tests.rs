@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
@@ -42,9 +42,14 @@ impl Received {
     }
 }
 
-/// Accepts one connection, reads its request and writes `response`. A dummy connection the test
-/// makes to unblock `accept` reads as an empty request.
+/// Accepts one connection, reads its request and writes `response`, closing the connection. A
+/// dummy connection the test makes to unblock `accept` reads as an empty request.
 fn serve_one(listener: &TcpListener, response: &[u8]) -> Received {
+    serve_and_hold(listener, response).0
+}
+
+/// As [`serve_one`], handing back the connection open.
+fn serve_and_hold(listener: &TcpListener, response: &[u8]) -> (Received, TcpStream) {
     let (stream, _) = listener.accept().expect("a connection");
     stream
         .set_read_timeout(Some(TIMEOUT))
@@ -71,7 +76,7 @@ fn serve_one(listener: &TcpListener, response: &[u8]) -> Received {
     // concern; what the client returned is.
     let wrote: io::Result<()> = stream.write_all(response);
     drop(wrote);
-    received
+    (received, stream)
 }
 
 /// A request to `url` with the test token and `timeout`.
@@ -323,6 +328,43 @@ fn a_redirect_is_not_followed_and_is_a_bad_response() {
         Err(io::ErrorKind::WouldBlock),
         "the redirect target saw no connection"
     );
+}
+
+/// The status line and headers arrive, then the body stalls with the connection held open:
+/// the request's timeout still ends the call (ureq's global timeout covers the body read).
+#[test]
+#[cfg_attr(miri, ignore = "opens loopback sockets")]
+fn a_body_that_stalls_after_the_headers_times_out() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("its address");
+    let token = token();
+    let short = Duration::from_millis(200);
+
+    let (result, elapsed) = thread::scope(|scope| {
+        let server = thread::Builder::new()
+            .name("stalling-workers-ai".to_owned())
+            .spawn_scoped(scope, || {
+                let (_, mut stream) = serve_and_hold(
+                    &listener,
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{\"res",
+                );
+                // Holds the connection until the client gives up and closes it (or the
+                // fake's own read timeout passes); what it reads is not the test's concern.
+                let mut rest = Vec::new();
+                let held: io::Result<usize> = stream.read_to_end(&mut rest);
+                drop(held);
+            })
+            .expect("a server thread");
+        let start = Instant::now();
+        let result = UreqTransport::new().send(&request(&url(addr), &token, short));
+        let elapsed = start.elapsed();
+        TcpStream::connect(addr).expect("a dummy connection");
+        server.join().expect("the stalling server");
+        (result, elapsed)
+    });
+
+    assert_eq!(result, Err(TransportError::TimedOut { after: short }));
+    assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
 }
 
 #[test]

@@ -6,6 +6,12 @@
 //! the bearer token never goes to another host), takes no proxy from the environment, and
 //! reads at most [`MAX_RESPONSE_BYTES`] of body. No error carries the token, the URL or a
 //! ureq message: each failure maps to a fixed reason.
+//!
+//! With a timeout set, ureq's default resolver runs `getaddrinfo` on a thread it spawns and
+//! does not join, so a lookup still running when a call times out outlives the call. That is
+//! harmless here: every caller is a one-shot `anneal` process that exits soon after. If this
+//! transport ever runs in a long-lived process, give the agent an owned resolver (bounded and
+//! joined, H-13) instead.
 
 use std::io::{self, Read as _};
 use std::time::Duration;
@@ -79,27 +85,32 @@ const fn bad(reason: String) -> TransportError {
 }
 
 /// Unreachable for `reason`.
-fn unreachable(reason: &str) -> TransportError {
+fn unreachable_because(reason: &str) -> TransportError {
     TransportError::Unreachable {
         reason: reason.to_owned(),
     }
 }
 
 /// The failure for ureq's `error`, with a fixed reason: ureq's own messages can hold the URL.
+///
+/// A body that stops arriving surfaces as [`ureq::Error::Timeout`] once the request's timeout
+/// passes (pinned by `a_body_that_stalls_after_the_headers_times_out`). ureq's
+/// `#[doc(hidden)]` `BodyStalled`, which its docs say is never seen, is not matched by name; it
+/// falls to the last arm.
 fn failure(error: &ureq::Error, after: Duration) -> TransportError {
     match error {
         ureq::Error::Timeout(_) => TransportError::TimedOut { after },
         ureq::Error::Io(io) if io.kind() == io::ErrorKind::TimedOut => {
             TransportError::TimedOut { after }
         }
-        ureq::Error::Io(io) => unreachable(&format!("connection failed ({})", io.kind())),
-        ureq::Error::HostNotFound => unreachable("host not found"),
-        ureq::Error::ConnectionFailed => unreachable("connection failed"),
+        ureq::Error::Io(io) => unreachable_because(&format!("connection failed ({})", io.kind())),
+        ureq::Error::HostNotFound => unreachable_because("host not found"),
+        ureq::Error::ConnectionFailed => unreachable_because("connection failed"),
         ureq::Error::Tls(_)
         | ureq::Error::Pem(_)
         | ureq::Error::Rustls(_)
-        | ureq::Error::TlsRequired => unreachable("TLS failure"),
-        ureq::Error::BadUri(_) | ureq::Error::Http(_) => unreachable("invalid request"),
+        | ureq::Error::TlsRequired => unreachable_because("TLS failure"),
+        ureq::Error::BadUri(_) | ureq::Error::Http(_) => unreachable_because("invalid request"),
         ureq::Error::Protocol(_) | ureq::Error::LargeResponseHeader(..) => {
             bad("malformed HTTP response".to_owned())
         }
@@ -110,7 +121,7 @@ fn failure(error: &ureq::Error, after: Duration) -> TransportError {
         ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => {
             bad("redirect refused".to_owned())
         }
-        _ => unreachable("request failed"),
+        _ => unreachable_because("request failed"),
     }
 }
 

@@ -55,13 +55,19 @@ no proxy from `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY`, and reads at most 64 K
 (more is a bad response). A non-2xx status is a bad response (`HTTP <code>`); a refused or
 failed connection, DNS or TLS failure is unreachable; past the timeout is timed out. Reasons
 are fixed strings: no error, row or envelope holds the token, the URL or ureq's own message.
+A body that stalls after the headers ends at the same timeout. With a timeout set, ureq
+resolves the host on a thread it does not join, which can outlive a timed-out call; harmless
+in a one-shot hook process, but a long-lived caller would need an owned resolver.
 Every point still starts in shadow, so no caller acts on Clef until a point has 50 answered
 decisions and is configured `enforce`.
 
 `ANNEAL_CLEF_URL` replaces the accounts URL (`https://api.cloudflare.com/client/v4/accounts`)
-for tests. It is accepted only as `http://` on `127.0.0.1`, `[::1]` or `localhost`, with an
-optional port and path; any other value is a malformed configuration (exit 5 with the
-fallback, nothing sent or logged). The binary tests set it to `http://127.0.0.1:0`, which
+for tests. Only a debug build reads it; a release build, which is what the plugin ships,
+ignores it entirely, so nothing that can set a hook's environment can send the token over
+cleartext. In a debug build it is accepted only as `http://` on the literals `127.0.0.1` or
+`[::1]` (not `localhost`, which resolves through `/etc/hosts`), with an optional port and
+path; any other value is a malformed configuration (exit 5 with the fallback, nothing sent or
+logged). The binary tests set it to `http://127.0.0.1:0`, which
 refuses at once, or to a fake Workers AI on a loopback port, so no test reaches the network.
 
 ## Configuration

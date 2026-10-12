@@ -2,8 +2,8 @@
 //! body, or a [`TransportError`] that says whether Clef was unreachable, timed out or answered
 //! badly.
 //!
-//! Production sends through `http::UreqTransport` (ureq with rustls); [`NoHttpClient`] never
-//! sends and reports every call as unreachable. An adapter must keep the [`ApiToken`] out of
+//! Production sends through `http::UreqTransport` (ureq with rustls); the test-only
+//! `NoHttpClient` never sends. An adapter must keep the [`ApiToken`] out of
 //! every error it returns, honour the request's timeout, and refuse a body over
 //! [`MAX_RESPONSE_BYTES`].
 
@@ -18,7 +18,9 @@ use serde::Serialize;
 /// (H-13).
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
-/// Why every call through [`NoHttpClient`] fails.
+/// Why every call through [`NoHttpClient`] fails. Test-only: the wording predates the HTTP
+/// client and is pinned by `without_an_http_client_every_call_is_unreachable`.
+#[cfg(test)]
 pub const NO_HTTP_CLIENT: &str = "no HTTP client configured (pending dependency decision)";
 
 /// The Workers AI API token, which never formats.
@@ -125,12 +127,13 @@ pub trait Transport {
     fn send(&self, request: &ClefRequest<'_>) -> Result<Vec<u8>, TransportError>;
 }
 
-/// A transport that never sends: every call is unreachable, so the caller applies its
-/// fallback. The binary uses `http::UreqTransport`; this one stays for callers that must not
-/// reach the network.
+/// A test transport that never sends: every call is unreachable. The binary uses
+/// `http::UreqTransport`.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoHttpClient;
 
+#[cfg(test)]
 impl Transport for NoHttpClient {
     fn send(&self, _request: &ClefRequest<'_>) -> Result<Vec<u8>, TransportError> {
         Err(TransportError::Unreachable {

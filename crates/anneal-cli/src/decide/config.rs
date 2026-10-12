@@ -6,9 +6,10 @@
 //! `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`, spaces around the
 //! parts ignored; empty or unset is `shadow`, the manifest's default.
 //!
-//! [`ENDPOINT_VAR`] (`ANNEAL_CLEF_URL`) replaces the Workers AI accounts URL for tests. It is
-//! accepted only as `http://` on `127.0.0.1`, `[::1]` or `localhost`, so it cannot send the
-//! token off the machine; any other value is [`ConfigError::Endpoint`].
+//! [`ENDPOINT_VAR`] (`ANNEAL_CLEF_URL`) replaces the Workers AI accounts URL for tests. Only a
+//! debug build reads it (a release build ignores it entirely), and only as `http://` on
+//! `127.0.0.1` or `[::1]`, so it cannot send the token off the machine; any other value is
+//! [`ConfigError::Endpoint`].
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -26,11 +27,17 @@ pub const TOKEN_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN";
 /// `userConfig.clef_mode`: `off`, `shadow` or `enforce`, with per-point overrides.
 pub const MODE_VAR: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
 
-/// Test-only override of the Workers AI accounts URL; loopback `http://` only.
+/// Test-only override of the Workers AI accounts URL; loopback `http://` only, debug builds
+/// only.
 pub const ENDPOINT_VAR: &str = "ANNEAL_CLEF_URL";
 
-/// The hosts [`ENDPOINT_VAR`] may name.
-const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "[::1]", "localhost"];
+/// Whether [`ENDPOINT_VAR`] is read at all: only in debug builds (the test binaries), never in
+/// a release build, so a shipped `anneal` cannot be pointed at a cleartext listener.
+const HONOUR_ENDPOINT: bool = cfg!(debug_assertions);
+
+/// The hosts [`ENDPOINT_VAR`] may name: loopback literals only, since `localhost` resolves
+/// through `/etc/hosts` and NSS.
+const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "[::1]"];
 
 /// Longest account id.
 const MAX_ACCOUNT_BYTES: usize = 64;
@@ -96,9 +103,7 @@ pub enum ConfigError {
         value: String,
     },
     /// The endpoint override is not a loopback `http://` URL.
-    #[error(
-        "{ENDPOINT_VAR} must be http:// on 127.0.0.1, [::1] or localhost, with an optional port and path"
-    )]
+    #[error("{ENDPOINT_VAR} must be http:// on 127.0.0.1 or [::1], with an optional port and path")]
     Endpoint,
 }
 
@@ -144,9 +149,7 @@ impl ClefConfig {
             None => (Mode::Shadow, BTreeMap::new()),
             Some(value) => parse_mode(&value).ok_or(ConfigError::Mode { value })?,
         };
-        let endpoint = read(ENDPOINT_VAR)?
-            .map(|value| loopback_base(&value).ok_or(ConfigError::Endpoint))
-            .transpose()?;
+        let endpoint = endpoint_override(HONOUR_ENDPOINT, || read(ENDPOINT_VAR))?;
         Ok(Self {
             account,
             token,
@@ -180,6 +183,20 @@ impl ClefConfig {
     pub fn mode(&self, point: Point) -> Mode {
         self.overrides.get(&point).copied().unwrap_or(self.global)
     }
+}
+
+/// The checked endpoint override when `honoured`; otherwise `None` without calling `read`, so
+/// a release build never looks at the variable.
+fn endpoint_override(
+    honoured: bool,
+    read: impl FnOnce() -> Result<Option<String>, ConfigError>,
+) -> Result<Option<String>, ConfigError> {
+    if !honoured {
+        return Ok(None);
+    }
+    read()?
+        .map(|value| loopback_base(&value).ok_or(ConfigError::Endpoint))
+        .transpose()
 }
 
 /// `value` without one trailing `/`, when it is `http://`, a loopback host, an optional port
@@ -219,10 +236,14 @@ fn parse_mode(value: &str) -> Option<(Mode, BTreeMap<Point, Mode>)> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::ffi::OsString;
 
-    use super::{ACCOUNT_VAR, ClefConfig, ConfigError, ENDPOINT_VAR, MODE_VAR, Mode, TOKEN_VAR};
+    use super::{
+        ACCOUNT_VAR, ClefConfig, ConfigError, ENDPOINT_VAR, MODE_VAR, Mode, TOKEN_VAR,
+        endpoint_override,
+    };
     use crate::decide::point::Point;
     use crate::decide::transport::ApiToken;
 
@@ -341,10 +362,9 @@ mod tests {
             ("http://127.0.0.1:8080", "http://127.0.0.1:8080"),
             ("http://127.0.0.1:0/", "http://127.0.0.1:0"),
             ("http://[::1]:9/accounts", "http://[::1]:9/accounts"),
-            ("http://localhost", "http://localhost"),
             (
-                "http://localhost:65535/a/b-c_d.e/",
-                "http://localhost:65535/a/b-c_d.e",
+                "http://127.0.0.1:65535/a/b-c_d.e/",
+                "http://127.0.0.1:65535/a/b-c_d.e",
             ),
         ] {
             assert_eq!(
@@ -363,6 +383,8 @@ mod tests {
             "https://127.0.0.1:8080",
             "http://127.0.0.2",
             "http://127.0.0.1.example.com",
+            "http://localhost",
+            "http://localhost:8080/accounts",
             "http://localhost.example.com/",
             "http://localhost@example.com",
             "http://user@127.0.0.1",
@@ -382,6 +404,28 @@ mod tests {
                 "{value:?} is refused"
             );
         }
+    }
+
+    #[test]
+    fn a_release_build_ignores_the_endpoint_override_without_reading_it() {
+        let read = Cell::new(false);
+
+        let endpoint = endpoint_override(false, || {
+            read.set(true);
+            Ok(Some("https://example.com/not-loopback".to_owned()))
+        });
+
+        assert!(matches!(endpoint, Ok(None)), "{endpoint:?}");
+        assert!(!read.get(), "the variable is not read");
+    }
+
+    #[test]
+    fn a_debug_build_reads_and_checks_the_endpoint_override() {
+        let taken = endpoint_override(true, || Ok(Some("http://127.0.0.1:8/".to_owned())));
+        let refused = endpoint_override(true, || Ok(Some("https://example.com".to_owned())));
+
+        assert_eq!(taken.ok(), Some(Some("http://127.0.0.1:8".to_owned())));
+        assert!(matches!(refused, Err(ConfigError::Endpoint)), "{refused:?}");
     }
 
     #[test]
