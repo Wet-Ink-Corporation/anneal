@@ -127,3 +127,33 @@ fn metrics_that_are_not_an_object_of_numbers_are_a_usage_error() -> TestResult {
     assert!(output.stdout.is_empty(), "no envelope for a usage error");
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn metrics_naming_a_metric_twice_are_a_usage_error_naming_it() -> TestResult {
+    // Without the check the later value would silently win: here, the go one.
+    let dir = tempfile::tempdir()?;
+    let bands = fixtures().join("bands.json");
+
+    let output = anneal_in(dir.path())
+        .args([
+            "rollout",
+            "decide",
+            "--metrics",
+            r#"{"error_rate": 0.2, "error_rate": 0.001}"#,
+        ])
+        .arg("--bands")
+        .arg(bands)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "no envelope for a usage error");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.starts_with("ERROR rollout: --metrics")
+            && stderr.contains("metric \"error_rate\" is given twice")
+            && stderr.lines().count() == 1,
+        "one ERROR line naming the metric: {stderr}"
+    );
+    Ok(())
+}

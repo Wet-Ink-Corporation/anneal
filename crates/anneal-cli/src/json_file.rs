@@ -1,11 +1,65 @@
 //! A JSON file named on the command line, read whole within a size cap and parsed strictly.
-//! `rollout` (its bands) and `perf` (its baseline samples) share it.
+//!
+//! `rollout` (its bands) and `perf` (its baseline samples) share it, and `UniqueMap`, an
+//! object whose repeated key is an error rather than a silent overwrite.
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read};
+use std::marker::PhantomData;
 use std::path::Path;
 
-use serde::de::DeserializeOwned;
+use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+
+/// A JSON object of named metrics in which a name given twice does not parse: serde's maps
+/// keep the last value, so a repeated key would silently replace the first.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct UniqueMap<V>(BTreeMap<String, V>);
+
+impl<V> UniqueMap<V> {
+    /// The entries, by name.
+    pub(crate) fn into_inner(self) -> BTreeMap<String, V> {
+        self.0
+    }
+}
+
+impl<'de, V: Deserialize<'de>> Deserialize<'de> for UniqueMap<V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(UniqueMapVisitor(PhantomData))
+    }
+}
+
+/// Reads a [`UniqueMap`] entry by entry.
+struct UniqueMapVisitor<V>(PhantomData<V>);
+
+impl<'de, V: Deserialize<'de>> Visitor<'de> for UniqueMapVisitor<V> {
+    type Value = UniqueMap<V>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an object of named metrics, each name once")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut entries = BTreeMap::new();
+        while let Some((key, value)) = map.next_entry::<String, V>()? {
+            match entries.entry(key) {
+                Entry::Occupied(entry) => {
+                    return Err(de::Error::custom(format_args!(
+                        "metric {:?} is given twice",
+                        entry.key()
+                    )));
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+            }
+        }
+        Ok(UniqueMap(entries))
+    }
+}
 
 /// Why a JSON file could not be read.
 #[derive(Debug, thiserror::Error)]

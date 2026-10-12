@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::json_file::UniqueMap;
+
 /// The most metrics a bands file may hold (H-13).
 pub const MAX_METRICS: usize = 256;
 
@@ -136,7 +138,8 @@ impl Band {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BandsDto {
-    metrics: BTreeMap<String, BandDto>,
+    /// A metric named twice does not parse.
+    metrics: UniqueMap<BandDto>,
 }
 
 /// One metric's band as written.
@@ -158,12 +161,12 @@ impl TryFrom<BandsDto> for Bands {
     type Error = BandError;
 
     fn try_from(dto: BandsDto) -> Result<Self, Self::Error> {
-        let count = dto.metrics.len();
+        let metrics = dto.metrics.into_inner();
+        let count = metrics.len();
         if count == 0 || count > MAX_METRICS {
             return Err(BandError::Count { count });
         }
-        let metrics = dto
-            .metrics
+        let metrics = metrics
             .into_iter()
             .map(
                 |(metric, band)| match Band::new(band.better, band.hold, band.rollback) {

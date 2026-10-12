@@ -82,7 +82,7 @@ pub struct ContractArgs {
 struct Request<'a> {
     migration: &'a str,
     step: Step,
-    session: Option<&'a String>,
+    session: Option<&'a str>,
 }
 
 impl<'a> From<&'a MigrateAction> for Request<'a> {
@@ -90,7 +90,7 @@ impl<'a> From<&'a MigrateAction> for Request<'a> {
         let wave = |args: &'a WaveArgs, step: Step| Self {
             migration: &args.migration,
             step,
-            session: args.session.as_ref(),
+            session: args.session.as_deref(),
         };
         match action {
             MigrateAction::Start(args) => wave(args, Step::Start(args.wave)),
@@ -98,7 +98,7 @@ impl<'a> From<&'a MigrateAction> for Request<'a> {
             MigrateAction::Contract(args) => Self {
                 migration: &args.migration,
                 step: Step::Contract,
-                session: args.session.as_ref(),
+                session: args.session.as_deref(),
             },
         }
     }
@@ -118,7 +118,8 @@ pub(crate) fn run<O: Write>(
         "cli",
         Timestamp::now()?,
     );
-    envelope.session_id = request.session.cloned();
+    // The envelope stores the session id.
+    envelope.session_id = request.session.map(str::to_owned);
     // The migration and session become ledger tags; check them before a ledger is opened (or
     // created), so a value the store would refuse is a usage error that leaves no file.
     let tag = LedgerTag::new(TagKey::Migration, request.migration)
@@ -147,10 +148,20 @@ pub(crate) fn run<O: Write>(
         Some(store) => store,
         None => Store::open(&location.path)?,
     };
-    match store.append_if(&envelope, &Condition::none_matching(filter).after(last))? {
-        Appended::At(position) => report.recorded(&state.after(request.step), position, out),
-        Appended::Conflict => report.refused(&state, &Refusal::Concurrent, out),
-    }
+    let appended = record(&store, &envelope, filter, last)?;
+    report.appended(state, appended, out)
+}
+
+/// Appends `envelope` unless an event matching `filter` (the migration's) was recorded after
+/// position `last`, the latest one the step was judged on: first writer wins, so two racing
+/// steps cannot both land.
+fn record(
+    store: &Store,
+    envelope: &EventEnvelope,
+    filter: Filter,
+    last: u64,
+) -> Result<Appended, CliError> {
+    Ok(store.append_if(envelope, &Condition::none_matching(filter).after(last))?)
 }
 
 /// The ledger at `path` when its file exists; `None` when it does not, so a refused step
@@ -234,6 +245,19 @@ impl Report<'_> {
         match self.request.step {
             Step::Start(wave) | Step::Done(wave) => Some(wave),
             Step::Contract => None,
+        }
+    }
+
+    /// Reports the outcome of [`record`] for a step judged on `state`.
+    fn appended<O: Write>(
+        &self,
+        state: Waves,
+        appended: Appended,
+        out: &mut O,
+    ) -> Result<Code, CliError> {
+        match appended {
+            Appended::At(position) => self.recorded(&state.after(self.request.step), position, out),
+            Appended::Conflict => self.refused(&state, &Refusal::Concurrent, out),
         }
     }
 
@@ -328,3 +352,6 @@ fn refusal_message(migration: &str, refusal: &Refusal) -> String {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests;

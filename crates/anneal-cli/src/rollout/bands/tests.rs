@@ -244,3 +244,20 @@ fn a_bands_file_with_an_unknown_key_does_not_parse() {
 
     assert!(parsed.is_err(), "a misspelt or extra key is refused");
 }
+
+#[test]
+fn a_bands_file_naming_a_metric_twice_does_not_parse_and_names_it() {
+    // Without the check the second band would silently replace the first.
+    let parsed = serde_json::from_str::<BandsDto>(
+        r#"{"metrics": {
+            "p99_ms": {"better": "lower", "hold": 300, "rollback": 500},
+            "p99_ms": {"better": "lower", "hold": 3000, "rollback": 5000}
+        }}"#,
+    );
+
+    let message = parsed.map(|_| ()).map_err(|error| error.to_string());
+    assert!(
+        matches!(&message, Err(message) if message.starts_with("metric \"p99_ms\" is given twice")),
+        "{message:?}"
+    );
+}

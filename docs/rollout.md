@@ -11,7 +11,7 @@ policy).
 
 ## Bands file
 
-JSON, at most 1 MiB and 256 metrics, read strictly (an unknown key is refused):
+JSON, at most 1 MiB and 256 metrics, read strictly (an unknown key, or a metric named twice, is refused):
 
 ```json
 {
@@ -51,7 +51,7 @@ Each metric that is not go is a finding: `rollout/hold:<metric>`, `rollout/rollb
 or `rollout/missing:<metric>`.
 
 Exit codes: 0 go, 1 hold, 2 rollback (each with its envelope on stdout); a bands file that is
-missing, not a regular file, too large or invalid, or `--metrics` that is not a JSON object of
+missing, not a regular file, too large or invalid, or `--metrics` that names a metric twice or is not a JSON object of
 numbers, is a usage error (2 with one `ERROR` line and nothing on stdout); a bands file that
 exists but cannot be read is 70. A rollback's 2 always comes with an envelope, a usage error's
 never.

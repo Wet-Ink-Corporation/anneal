@@ -3,8 +3,8 @@
 //! The statistic is Welch's t interval on the difference of means (candidate minus baseline,
 //! in seconds) at 95%: the half-width is `t * sqrt(var_c / n_c + var_b / n_b)`, with `t` the
 //! 97.5th percentile of Student's t at the Welch–Satterthwaite degrees of freedom, read from a
-//! table at the largest tabled df not above it (so the interval is never narrower than the
-//! exact one). The change is faster only when the whole interval is below zero; an interval
+//! table, rounded up, at the largest tabled df not above it (t falls as df grows, so the
+//! interval is never narrower than the exact one). The change is faster only when the whole interval is below zero; an interval
 //! holding zero is neutral, and one above zero is slower. Only faster keeps the change.
 
 use serde::Serialize;
@@ -22,29 +22,31 @@ const MAX_SECS: f64 = 86_400.0;
 pub(crate) const CONFIDENCE: f64 = 0.95;
 
 /// Student's t at 97.5% for 1 degree of freedom, the widest tabled value, used below 1 too.
-const T_975_DF_1: f64 = 12.706;
+const T_975_DF_1: f64 = 12.707;
 
-/// Student's t at 97.5% (two-sided 95%) by degrees of freedom, ascending.
+/// Student's t at 97.5% (two-sided 95%) by degrees of freedom, ascending, each rounded up to
+/// three decimals so no entry is below the exact quantile (checked against it by
+/// `every_tabled_t_is_at_or_above_the_exact_one_and_within_0_001_of_it`).
 const T_975: [(u32, f64); 36] = [
     (1, T_975_DF_1),
     (2, 4.303),
-    (3, 3.182),
-    (4, 2.776),
+    (3, 3.183),
+    (4, 2.777),
     (5, 2.571),
     (6, 2.447),
     (7, 2.365),
-    (8, 2.306),
-    (9, 2.262),
-    (10, 2.228),
+    (8, 2.307),
+    (9, 2.263),
+    (10, 2.229),
     (11, 2.201),
     (12, 2.179),
-    (13, 2.160),
+    (13, 2.161),
     (14, 2.145),
-    (15, 2.131),
+    (15, 2.132),
     (16, 2.120),
     (17, 2.110),
     (18, 2.101),
-    (19, 2.093),
+    (19, 2.094),
     (20, 2.086),
     (21, 2.080),
     (22, 2.074),
@@ -53,13 +55,13 @@ const T_975: [(u32, f64); 36] = [
     (25, 2.060),
     (26, 2.056),
     (27, 2.052),
-    (28, 2.048),
-    (29, 2.045),
-    (30, 2.042),
-    (40, 2.021),
+    (28, 2.049),
+    (29, 2.046),
+    (30, 2.043),
+    (40, 2.022),
     (50, 2.009),
-    (60, 2.000),
-    (80, 1.990),
+    (60, 2.001),
+    (80, 1.991),
     (100, 1.984),
     (120, 1.980),
 ];

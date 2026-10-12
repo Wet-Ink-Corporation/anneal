@@ -28,7 +28,8 @@ git switch my-branch && anneal perf noise  -n 20 --baseline /tmp/base.json -- ./
 `noise` compares the candidate's run times with the baseline's by Welch's t interval on the
 difference of means (candidate minus baseline) at 95%. The t value is the 97.5th percentile of
 Student's t at the Welch–Satterthwaite degrees of freedom, read from a table at the largest
-tabled df not above it, so the interval is never narrower than the exact one.
+tabled df not above it, each entry rounded up to three decimals, so the interval is never
+narrower than the exact one.
 
 | Interval | Verdict | Decision | Exit |
 |---|---|---|---|

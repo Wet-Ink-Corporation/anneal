@@ -237,6 +237,40 @@ fn a_failed_run_is_an_internal_error_and_a_command_that_cannot_start_a_usage_err
 }
 
 #[test]
+fn a_timed_out_run_stops_the_command_as_an_internal_error_naming_the_run() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = baseline(dir.path(), &[100, 200]);
+    let mut runner = FakeRunner {
+        runs: VecDeque::from([
+            Ok(Duration::from_micros(5)),
+            Err(RunError::TimedOut { secs: 9 }),
+            Ok(Duration::from_micros(5)),
+        ]),
+        seen: Vec::new(),
+    };
+
+    let (code, out) = run_perf(
+        &["noise", "-n", "3", "--baseline", &file, "--", "bench"],
+        &mut runner,
+    );
+
+    let error = code.expect_err("a timed-out run is an error");
+    assert_eq!(
+        (error.code().value(), crate::error_chain::reason(&error)),
+        (
+            70,
+            "perf: run 2 of 3: the command ran past its 9 s timeout and was killed".to_owned()
+        ),
+        "the run and its timeout are named"
+    );
+    assert_eq!(
+        (out, runner.seen.len()),
+        (Value::Null, 2),
+        "nothing on stdout, no run after it"
+    );
+}
+
+#[test]
 fn a_baseline_of_another_version_or_with_one_run_is_a_usage_error() {
     let dir = tempfile::tempdir().expect("temp dir");
     let other = dir.path().join("v2.json");

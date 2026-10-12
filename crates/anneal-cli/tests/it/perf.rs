@@ -52,6 +52,30 @@ fn sample_saves_n_runs_and_noise_compares_against_them() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary and git")]
+fn a_run_that_fails_is_an_internal_error_naming_the_run_and_saves_nothing() -> TestResult {
+    // git exits 129 on an unknown option: the run started and failed, so its time measures
+    // nothing.
+    let dir = tempfile::tempdir()?;
+
+    let output = anneal_in(dir.path())
+        .args(["perf", "sample", "-n", "2", "--out", "x", "--"])
+        .args(["git", "--no-such-option"])
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(70), "{output:?}");
+    assert!(output.stdout.is_empty(), "no envelope");
+    assert!(!dir.path().join("x").exists(), "nothing saved");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.starts_with("ERROR perf: run 1 of 2: the command failed (exit 129)")
+            && stderr.lines().count() == 1,
+        "one ERROR line naming the run: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_command_that_cannot_start_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     let dir = tempfile::tempdir()?;

@@ -21,7 +21,7 @@ use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::json_file::{self, JsonFileError};
+use crate::json_file::{self, JsonFileError, UniqueMap};
 use bands::{BandError, Bands, BandsDto, Better, Decision, Rated, Rating};
 
 /// The largest bands file read, in bytes (H-13).
@@ -102,8 +102,10 @@ impl RolloutError {
 /// Runs `anneal rollout <action>`.
 pub(crate) fn run<O: Write>(args: &RolloutArgs, out: &mut O) -> Result<Code, CliError> {
     let RolloutAction::Decide(args) = &args.action;
-    let metrics: BTreeMap<String, f64> =
-        serde_json::from_str(&args.metrics).map_err(RolloutError::Metrics)?;
+    // A metric given twice is refused rather than the later value silently winning.
+    let metrics: BTreeMap<String, f64> = serde_json::from_str::<UniqueMap<f64>>(&args.metrics)
+        .map_err(RolloutError::Metrics)?
+        .into_inner();
     let bands = read_bands(&args.bands)?;
     let decision = Decision::of(&bands, &metrics);
     emit(&decision, out)
