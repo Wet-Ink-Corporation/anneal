@@ -101,6 +101,26 @@
       "role": "scaffolding",
       "model_generation": "claude-5",
       "source": "Story #39 (GSD pattern: flag instruction-shaped text in fetched content)"
+    },
+    {
+      "id": "context-monitor",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:c3acbc901216234f",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (context-monitor), context survival; story #38"
+    },
+    {
+      "id": "handoff",
+      "event": "PreCompact",
+      "matcher": "",
+      "fingerprint": "sha256:8a112bc19b313e45",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (handoff), context survival; story #38"
     }
   ]
 }

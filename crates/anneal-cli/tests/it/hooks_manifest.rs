@@ -796,3 +796,44 @@ fn the_schema_values_agree_with_the_metadata_dto() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn the_context_monitor_runs_once_per_batch_of_tool_calls_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::ContextMonitor)?;
+    assert_eq!(
+        event,
+        HookEvent::PostToolBatch,
+        "once per batch (no PostToolUse entry may run per call)"
+    );
+    assert_eq!(matcher, "", "PostToolBatch takes no matcher");
+    assert_eq!(hook.args, ["hook", "context-monitor"], "no --fail-closed");
+    assert_eq!(hook.on_failure, OnFailure::Continue, "fails open");
+    assert_eq!(hook.timeout, 5, "it reads two small files");
+    Ok(())
+}
+
+#[test]
+fn the_handoff_hook_runs_before_every_compaction_and_fails_open() -> TestResult {
+    let Placed {
+        event,
+        matcher,
+        hook,
+    } = only_entry(HookName::Handoff)?;
+    assert_eq!(event, HookEvent::PreCompact, "before compaction");
+    assert_eq!(matcher, "", "manual and automatic compactions");
+    assert_eq!(hook.args, ["hook", "handoff"], "no --fail-closed");
+    assert_eq!(
+        hook.on_failure,
+        OnFailure::Continue,
+        "never blocks a compaction"
+    );
+    assert_eq!(
+        hook.timeout, 30,
+        "the Stop hook's checks run inside it, within the same 30 s"
+    );
+    Ok(())
+}

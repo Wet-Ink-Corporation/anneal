@@ -44,6 +44,8 @@
 //! - [`repo_config`]: `.anneal/config.json`, read within a size cap (`check_fast`,
 //!   `review.require_plugin`, `ship.sensitive_globs`).
 //! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
+//! - [`statusline`]: `anneal statusline`, Claude Code's status line, which saves each
+//!   session's context usage for the context-monitor hook.
 
 pub mod adr;
 pub mod baseline;
@@ -51,6 +53,7 @@ pub mod calibrate;
 pub mod cli;
 pub mod command;
 mod content_hash;
+mod context;
 pub mod dag;
 pub mod decide;
 pub mod envelope;
@@ -76,6 +79,7 @@ pub mod repo_config;
 pub mod repro;
 pub mod rulings;
 pub mod ship;
+pub mod statusline;
 pub mod task;
 #[cfg(test)]
 mod test_repo;

@@ -22,6 +22,7 @@ mod hook_completeness;
 mod hook_fast_check;
 mod hook_guard;
 mod hook_guard_d1;
+mod hook_handoff;
 mod hook_injection_scan;
 mod hook_merge_gate;
 mod hook_prompt;
@@ -42,6 +43,7 @@ mod release_check;
 mod repo_gates;
 mod repro;
 mod ship;
+mod statusline;
 #[cfg(test)]
 mod support;
 mod task;

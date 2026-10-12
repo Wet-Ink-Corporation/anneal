@@ -18,7 +18,7 @@
 //! one. Anything it cannot check is one `ERROR` line as the `systemMessage`, and the stop goes
 //! on. See `docs/hooks.md`.
 
-mod check;
+pub(crate) mod check;
 mod claim;
 mod counter;
 mod edits;

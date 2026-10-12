@@ -13,8 +13,10 @@ pub(crate) mod bootstrap;
 #[cfg(test)]
 pub(crate) mod clef_fake;
 pub(crate) mod completeness;
+pub(crate) mod context_monitor;
 pub(crate) mod fast_check;
 pub(crate) mod guard;
+pub(crate) mod handoff;
 pub(crate) mod injection_scan;
 pub(crate) mod merge_gate;
 pub(crate) mod preconditions;
@@ -86,11 +88,17 @@ pub enum HookName {
     /// `PostToolBatch`: note instruction-shaped text in `Read` and `WebFetch` results; never
     /// blocks
     InjectionScan,
+    /// `PostToolBatch`: from the status line's saved usage, warn once at 60% and stop once at
+    /// 75% of the auto-compact window per crossing; fails open
+    ContextMonitor,
+    /// `PreCompact`: write `.continue-here` (phase, task N of M, open gates, ledger) at the
+    /// worktree root for the next session start; fails open
+    Handoff,
 }
 
 impl HookName {
     /// Every hook.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Bootstrap,
         Self::Guard,
         Self::Preconditions,
@@ -101,6 +109,8 @@ impl HookName {
         Self::RuledBefore,
         Self::MergeGate,
         Self::InjectionScan,
+        Self::ContextMonitor,
+        Self::Handoff,
     ];
 
     /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
@@ -117,6 +127,8 @@ impl HookName {
             Self::RuledBefore => "ruled-before",
             Self::MergeGate => "merge-gate",
             Self::InjectionScan => "injection-scan",
+            Self::ContextMonitor => "context-monitor",
+            Self::Handoff => "handoff",
         }
     }
 
@@ -132,7 +144,9 @@ impl HookName {
             | Self::Status
             | Self::Route
             | Self::RuledBefore
-            | Self::InjectionScan => false,
+            | Self::InjectionScan
+            | Self::ContextMonitor
+            | Self::Handoff => false,
             Self::Guard | Self::Preconditions | Self::MergeGate => true,
         }
     }
@@ -175,6 +189,8 @@ where
         }
         HookName::MergeGate => merge_gate::run(env, out),
         HookName::InjectionScan => injection_scan::run(env, out),
+        HookName::ContextMonitor => context_monitor::run(env, out),
+        HookName::Handoff => handoff::run(env, out),
     }
 }
 

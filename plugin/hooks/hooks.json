@@ -52,6 +52,17 @@
             "onFailure": "continue"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "context-monitor"],
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -108,6 +119,19 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
             "args": ["hook", "status"],
             "timeout": 15,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "handoff"],
+            "timeout": 30,
             "onFailure": "continue"
           }
         ]
