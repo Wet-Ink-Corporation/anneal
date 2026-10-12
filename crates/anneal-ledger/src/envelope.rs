@@ -267,7 +267,11 @@ mod tests {
             parsed.event,
             LedgerEvent::VerdictSet(VerdictSet {
                 pr: 12,
-                verdict: Verdict::NoiseOnly
+                verdict: Verdict::NoiseOnly,
+                source: None,
+                sha: None,
+                patch_id: None,
+                base: None,
             }),
             "payload read"
         );

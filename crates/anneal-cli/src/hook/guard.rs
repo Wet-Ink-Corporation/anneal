@@ -31,7 +31,9 @@ use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny
 use crate::paths::{self, PathError};
 /// What [`run_with`] reaches Clef and time through, so its callers can name it.
 pub(crate) use clef::Ports;
-use denylist::{Context, Verdict};
+use denylist::Verdict;
+/// The merge gate reads commands as the guard does.
+pub(crate) use denylist::{Context, MergeScan, PrMerge, Target, find_pr_merge};
 
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
 /// bodies, so the cap is well above a `PreToolUse` input's usual size.

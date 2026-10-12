@@ -34,6 +34,14 @@
 //! - [`repro`]: `anneal repro record|leftovers`, the red reproduction diagnose mode waits for
 //!   and the `[DEBUG-<id>]` instrumentation left behind ([`repro::debug_leftovers`]).
 //! - [`rulings`]: the out-of-scope ruling store, `.out-of-scope/<slug>.md`, listed by id.
+//! - [`verdict`]: `anneal verdict set|valid`, review verdicts per pull request, fresh for the
+//!   head's commit or, after a rebase-only change, its patch id.
+//! - [`ship`]: `anneal ship skip-rule`, whether a change may skip full review.
+//! - [`pr_diff`]: the bounded git reads of a pull request's diff (commits, base, patch id,
+//!   numstat) that `verdict`, `ship` and the merge gate share.
+//! - [`repo_config`]: `.anneal/config.json`, read within a size cap (`check_fast`,
+//!   `review.require_plugin`, `ship.sensitive_globs`).
+//! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
 
 pub mod adr;
 pub mod baseline;
@@ -50,6 +58,7 @@ pub mod eval;
 mod existing_ledger;
 pub mod exit_codes;
 pub mod floor_guard;
+pub mod glob;
 pub mod grill;
 pub mod hook;
 pub mod ledger;
@@ -57,9 +66,15 @@ pub mod lint;
 pub mod mode;
 pub mod paths;
 pub mod plan;
+pub mod pr_diff;
 mod process;
 #[cfg(test)]
 mod release_check;
+pub mod repo_config;
 pub mod repro;
 pub mod rulings;
+pub mod ship;
 pub mod task;
+#[cfg(test)]
+mod test_repo;
+pub mod verdict;

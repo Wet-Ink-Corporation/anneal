@@ -45,7 +45,8 @@ Hooks fail open. `anneal hook <id>` notes its failures in its output, or in one 
 stderr when stdout cannot be written, and exits 0. Only a usage error exits 2, which is why the
 manifest test runs every entry's arguments through the binary.
 
-Guards fail closed. A guard (`hook guard`, or any hook passed `--fail-closed`) denies what it
+Guards fail closed. A guard (`hook guard`, `hook preconditions`, `hook merge-gate`, or any hook
+passed `--fail-closed`) denies what it
 cannot judge. When its output cannot be written it exits 2 with one `ERROR` line, which Claude
 Code reads as "block". Its entry passes `--fail-closed` and sets `onFailure: "block"`, so a crash
 or a timeout blocks too.
@@ -117,6 +118,22 @@ enforce that cannot run asks, and an answer that cannot be logged never becomes 
 Clef off nothing is asked. The guard measures its 4.5 s budget from its start, and a deny with too
 little time left skips the ledger record, with a note. A denylist denial never reaches Clef. The denylist, the bypass handling and
 D1 are documented in `docs/guard.md`.
+
+## `merge-gate` (PreToolUse)
+
+Matcher `Bash`, `timeout` 5 s, `onFailure: "block"`, arguments `hook merge-gate --fail-closed`,
+in the same matcher group as the guard. It reads Claude Code's `PreToolUse` input on stdin (at
+most 1 MiB; it uses `tool_name`, `tool_input.command`, `session_id` and `cwd`) and finds every
+`gh pr merge` the command runs with the guard's lexer and unwrapping (`guard::find_pr_merge`).
+Any other call is allowed silently. Each merge must name its pull request by number and no other
+repository, and needs a fresh `tests_verified`-or-better verdict for its head
+(`--match-head-commit`, else `HEAD`; fresh by commit or by patch id, so a rebase keeps it) and a
+review verdict unless `anneal ship skip-rule` would skip the change; a human `approved` counts as
+the review only while `review.require_plugin` is false. A denial is the guard's deny decision with
+one `ERROR merge-gate: ...` line naming what is missing and the `anneal verdict set` command that
+records it, plus a `gate_blocked` event (`point` is `merge-gate.<check>`) in an existing ledger;
+it never creates one. Unreadable input or commands, and a ledger, git or setting it cannot read,
+are denied; git and ledger reads share 4 s from the hook's start. See `docs/verdict.md`.
 
 ## `preconditions` (PreToolUse)
 

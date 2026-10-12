@@ -20,6 +20,7 @@ use crate::grill::GrillError;
 use crate::lint::skills::LintError;
 use crate::mode::ModeError;
 use crate::paths::PathError;
+use crate::pr_diff::PrError;
 use crate::repro::ReproError;
 use crate::task::TaskError;
 
@@ -80,6 +81,9 @@ pub enum CliError {
     /// `anneal floor-guard` could not check the diff.
     #[error(transparent)]
     FloorGuard(#[from] FloorError),
+    /// `anneal verdict` or `anneal ship` could not read the pull request's change.
+    #[error(transparent)]
+    Pr(#[from] PrError),
     /// `anneal decide` could not ask, or record, its question.
     #[error("decide")]
     Decide(#[from] DecideError),
@@ -111,6 +115,7 @@ impl CliError {
             Self::Mode(error) => error.code(),
             Self::Repro(error) => error.code(),
             Self::FloorGuard(error) => error.code(),
+            Self::Pr(error) => error.code(),
             Self::Decide(error) => error.code(),
             Self::Calibrate(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,

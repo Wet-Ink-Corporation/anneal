@@ -6,6 +6,7 @@
 mod bypasses;
 mod forms;
 mod indirection;
+mod merge;
 
 use std::ffi::OsString;
 

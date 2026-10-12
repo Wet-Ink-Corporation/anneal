@@ -22,6 +22,7 @@ mod hook_completeness;
 mod hook_fast_check;
 mod hook_guard;
 mod hook_guard_d1;
+mod hook_merge_gate;
 mod hook_prompt;
 mod hook_status;
 mod hooks_manifest;
@@ -33,10 +34,14 @@ mod lint_spec;
 mod lint_terms;
 mod paths;
 mod plan;
+#[cfg(test)]
+mod pr_repo;
 mod preconditions;
 mod release_check;
 mod repo_gates;
 mod repro;
+mod ship;
 #[cfg(test)]
 mod support;
 mod task;
+mod verdict;
