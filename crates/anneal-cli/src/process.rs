@@ -215,7 +215,7 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    use super::{Limits, wait_with_input};
+    use super::{Limits, WaitError, wait_with_input};
 
     /// Thirty seconds and 1 KiB of each stream: ample for `git` on any runner.
     const LIMITS: Limits = Limits {
@@ -256,5 +256,31 @@ mod tests {
 
         assert!(output.status.success(), "{output:?}");
         assert!(output.stdout.starts_with(b"git version"), "{output:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_joined() {
+        // `exec` leaves no shell holding the pipes; 2 MiB is far past any pipe buffer, so the
+        // writer blocks until the kill closes the read end.
+        let mut child = Command::new("sh")
+            .args(["-c", "exec sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh starts");
+        let limits = Limits {
+            timeout: Duration::from_millis(200),
+            cap: 1024,
+        };
+
+        let result = wait_with_input(&mut child, &vec![b'x'; 2 * 1024 * 1024], limits, "sleep");
+
+        assert!(matches!(result, Err(WaitError::Timeout)), "{result:?}");
+        assert!(
+            child.try_wait().expect("waitable").is_some(),
+            "the child was reaped"
+        );
     }
 }

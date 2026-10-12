@@ -441,11 +441,12 @@ one):
    looked at and 256 atoms read, 16 KiB of each. An atom that does not read or parse is
    skipped, as is one a ruling already cites as its `weigh_in_ref`;
 3. then, with a `weighin` to ask (`$WEIGHIN_BIN`, else `weighin` on `PATH`; see
-   [orchestrate.md](orchestrate.md)), the items `weighin open --all --json` lists as
+   [orchestrate.md](orchestrate.md)), the items `weighin open --all --json --top 4096` lists as
    `decided` whose atom is not written yet, summarised as `<question>: <option>`. weigh-in
    gets at most 1 s, and never the time Clef's timeout needs; its output is capped at 4 MiB.
    Without a `weighin` this step is skipped silently. When it fails (a `$WEIGHIN_BIN` naming
-   no file, a non-zero exit, a timeout, output that does not parse, no time left) the other
+   no file, a non-zero exit, a timeout, output that does not parse, a listing of 4,096 items
+   or more, which may be cut, no time left) the other
    rulings are still offered and one `ERROR ruled-before: weigh-in's decided items were not
    read: ...` line is the `systemMessage`.
 

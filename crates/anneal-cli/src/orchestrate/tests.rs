@@ -262,6 +262,29 @@ fn a_failing_weighin_or_an_unreadable_receipt_fails_open_with_the_reason() -> Te
 }
 
 #[test]
+fn an_impossible_date_or_a_line_separator_is_a_usage_error_exiting_2_that_runs_nothing()
+-> TestResult {
+    let world = World::new()?;
+    let fake = Fake::answering(0, RECEIPT);
+
+    for (index, value) in [(12, "2026-02-31"), (4, "Shared\u{2028}cache?")] {
+        let mut words = PARK.to_vec();
+        words[index] = value;
+        let (code, envelope) = world.run(&words, Some(&world.bin()), &fake);
+        let error = code.expect_err("refused");
+        assert!(
+            matches!(error, CliError::Usage { .. }),
+            "{value:?}: {error:?}"
+        );
+        assert_eq!(error.code().value(), 2, "{value:?}");
+        assert_eq!(envelope, Value::Null, "nothing on stdout");
+    }
+    assert_eq!(fake.calls(), 0, "weighin never ran");
+    assert!(!world.store().exists(), "no ledger created");
+    Ok(())
+}
+
+#[test]
 fn invalid_park_arguments_are_usage_errors_that_run_and_record_nothing() -> TestResult {
     let world = World::new()?;
     let fake = Fake::answering(0, RECEIPT);

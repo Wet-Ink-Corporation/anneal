@@ -322,7 +322,7 @@ impl Runner for Listing {
     fn run(&self, call: &Call<'_>) -> Result<Ran, RunError> {
         assert_eq!(
             call.args,
-            ["open", "--all", "--json"],
+            ["open", "--all", "--json", "--top", "4096"],
             "only the listing is read"
         );
         // Each call hands out its own copy of the fixed run.

@@ -48,8 +48,10 @@ rules otherwise (shadow, `rule`, Clef off with exit 3, no answer with exit 5, or
 `PATH` (`weighin.exe`, `weighin.cmd` or `weighin.bat` on Windows).
 
 **Parking.** Every argument is checked first (the ticket as `anneal round` takes it; each text
-one non-blank line of at most 1,024 characters for `--q` and 512 for the rest; `--resolve-by` a
-`YYYY-MM-DD` date; `--decision` a decision id; `--session` a ledger tag), then the ledger is
+one non-blank line of at most 1,024 characters for `--q` and 512 for the rest, with no control,
+default-ignorable, format (Cf, bidi controls among them), line or paragraph separator character;
+`--resolve-by` a `YYYY-MM-DD` date that exists, so `2026-02-31` and `2026-02-29` are refused and
+`2028-02-29` is not; `--decision` a decision id; `--session` a ledger tag), then the ledger is
 opened, then `weighin batch` runs in the working directory with one JSON array on stdin:
 
 ```json
@@ -66,7 +68,10 @@ not read in part). The receipt is read line by line by its first words: `raised 
 `wi-… already raised`, and `deferred wi-…` for the same item. Raising is idempotent in weigh-in,
 so a park run again (a retried hook, a resumed session) names the same item; the ledger gets
 one `weighin_parked {item_id, ticket, decision?}` per item and ticket, and a repeat reports
-`data.recorded: false`.
+`data.recorded: false`. Two parks of the same item racing still record it once: a park reads the
+ticket's parks, appends only if none landed after that read (first writer wins), and on a
+conflict reads again, reporting the winner's position with `data.recorded: false`. A conflict
+with another item's park of the ticket is retried, at most 4 times, then exits 70.
 
 **Failing open.** With no `weighin`, or when it cannot start, times out, exits non-zero, writes
 too much, or prints a receipt that does not show the item raised and deferred, the park records
@@ -85,9 +90,12 @@ and what undoing it costs if the ruling is wrong. Nothing is asked.
 ## Reading rulings back (D6)
 
 The `ruled-before` hook offers Clef D6 the `.out-of-scope/` rulings, weigh-in's accepted
-decision atoms (`.kb/_intake/decisions/*.md`), and the items `weighin open --all --json` lists
-as decided whose atoms are not written yet ([hooks.md](hooks.md)). A ruling recorded with
-`weighin decide` on a parked item is therefore surfaced on a later prompt.
+decision atoms (`.kb/_intake/decisions/*.md`), and the items `weighin open --all --json --top 4096`
+lists as decided whose atoms are not written yet ([hooks.md](hooks.md)). A ruling recorded with
+`weighin decide` on a parked item is therefore surfaced on a later prompt. `--top` is explicit
+because weigh-in's `open` lists only 12 items by default, in id order, also with `--json`; a
+listing of 4,096 items or more may have been cut, so it is refused as a failure rather than
+read in part.
 
 Labelling the D2 decision from that ruling (the default held, or the human chose otherwise) is
 not automatic yet: `weighin_parked` keeps the D2 decision id so it can be, and until then it is
@@ -100,4 +108,6 @@ integration tests run the binary with weigh-in absent (every platform) and with 
 `weighin` shell script (unix). `orchestrate::the_pinned_weigh_in_parks_once_and_its_ruling_reaches_d6`
 runs the release exit criterion against a real weigh-in when `WEIGHIN_BIN` names one (0.6.0 or
 later; the CI step that downloads a pinned release and sets it is still to be added); without
-it the test prints that it skipped.
+it the test prints that it skipped. It also raises 13 more items, decides the one whose id
+sorts last and removes the decision atoms, so D6 can find that ruling only past `open`'s
+default 12.

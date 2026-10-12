@@ -4,7 +4,8 @@
 //! - `locate`: the CLI, from `$WEIGHIN_BIN`, then `weighin` on `PATH`.
 //! - `batch`: the raise and deferral a park pipes to `weighin batch`.
 //! - `receipt`: the item `weighin batch` minted (or found already raised) for a park.
-//! - `items`: the decided items of `weighin open --all --json`, for D6.
+//! - `items`: the decided items of `weighin open --all --json --top 4096`, for D6; a listing
+//!   that long may be cut, so it is refused.
 //!
 //! The CLI runs through the [`Runner`] port; [`ProcessRunner`] spawns it with the input piped
 //! to stdin, each output stream capped at [`MAX_OUTPUT_BYTES`] (one byte more is read, so a
@@ -26,6 +27,7 @@ use std::time::Duration;
 use crate::process::{self, WaitError};
 pub(crate) use batch::ParkRequest;
 pub(crate) use items::Decided;
+use items::ListingError;
 pub(crate) use locate::{BIN_VAR, locate};
 use receipt::ReceiptError;
 
@@ -43,6 +45,10 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Most characters of the CLI's stderr kept in a failure's reason.
 const MAX_STDERR_CHARS: usize = 200;
+
+/// The `--top` asked of `weighin open --all --json`, whose own default (12) would cut the
+/// listing short; a listing this long may have been cut, so it is refused.
+pub(crate) const MAX_LISTED_ITEMS: usize = 4096;
 
 /// A weigh-in item id: `wi-` and 1 to 32 lower-case ASCII letters or digits.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +204,15 @@ pub(crate) enum BridgeError {
     /// `open --all --json` did not parse.
     #[error("weighin open --all --json did not parse")]
     Listing(#[source] serde_json::Error),
+    /// `open --all --json` listed as many items as it was asked for, so it may have left some
+    /// out.
+    #[error(
+        "weighin open --all --json listed {cap} items or more; refusing a listing that may be cut"
+    )]
+    Truncated {
+        /// The most items asked for.
+        cap: usize,
+    },
 }
 
 /// An exit code, or the signal that stands in for one.
@@ -237,27 +252,34 @@ pub(crate) fn park(
     Ok(receipt::parked_item(&String::from_utf8_lossy(&stdout))?)
 }
 
-/// The items weigh-in has decided, from `weighin open --all --json` run in `cwd` within
-/// `timeout`.
+/// The items weigh-in has decided, from `weighin open --all --json --top 4096` run in `cwd`
+/// within `timeout`.
 ///
 /// # Errors
 /// [`BridgeError`] when the CLI cannot run, fails, writes too much, or its listing does not
-/// parse.
+/// parse; [`BridgeError::Truncated`] when it lists [`MAX_LISTED_ITEMS`] items or more, since
+/// it may have left some out.
 pub(crate) fn decided_items(
     runner: &impl Runner,
     bin: &Path,
     cwd: &Path,
     timeout: Duration,
 ) -> Result<Vec<Decided>, BridgeError> {
+    let top = MAX_LISTED_ITEMS.to_string();
     let call = Call {
         program: bin,
-        args: &["open", "--all", "--json"],
+        args: &["open", "--all", "--json", "--top", &top],
         input: &[],
         cwd,
         timeout,
     };
     let stdout = run_ok(runner, &call)?;
-    items::decided(&stdout).map_err(BridgeError::Listing)
+    items::decided(&stdout, MAX_LISTED_ITEMS).map_err(|error| match error {
+        ListingError::Parse(source) => BridgeError::Listing(source),
+        ListingError::Truncated => BridgeError::Truncated {
+            cap: MAX_LISTED_ITEMS,
+        },
+    })
 }
 
 /// Runs `call` and returns its stdout when it exited 0 within the caps.

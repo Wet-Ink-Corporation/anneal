@@ -182,7 +182,7 @@ fn decided_items_are_read_from_open_all_json_within_the_given_time() {
     let [call] = asked.as_slice() else {
         panic!("one call: {asked:?}");
     };
-    assert_eq!(call.args, ["open", "--all", "--json"]);
+    assert_eq!(call.args, ["open", "--all", "--json", "--top", "4096"]);
     assert_eq!(call.input, "", "nothing on stdin");
     assert_eq!(call.timeout, Duration::from_millis(700));
     let ids: Vec<&str> = found.iter().map(|item| item.id.as_str()).collect();
@@ -197,4 +197,44 @@ fn a_listing_that_does_not_parse_is_a_failure() {
         decided_items(&fake, Path::new("w"), Path::new("."), PARK_TIMEOUT).expect_err("not JSON");
 
     assert!(matches!(error, BridgeError::Listing(_)), "{error:?}");
+}
+
+#[test]
+fn the_listing_asks_weighin_for_up_to_4096_items_not_its_default_12() {
+    let fake = Fake::answering(Some(0), "[]", "");
+
+    let found = decided_items(&fake, Path::new("w"), Path::new("."), PARK_TIMEOUT).expect("read");
+
+    assert_eq!(found, []);
+    let asked = fake.asked();
+    let [call] = asked.as_slice() else {
+        panic!("one call: {asked:?}");
+    };
+    assert_eq!(call.args, ["open", "--all", "--json", "--top", "4096"]);
+}
+
+/// A listing of `count` decided items, `wi-0` up.
+fn listing(count: usize) -> String {
+    let items: Vec<serde_json::Value> = (0..count)
+        .map(|n| {
+            serde_json::json!({"id": format!("wi-{n}"), "status": "decided", "question": "Q?",
+                               "decision": {"option": "yes"}})
+        })
+        .collect();
+    serde_json::Value::Array(items).to_string()
+}
+
+#[test]
+fn a_listing_as_long_as_the_cap_may_be_cut_so_it_is_refused_not_read_in_part() {
+    let full = Fake::answering(Some(0), &listing(4096), "");
+    let under = Fake::answering(Some(0), &listing(4095), "");
+
+    let full = decided_items(&full, Path::new("w"), Path::new("."), PARK_TIMEOUT);
+    let under = decided_items(&under, Path::new("w"), Path::new("."), PARK_TIMEOUT);
+
+    assert!(
+        matches!(full, Err(BridgeError::Truncated { cap: 4096 })),
+        "{full:?}"
+    );
+    assert_eq!(under.expect("under the cap").len(), 4095);
 }

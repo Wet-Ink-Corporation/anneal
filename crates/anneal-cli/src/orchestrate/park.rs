@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::io::Write;
 
 use anneal_ledger::event::{BridgeUnavailable, OrchestrateRuled, WeighinParked};
-use anneal_ledger::{EventEnvelope, EventKind, Filter, LedgerEvent, Store, Timestamp};
+use anneal_ledger::{EventEnvelope, LedgerEvent, Store, Timestamp};
 use clap::Args;
 use serde::Serialize;
 
@@ -22,10 +22,15 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::error_chain;
 use crate::exit_codes::{self, Code};
+use crate::hook::injection_scan::detect;
 use crate::paths;
 use crate::weighin::{self, ItemId, ParkRequest, Runner};
 
 use super::Ports;
+
+mod parked;
+
+use parked::{Park, Parked};
 
 /// Most characters of a question.
 const MAX_QUESTION_CHARS: usize = 1024;
@@ -201,28 +206,23 @@ fn record_parked<O: Write>(
     out: &mut O,
 ) -> Result<Code, CliError> {
     let ticket = record.ticket;
-    let filter = Filter {
-        types: vec![EventKind::WeighinParked],
-        tags: Vec::new(),
+    let parks = parked::parks_of(ticket.as_str()).map_err(|error| CliError::Usage {
+        reason: format!("the --ticket is recorded as a ledger tag: {error}"),
+    })?;
+    let event = LedgerEvent::WeighinParked(WeighinParked {
+        item_id: item.as_str().to_owned(),
+        ticket: ticket.as_str().to_owned(),
+        decision: decision.map(|id| id.as_str().to_owned()),
+    });
+    let envelope = envelope(event, record.session)?;
+    let park = Park {
+        parks: &parks,
+        item: item.as_str(),
+        event: &envelope,
     };
-    let earlier = record
-        .store
-        .query(&filter)?
-        .into_iter()
-        .find_map(|recorded| {
-            matches!(&recorded.event.event, LedgerEvent::WeighinParked(parked)
-            if parked.item_id == item.as_str() && parked.ticket == ticket.as_str())
-            .then_some(recorded.position)
-        });
-    let (position, recorded) = if let Some(position) = earlier {
-        (position, false)
-    } else {
-        let event = LedgerEvent::WeighinParked(WeighinParked {
-            item_id: item.as_str().to_owned(),
-            ticket: ticket.as_str().to_owned(),
-            decision: decision.map(|id| id.as_str().to_owned()),
-        });
-        (record.append(event)?, true)
+    let (position, recorded) = match park.record(record.store)? {
+        Parked::Recorded(position) => (position, true),
+        Parked::Already(position) => (position, false),
     };
     let data = ParkData {
         ticket: ticket.as_str(),
@@ -301,11 +301,14 @@ fn check_session(ticket: &Ticket, session: Option<&str>) -> Result<(), CliError>
         })
 }
 
-/// `value` trimmed, when it is one non-blank line of at most `max` characters with no control
-/// character; else a usage error naming `--flag`.
+/// `value` trimmed, when it is one non-blank line of at most `max` characters with no control,
+/// default-ignorable, format, line or paragraph separator character (Cc, and what
+/// `injection_scan::detect::is_unprintable` names: a bidi override or a U+2028 would hide or
+/// break the line on weigh-in's board); else a usage error naming `--flag`.
 fn one_line<'a>(flag: &str, value: &'a str, max: usize) -> Result<&'a str, CliError> {
     let text = value.trim();
-    if text.is_empty() || text.chars().any(char::is_control) || text.chars().count() > max {
+    let hidden = |c: char| c.is_control() || detect::is_unprintable(c);
+    if text.is_empty() || text.chars().any(hidden) || text.chars().count() > max {
         return Err(CliError::Usage {
             reason: format!("--{flag} must be one non-blank line of at most {max} characters"),
         });
@@ -313,22 +316,41 @@ fn one_line<'a>(flag: &str, value: &'a str, max: usize) -> Result<&'a str, CliEr
     Ok(text)
 }
 
-/// `value` when it is a `YYYY-MM-DD` date (month 01 to 12, day 01 to 31); else a usage error
-/// naming `--flag`.
+/// `value` when it is a `YYYY-MM-DD` date that exists (month 01 to 12, day 01 to the month's
+/// length, February 29 only in a leap year); else a usage error naming `--flag`.
 fn date<'a>(flag: &str, value: &'a str) -> Result<&'a str, CliError> {
-    let number = |part: &str, range: std::ops::RangeInclusive<u32>| {
-        part.bytes().all(|b| b.is_ascii_digit())
-            && part.parse::<u32>().is_ok_and(|n| range.contains(&n))
+    let number = |part: &str, digits: usize| {
+        (part.len() == digits && part.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
     };
-    let valid = matches!(value.split('-').collect::<Vec<_>>().as_slice(),
-        [year, month, day] if year.len() == 4 && month.len() == 2 && day.len() == 2
-            && number(year, 0..=9999) && number(month, 1..=12) && number(day, 1..=31));
+    let valid = match value.split('-').collect::<Vec<_>>().as_slice() {
+        [year, month, day] => match (number(year, 4), number(month, 2), number(day, 2)) {
+            (Some(year), Some(month), Some(day)) => {
+                days_in_month(year, month).is_some_and(|days| (1..=days).contains(&day))
+            }
+            _ => false,
+        },
+        _ => false,
+    };
     if valid {
         Ok(value)
     } else {
         Err(CliError::Usage {
             reason: format!("--{flag} must be a date, YYYY-MM-DD"),
         })
+    }
+}
+
+/// The days of `month` (1 to 12) in `year` of the Gregorian calendar; `None` for no month.
+const fn days_in_month(year: u32, month: u32) -> Option<u32> {
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => Some(31),
+        4 | 6 | 9 | 11 => Some(30),
+        2 if leap => Some(29),
+        2 => Some(28),
+        _ => None,
     }
 }
 
@@ -381,5 +403,51 @@ mod tests {
         assert_eq!(one_line("q", &"é".repeat(8), 8).ok(), Some("éééééééé"));
         assert!(refused(&"é".repeat(9), 8), "nine characters");
         assert!(refused("tab\there", 64), "a control character");
+    }
+
+    #[test]
+    fn a_day_past_the_end_of_its_month_is_refused_with_leap_years_counted() {
+        for good in [
+            "2024-02-29",
+            "2000-02-29",
+            "2026-02-28",
+            "2026-04-30",
+            "2026-01-31",
+        ] {
+            assert_eq!(date("resolve-by", good).ok(), Some(good), "{good}");
+        }
+        for bad in [
+            "2026-02-29",
+            "2100-02-29",
+            "2026-02-31",
+            "2026-04-31",
+            "2026-06-31",
+            "2026-09-31",
+            "2026-11-31",
+        ] {
+            assert!(
+                matches!(date("resolve-by", bad), Err(CliError::Usage { reason })
+                    if reason == "--resolve-by must be a date, YYYY-MM-DD"),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn invisible_format_and_separator_characters_are_refused_like_control_characters() {
+        for character in [
+            '\u{2028}', '\u{2029}', '\u{202E}', '\u{200B}', '\u{FEFF}', '\u{00AD}',
+        ] {
+            let text = format!("Shared{character}cache?");
+
+            let result = one_line("q", &text, 64);
+
+            assert!(
+                matches!(&result, Err(CliError::Usage { reason })
+                    if reason == "--q must be one non-blank line of at most 64 characters"),
+                "U+{:04X}: {result:?}",
+                u32::from(character)
+            );
+        }
     }
 }

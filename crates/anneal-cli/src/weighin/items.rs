@@ -41,12 +41,27 @@ pub(crate) struct Decided {
     pub(crate) option: String,
 }
 
-/// The decided items in `json`, in the order listed.
+/// Why a listing could not be read.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ListingError {
+    /// It is not an array of items.
+    #[error("the listing did not parse")]
+    Parse(#[source] serde_json::Error),
+    /// It holds as many items as were asked for, so weigh-in may have left some out.
+    #[error("the listing may be cut")]
+    Truncated,
+}
+
+/// The decided items in `json`, a listing asked for at most `asked` items, in the order listed.
 ///
 /// # Errors
-/// `serde_json`'s when `json` is not an array of items.
-pub(crate) fn decided(json: &[u8]) -> Result<Vec<Decided>, serde_json::Error> {
-    let items: Vec<ItemDto> = serde_json::from_slice(json)?;
+/// [`ListingError::Parse`] when `json` is not an array of items, [`ListingError::Truncated`]
+/// when it holds `asked` items or more.
+pub(crate) fn decided(json: &[u8], asked: usize) -> Result<Vec<Decided>, ListingError> {
+    let items: Vec<ItemDto> = serde_json::from_slice(json).map_err(ListingError::Parse)?;
+    if items.len() >= asked {
+        return Err(ListingError::Truncated);
+    }
     Ok(items
         .into_iter()
         .filter(|item| item.status == DECIDED)
@@ -66,7 +81,7 @@ pub(crate) fn decided(json: &[u8]) -> Result<Vec<Decided>, serde_json::Error> {
 mod tests {
     use serde_json::json;
 
-    use super::{Decided, decided};
+    use super::{Decided, ListingError, decided};
 
     #[test]
     fn only_decided_items_with_a_weigh_in_id_are_read() {
@@ -80,7 +95,7 @@ mod tests {
             {"id": "not-wi", "status": "decided", "question": "Q", "decision": {"option": "x"}}
         ]);
 
-        let found = decided(listed.to_string().as_bytes()).expect("an array");
+        let found = decided(listed.to_string().as_bytes(), 4096).expect("an array");
 
         assert_eq!(
             found,
@@ -94,8 +109,11 @@ mod tests {
 
     #[test]
     fn an_empty_list_has_no_rulings_and_a_non_list_is_an_error() {
-        assert_eq!(decided(b"[]").expect("an array"), []);
-        let error = decided(b"{\"id\": \"wi-1\"}").expect_err("an object is not a list");
+        assert_eq!(decided(b"[]", 4096).expect("an array"), []);
+        let error = decided(b"{\"id\": \"wi-1\"}", 4096).expect_err("an object is not a list");
+        let ListingError::Parse(error) = error else {
+            panic!("not a parse error: {error:?}");
+        };
         assert_eq!(error.classify(), serde_json::error::Category::Data);
     }
 }

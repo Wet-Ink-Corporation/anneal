@@ -119,6 +119,15 @@ pub enum CliError {
         /// How many tries were made.
         attempts: usize,
     },
+    /// `anneal orchestrate park` lost every try to parks of other items of its ticket.
+    #[error(
+        "orchestrate park: other parks of the ticket kept landing during {attempts} tries; run it \
+         again"
+    )]
+    ParkContended {
+        /// How many tries were made.
+        attempts: usize,
+    },
     /// The ledger holds more `round_started` events than `anneal round` reads, so a ticket's
     /// rounds cannot be counted whole.
     #[error(
@@ -157,6 +166,7 @@ impl CliError {
             | Self::CurrentDir(_)
             | Self::Dag(_)
             | Self::RoundContended { .. }
+            | Self::ParkContended { .. }
             | Self::TooManyRounds { .. } => exit_codes::INTERNAL,
             Self::Lint(error) | Self::Plan(error) => error.code(),
             Self::Eval(error) => error.code(),

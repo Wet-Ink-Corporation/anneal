@@ -104,11 +104,18 @@ pub(crate) fn gather(root: &Path, decided: &[Decided]) -> Result<Vec<Precedent>,
         max_files: MAX_ATOM_FILES,
     };
     let rulings = rulings::list_within(&root.join(rulings::STORE_DIR), limits)?;
-    let cited: BTreeSet<&str> = rulings.iter().filter_map(|r| r.weigh_in_ref()).collect();
+    // An atom is not offered again under an offered ruling's id, or when a ruling cites it.
+    let taken: BTreeSet<&str> = rulings
+        .iter()
+        .map(rulings::Ruling::id)
+        .filter(|id| offerable(id))
+        .chain(rulings.iter().filter_map(|r| r.weigh_in_ref()))
+        .collect();
     // `rulings::list` refuses duplicate ids, so only the atoms can repeat one.
     let mut precedents: Vec<Precedent> = rulings
         .iter()
         .filter(|ruling| offerable(ruling.id()))
+        .take(MAX_PRECEDENTS)
         .map(|ruling| Precedent {
             id: ruling.id().to_owned(),
             summary: one_line(ruling.summary()),
@@ -116,24 +123,29 @@ pub(crate) fn gather(root: &Path, decided: &[Decided]) -> Result<Vec<Precedent>,
         .collect();
     let atoms_dir = ATOMS_DIR.iter().fold(root.to_path_buf(), |p, c| p.join(c));
     let mut atoms = accepted_atoms(&atoms_dir)?;
-    for item in decided {
-        let id = item.id.as_str();
-        if offerable(id) && atoms.iter().all(|atom| atom.id != id) {
-            let question = item.question.trim().trim_end_matches('?');
-            atoms.push(Precedent {
-                id: id.to_owned(),
-                summary: one_line(&format!("{question}: {}", item.option)),
-            });
-        }
-    }
+    atoms.extend(
+        decided
+            .iter()
+            .filter(|item| offerable(item.id.as_str()))
+            .map(|item| {
+                let question = item.question.trim().trim_end_matches('?');
+                Precedent {
+                    id: item.id.as_str().to_owned(),
+                    summary: one_line(&format!("{question}: {}", item.option)),
+                }
+            }),
+    );
+    // A stable sort keeps the accepted atoms (read first) ahead of the decided items with
+    // their id, and `dedup_by` keeps the first of each id: the atom wins.
     atoms.sort_by(|a, b| a.id.cmp(&b.id));
-    for atom in atoms {
-        let fresh = precedents.iter().all(|taken| taken.id != atom.id);
-        if fresh && !cited.contains(atom.id.as_str()) {
-            precedents.push(atom);
-        }
-    }
-    precedents.truncate(MAX_PRECEDENTS);
+    atoms.dedup_by(|later, earlier| later.id == earlier.id);
+    let vacancies = MAX_PRECEDENTS.saturating_sub(precedents.len());
+    precedents.extend(
+        atoms
+            .into_iter()
+            .filter(|atom| !taken.contains(atom.id.as_str()))
+            .take(vacancies),
+    );
     Ok(precedents)
 }
 
@@ -210,6 +222,7 @@ mod tests {
         MAX_ATOM_FILES, MAX_PRECEDENTS, MAX_SUMMARY_BYTES, Precedent, PrecedentError, gather,
     };
     use crate::rulings::RulingError;
+    use crate::weighin::Decided;
 
     type TestResult = Result<(), Box<dyn Error>>;
 
@@ -414,6 +427,44 @@ mod tests {
         let root = tempfile::tempdir()?;
 
         assert!(gather(root.path(), &[])?.is_empty(), "nothing to offer");
+        Ok(())
+    }
+
+    #[test]
+    fn many_decided_items_are_offered_once_each_in_id_order_up_to_the_cap() -> TestResult {
+        let root = tempfile::tempdir()?;
+        atom(root.path(), "wi-000005", "accepted")?;
+        let decided: Vec<Decided> = (0..300)
+            .rev()
+            .chain([5, 7, 7])
+            .map(|n| Decided {
+                id: format!("wi-{n:06}").parse().expect("an id"),
+                question: format!("Question {n}?"),
+                option: "yes".to_owned(),
+            })
+            .collect();
+
+        let found = gather(root.path(), &decided)?;
+
+        let ids: Vec<&str> = found.iter().map(Precedent::id).collect();
+        let expected: Vec<String> = (0..MAX_PRECEDENTS).map(|n| format!("wi-{n:06}")).collect();
+        assert_eq!(ids, expected, "each id once, in id order, cut at the cap");
+        let atom_kept = found
+            .iter()
+            .find(|p| p.id() == "wi-000005")
+            .expect("offered");
+        assert_eq!(
+            atom_kept.summary(),
+            "Which licence: MIT OR Apache-2.0",
+            "the atom wins over the decided item with its id"
+        );
+        assert_eq!(
+            found
+                .iter()
+                .find(|p| p.id() == "wi-000007")
+                .map(Precedent::summary),
+            Some("Question 7: yes")
+        );
         Ok(())
     }
 }

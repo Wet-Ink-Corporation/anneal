@@ -178,8 +178,13 @@ fn weighin(bin: &Path, dir: &Path, args: &[&str]) -> TestResult<Vec<u8>> {
 }
 
 /// Runs the ruled-before hook in `repo` on `prompt` with Clef enforcing D6 and answering
-/// `item` at 0.9, returning its stdout parsed.
-fn ruled_before(repo: &Path, bin: &Path, item: &str, prompt: &str) -> TestResult<Value> {
+/// `item` at 0.9 (and each of the `others` offered at 0), returning its stdout parsed.
+fn ruled_before(
+    repo: &Path,
+    bin: &Path,
+    (item, others): (&str, &[&str]),
+    prompt: &str,
+) -> TestResult<Value> {
     let home = repo.join(".anneal-home");
     let decisions = home.join("decisions");
     std::fs::create_dir_all(&decisions)?;
@@ -187,7 +192,13 @@ fn ruled_before(repo: &Path, bin: &Path, item: &str, prompt: &str) -> TestResult
         decisions.join("counts.json"),
         json!({"kind": "anneal-decision-counts", "version": 1, "answered": {"D6": 50}}).to_string(),
     )?;
-    let inner = json!({"probabilities": {item: 0.9, "none": 0.1}});
+    let mut probabilities = serde_json::Map::new();
+    probabilities.insert(item.to_owned(), json!(0.9));
+    probabilities.insert("none".to_owned(), json!(0.1));
+    for other in others {
+        probabilities.insert((*other).to_owned(), json!(0.0));
+    }
+    let inner = json!({ "probabilities": probabilities });
     let body = json!({"result": {"response": inner.to_string()}}).to_string();
     let input = json!({
         "session_id": "s37",
@@ -216,12 +227,85 @@ fn ruled_before(repo: &Path, bin: &Path, item: &str, prompt: &str) -> TestResult
     });
     let output = output?;
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    Ok(serde_json::from_slice(&output.stdout)?)
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("{error}: {output:?}").into())
+}
+
+/// How many items are raised beside the park: more than `weighin open`'s default `--top` (12).
+const SEEDED: usize = 13;
+
+/// Raises [`SEEDED`] more items in `repo`, decides the one whose id sorts last (`open --all`
+/// lists in id order, so past the default `--top`) unless it is `decided` already, and removes
+/// the decision atoms, so D6 can learn of the rulings only from weigh-in's listing. Returns
+/// that id.
+fn seed_and_decide_the_last(bin: &Path, repo: &Path, decided: &str) -> TestResult<String> {
+    let raises: Vec<Value> = (1..=SEEDED)
+        .map(|n| json!({"op": "raise", "q": format!("Seeded question {n}?")}))
+        .collect();
+    let mut command = Command::new(bin);
+    command.arg("batch").current_dir(repo).stdin(Stdio::piped());
+    for var in WEIGH_IN_SESSION {
+        command.env_remove(var);
+    }
+    let mut child = command.stdout(Stdio::null()).spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or("stdin is piped")?
+        .write_all(Value::Array(raises).to_string().as_bytes())?;
+    assert!(child.wait()?.success(), "weighin batch");
+    let listed: Value = serde_json::from_slice(&weighin(
+        bin,
+        repo,
+        &["open", "--all", "--json", "--top", "100"],
+    )?)?;
+    let ids: Vec<&str> = listed
+        .as_array()
+        .ok_or("a list")?
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(ids.len(), SEEDED + 1, "the park and the seeded items");
+    let last = ids.iter().max().ok_or("an id")?.to_string();
+    if last != decided {
+        weighin(bin, repo, &["decide", &last, "seeded"])?;
+    }
+    std::fs::remove_dir_all(repo.join(".kb").join("_intake").join("decisions"))?;
+    Ok(last)
+}
+
+/// The `additionalContext` of a hook's output, or `""`.
+fn context_of(surfaced: &Value) -> &str {
+    surfaced
+        .pointer("/hookSpecificOutput/additionalContext")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+/// With [`SEEDED`] more items raised and the last-sorting one decided (its atom removed), D6
+/// still surfaces that ruling: the listing is read past `open`'s default `--top` of 12.
+fn d6_reads_past_the_default_top(bin: &Path, repo: &Path, parked: &str) -> TestResult {
+    let last = seed_and_decide_the_last(bin, repo, parked)?;
+
+    let surfaced = ruled_before(
+        repo,
+        bin,
+        (&last, &[parked]),
+        "should we revisit the seeded call",
+    )?;
+
+    assert!(
+        context_of(&surfaced).contains(&last),
+        "D6 surfaces the ruling listed last of {}: {surfaced}",
+        SEEDED + 1
+    );
+    Ok(())
 }
 
 /// The exit criterion of Release 5 against the real weigh-in: a park creates one item with
 /// its default (a retry adds none), and a ruling recorded with `weighin decide` is surfaced by
-/// D6 on a later prompt. Runs only with `WEIGHIN_BIN` naming a weigh-in 0.6 or later.
+/// D6 on a later prompt, also when weigh-in holds more items than `open`'s default `--top` and
+/// the ruling is listed last, with no decision atom to fall back on. Runs only with
+/// `WEIGHIN_BIN` naming a weigh-in 0.6 or later.
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary and weighin")]
 fn the_pinned_weigh_in_parks_once_and_its_ruling_reaches_d6() -> TestResult {
@@ -261,15 +345,18 @@ fn the_pinned_weigh_in_parks_once_and_its_ruling_reaches_d6() -> TestResult {
     assert_eq!(open[0]["id"], json!(item), "visible in weighin open");
 
     weighin(&bin, repo.path(), &["decide", item, "shared"])?;
-    let surfaced = ruled_before(repo.path(), &bin, item, "let us split the cache per tenant")?;
+    let surfaced = ruled_before(
+        repo.path(),
+        &bin,
+        (item, &[]),
+        "let us split the cache per tenant",
+    )?;
 
-    let context = surfaced
-        .pointer("/hookSpecificOutput/additionalContext")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let context = context_of(&surfaced);
     assert!(
         context.contains(item) && context.contains("shared"),
         "D6 surfaces the ruling: {surfaced}"
     );
-    Ok(())
+
+    d6_reads_past_the_default_top(&bin, repo.path(), item)
 }
