@@ -9,55 +9,16 @@
 //! not read stops the run (exit 2) before this comparison is made.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
-use crate::exit_codes::{self, Code};
-use crate::lint::skills::LintError;
+use crate::eval::real::ChangedError;
 use crate::lint::skills::discover::{EntryKind, MAX_READ_BYTES, list_dir, read_bounded};
 use crate::lint::skills::frontmatter;
-use crate::paths::{PathError, run_git_capped};
+use crate::paths::run_git_capped;
 
 /// How long one git call may take.
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Why `--changed-since` could not compare.
-#[derive(Debug, thiserror::Error)]
-pub enum ChangedError {
-    /// The base names no commit.
-    #[error("--changed-since {base:?} names no commit")]
-    Unresolved {
-        /// The base as given.
-        base: String,
-    },
-    /// git could not be run.
-    #[error("comparing skills with git")]
-    Git(#[source] PathError),
-    /// The skills directory could not be listed.
-    #[error("listing the skills")]
-    List(#[source] LintError),
-    /// A skill file could not be read.
-    #[error("reading {}", path.display())]
-    Read {
-        /// The file.
-        path: PathBuf,
-        /// Why.
-        #[source]
-        source: std::io::Error,
-    },
-}
-
-impl ChangedError {
-    /// The documented exit code: a base that names no commit is a usage error, the rest
-    /// internal.
-    #[must_use]
-    pub const fn code(&self) -> Code {
-        match self {
-            Self::Unresolved { .. } => exit_codes::USAGE,
-            Self::Git(_) | Self::List(_) | Self::Read { .. } => exit_codes::INTERNAL,
-        }
-    }
-}
 
 /// What the router reads of one skill; `None` for a user-invoked skill, which it never sees.
 #[derive(Debug, Clone, PartialEq, Eq)]

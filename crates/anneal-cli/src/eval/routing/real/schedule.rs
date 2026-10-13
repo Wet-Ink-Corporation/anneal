@@ -7,7 +7,7 @@
 use serde::Serialize;
 
 use super::Run;
-use super::wilson::{Bar, Position, wilson};
+use crate::eval::real::wilson::{Bar, Position, wilson};
 
 /// Runs per batch.
 pub(crate) const BATCH: u32 = 3;

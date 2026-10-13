@@ -14,8 +14,8 @@ use super::{BaselineKind, Trial, UpliftOutcome};
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
-use crate::eval::routing::real::Stop;
-use crate::eval::routing::real::wilson::wilson;
+use crate::eval::real::Stop;
+use crate::eval::real::wilson::wilson;
 use crate::exit_codes::{self, Code};
 
 /// The envelope's `data`.

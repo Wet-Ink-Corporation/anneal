@@ -27,9 +27,9 @@ pub(crate) use args::{Mode, Settings};
 pub use gated::GatedCases;
 pub(crate) use report::report;
 
-use crate::eval::routing::real::args::plugin_of;
-use crate::eval::routing::real::claude::plugin_name;
-use crate::eval::routing::real::{ChangedError, RouterError, spend_unknown};
+use crate::eval::real::args::plugin_of;
+use crate::eval::real::claude::plugin_name;
+use crate::eval::real::{ChangedError, RouterError, spend_unknown};
 use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;

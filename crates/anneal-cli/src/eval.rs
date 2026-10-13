@@ -6,10 +6,14 @@
 //! - [`uplift`]: `eval uplift`, Tier 3, each entry skill's regression and capability suites
 //!   under `evals/uplift/` run with the skill and without it.
 //!
+//! Tiers 2 and 3 share `real`: the `claude plugin eval` driver, its result reader, the Wilson
+//! interval and the temporary workspace.
+//!
 //! The envelope's `data` holds the counts, the confusion table as a map (`confusion`) and as
 //! aligned text lines (`table`, for `jq -r '.data.table[]'`); every miss and every problem is a
 //! finding.
 
+mod real;
 pub mod routing;
 pub mod uplift;
 
@@ -23,7 +27,7 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::Code;
 use crate::exit_codes::render::command_help;
-use routing::real::{self, RealArgs};
+use routing::real::RealArgs;
 use routing::{Case, CaseKind, Confusion, Outcome, Problem};
 
 /// Arguments of `anneal eval`.
@@ -69,7 +73,9 @@ pub fn run<O: Write>(args: &EvalArgs, out: &mut O) -> Result<Code, CliError> {
     match &args.suite {
         EvalSuite::Routing(command) => match command.real.settings()? {
             None => report(&routing::evaluate(&command.inputs)?, out),
-            Some(settings) => real::report(&real::evaluate(&command.inputs, &settings)?, out),
+            Some(settings) => {
+                routing::real::report(&routing::real::evaluate(&command.inputs, &settings)?, out)
+            }
         },
         EvalSuite::Uplift(args) => {
             let mode = args.mode()?;

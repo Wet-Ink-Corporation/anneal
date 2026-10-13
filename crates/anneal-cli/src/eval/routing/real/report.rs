@@ -6,12 +6,12 @@ use serde::Serialize;
 
 use super::schedule::{Count, Next, next};
 use super::tally::{Probe, Rate, SkillResult, confusion, failed, per_skill};
-use super::wilson::Bar;
 use super::{RealOutcome, Run, Stop};
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::eval::problem_finding;
+use crate::eval::real::wilson::Bar;
 use crate::eval::routing::Confusion;
 use crate::exit_codes::{self, Code};
 

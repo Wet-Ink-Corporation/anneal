@@ -13,8 +13,8 @@ use super::Trial;
 use super::suites::Case;
 use super::tally::{Arms, RUNS};
 use crate::error_chain;
-use crate::eval::routing::real::result::{ResultError, over_asked};
-use crate::eval::routing::real::{RouterError, Stop};
+use crate::eval::real::result::{ResultError, over_asked};
+use crate::eval::real::{RouterError, Stop};
 
 /// The least budget, in US dollars, worth launching a batch for.
 const MIN_BUDGET_USD: f64 = 0.01;

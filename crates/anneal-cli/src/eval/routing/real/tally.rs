@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use super::Run;
 use super::schedule::{Count, Next, next};
-use super::wilson::{Bar, Interval, Position, wilson};
+use crate::eval::real::wilson::{Bar, Interval, Position, wilson};
 use crate::eval::routing::Confusion;
 
 /// The row-header cell of the rendered table.
@@ -180,8 +180,8 @@ fn label(run: &Run) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{Probe, per_skill};
+    use crate::eval::real::wilson::Position;
     use crate::eval::routing::real::Run;
-    use crate::eval::routing::real::wilson::Position;
 
     fn skills() -> Vec<String> {
         ["plan", "spec"].map(str::to_owned).to_vec()
