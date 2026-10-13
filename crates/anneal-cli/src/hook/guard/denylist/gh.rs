@@ -8,7 +8,7 @@
 //! the word, or the next word when it ends the cluster (`-R=o/x` drops the `=`).
 
 use super::wrappers::may_be_option;
-use crate::hook::guard::shell::Word;
+use crate::hook::guard::shell::{Shape, Substituted, Word};
 
 /// Long options of `gh` and `gh pr merge` that take the next word as their value.
 const VALUE_LONGS: &[&str] = &[
@@ -59,6 +59,11 @@ pub(crate) struct PrMerge {
     /// How the command changed the working directory before gh ran (`cd`, `env --chdir`, ...),
     /// so gh may read another repository's remotes.
     pub(crate) moved: Option<&'static str>,
+    /// Why gh may read another `--repo` or `--match-head-commit` than `repo` and `match_head`
+    /// say: one of them is not written out in the command (a variable's value the guard put
+    /// in, which control flow or `unset` may change), a word may vanish or split at run time
+    /// and shift which word an option takes, or there is more than one operand.
+    pub(crate) unsure: Option<&'static str>,
 }
 
 /// What a pass over `gh`'s arguments found.
@@ -68,6 +73,42 @@ struct Parsed<'a> {
     match_head: Option<&'a str>,
     disable_auto: bool,
     operands: Vec<&'a Word>,
+    unsure: Option<&'static str>,
+}
+
+impl Parsed<'_> {
+    /// Notes `why` unless an earlier reason was noted.
+    fn doubt(&mut self, why: &'static str) {
+        self.unsure.get_or_insert(why);
+    }
+}
+
+/// Why a word may not be one word at run time.
+const SHIFTING: &str = "has a word that may vanish or split at run time (an unquoted \
+                        expansion or variable, or a glob)";
+
+/// Why `--repo` cannot be trusted.
+const REPO_NOT_WRITTEN: &str = "takes --repo from a value the command does not write out";
+
+/// Why `--match-head-commit` cannot be trusted.
+const PIN_NOT_WRITTEN: &str =
+    "takes --match-head-commit from a value the command does not write out";
+
+/// Why more than one operand cannot be trusted.
+const OPERANDS: &str = "has more than one operand after pr merge";
+
+/// Whether `word` is one word at run time whatever the command's variables hold: no unquoted
+/// expansion, no value put in unquoted, and no glob.
+fn stays_one_word(word: &Word) -> bool {
+    word.substituted != Substituted::Unquoted
+        && word.expansions.iter().all(|expansion| expansion.quoted)
+        && !(word.shape == Shape::Pattern && word.text.contains(['*', '?', '[']))
+}
+
+/// Whether `word`'s text is what the command writes out: no expansion and no value the guard
+/// put in.
+fn written(word: &Word) -> bool {
+    word.is_literal() && word.substituted == Substituted::No
 }
 
 /// How an option word takes its value.
@@ -85,11 +126,15 @@ enum Taken<'a> {
 /// `--disable-auto=<bool>`) turns auto-merge off and merges nothing. A group or subcommand word
 /// known only at run time may be `pr merge`, so it counts as one whose pull request is unknown.
 pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
-    let parsed = parse(args);
+    let mut parsed = parse(args);
     if parsed.disable_auto {
         return None;
     }
     let (target, url_repo) = target(&parsed.operands)?;
+    // `pr`, `merge` and the pull request.
+    if parsed.operands.len() > 3 {
+        parsed.doubt(OPERANDS);
+    }
     Some(PrMerge {
         target,
         repo: parsed.repo.map(str::to_owned),
@@ -97,6 +142,7 @@ pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
         url_repo,
         env: None,
         moved: None,
+        unsure: parsed.unsure,
     })
 }
 
@@ -125,10 +171,13 @@ fn target(operands: &[&Word]) -> Option<(Target, Option<String>)> {
     }
 }
 
-/// One pass over `words`: the options the gate reads, wherever they are, and the operands in
-/// order (everything after `--` is an operand).
+/// One pass over `words`: the options the gate reads, wherever they are, the operands in order
+/// (everything after `--` is an operand), and why the values read may not be gh's.
 fn parse(words: &[Word]) -> Parsed<'_> {
     let mut parsed = Parsed::default();
+    if !words.iter().all(stays_one_word) {
+        parsed.doubt(SHIFTING);
+    }
     let mut rest = words;
     while let [first, tail @ ..] = rest {
         rest = tail;
@@ -143,16 +192,22 @@ fn parse(words: &[Word]) -> Parsed<'_> {
         let (name, taken) = read_option(&first.text);
         let value = match taken {
             Taken::Flag => None,
-            Taken::Attached(value) => Some(value),
+            Taken::Attached(value) => Some((value, first)),
             Taken::Next => {
                 let [value, after @ ..] = rest else {
                     break;
                 };
                 rest = after;
-                Some(value.text.as_str())
+                Some((value.text.as_str(), value))
             }
         };
-        match (name, value) {
+        let not_written = value.is_some_and(|(_, source)| !written(source));
+        match name {
+            "--repo" if not_written => parsed.doubt(REPO_NOT_WRITTEN),
+            "--match-head-commit" if not_written => parsed.doubt(PIN_NOT_WRITTEN),
+            _ => {}
+        }
+        match (name, value.map(|(value, _)| value)) {
             ("--repo", Some(value)) => parsed.repo = Some(value),
             ("--match-head-commit", Some(value)) => parsed.match_head = Some(value),
             ("--disable-auto", None) => parsed.disable_auto = true,

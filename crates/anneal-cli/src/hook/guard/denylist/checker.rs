@@ -171,7 +171,7 @@ impl<'c> Checker<'c> {
                         let line: Vec<Word> = args
                             .iter()
                             .cloned()
-                            .chain(input.split_whitespace().map(variables::literal))
+                            .chain(input.split_whitespace().map(variables::split_out))
                             .collect();
                         self.program(program, &line, scope)
                     }

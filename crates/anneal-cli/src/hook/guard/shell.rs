@@ -18,7 +18,7 @@ mod word;
 use std::mem;
 
 use redirect::Heredoc;
-pub(crate) use word::{Expansion, Shape, Word};
+pub(crate) use word::{Expansion, Shape, Substituted, Word};
 
 /// How deep `$( )`, backticks, `( )` and `${ }` may nest before a command is refused (H-13).
 pub(crate) const MAX_NESTING: usize = 32;

@@ -15,6 +15,7 @@ fn merge(target: Target, repo: Option<&str>, match_head: Option<&str>) -> PrMerg
         url_repo: None,
         env: None,
         moved: None,
+        unsure: None,
     }
 }
 
@@ -85,6 +86,11 @@ fn an_origin_url_reads_as_host_owner_and_repository() {
         ),
         ("https://github.com/o/r", Some("github.com/o/r")),
         (
+            "git@github.com:Owner/Repo.GIT\n",
+            Some("github.com/owner/repo"),
+        ),
+        ("https://github.com/o/r$x.git", None),
+        (
             "https://user@github.com:443/o/r.git/",
             Some("github.com/o/r"),
         ),
@@ -133,11 +139,33 @@ fn a_repository_named_as_host_owner_and_repository_passes_to_the_gate() {
 }
 
 #[test]
+fn a_merge_whose_repository_may_differ_at_run_time_is_denied() {
+    let mut unsure = merge(
+        Target::Number(7),
+        Some("github.com/owner/repo"),
+        Some("abc"),
+    );
+    unsure.unsure = Some("takes --repo from a variable");
+
+    let denial = pull(&unsure).expect_err("denied");
+
+    assert_eq!(
+        (
+            denial.check,
+            denial.reason.contains("takes --repo from a variable")
+        ),
+        (Check::Repo, true),
+        "{denial:?}"
+    );
+}
+
+#[test]
 fn a_repository_not_named_as_host_owner_and_repository_is_denied() {
     let rows = [
         "owner/repo",
         "https://github.com/owner/repo",
         "github.com/owner/repo.git",
+        "github.com/owner/repo.GIT",
         "github.com/owner/repo/extra",
         "github.com//repo",
         "github.com/owner/$REPO",

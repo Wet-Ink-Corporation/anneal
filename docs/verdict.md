@@ -143,14 +143,22 @@ or `true`), which merges nothing; `--disable-auto=false` is a merge. For each me
    command to run, with the worktree's `HEAD` (and `--repo`) filled in.
 3. The merge must name the repository the gate judges, the worktree's `origin`, as
    `-R`/`--repo <host>/<owner>/<repo>` (`--repo=`, `-R<value>` and `-R=<value>` too; the last one
-   given counts, as in pflag), compared without case. This is what the gate's invariant rests
-   on: gh takes the repository from `--repo` before `GH_REPO` and before the working directory's
-   git remotes, and takes the host in it before `GH_HOST` (a bare `owner/repo` would take
-   `GH_HOST`'s, so it is denied). So no `cd`, wrapper, environment variable or function body can
-   point gh at a repository other than the one whose verdicts were judged. A merge without
-   `--repo`, with another repository, or in a worktree whose `origin` does not read as
-   `<host>/<owner>/<repo>` is denied (`repo`), and the denial names the exact command:
-   `gh pr merge <n> --match-head-commit <HEAD> --repo <origin>`.
+   given counts, as in pflag), compared without case, and written out literally in the command.
+   This is what the gate's invariant rests on: gh takes the repository from `--repo` before
+   `GH_REPO` and before the working directory's git remotes, and takes the host in it before
+   `GH_HOST` (a bare `owner/repo` would take `GH_HOST`'s, so it is denied). So with a literal
+   `--repo`, no `cd`, wrapper, environment variable or function body can point gh at a
+   repository other than the one whose verdicts were judged. The gate trusts only what the
+   command writes out, so these are denied too (`repo`): a `--repo` or `--match-head-commit`
+   whose value comes from a variable, even one the command sets (control flow and `unset`
+   decide its value at run time); any of gh's words that may vanish or split at run time (an
+   unquoted expansion or a glob), which could shift which word `--repo` takes; and more than
+   one operand after `pr merge`. A merge without `--repo`, with another repository, or in a
+   worktree whose `origin` does not read as `<host>/<owner>/<repo>` is denied (`repo`), and
+   the denial names the exact command:
+   `gh pr merge <n> --match-head-commit <HEAD> --repo <origin>`. `origin` and `--repo` are read
+   by one rule: each part in `[A-Za-z0-9._-]`, and a `.git` ending, in any case, dropped from
+   `origin` and refused in `--repo`.
 
    As defence in depth the gate also denies a command that sets `GH_REPO` or `GH_HOST` (`env`),
    also through brace expansion (`export GH_RE{PO,X}=o/x`; a brace sequence that may build such
@@ -183,6 +191,14 @@ The gate judges what it can see in a Bash command, for an honest agent:
 
 - merges outside `gh pr merge`: `gh api` calls to the merge endpoint, a gh alias, the web UI, or
   another tool;
+- an `origin` that names an ssh host alias (`git@github-work:org/repo.git`, with
+  `github-work` defined in `~/.ssh/config`) reads as `github-work/org/repo`, a host gh cannot
+  reach, so every merge in that worktree is denied or fails. The gate stays offline and does
+  not resolve aliases (no `ssh -G`). Point `origin` at the real host
+  (`git remote set-url origin git@github.com:org/repo.git`), or map the alias to it with
+  `git config url.git@github.com:.insteadOf git@github-work:`, which `git remote get-url`
+  expands, so the gate reads `github.com/org/repo` (git then connects to the real host too, so
+  choose the alias's key another way, such as `core.sshCommand`);
 - the gate judges the worktree it runs in: `origin` and the ledger are read from the hook's
   working directory, so a Bash call that an earlier call moved into another repository's
   worktree is judged against that repository, and `--repo` must then name it;

@@ -416,16 +416,9 @@ fn a_merge_in_a_repository_without_an_origin_is_denied() -> TestResult {
     Ok(())
 }
 
-#[test]
-#[cfg_attr(miri, ignore = "runs git and the binary")]
-fn every_bypass_from_the_review_of_89_is_denied() -> TestResult {
-    let repo = PrRepo::new()?;
-    repo.ensure_origin()?;
-    repo.set_verdict("tests-verified", "local")?;
-    let head = repo.head()?;
-    let merge = format!("gh pr merge 7 --match-head-commit {head}");
-
-    let rows = [
+/// The bypasses the reviews of #89 found, around `merge`, each with the check that denies it.
+fn bypass_rows(merge: &str) -> Vec<(String, &'static str)> {
+    vec![
         // Brace sequences building GH_REPO or GH_HOST.
         (
             format!("export GH_REP{{O..O}}=o/x; {merge}"),
@@ -462,7 +455,40 @@ fn every_bypass_from_the_review_of_89_is_denied() -> TestResult {
             format!("export $(printf GH_RE%sPO)=o/x; {merge}"),
             "merge-gate.repo",
         ),
-    ];
+        // Round 2: a --repo the command does not write out, or one a vanishing word shifts.
+        (
+            format!(r#"r={ORIGIN_REPO}; {merge} --repo "$r""#),
+            "merge-gate.repo",
+        ),
+        (
+            format!(r#"false && r={ORIGIN_REPO}; {merge} --repo "$r""#),
+            "merge-gate.repo",
+        ),
+        (
+            format!("r={ORIGIN_REPO}; unset r; {merge} --repo $r"),
+            "merge-gate.repo",
+        ),
+        (
+            format!("{merge} --body $x --repo {ORIGIN_REPO}"),
+            "merge-gate.repo",
+        ),
+        (
+            format!("{merge} $x --repo {ORIGIN_REPO}"),
+            "merge-gate.repo",
+        ),
+    ]
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn every_bypass_from_the_review_of_89_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let merge = format!("gh pr merge 7 --match-head-commit {head}");
+
+    let rows = bypass_rows(&merge);
     let mut expected = Vec::new();
     for (command, point) in &rows {
         deny_reason(&repo.merge_gate(command)?)?;

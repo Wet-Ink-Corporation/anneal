@@ -38,6 +38,16 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
             ),
         ));
     }
+    if let Some(why) = merge.unsure {
+        return Err(Denial::new(
+            Check::Repo,
+            &format!(
+                "gh pr merge {why}, so the repository or head gh reads may not be the one the \
+                 gate sees; write each word out: `gh pr merge <number> --match-head-commit \
+                 <full commit> --repo <host>/<owner>/<repo>`"
+            ),
+        ));
+    }
     if let Some(name) = &merge.env {
         return Err(Denial::new(
             Check::Env,
@@ -113,19 +123,30 @@ pub(super) fn pinned_head<'a>(
 /// repository names use, which leaves out every expansion, glob and quote: gh then takes the
 /// host from it, not from `GH_HOST`.
 fn is_full_name(repo: &str) -> bool {
-    let name_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
     let mut parts = repo.split('/');
     let (Some(host), Some(owner), Some(name), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
         return false;
     };
+    without_git_suffix(name).is_none() && full_name(host, owner, name).is_some()
+}
+
+/// `name` without a `.git` ending in any case, or `None` when it has none.
+fn without_git_suffix(name: &str) -> Option<&str> {
+    name.rsplit_once('.')
+        .filter(|(_, extension)| extension.eq_ignore_ascii_case("git"))
+        .map(|(stem, _)| stem)
+}
+
+/// The one rule both `--repo` and `origin` are read with: `<host>/<owner>/<repo>`, lower-cased,
+/// each part non-empty and in the characters host names and GitHub repository names use.
+fn full_name(host: &str, owner: &str, name: &str) -> Option<String> {
+    let name_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
     [host, owner, name]
         .iter()
         .all(|part| !part.is_empty() && part.chars().all(name_char))
-        && name
-            .rsplit_once('.')
-            .is_none_or(|(_, extension)| !extension.eq_ignore_ascii_case("git"))
+        .then(|| format!("{host}/{owner}/{name}").to_ascii_lowercase())
 }
 
 /// The `<host>/<owner>/<repo>` of the `origin` remote under `root`: `None` when there is no
@@ -199,7 +220,8 @@ pub(super) fn check_repo(
     ))
 }
 
-/// The `<host>/<owner>/<repo>` (lower-cased, no port, user or `.git`) of a remote URL:
+/// The `<host>/<owner>/<repo>` (no port, user or `.git` in any case; read by [`full_name`]'s
+/// rule, as `--repo` is) of a remote URL:
 /// `scheme://[user@]host[:port]/owner/repo[.git]` or scp-like `[user@]host:owner/repo[.git]`.
 pub(super) fn origin_repo(url: &str) -> Option<String> {
     let url = url.trim();
@@ -213,11 +235,6 @@ pub(super) fn origin_repo(url: &str) -> Option<String> {
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
     let host = host.split_once(':').map_or(host, |(name, _port)| name);
-    let path = path.trim_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let (owner, repo) = path.split_once('/')?;
-    if host.is_empty() || owner.is_empty() || repo.is_empty() || repo.contains('/') {
-        return None;
-    }
-    Some(format!("{host}/{owner}/{repo}").to_ascii_lowercase())
+    let (owner, repo) = path.trim_matches('/').split_once('/')?;
+    full_name(host, owner, without_git_suffix(repo).unwrap_or(repo))
 }

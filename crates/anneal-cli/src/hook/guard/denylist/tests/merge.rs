@@ -312,6 +312,59 @@ fn a_directory_change_anywhere_in_the_command_is_noted_on_the_merge() {
 }
 
 #[test]
+fn a_merge_whose_repo_or_pin_may_differ_at_run_time_is_noted_as_unsure() {
+    let rows = [
+        // A variable's value the guard put in, which control flow or unset may change.
+        (
+            r#"r=github.com/owner/repo; gh pr merge 5 --repo "$r""#,
+            true,
+        ),
+        ("r=github.com/owner/repo; gh pr merge 5 --repo $r", true),
+        (
+            r#"false && r=github.com/owner/repo; gh pr merge 5 --repo "$r""#,
+            true,
+        ),
+        (
+            r#"r=github.com/owner/repo; unset r; gh pr merge 5 --repo "$r""#,
+            true,
+        ),
+        ("r=github.com/owner/repo; gh pr merge 5 --repo=$r", true),
+        (
+            r#"h=abc; gh pr merge 5 --match-head-commit "$h" -R github.com/owner/repo"#,
+            true,
+        ),
+        // A word that may vanish or split, shifting which word --repo takes.
+        ("gh pr merge 5 --body $x --repo github.com/owner/repo", true),
+        ("gh pr merge 5 --body * --repo github.com/owner/repo", true),
+        // More than one operand.
+        ("gh pr merge 5 $x --repo github.com/owner/repo", true),
+        ("gh pr merge 5 6 --repo github.com/owner/repo", true),
+        // Written out, or quoted so it stays one word.
+        (
+            "gh pr merge 5 --match-head-commit abc --repo github.com/owner/repo",
+            false,
+        ),
+        ("gh pr merge 5 -R github.com/owner/repo", false),
+        (
+            r#"gh pr merge 5 --body "$(cat notes)" --repo github.com/owner/repo"#,
+            false,
+        ),
+        (
+            r#"x=1; gh pr merge 5 --body "$x" --repo github.com/owner/repo"#,
+            false,
+        ),
+    ];
+
+    for (command, unsure) in rows {
+        let found: Vec<bool> = merges(command)
+            .iter()
+            .map(|merge| merge.unsure.is_some())
+            .collect();
+        assert_eq!(found, [unsure], "{command}");
+    }
+}
+
+#[test]
 fn a_login_shell_of_sudo_or_su_is_noted_as_a_directory_change() {
     let rows = [
         ("sudo -i gh pr merge 5", "sudo --login"),
