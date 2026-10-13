@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use super::wrappers::{is_assignment, is_option, skip_keywords};
-use crate::hook::guard::shell::{Expansion, Shape, SimpleCommand, Substituted, Word};
+use crate::hook::guard::shell::{Expansion, Shape, SimpleCommand, Word};
 
 /// The variables the command has set so far, in the order it runs.
 #[derive(Debug, Default)]
@@ -132,7 +132,7 @@ impl Variables {
     fn substituted(&self, word: &Word) -> Option<Vec<Word>> {
         let mut text = String::with_capacity(word.text.len());
         let mut remaining = Vec::new();
-        let (mut replaced, mut splits, mut unquoted) = (false, false, false);
+        let (mut replaced, mut splits) = (false, false);
         let mut at = 0;
         for expansion in &word.expansions {
             text.push_str(word.text.get(at..expansion.range.start)?);
@@ -144,7 +144,6 @@ impl Variables {
                 .filter(|_| !splits_unknown);
             if let Some(value) = value {
                 replaced = true;
-                unquoted |= !expansion.quoted;
                 splits |= !expansion.quoted && value.contains(char::is_whitespace);
                 text.push_str(value);
             } else {
@@ -164,7 +163,7 @@ impl Variables {
             return None;
         }
         if splits {
-            return Some(text.split_whitespace().map(split_out).collect());
+            return Some(text.split_whitespace().map(literal).collect());
         }
         let shape = if remaining.is_empty() {
             literal(&text).shape
@@ -176,11 +175,6 @@ impl Variables {
             shape,
             quoted: word.quoted,
             expansions: remaining,
-            substituted: if unquoted {
-                Substituted::Unquoted
-            } else {
-                Substituted::Quoted
-            },
         }])
     }
 }
@@ -197,16 +191,6 @@ pub(super) fn literal(text: &str) -> Word {
         },
         quoted: false,
         expansions: Vec::new(),
-        substituted: Substituted::No,
-    }
-}
-
-/// `text` as a word split out of another at run time (a variable's value, `${IFS}`, or what
-/// `xargs` appends), which the command does not write out as one word.
-pub(super) fn split_out(text: &str) -> Word {
-    Word {
-        substituted: Substituted::Unquoted,
-        ..literal(text)
     }
 }
 
@@ -298,5 +282,5 @@ pub(super) fn fields(word: &Word) -> Vec<Word> {
             if at < covered_to { ' ' } else { c }
         })
         .collect();
-    skeleton.split_whitespace().map(split_out).collect()
+    skeleton.split_whitespace().map(literal).collect()
 }

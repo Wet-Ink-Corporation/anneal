@@ -448,6 +448,68 @@ fn a_merge_with_a_brace_word_is_denied() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn every_bypass_from_the_fourth_review_of_89_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let pin = format!("--match-head-commit {head} --repo {ORIGIN_REPO}");
+    let merge = format!("gh pr merge 7 {pin}");
+
+    let rows = [
+        // F1: a quoted word joined to a brace or glob.
+        format!(r#"gh pr merge 7 --body "$b"{{x,--repo=github.com/other/repo}} {pin}"#),
+        format!(r#"{merge} --body "$b"*"#),
+        // F2: arguments appended at run time.
+        format!("cat args | xargs {merge}"),
+        format!("xargs -a args {merge}"),
+        format!("xargs {merge} < args"),
+        format!("find . -name x -exec {merge} {{}} +"),
+        // F3: another gh, or definitions read before the merge.
+        format!("hash -p ./evil/gh gh; {merge}"),
+        format!("PATH=./evil:$PATH {merge}"),
+        format!("export PATH=./evil:$PATH; {merge}"),
+        format!(". ./defs; {merge}"),
+        format!("source ./defs; {merge}"),
+        format!("BASH_ENV=./defs bash -c '{merge}'"),
+        format!("bash --rcfile ./defs -i -c '{merge}'"),
+        format!("enable -f ./evil.so gh; {merge}"),
+    ];
+    for command in &rows {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(
+            reason.contains("gh pr merge <number>"),
+            "{command}: {reason}"
+        );
+    }
+
+    assert_eq!(blocked_points(&repo)?, vec!["merge-gate.repo"; rows.len()]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn the_canonical_merge_command_with_its_flags_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+
+    for command in [
+        format!("gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}"),
+        format!(
+            "gh pr merge --squash --delete-branch --subject 'Ship it (#7)' --body \"Merged.\" \
+             --repo {ORIGIN_REPO} 7 --match-head-commit {head}"
+        ),
+    ] {
+        assert_allowed(&repo.merge_gate(&command)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_merge_in_a_repository_without_an_origin_is_denied() -> TestResult {
     let repo = PrRepo::new()?;
     repo.set_verdict("tests-verified", "local")?;

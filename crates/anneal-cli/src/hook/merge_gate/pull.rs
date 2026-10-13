@@ -56,17 +56,6 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
             ),
         ));
     }
-    // After the named causes (a gh variable, a directory change), which say more.
-    if let Some(why) = merge.unsure {
-        return Err(Denial::new(
-            Check::Repo,
-            &format!(
-                "gh pr merge {why}, so the repository or head gh reads may not be the one the \
-                 gate sees; write each word out: `gh pr merge <number> --match-head-commit \
-                 <full commit> --repo <host>/<owner>/<repo>`"
-            ),
-        ));
-    }
     match merge.target {
         Target::Number(pr) => Ok(Pull {
             pr,

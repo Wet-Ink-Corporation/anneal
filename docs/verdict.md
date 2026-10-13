@@ -127,53 +127,56 @@ usage error for the commands and a denial in the hook.
 ## The merge gate
 
 `anneal hook merge-gate --fail-closed` runs on every Bash call (`PreToolUse`, matcher `Bash`,
-5 s, `onFailure: "block"`). It reads the command as the guard does, through wrappers, `bash -c`,
-`eval`, scripts on stdin and variables the command sets, and finds each `gh pr merge` it runs.
-gh's arguments are read as gh's flag parser (pflag) reads them: options may come before `pr`,
-short options cluster (`-db 5` is `-d -b 5`), and `-R=o/r` is `-R o/r`. A call that runs none is
-allowed silently; so is `gh pr merge --disable-auto` (bare, or set to a true value such as `1`
-or `true`), which merges nothing; `--disable-auto=false` is a merge. For each merge:
+5 s, `onFailure: "block"`). It judges a merge only in one shape, the canonical merge command,
+run as a Bash call of its own:
 
-1. The pull request must be named by number (`7`, `#7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
-   URL whose host, owner and repository are the worktree's `origin`). With no argument gh merges
-   the current branch's pull request, and a branch name needs a network lookup; both are denied,
-   as is any other URL.
+```
+gh pr merge <number> --match-head-commit <full commit> --repo <host>/<owner>/<repo>
+```
+
+with its arguments in any order, and optionally `--squash`, `--merge`, `--rebase`,
+`--delete-branch`, `--auto`, `--subject <text>` and `--body <text>`. `--repo` may also be
+written `--repo=<value>`, `-R <value>`, `-R<value>` or `-R=<value>`, and `--match-head-commit`
+as `--match-head-commit=<value>`; when an option is given twice the last one counts, as in gh's
+flag parser (pflag). The shape is read from the command's raw text: every word is plain
+(letters, digits and `._/:@%+,=-`), so bash neither expands, splits nor drops it; only a
+`--subject` or `--body` text may be quoted, in single quotes or in double quotes holding no `$`,
+backtick, `\` or `!`, so it stays one word and runs nothing. There is nothing before or after
+the merge: no separator, pipe, redirection, assignment, wrapper, subshell, heredoc, comment,
+variable, glob, brace, `~` or second command.
+
+Any other command is read as the guard reads commands (wrappers, `bash -c`, `eval`, scripts on
+stdin, variables the command sets, gh's options as pflag reads them). If it runs a
+`gh pr merge`, or cannot be read (`unreadable`), it is denied: with `env` when it sets `GH_REPO`
+or `GH_HOST` (brace expansion included; a brace sequence that may build such a name,
+`GH_REP{O..O}`, is unreadable), `directory` when it changes directory anywhere (`cd`, `pushd`,
+`popd`, a function or trap body defined before a later `cd`, `env -C`/`--chdir`,
+`sudo -D`/`--chdir`, a login shell, `find -execdir`/`-okdir`), `target` when the merge names no
+pull request number, and otherwise `repo`, naming the canonical command. So a function, an
+alias, `PATH`, `hash`, `source`, `BASH_ENV`, `xargs`, a quoted word joined to a brace, or
+anything else a command could use to change what gh receives is never judged: the gate does not
+enumerate shell forms. A call that runs no merge is allowed silently; so is
+`gh pr merge --disable-auto` (bare, or set to a true value such as `1` or `true`), which merges
+nothing. For the canonical command:
+
+1. The pull request must be named by number (`7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
+   URL whose host, owner and repository are the worktree's `origin`; an unquoted `#7` starts a
+   shell comment). With no argument gh merges the current branch's pull request, and a branch
+   name needs a network lookup; both are denied (`target`), as is any other URL (`repo`).
 2. The head must be pinned with `--match-head-commit <full 40-hex commit>`, so gh refuses the
    merge if the remote head differs from the commit judged. Without a pin the denial names the
    command to run, with the worktree's `HEAD` (and `--repo`) filled in.
-3. The merge must name the repository the gate judges, the worktree's `origin`, as
-   `-R`/`--repo <host>/<owner>/<repo>` (`--repo=`, `-R<value>` and `-R=<value>` too; the last one
-   given counts, as in pflag), compared without case, and written out literally in the command.
-   This is what the gate's invariant rests on: gh takes the repository from `--repo` before
-   `GH_REPO` and before the working directory's git remotes, and takes the host in it before
-   `GH_HOST` (a bare `owner/repo` would take `GH_HOST`'s, so it is denied). So with a literal
-   `--repo`, no `cd`, wrapper or environment variable can point gh at a repository other than
-   the one whose verdicts were judged. The gate trusts only what the command writes out, so
-   these are denied too (`repo`): a `--repo` or `--match-head-commit` whose value comes from a
-   variable, even one the command sets (control flow and `unset` decide its value at run time);
-   any gh word that is neither written out literally nor an expansion wholly in double quotes
-   that stays one word, since bash may split it or drop it and shift which word `--repo`
-   takes: an unquoted variable or substitution, any glob, brace (`{a,b}`, `{1..2}`) or leading
-   `~`, and a quoted list (`"$@"`, `"${a[@]}"`, `"${!name}"`); a first operand known only at
-   run time; more than one operand after `pr merge`; and any merge in a command that defines a
-   function or an alias (`f(){ ...; }`, `function f`, `alias`, `BASH_FUNC_*`), since a body is
-   read where it is defined and may forward other arguments to gh, or make the name `gh` run
-   something else. A merge without `--repo`, with another repository, or in a
-   worktree whose `origin` does not read as `<host>/<owner>/<repo>` is denied (`repo`), and
-   the denial names the exact command:
+3. `--repo` must name the repository the gate judges, the worktree's `origin`, as
+   `<host>/<owner>/<repo>`, compared without case. This is what the gate's invariant rests on:
+   gh takes the repository from `--repo` before `GH_REPO` and before the working directory's
+   git remotes, and takes the host in it before `GH_HOST` (a bare `owner/repo` would take
+   `GH_HOST`'s, so it is denied). With the canonical command run on its own, nothing in the
+   command can change which repository, pull request or head gh receives. A merge without
+   `--repo`, with another repository, or in a worktree whose `origin` does not read as
+   `<host>/<owner>/<repo>` is denied (`repo`), and the denial names the exact command:
    `gh pr merge <n> --match-head-commit <HEAD> --repo <origin>`. `origin` and `--repo` are read
    by one rule: each part in `[A-Za-z0-9._-]`, and a `.git` ending, in any case, dropped from
    `origin` and refused in `--repo`.
-
-   As defence in depth the gate also denies a command that sets `GH_REPO` or `GH_HOST` (`env`),
-   also through brace expansion (`export GH_RE{PO,X}=o/x`; a brace sequence that may build such
-   a name, `GH_REP{O..O}`, is unreadable), and one that changes directory (`directory`): a `cd`,
-   `pushd` or `popd` anywhere in it (a function or trap body defined before a later `cd` runs
-   after it), `env -C`/`--chdir`, `sudo -D`/`--chdir`, a login shell (`sudo -i`/`--login`,
-   `su -`/`-l`/`--login`), or a `find -execdir`/`-okdir` action. These checks do not see every
-   form (an `env` short cluster such as `env -vu X -C /tmp`, a gh run from a git pager under
-   `git -C`, a name built at run time as in `export $(printf GH_RE%sPO)=o/x`); `--repo` covers
-   them.
 4. A fresh tests verdict must hold for the head. Otherwise it denies with `no-verdict`, `stale`,
    `changes-requested` or `tests`, naming `anneal verdict set ... --level tests-verified`.
 5. A review verdict must hold, unless the skip-rule skips the change from the base the latest
@@ -194,8 +197,13 @@ for a lock and never past what is left of the 3.5 s.
 
 The gate judges what it can see in a Bash command, for an honest agent:
 
-- merges outside `gh pr merge`: `gh api` calls to the merge endpoint, a gh alias, the web UI, or
-  another tool;
+- what the command text cannot show: a function or alias for `gh` (or `command`, `builtin`)
+  defined in a shell startup file or in Claude Code's shell snapshot (for example
+  `alias gh='op plugin run -- gh'`), and `PATH`, `GH_REPO`, `GH_HOST` or `BASH_ENV` set in the
+  session's environment rather than in the command. The canonical command runs whatever `gh`
+  means in that shell;
+- merges outside `gh pr merge`: a gh alias (`gh alias set`), `gh api` calls to the merge
+  endpoint, the web UI, or another tool;
 - an `origin` that names an ssh host alias (`git@github-work:org/repo.git`, with
   `github-work` defined in `~/.ssh/config`) reads as `github-work/org/repo`, a host gh cannot
   reach, so every merge in that worktree is denied or fails. The gate stays offline and does

@@ -62,8 +62,6 @@ pub(super) struct Checker<'c> {
     gh_env: Option<&'static str>,
     /// The first `cd`, `pushd` or `popd` the command ran, so far.
     moved: Option<&'static str>,
-    /// Whether the command defines a function or an alias, so far.
-    defines: bool,
 }
 
 /// The most commands arguments are read as in one check (H-13): each read walks the rest of
@@ -88,7 +86,6 @@ impl<'c> Checker<'c> {
             merges: Vec::new(),
             gh_env: None,
             moved: None,
-            defines: false,
         }
     }
 
@@ -121,7 +118,6 @@ impl<'c> Checker<'c> {
         };
         commands.iter().find_map(|command| {
             self.variables.record(command);
-            self.defines |= command.defines_function;
             let own = own_feed(command, &commands);
             let feed = own.as_ref().unwrap_or(scope.feed);
             self.command(command, Scope { feed, ..scope })
@@ -142,7 +138,6 @@ impl<'c> Checker<'c> {
         if let Some(denial) = self.note_gh_env(words) {
             return Some(denial);
         }
-        self.defines |= wrappers::defines(words);
         let scope = self.moved_by_wrapper(words, scope);
         match wrappers::unwrap(words) {
             Run::Nothing => None,
@@ -176,7 +171,7 @@ impl<'c> Checker<'c> {
                         let line: Vec<Word> = args
                             .iter()
                             .cloned()
-                            .chain(input.split_whitespace().map(variables::split_out))
+                            .chain(input.split_whitespace().map(variables::literal))
                             .collect();
                         self.program(program, &line, scope)
                     }

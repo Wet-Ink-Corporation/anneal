@@ -3,9 +3,9 @@ use std::io;
 use std::path::PathBuf;
 
 use super::pull::{Pull, check_repo, origin_repo, pull};
-use super::{Check, run};
+use super::{Check, Screen, run, screen};
 use crate::hook::HookEnv;
-use crate::hook::guard::{PrMerge, Target};
+use crate::hook::guard::{Context, PrMerge, Target};
 
 fn merge(target: Target, repo: Option<&str>, match_head: Option<&str>) -> PrMerge {
     PrMerge {
@@ -15,7 +15,16 @@ fn merge(target: Target, repo: Option<&str>, match_head: Option<&str>) -> PrMerg
         url_repo: None,
         env: None,
         moved: None,
-        unsure: None,
+    }
+}
+
+/// How the gate screens `command` before reading git: `Some(check)` when it denies, `None`
+/// when it judges the command's merge.
+fn screened(command: &str) -> Option<Check> {
+    match screen(command, &Context::new(|_: &str| None)) {
+        Screen::Deny(denial) => Some(denial.check),
+        Screen::Judge(_) => None,
+        Screen::NoMerge => panic!("{command}: no merge found"),
     }
 }
 
@@ -140,23 +149,227 @@ fn a_repository_named_as_host_owner_and_repository_passes_to_the_gate() {
 
 #[test]
 fn a_merge_whose_repository_may_differ_at_run_time_is_denied() {
-    let mut unsure = merge(
-        Target::Number(7),
-        Some("github.com/owner/repo"),
-        Some("abc"),
-    );
-    unsure.unsure = Some("takes --repo from a variable");
+    let command = r#"r=github.com/owner/repo; gh pr merge 7 --match-head-commit abc --repo "$r""#;
 
-    let denial = pull(&unsure).expect_err("denied");
+    let Screen::Deny(denial) = screen(command, &Context::new(|_: &str| None)) else {
+        panic!("{command}: not denied");
+    };
 
     assert_eq!(
-        (
-            denial.check,
-            denial.reason.contains("takes --repo from a variable")
-        ),
+        (denial.check, denial.reason.contains(super::canonical::FORM)),
         (Check::Repo, true),
         "{denial:?}"
     );
+}
+
+#[test]
+fn a_merge_whose_repo_or_pin_may_differ_at_run_time_is_denied_unless_written_out() {
+    let rows = [
+        // A variable's value the guard put in, which control flow or unset may change.
+        (
+            r#"r=github.com/owner/repo; gh pr merge 5 --repo "$r""#,
+            Some(Check::Repo),
+        ),
+        (
+            "r=github.com/owner/repo; gh pr merge 5 --repo $r",
+            Some(Check::Repo),
+        ),
+        (
+            r#"false && r=github.com/owner/repo; gh pr merge 5 --repo "$r""#,
+            Some(Check::Repo),
+        ),
+        (
+            r#"r=github.com/owner/repo; unset r; gh pr merge 5 --repo "$r""#,
+            Some(Check::Repo),
+        ),
+        (
+            "r=github.com/owner/repo; gh pr merge 5 --repo=$r",
+            Some(Check::Repo),
+        ),
+        (
+            r#"h=abc; gh pr merge 5 --match-head-commit "$h" -R github.com/owner/repo"#,
+            Some(Check::Repo),
+        ),
+        // A word that may vanish or split, shifting which word --repo takes.
+        (
+            "gh pr merge 5 --body $x --repo github.com/owner/repo",
+            Some(Check::Repo),
+        ),
+        (
+            "gh pr merge 5 --body * --repo github.com/owner/repo",
+            Some(Check::Repo),
+        ),
+        // More than one operand.
+        (
+            "gh pr merge 5 $x --repo github.com/owner/repo",
+            Some(Check::Repo),
+        ),
+        (
+            "gh pr merge 5 6 --repo github.com/owner/repo",
+            Some(Check::Repo),
+        ),
+        // Written out: judged.
+        (
+            "gh pr merge 5 --match-head-commit abc --repo github.com/owner/repo",
+            None,
+        ),
+        ("gh pr merge 5 -R github.com/owner/repo", None),
+        // A quoted expansion stays one word but runs or reads something: denied too.
+        (
+            r#"gh pr merge 5 --body "$(cat notes)" --repo github.com/owner/repo"#,
+            Some(Check::Repo),
+        ),
+        (
+            r#"x=1; gh pr merge 5 --body "$x" --repo github.com/owner/repo"#,
+            Some(Check::Repo),
+        ),
+    ];
+
+    for (command, check) in rows {
+        assert_eq!(screened(command), check, "{command}");
+    }
+}
+
+#[test]
+fn a_merge_with_a_word_that_is_not_literal_or_quoted_is_denied() {
+    let rows = [
+        // A brace sequence or list, which bash splits into several words.
+        (
+            "gh pr merge 5 --body {a..b} --repo github.com/owner/repo",
+            Check::Repo,
+        ),
+        (
+            "gh pr merge 5 --body {a,b} --repo github.com/owner/repo",
+            Check::Repo,
+        ),
+        (
+            "gh pr merge 5 {1..2} --repo github.com/owner/repo",
+            Check::Repo,
+        ),
+        (
+            "gh pr merge 5 {a,b} --repo github.com/owner/repo",
+            Check::Repo,
+        ),
+        // Any other pattern word, `~` included.
+        (
+            "gh pr merge 5 --body-file ~/notes --repo github.com/owner/repo",
+            Check::Repo,
+        ),
+        // A quoted expansion that may still split or vanish.
+        (
+            r#"bash -c 'gh pr merge 5 --repo github.com/owner/repo "$@"' _ --repo o/x"#,
+            Check::Repo,
+        ),
+        (
+            r#"a=(x); gh pr merge 5 --body "${a[@]}" --repo github.com/owner/repo"#,
+            Check::Repo,
+        ),
+        // gh's first operand known only at run time: no pull request number either.
+        (
+            r#"gh "$g" merge 5 --repo github.com/owner/repo"#,
+            Check::Target,
+        ),
+    ];
+
+    for (command, check) in rows {
+        assert_eq!(screened(command), Some(check), "{command}");
+    }
+}
+
+#[test]
+fn a_merge_in_a_command_defining_a_function_or_alias_is_denied() {
+    let merge = "gh pr merge 5 --match-head-commit abc --repo github.com/owner/repo";
+    // A merge read in a body names no pull request when the body takes it from the call.
+    let rows = [
+        (
+            r#"f(){ gh pr merge "$@"; }; f 5 --repo github.com/other/repo"#.to_owned(),
+            Check::Target,
+        ),
+        (
+            format!(r#"gh(){{ command gh "$@" --repo github.com/other/repo; }}; {merge}"#),
+            Check::Repo,
+        ),
+        (
+            format!(r#"gh () {{ command gh "$@"; }}; {merge}"#),
+            Check::Repo,
+        ),
+        (
+            format!(r#"function gh {{ command gh "$@"; }}; {merge}"#),
+            Check::Repo,
+        ),
+        (
+            "alias f='gh pr merge'; f 5 --repo github.com/other/repo".to_owned(),
+            Check::Target,
+        ),
+        (
+            format!("alias gh='gh --repo github.com/other/repo'; {merge}"),
+            Check::Repo,
+        ),
+        (
+            format!("builtin alias gh='gh -R o/x'; {merge}"),
+            Check::Repo,
+        ),
+        (
+            format!(r"env 'BASH_FUNC_gh%%=() {{ :; }}' bash -c '{merge}'"),
+            Check::Repo,
+        ),
+        (format!("{merge}; f() {{ :; }}"), Check::Repo),
+    ];
+
+    for (command, check) in &rows {
+        assert_eq!(screened(command), Some(*check), "{command}");
+    }
+}
+
+#[test]
+fn a_merge_after_a_parenthesis_is_denied_as_not_its_own_command() {
+    let merge = "gh pr merge 5 --match-head-commit abc --repo github.com/owner/repo";
+    let rows = [
+        (format!("a=(x y); {merge}"), Check::Repo),
+        (format!("if (true); then {merge}; fi"), Check::Repo),
+        (format!("case x in (x) {merge};; esac"), Check::Repo),
+        (format!("(cd .); {merge}"), Check::Directory),
+    ];
+
+    for (command, check) in &rows {
+        assert_eq!(screened(command), Some(*check), "{command}");
+    }
+}
+
+#[test]
+fn every_bypass_from_the_fourth_review_of_89_is_denied_before_git_is_read() {
+    let pin = "--match-head-commit abc --repo github.com/owner/repo";
+    let merge = format!("gh pr merge 7 {pin}");
+    let rows = [
+        // F1: a quoted word joined to a brace or glob.
+        format!(r#"gh pr merge 7 --body "$b"{{x,--repo=github.com/other/repo}} {pin}"#),
+        format!(r#"{merge} --body "$b"*"#),
+        // F2: arguments appended at run time.
+        format!("cat args | xargs {merge}"),
+        format!("xargs -a args {merge}"),
+        format!("xargs {merge} < args"),
+        format!("find . -name x -exec {merge} {{}} +"),
+        // F3: another gh, or definitions read before the merge.
+        format!("hash -p ./evil/gh gh; {merge}"),
+        format!("PATH=./evil:$PATH {merge}"),
+        format!("export PATH=./evil:$PATH; {merge}"),
+        format!(". ./defs; {merge}"),
+        format!("source ./defs; {merge}"),
+        format!("BASH_ENV=./defs bash -c '{merge}'"),
+        format!("bash --rcfile ./defs -i -c '{merge}'"),
+        format!("enable -f ./evil.so gh; {merge}"),
+    ];
+
+    for command in &rows {
+        assert_eq!(screened(command), Some(Check::Repo), "{command}");
+    }
+}
+
+#[test]
+fn the_canonical_merge_command_is_judged() {
+    let command = "gh pr merge 7 --squash --match-head-commit abc --repo github.com/owner/repo";
+
+    assert_eq!(screened(command), None, "{command}");
 }
 
 #[test]

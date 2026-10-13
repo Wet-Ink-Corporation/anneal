@@ -62,7 +62,6 @@ pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
             shape: arg.shape,
             quoted: arg.quoted,
             expansions: Vec::new(),
-            substituted: arg.substituted,
         }));
         if expanded.len() > MAX_WORDS {
             return Err(too_many(TooMany));

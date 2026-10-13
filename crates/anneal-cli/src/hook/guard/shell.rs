@@ -18,7 +18,7 @@ mod word;
 use std::mem;
 
 use redirect::Heredoc;
-pub(crate) use word::{Expansion, Shape, Substituted, Word};
+pub(crate) use word::{Expansion, Shape, Word};
 
 /// How deep `$( )`, backticks, `( )` and `${ }` may nest before a command is refused (H-13).
 pub(crate) const MAX_NESTING: usize = 32;
@@ -37,10 +37,6 @@ pub(crate) struct SimpleCommand {
     pub(crate) writes: Vec<Word>,
     /// Where its standard input comes from.
     pub(crate) stdin: Stdin,
-    /// Whether a `(` follows its words, as in a function definition (`name()`, `function
-    /// name()`). One after keywords alone (`if (`), after `case ... in` or after an array
-    /// assignment (`a=(`) does not count.
-    pub(crate) defines_function: bool,
     /// The heredoc it reads, by number, until the body is read.
     heredoc: Option<usize>,
 }
@@ -261,7 +257,6 @@ impl Lexer {
             }
             '(' => {
                 self.advance();
-                command.defines_function = opens_definition(&command.words);
                 self.finish(command);
                 self.list(Close::Paren("("), level.depth.saturating_add(1))?;
             }
@@ -357,18 +352,6 @@ impl Lexer {
             self.advance();
         }
     }
-}
-
-/// Whether a `(` after `words` (the words of the command it ends) defines a function: some
-/// word comes before it that is not a keyword, the last is not `in` (a `case` pattern) and
-/// does not end with `=` (an array assignment). It may over-count (`[[ ( -f x ) ]]`), which
-/// only makes the merge gate's probe more careful.
-fn opens_definition(words: &[Word]) -> bool {
-    let after_keywords = words.iter().all(|word| word.is_bare(&RESERVED));
-    let pattern_or_array = words
-        .last()
-        .is_some_and(|word| word.is_bare(&["in"]) || word.text.ends_with('='));
-    !after_keywords && !pattern_or_array
 }
 
 /// The result of reaching the end of the input while reading up to `close`.

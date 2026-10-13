@@ -15,24 +15,6 @@ pub(crate) struct Word {
     pub(crate) quoted: bool,
     /// Each expansion's source text in `text` (`$x`, `${x}`, `$( )`, backticks, `<( )`).
     pub(crate) expansions: Vec<Expansion>,
-    /// Whether the guard put a value into the text that the command does not write out.
-    pub(crate) substituted: Substituted,
-}
-
-/// Whether a word's text holds a value the guard put in: a variable's value it followed
-/// (`denylist::variables`), which control flow or `unset` may change at run time, or a word it
-/// made by splitting. Deny-direction checks may read such text; a check that allows on it may
-/// not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Substituted {
-    /// The text is as the command writes it.
-    #[default]
-    No,
-    /// A value was put in only for quoted expansions, so the word stays one word.
-    Quoted,
-    /// A value was put in for an unquoted expansion, or the word was split out of another, so
-    /// at run time it may be empty, vanish or split.
-    Unquoted,
 }
 
 /// Where an expansion's source text is in its word's text, and whether it was in double
@@ -63,7 +45,6 @@ impl Word {
             shape: Shape::Literal,
             quoted: false,
             expansions: Vec::new(),
-            substituted: Substituted::No,
         }
     }
 
@@ -74,7 +55,6 @@ impl Word {
             shape: Shape::Literal,
             quoted: true,
             expansions: Vec::new(),
-            substituted: Substituted::No,
         }
     }
 

@@ -26,7 +26,7 @@ Takes a change that passed `verify` through review, merge, migration and rollout
 2. **Verdict.** Record green tests with `anneal verdict set --pr <n> --sha HEAD --level tests-verified --source local`, get the review, then run `anneal verdict valid --pr <n>`. It's working if it exits 0.
 3. **Rollback plan.** In the pull request: the revert or flag that undoes the change, who runs it, and what it cannot undo. It's working if someone else could run it unaided.
 4. **GO or NO-GO.** GO only with steps 2 and 3 done and `anneal watch pr <n>` at exit 0; otherwise NO-GO. It's working if the decision names each exit code.
-5. **Merge.** Run `gh pr merge <n> --match-head-commit <HEAD> --repo <origin's host/owner/repo>`. It's working if the `merge-gate` hook lets it through.
+5. **Merge.** Run exactly `gh pr merge <n> --match-head-commit <HEAD> --repo <origin's host/owner/repo>`, alone. It's working if the `merge-gate` hook lets it through.
 6. **Migrate.** For a schema or data change, follow references/migrate.md: expand, then waves with `anneal migrate start` and `anneal migrate done`, then `anneal migrate contract`. It's working if contract exits 0.
 7. **Roll out.** Before each stage of references/release.md, run `anneal rollout decide --metrics <json> --bands <file>`. It's working if every widening follows an exit 0; on 1 hold, on 2 run the rollback plan.
 8. **Speed claims.** Run `anneal perf sample` on the base and `anneal perf noise` on the change. It's working if every kept speed-up has an exit 0 behind it.

@@ -1,17 +1,18 @@
 //! `anneal hook merge-gate`: the `PreToolUse` gate on `gh pr merge`. It fails closed.
 //!
-//! It reads Claude Code's `PreToolUse` input on stdin and finds every `gh pr merge` the Bash
-//! command runs, read as the guard reads commands (`guard::find_pr_merge`: wrappers, `bash -c`,
-//! `eval`, scripts on stdin, variables). A call that runs none, and any other tool, is allowed
-//! silently. Each merge must name its pull request by number (`7`, `#7`, or an
-//! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin its head with a
-//! full `--match-head-commit`, and name the repository the gate judges, the `origin` remote's,
-//! with `-R`/`--repo <host>/<owner>/<repo>`: gh takes the repository from `--repo` before
-//! `GH_REPO` or the working directory, and the host in it before `GH_HOST`, so what gh merges
-//! is what was judged. Each denial names the exact command, with the worktree's `HEAD`. As
-//! defence in depth it also denies a command that sets `GH_REPO`/`GH_HOST` or changes directory
-//! (`cd`, `pushd`, `popd`, `env --chdir`, `sudo --chdir`/`--login`, `su --login`,
-//! `find -execdir`) anywhere. Then it needs, for that head (`pull` holds the checks above):
+//! It reads Claude Code's `PreToolUse` input on stdin. A Bash command that is the canonical
+//! merge command ([`canonical`]: `gh pr merge <n> --match-head-commit <commit> --repo
+//! <host>/<owner>/<repo>` and a few flags, every word written out, nothing around it) is
+//! judged. Any other command is read as the guard reads commands (`guard::find_pr_merge`:
+//! wrappers, `bash -c`, `eval`, scripts on stdin, variables): one that runs no `gh pr merge`,
+//! and any other tool, is allowed silently; one that runs a merge, or cannot be read, is denied,
+//! so no shell form needs to be enumerated. The canonical command must name its pull request by
+//! number (or an `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin
+//! its head with a full `--match-head-commit`, and name the repository the gate judges, the
+//! `origin` remote's, with `--repo <host>/<owner>/<repo>`: gh takes the repository from
+//! `--repo` before `GH_REPO` or the working directory, and the host in it before `GH_HOST`, so
+//! what gh merges is what was judged. Each denial names the exact command, with the worktree's
+//! `HEAD`. Then it needs, for that head (`pull` holds the checks above):
 //!
 //! - a fresh `tests_verified`-or-better verdict after the latest fresh `changes_requested`
 //!   (fresh: recorded for the head's commit, or for the same patch id from the same base, so a
@@ -25,6 +26,7 @@
 //! and a ledger, git or setting it cannot read, deny. git and the ledger get [`GIT_BUDGET`]
 //! from the hook's start, each git call at most [`GIT_TIMEOUT`]. See `docs/verdict.md`.
 
+mod canonical;
 mod pull;
 
 use std::error::Error;
@@ -291,26 +293,69 @@ fn judge(
         );
         return Some((denial, open_existing(&cwd, lookup, budget)));
     };
-    let merges = match find_pr_merge(&command, &Context::new(&lookup)) {
-        MergeScan::Merges(merges) if merges.is_empty() => return None,
-        MergeScan::Merges(merges) => merges,
-        MergeScan::Unreadable(denial) => {
-            let denial = Denial::new(
-                Check::Unreadable,
-                &format!(
-                    "the command cannot be read, so a gh pr merge in it cannot be checked: {}",
-                    denial.reason
-                ),
-            );
-            return Some((denial, open_existing(&cwd, lookup, budget)));
-        }
+    let merge = match screen(&command, &Context::new(&lookup)) {
+        Screen::NoMerge => return None,
+        Screen::Deny(denial) => return Some((denial, open_existing(&cwd, lookup, budget))),
+        Screen::Judge(merge) => merge,
     };
     let ledger = open_existing(&cwd, lookup, budget);
     let denial = match &ledger {
-        Ok(store) => judge_merges(&merges, store.as_ref(), &cwd, budget),
+        Ok(store) => judge_merge(&merge, store.as_ref(), &cwd, budget),
         Err(error) => Some(unjudged("the ledger cannot be read", error)),
     }?;
     Some((denial, ledger))
+}
+
+/// What the gate does with a Bash command before it reads git or the ledger.
+#[derive(Debug, PartialEq, Eq)]
+enum Screen {
+    /// It runs no `gh pr merge`: allow.
+    NoMerge,
+    /// It runs one, or may, in a shape the gate does not judge: deny.
+    Deny(Denial),
+    /// It is the one accepted merge command ([`canonical`]): judge this merge.
+    Judge(PrMerge),
+}
+
+/// Screens `command`: the accepted merge command is judged; any other command in which the
+/// guard's probe finds a merge, or which it cannot read, is denied. A merge found elsewhere is
+/// denied with the probe's most specific reason (`GH_REPO` set, a directory change, no pull
+/// request number), else as not the accepted command (`repo`).
+fn screen(command: &str, context: &Context) -> Screen {
+    if let Some(merge) = canonical::read(command) {
+        return Screen::Judge(merge);
+    }
+    match find_pr_merge(command, context) {
+        MergeScan::Merges(merges) if merges.is_empty() => Screen::NoMerge,
+        MergeScan::Merges(merges) => Screen::Deny(
+            merges
+                .iter()
+                .find_map(|merge| pull::pull(merge).err())
+                .unwrap_or_else(not_canonical),
+        ),
+        MergeScan::Unreadable(denial) => Screen::Deny(Denial::new(
+            Check::Unreadable,
+            &format!(
+                "the command cannot be read, so a gh pr merge in it cannot be checked: {}",
+                denial.reason
+            ),
+        )),
+    }
+}
+
+/// The denial for a merge in any command but the accepted one.
+fn not_canonical() -> Denial {
+    Denial::new(
+        Check::Repo,
+        &format!(
+            "gh pr merge is judged only as a Bash call of its own, every word written out: \
+             `{}`, optionally with --squash, --merge, --rebase, --delete-branch, --auto, \
+             --subject <text> or --body <text> (a text in single quotes, or in double quotes \
+             without $, `, \\ or !); nothing before or after it, no variable, glob, brace, \
+             redirection or second command",
+            canonical::FORM
+        ),
+    )
 }
 
 /// The ledger seen from `cwd` when its file exists: git to find it and each later statement's
@@ -325,25 +370,19 @@ fn open_existing(cwd: &Path, lookup: impl Fn(&str) -> Option<OsString>, budget: 
     )
 }
 
-/// The first denial among `merges` run from `cwd`, with the verdicts in `store`.
-fn judge_merges(
-    merges: &[PrMerge],
+/// The denial for `merge` run from `cwd`, with the verdicts in `store`, if any.
+fn judge_merge(
+    merge: &PrMerge,
     store: Option<&Store>,
     cwd: &Path,
     budget: Budget,
 ) -> Option<Denial> {
-    let pulls = merges
-        .iter()
-        .map(|merge| pull::pull(merge).map(|pull| (pull, merge.repo.as_deref())))
-        .collect::<Result<Vec<_>, _>>();
-    let pulls = match pulls {
-        Ok(pulls) => pulls,
+    let pull = match pull::pull(merge) {
+        Ok(pull) => pull,
         Err(denial) => return Some(denial),
     };
     with_gate(store, cwd, budget, |gate| {
-        pulls
-            .into_iter()
-            .find_map(|(pull, repo)| gate.judge(pull, repo))
+        gate.judge(pull, merge.repo.as_deref())
     })
 }
 

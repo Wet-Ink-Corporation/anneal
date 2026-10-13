@@ -29,7 +29,7 @@ use std::path::{Component, Path, PathBuf};
 use super::Denial;
 use checker::{Checker, Entries, Scope};
 use feed::Feed;
-pub(crate) use gh::{PrMerge, Target};
+pub(crate) use gh::{PrMerge, Target, read_target};
 
 /// How deep `bash -c`, `eval`, `env -S` and `find -exec` may nest before a command is refused.
 pub(crate) const MAX_DEPTH: usize = 8;
