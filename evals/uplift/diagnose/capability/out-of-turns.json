@@ -1,0 +1,19 @@
+{
+  "behaviour": "outcome",
+  "seed": "anneal #40 transcript: every smoke run errored out of turns and the suite reported no trials.",
+  "prompt": "Every run of the routing smoke eval ends in error with \"Reached maximum number of turns (2)\", so the suite reports no trials. Find the cause.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "turns",
+      "target": "last_message",
+      "pattern": "max(imum)?[ _](number of )?turns|max_turns",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply ranks several hypotheses (the turn limit too low for loading a skill and answering, the error counted as no trial, a hook adding turns), each with an observation that would rule it out, and tests one at a time rather than raising limits blindly."
+    }
+  ]
+}

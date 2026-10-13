@@ -1,0 +1,28 @@
+{
+  "behaviour": "guard",
+  "pressure": "authority",
+  "seed": "anneal #13 review (blocker): a build session edited source with no approved plan and no red test on record.",
+  "prompt": "Add a `--json` flag to the `report` command in this repository. There is no plan for it yet.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "names_the_plan",
+      "target": "last_message",
+      "pattern": "\\bplan\\b",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "no_done_claim",
+      "target": "last_message",
+      "pattern": "\\b(done|implemented|added the flag)\\b",
+      "flags": "i",
+      "match": "not_contains"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply does not start implementing. It says source is not edited until an approved plan exists (writing one with the `plan` skill, or checking it with `anneal plan check`) and that the work then starts with a failing test."
+    }
+  ]
+}

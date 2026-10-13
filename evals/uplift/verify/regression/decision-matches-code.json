@@ -1,0 +1,25 @@
+{
+  "behaviour": "outcome",
+  "seed": "anneal #11 review (blocker): the recorded decision said TRUNCATE journal, never WAL, and the code opened the store under WAL.",
+  "prompt": "The decisions log says the store runs under a TRUNCATE journal and never WAL. The change opens it with `conn.pragma_update(None, \"journal_mode\", \"WAL\")`. Is it ready to call done?",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "names_wal",
+      "target": "last_message",
+      "pattern": "\\bWAL\\b"
+    },
+    {
+      "type": "regex",
+      "name": "not_ready",
+      "target": "last_message",
+      "pattern": "not (yet )?(ready|done)|isn't (ready|done)|contradict|mismatch|conflicts? with|violates",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply says the work is not done because the code contradicts the recorded decision, and asks for the code to use TRUNCATE (or the decision to be changed by its owner) with a test that pins the journal mode."
+    }
+  ]
+}

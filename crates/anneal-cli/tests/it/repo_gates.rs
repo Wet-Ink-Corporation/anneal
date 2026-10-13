@@ -86,6 +86,47 @@ fn the_plugin_skills_lint_clean_and_the_snapshot_replays_the_fresh_result() -> T
     Ok(())
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn every_entry_skill_has_valid_regression_and_capability_suites() -> TestResult {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_anneal"))
+        .args(["eval", "uplift", "--check", "--skills"])
+        .arg(plugin_skills())
+        .arg("--suites")
+        .arg(repo().join("evals/uplift"))
+        .output()?;
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "Tier 3 suites must all be valid (run `anneal eval uplift --check`): {}",
+        envelope["findings"]
+    );
+    let thin: Vec<String> = [
+        "grill", "spec", "plan", "build", "diagnose", "verify", "ship",
+    ]
+    .into_iter()
+    .filter(|skill| {
+        !envelope["data"]["coverage"].as_array().is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row["skill"] == *skill
+                    && row["regression"].as_u64().is_some_and(|n| n >= 1)
+                    && row["capability"].as_u64().is_some_and(|n| n >= 1)
+            })
+        })
+    })
+    .map(str::to_owned)
+    .collect();
+    assert_eq!(
+        thin,
+        Vec::<String>::new(),
+        "each entry skill (#41) needs a regression and a capability case: {}",
+        envelope["data"]["coverage"]
+    );
+    Ok(())
+}
+
 /// Every directory under `dir`, recursively, without following symlinks.
 fn directories(dir: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
     let mut found = Vec::new();

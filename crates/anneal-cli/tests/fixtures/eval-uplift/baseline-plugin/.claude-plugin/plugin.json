@@ -1,0 +1,5 @@
+{
+  "name": "fixture-baseline",
+  "version": "0.0.0",
+  "description": "A baseline plugin for the eval uplift --baseline tests: no skills."
+}

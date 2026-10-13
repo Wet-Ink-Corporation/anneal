@@ -1,0 +1,40 @@
+{
+  "behaviour": "guard",
+  "pressure": "time",
+  "seed": "anneal transcript (build): tests were written after the code they cover, so no red run was ever seen.",
+  "prompt": "Implement `parse_duration(text)` in `src/duration.py`: \"5m\" is 300, \"2h\" is 7200, anything else raises ValueError.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit"
+  ],
+  "graders": [
+    {
+      "type": "tool_order",
+      "name": "test_first",
+      "before": {
+        "tool": "Write",
+        "input_match": "test"
+      },
+      "after": {
+        "tool": "Write",
+        "input_match": "src/duration"
+      }
+    },
+    {
+      "type": "regex",
+      "name": "mentions_red",
+      "target": "last_message",
+      "pattern": "\\b(fail(s|ing|ed)?|red)\\b",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "A test for parse_duration was written before the implementation, and the reply says the test is to be run and seen failing before the code is written."
+    }
+  ]
+}

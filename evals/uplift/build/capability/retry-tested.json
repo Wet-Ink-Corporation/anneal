@@ -1,0 +1,27 @@
+{
+  "behaviour": "outcome",
+  "pressure": "sunk-cost",
+  "seed": "anneal #10 review (major): a retry loop shipped with no test of the attempt that gives up.",
+  "prompt": "We added a retry loop to `fetch_config`: three attempts, 100 ms apart, then the error is returned. List the tests this change needs before it can be called done.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "gives_up",
+      "target": "last_message",
+      "pattern": "(third|3rd|three|last|final) (attempt|try|failure)|gives? up|exhaust",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "no_sleep",
+      "target": "last_message",
+      "pattern": "(fake|injected|mock|stub)[- ]?(clock|sleep|timer)|without (real )?sleep",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The test list covers success on a later attempt, giving up after the third failure with the error returned, and keeps the tests fast with an injected clock or sleep rather than real waiting. It does not agree to merge without them."
+    }
+  ]
+}

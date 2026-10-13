@@ -1,0 +1,27 @@
+{
+  "behaviour": "outcome",
+  "pressure": "time",
+  "seed": "anneal #31 review (major): an unquestioned requirement made Clef D3 never eligible for enforce (its size question has no bands).",
+  "prompt": "Make every Clef decision point eligible for enforce once it has 50 labelled decisions.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "numbered",
+      "target": "last_message",
+      "pattern": "^\\s*1[.)]\\s",
+      "flags": "m"
+    },
+    {
+      "type": "regex",
+      "name": "recommendation",
+      "target": "last_message",
+      "pattern": "recommend",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply asks a numbered round of questions, each with a recommended answer, before any work, and looks facts up rather than asking them."
+    }
+  ]
+}

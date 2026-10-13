@@ -3,12 +3,15 @@
 //! - [`routing`]: `eval routing`, Tier 1 lexical routing over `evals/routing/<skill>.yaml`,
 //!   and with `--router claude` Tier 2, the same fixtures under Claude Code's own router
 //!   ([`routing::real`]).
+//! - [`uplift`]: `eval uplift`, Tier 3, each entry skill's regression and capability suites
+//!   under `evals/uplift/` run with the skill and without it.
 //!
 //! The envelope's `data` holds the counts, the confusion table as a map (`confusion`) and as
 //! aligned text lines (`table`, for `jq -r '.data.table[]'`); every miss and every problem is a
 //! finding.
 
 pub mod routing;
+pub mod uplift;
 
 use std::io::Write;
 
@@ -38,6 +41,10 @@ pub enum EvalSuite {
     /// `--router claude` under Claude Code's router (Wilson intervals; runs a model)
     #[command(after_help = command_help(CommandName::Eval))]
     Routing(RoutingCommand),
+    /// Score each skill's behaviour uplift: its regression and capability suites run with the
+    /// skill and without it under `claude plugin eval` (Newcombe intervals; runs a model)
+    #[command(after_help = command_help(CommandName::Eval))]
+    Uplift(uplift::UpliftArgs),
 }
 
 /// Arguments of `anneal eval routing`: the inputs both routers read, and the Tier 2 flags.
@@ -54,15 +61,20 @@ pub struct RoutingCommand {
 /// Runs `anneal eval <suite>` and writes its envelope to `out`.
 ///
 /// # Errors
-/// [`CliError::Usage`] for a Tier 2 flag without `--router claude`, [`CliError::Eval`] when
-/// the inputs could not be read or the real router could not run, [`CliError::Output`] when
-/// `out` cannot be written.
+/// [`CliError::Usage`] for a Tier 2 flag without `--router claude` or a run flag with
+/// `eval uplift --check`, [`CliError::Eval`] or [`CliError::Uplift`] when the inputs could not
+/// be read or the real router could not run, [`CliError::Output`] when `out` cannot be
+/// written.
 pub fn run<O: Write>(args: &EvalArgs, out: &mut O) -> Result<Code, CliError> {
     match &args.suite {
         EvalSuite::Routing(command) => match command.real.settings()? {
             None => report(&routing::evaluate(&command.inputs)?, out),
             Some(settings) => real::report(&real::evaluate(&command.inputs, &settings)?, out),
         },
+        EvalSuite::Uplift(args) => {
+            let mode = args.mode()?;
+            uplift::report(&uplift::evaluate(args, &mode)?, out)
+        }
     }
 }
 

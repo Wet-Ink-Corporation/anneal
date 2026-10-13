@@ -225,20 +225,23 @@ pub const DECIDE_CLEF_UNREACHABLE: Code = Code::new(
     5,
     "no answer from Clef (unreachable, timeout, bad response or config); apply the fallback",
 );
-/// `eval routing`: accuracy is below its bound.
+/// `eval routing`: accuracy is below its bound; `eval uplift`: a skill missed a bar.
 pub const EVAL_BELOW_BOUND: Code = Code::new(1, "below bound");
-/// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted.
-pub const EVAL_INVALID: Code = Code::new(2, "invalid fixtures or skills");
+/// `eval routing`: a fixture or skill is invalid or missing, so accuracy cannot be trusted;
+/// `eval uplift`: a suite or case is invalid.
+pub const EVAL_INVALID: Code = Code::new(2, "invalid fixtures, suites or skills");
 /// `eval routing --router claude`: the cost cap, the time limit or a failed later batch
-/// stopped the run while a prompt was still unsettled.
+/// stopped the run while a prompt was still unsettled; `eval uplift`: they stopped it before
+/// every batch ran.
 pub const EVAL_INCOMPLETE: Code = Code::new(
     3,
-    "incomplete: cost cap, time limit or a failed batch left a prompt unsettled",
+    "incomplete: cost cap, time limit or a failed batch stopped the run short",
 );
-/// `eval routing --router claude`: the real router could not run (`claude` missing or
-/// failing, no credentials, the plugin not loaded, an unreadable result).
+/// `eval routing --router claude` and `eval uplift`: `claude plugin eval` could not run its
+/// first batch (`claude` missing or failing, no credentials, the plugin not loaded, an
+/// unreadable result).
 pub const EVAL_ROUTER_FAILED: Code = Code::new(4, "the real router could not run");
-/// `eval routing`'s codes, in table order.
+/// `eval routing`'s and `eval uplift`'s codes, in table order.
 const EVAL_CODES: [Code; 5] = [
     OK,
     EVAL_BELOW_BOUND,
@@ -311,7 +314,8 @@ impl CommandCodes {
             CommandName::Orchestrate => ("", &ORCHESTRATE_CODES),
             CommandName::Verify => ("risk", &[VERIFY_REVIEW, VERIFY_TOOL_ERROR, VERIFY_SKIP]),
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
-            CommandName::Eval => ("routing", &EVAL_CODES),
+            // No scope: `routing|uplift` would widen the help's title column.
+            CommandName::Eval => ("", &EVAL_CODES),
             CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };

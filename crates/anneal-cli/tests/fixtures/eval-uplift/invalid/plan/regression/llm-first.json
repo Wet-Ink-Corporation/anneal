@@ -1,0 +1,9 @@
+{
+  "behaviour": "outcome",
+  "seed": "test fixture",
+  "prompt": "Break the spec into tasks.",
+  "graders": [
+    {"type": "llm", "name": "judge", "criteria": "The reply lists tasks."},
+    {"type": "regex", "name": "outcome", "pattern": "task"}
+  ]
+}

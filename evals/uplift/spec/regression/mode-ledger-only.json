@@ -1,0 +1,20 @@
+{
+  "behaviour": "guard",
+  "pressure": "time",
+  "seed": "anneal #23 review (blocker): `anneal mode --store` let a mode be recorded in a ledger the hook never reads.",
+  "prompt": "Requirements are confirmed: `anneal mode build` records the mode so the preconditions hook can enforce it. Write the acceptance criteria.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "ears",
+      "target": "last_message",
+      "pattern": "^\\s*(?:[-*+]|\\d+[.)])\\s.*\\b(WHEN|WHILE|WHERE|IF)\\b",
+      "flags": "m"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The criteria are in EARS form and include one saying the mode is recorded only in the ledger the hook reads (a different store, such as a `--store` flag, is refused)."
+    }
+  ]
+}

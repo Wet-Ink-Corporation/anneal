@@ -1,0 +1,26 @@
+{
+  "behaviour": "outcome",
+  "seed": "anneal #23 review (blocker, reproduced): the preconditions hook judged an edit by its own cwd's worktree, not the edited file's.",
+  "prompt": "The preconditions hook denies edits in a second git worktree even though that worktree's plan is approved. The hook finds the worktree from the hook process's current directory. Find the cause.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "cwd",
+      "target": "last_message",
+      "pattern": "\\bcwd\\b|current (working )?directory|working directory",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "file_path",
+      "target": "last_message",
+      "pattern": "edited file|file('s)? (own )?(path|worktree)|file_path",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply ranks hypotheses with the leading one being that the worktree is taken from the hook's cwd rather than from the edited file's path, and proposes a reproduction that edits a file in the second worktree from the first."
+    }
+  ]
+}

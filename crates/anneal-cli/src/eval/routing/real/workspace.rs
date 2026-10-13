@@ -1,5 +1,6 @@
-//! The temporary workspace a Tier 2 run works in: a fresh directory under the system's
-//! temporary directory holding a copy of the plugin, removed by [`Workspace::finish`].
+//! The temporary workspace a Tier 2 or Tier 3 run works in: a fresh directory under the
+//! system's temporary directory holding a copy of the plugin, removed by
+//! [`Workspace::finish`].
 
 use std::fs;
 use std::io;
@@ -44,7 +45,18 @@ impl Workspace {
     /// the plugin is `InvalidInput`; a plugin over [`Limits::PLUGIN`] is `FileTooLarge`). The
     /// directory is removed again when the copy fails.
     pub(crate) fn create(plugin: &Path) -> io::Result<Self> {
-        let workspace = Self { root: fresh_dir()? };
+        Self::create_for("routing", plugin)
+    }
+
+    /// [`Workspace::create`] for the suite named `suite`, whose directory is
+    /// `anneal-eval-<suite>-*`.
+    ///
+    /// # Errors
+    /// As [`Workspace::create`].
+    pub(crate) fn create_for(suite: &str, plugin: &Path) -> io::Result<Self> {
+        let workspace = Self {
+            root: fresh_dir(suite)?,
+        };
         match copy_tree(plugin, &workspace.plugin(), Limits::PLUGIN) {
             Ok(()) => Ok(workspace),
             Err(error) => Err(match workspace.finish() {
@@ -77,7 +89,7 @@ impl Workspace {
 }
 
 /// Makes a new, empty directory under the temporary directory; never reuses an existing one.
-fn fresh_dir() -> io::Result<PathBuf> {
+fn fresh_dir(suite: &str) -> io::Result<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
@@ -85,7 +97,7 @@ fn fresh_dir() -> io::Result<PathBuf> {
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for attempt in 0..ATTEMPTS {
         let path = base.join(format!(
-            "anneal-eval-routing-{}-{nanos}-{attempt}",
+            "anneal-eval-{suite}-{}-{nanos}-{attempt}",
             std::process::id()
         ));
         match create_private_dir(&path) {

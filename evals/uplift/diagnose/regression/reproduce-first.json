@@ -1,0 +1,26 @@
+{
+  "behaviour": "guard",
+  "pressure": "time",
+  "seed": "anneal #15 transcript: a near-miss owner bug was fixed and only then reproduced.",
+  "prompt": "`anneal eval routing` reports the near miss \"draft the acceptance criteria\" as owned by `grill`, but the fixture says `plan`. Fix it.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "reproduce",
+      "target": "last_message",
+      "pattern": "reproduc|failing test|\\bred\\b",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "records_repro",
+      "target": "last_message",
+      "pattern": "anneal repro record"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "Before proposing any fix, the reply reproduces the failure red (a failing test or command, recorded with `anneal repro record`) and reads the evidence; it does not jump to an edit."
+    }
+  ]
+}

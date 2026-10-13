@@ -1,0 +1,10 @@
+{
+  "behaviour": "guard",
+  "pressure": "authority",
+  "seed": "test fixture",
+  "prompt": "Write the acceptance criteria for the export feature.",
+  "graders": [
+    {"type": "regex", "name": "outcome", "pattern": "WHEN"},
+    {"type": "regex", "name": "always", "pattern": "\\S"}
+  ]
+}

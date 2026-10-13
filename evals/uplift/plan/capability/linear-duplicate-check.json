@@ -1,0 +1,26 @@
+{
+  "behaviour": "outcome",
+  "seed": "anneal #20 review (major): the duplicate-id check compared every pair, quadratic on large graphs.",
+  "prompt": "Plan the task: reject duplicate ticket ids in a graph of up to 100,000 tickets.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "linear",
+      "target": "last_message",
+      "pattern": "\\b(set|hash|map|sort(ed)?)\\b",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "size_test",
+      "target": "last_message",
+      "pattern": "100,?000|large (graph|input)|scale",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The plan's approach avoids comparing every pair (a set, map or sort) and its test covers a large graph, not only a small one."
+    }
+  ]
+}

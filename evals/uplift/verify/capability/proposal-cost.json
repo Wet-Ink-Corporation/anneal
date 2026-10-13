@@ -1,0 +1,19 @@
+{
+  "behaviour": "outcome",
+  "seed": "anneal #29 review (major): `calibrate` proposed a new threshold whose expected cost only equalled the current one's.",
+  "prompt": "A change makes `calibrate` propose threshold 0.62 in place of the current 0.60. On the labelled set both cost 14. The author says the proposal is an improvement. Verify that claim.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "equal_cost",
+      "target": "last_message",
+      "pattern": "equal|same cost|tie|not (strictly )?(cheaper|lower|better)|no (cheaper|better|improvement)",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply says the claim does not hold: an equal cost is no improvement, so the current threshold should stand (a proposal must cost strictly less), and asks for a test pinning the tie."
+    }
+  ]
+}

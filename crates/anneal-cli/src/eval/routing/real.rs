@@ -8,17 +8,20 @@
 //! prompts settles with a 95% Wilson lower bound of at least 0.70, and the upper bound pooled
 //! over its siblings' prompts is at most 0.20.
 
-mod args;
+// `args`, `claude`, `result`, `wilson` and `workspace` are shared with Tier 3
+// (`eval::uplift`), which runs the same `claude plugin eval` adapter, result header checks,
+// intervals, defaults and cost cap.
+pub(crate) mod args;
 mod changed;
-mod claude;
+pub(crate) mod claude;
 mod drive;
 mod report;
-mod result;
+pub(crate) mod result;
 mod schedule;
 mod suite;
 mod tally;
-mod wilson;
-mod workspace;
+pub(crate) mod wilson;
+pub(crate) mod workspace;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -128,7 +131,7 @@ pub(crate) fn evaluate(
 
 /// `error` from the first batch, marked [`RouterError::SpendUnknown`] when `claude` had
 /// started and so may have spent before it failed.
-fn spend_unknown(error: RouterError) -> RouterError {
+pub(crate) fn spend_unknown(error: RouterError) -> RouterError {
     match error {
         RouterError::Wait(_)
         | RouterError::Failed { .. }
