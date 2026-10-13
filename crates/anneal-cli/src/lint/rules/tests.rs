@@ -6,7 +6,7 @@ use std::path::Path;
 
 use clap::CommandFactory;
 
-use super::enforcer::{self, Enforcer, Repository, Unresolved};
+use super::enforcer::{self, Enforcer, Repository, Root, Unresolved};
 use super::{check_document, named_enforcers};
 use crate::cli::Cli;
 use crate::lint::finding::LintFinding;
@@ -19,8 +19,9 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn resolve_in(root: &Path, span: &str) -> Result<Result<(), Unresolved>, LintError> {
     let hooks: BTreeSet<String> = ["guard".to_owned()].into();
     let commands = Cli::command();
+    let root = Root::resolve(root)?;
     let repository = Repository {
-        root,
+        root: &root,
         hook_ids: &hooks,
         commands: &commands,
     };
@@ -34,8 +35,9 @@ fn resolve_in(root: &Path, span: &str) -> Result<Result<(), Unresolved>, LintErr
 fn check(root: &Path, text: &str) -> Vec<LintFinding> {
     let hooks: BTreeSet<String> = ["guard".to_owned()].into();
     let commands = Cli::command();
+    let root = Root::resolve(root).expect("the scratch root resolves");
     let repository = Repository {
-        root,
+        root: &root,
         hook_ids: &hooks,
         commands: &commands,
     };
@@ -148,6 +150,50 @@ fn a_test_resolves_only_to_a_function_its_file_defines() -> TestResult {
     assert_eq!(
         resolve_in(root.path(), "test ../a.rs::a_case")?,
         Err(Unresolved::OutsideRoot)
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_test_file_symlinked_from_outside_the_root_is_outside_it() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(outside.path().join("a.rs"), "#[test]\nfn a_case() {}\n")?;
+    std::os::unix::fs::symlink(outside.path().join("a.rs"), root.path().join("a.rs"))?;
+    std::os::unix::fs::symlink(outside.path(), root.path().join("out"))?;
+
+    assert_eq!(
+        (
+            resolve_in(root.path(), "test a.rs::a_case")?,
+            resolve_in(root.path(), "test out/a.rs::a_case")?,
+        ),
+        (Err(Unresolved::OutsideRoot), Err(Unresolved::OutsideRoot)),
+        "a link to a file or a directory outside the root leads out of it"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_test_file_symlinked_within_the_root_resolves() -> TestResult {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("tests"))?;
+    fs::write(root.path().join("tests/a.rs"), "#[test]\nfn a_case() {}\n")?;
+    std::os::unix::fs::symlink(root.path().join("tests/a.rs"), root.path().join("link.rs"))?;
+
+    assert_eq!(resolve_in(root.path(), "test link.rs::a_case")?, Ok(()));
+    Ok(())
+}
+
+#[test]
+fn a_test_path_that_is_a_directory_is_no_test_file() -> TestResult {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("tests/a.rs"))?;
+
+    assert_eq!(
+        resolve_in(root.path(), "test tests/a.rs::a_case")?,
+        Err(Unresolved::NoTestFile)
     );
     Ok(())
 }

@@ -142,9 +142,11 @@ fn apply_one(text: &str, edit: &Edit<'_>) -> Result<(String, Change), EditError>
             to: edit.to,
         })?
         .to_string();
-    // The line holding the number: what precedes it on its line, and what follows it there.
+    // The line holding the number: what precedes it on its line, and what follows it there,
+    // without a CRLF file's `\r`.
     let line_start = head.rsplit_once('\n').map_or(head, |(_, rest)| rest);
     let line_end = tail.split_once('\n').map_or(tail, |(rest, _)| rest);
+    let line_end = line_end.strip_suffix('\r').unwrap_or(line_end);
     let change = Change {
         pointer: pointer(),
         line: head.matches('\n').count().saturating_add(1),
@@ -390,6 +392,32 @@ mod tests {
             Err(EditError::NotANumber {
                 pointer: pointer.to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn a_crlf_line_is_shown_without_its_carriage_return() {
+        let crlf = TEXT.replace('\n', "\r\n");
+
+        let edited = apply(
+            &crlf,
+            &[Edit {
+                pointer: POINTER,
+                from: 0.4,
+                to: 0.3,
+            }],
+        )
+        .expect("the pointer holds 0.4");
+
+        assert_eq!(edited.text, crlf.replacen("0.4", "0.3", 1));
+        assert_eq!(
+            edited.changes,
+            [Change {
+                pointer: POINTER.to_owned(),
+                line: 7,
+                before: "        { \"at_least\": 0.4, \"action\": \"ask\" }".to_owned(),
+                after: "        { \"at_least\": 0.3, \"action\": \"ask\" }".to_owned(),
+            }]
         );
     }
 

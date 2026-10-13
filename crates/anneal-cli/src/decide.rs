@@ -41,6 +41,7 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::string::FromUtf8Error;
 use std::time::SystemTimeError;
 
 use clap::{Args, Subcommand};
@@ -142,6 +143,15 @@ pub enum DecideError {
         /// The path looked at.
         path: PathBuf,
     },
+    /// The thresholds file is not UTF-8 text.
+    #[error("thresholds {path} is not UTF-8", path = path.display())]
+    ThresholdsNotUtf8 {
+        /// The file.
+        path: PathBuf,
+        /// The decoding error, which holds the bytes.
+        #[source]
+        source: FromUtf8Error,
+    },
     /// The thresholds file is invalid.
     #[error("thresholds {from}")]
     Thresholds {
@@ -172,6 +182,7 @@ impl DecideError {
             Self::Ask(_)
             | Self::ThresholdsFile(_)
             | Self::ThresholdsMissing { .. }
+            | Self::ThresholdsNotUtf8 { .. }
             | Self::Thresholds { .. }
             | Self::Log(_)
             | Self::Clock(_) => exit_codes::INTERNAL,
@@ -272,14 +283,16 @@ pub(crate) fn read_thresholds_text(
             path: path.to_path_buf(),
         });
     };
-    let parsed = Thresholds::parse(&bytes).map_err(|source| DecideError::Thresholds {
+    // Decoded before parsing, so the text `calibrate` diffs and edits is exactly the bytes read.
+    let text = String::from_utf8(bytes).map_err(|source| DecideError::ThresholdsNotUtf8 {
+        // The error owns the path it names.
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let parsed = Thresholds::parse(text.as_bytes()).map_err(|source| DecideError::Thresholds {
         from: path.display().to_string(),
         source,
     })?;
-    // JSON that parsed is UTF-8 (a byte outside ASCII is valid only inside a string, which
-    // serde_json checks), so the lossy branch never replaces anything; it only avoids a panic.
-    let text = String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
     Ok((parsed, Cow::Owned(text)))
 }
 

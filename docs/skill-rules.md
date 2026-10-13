@@ -179,7 +179,7 @@ found.
 |---|---|
 | `` `anneal <command> [<subcommand>...] [args]` `` | the words walk this binary's command tree to a command that runs: one with no subcommands, or one that runs without one (`anneal decide --point D1`); `anneal lint` alone names no check |
 | `` `hook <id>` `` | `<id>` is a `hooks[].id` of `--hooks`, by default `plugin/hooks/hooks.metadata.json` under `--root` when it exists |
-| `` `test <file>::<fn>` `` | `<file>` is a relative path under `--root` (default `.`), with no `..`, to a file of at most 1 MiB that contains `fn <fn>(` |
+| `` `test <file>::<fn>` `` | `<file>` is a relative path under `--root` (default `.`), with no `..`, that resolves (symlinks followed) inside the resolved root, to a regular file of at most 1 MiB that contains `fn <fn>(` |
 
 A lint the repository runs is named through the command or hook that runs it: `anneal lint ...`,
 or `hook fast-check` for `check_fast` in `.anneal/config.json`.

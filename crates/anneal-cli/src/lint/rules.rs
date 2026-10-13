@@ -20,7 +20,7 @@ use crate::lint::read_whole;
 use crate::lint::skills::checker::Checker;
 use crate::lint::skills::{LintError, read_hook_ids};
 use crate::lint::spec::markdown::{Document, Item, items};
-use enforcer::{Repository, Unresolved};
+use enforcer::{Repository, Root, Unresolved};
 
 /// The section that holds the rules (level 2, any letter case).
 const RULES_SECTION: &str = "Rules";
@@ -69,10 +69,11 @@ pub struct Outcome {
 /// an error.
 pub fn lint(args: &RulesArgs) -> Result<Outcome, LintError> {
     require_dir(&args.root)?;
+    let root = Root::resolve(&args.root)?;
     let (hook_ids, mut findings) = hook_ids(args)?;
     let commands = Cli::command();
     let repository = Repository {
-        root: &args.root,
+        root: &root,
         hook_ids: &hook_ids,
         commands: &commands,
     };

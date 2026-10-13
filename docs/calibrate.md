@@ -191,18 +191,21 @@ given and must be a regular file. It reads no decision log. Each step replaces o
 at its pointer, so the file keeps its layout and `git diff` shows exactly the `data.diff` the
 proposing run showed. Nothing is written unless every selected step applies:
 
+- each step's pointer lies under its own point and question, `/points/<point>/rules/<question>/`
+  (a step selected by `--point D7` never edits D1's numbers);
 - the number at each pointer is still the step's `from` (a file edited since, or another file,
   is refused);
 - the edited text reads as a strict thresholds file (`docs/decide.md`);
 - each pointer reads back its `to`.
 
-A refusal exits 3 with one `calibrate/refused:<pointer>` finding and writes nothing; run
+A refusal exits 3 with one `calibrate/refused:<pointer>` finding (`calibrate/refused:thresholds`
+when the edited text would not read as thresholds) and writes nothing; run
 `calibrate` again and review its diff. With no threshold step selected it writes nothing and
 exits 0 (`data.written: false`). Mode steps are never applied: they are listed in
 `data.not_applied` for the human to add to `clef_mode`. `data.applied` lists each step written
 with its line, `before` and `after`. No `proposals.json` is a usage error (exit 2: run
-`anneal calibrate` first); one that is not ours, or a thresholds file that cannot be read or
-written, exits 70. `--apply` without `--thresholds` is a usage error, so the built-in copy and
+`anneal calibrate` first); one that is not ours, or a thresholds file that cannot be read, is
+not UTF-8 or cannot be written, exits 70. `--apply` without `--thresholds` is a usage error, so the built-in copy and
 the installed plugin's file are never written by default.
 
 ## Limits

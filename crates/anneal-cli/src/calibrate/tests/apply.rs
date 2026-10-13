@@ -4,9 +4,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use clap::error::ErrorKind;
 use serde_json::json;
 
 use super::{TestResult, calibrate, hand_log};
+use crate::calibrate::PROPOSALS_FILE;
+use crate::calibrate::output::{PROPOSALS_KIND, PROPOSALS_VERSION};
 use crate::cli::Cli;
 use crate::decide;
 use crate::exit_codes;
@@ -192,5 +195,115 @@ fn a_proposals_file_of_another_kind_is_refused_as_an_internal_error() -> TestRes
 fn apply_needs_an_explicit_thresholds_file() {
     let parsed = Cli::try_parse_from(["anneal", "calibrate", "--apply"]);
 
-    assert!(parsed.is_err(), "--apply without --thresholds is refused");
+    assert_eq!(
+        parsed.map(|_cli| ()).map_err(|error| error.kind()),
+        Err(ErrorKind::MissingRequiredArgument),
+        "--apply without --thresholds is refused"
+    );
+}
+
+/// Writes a proposals file holding one `noul` threshold step of `point` at `pointer`, moving
+/// it `(from, to)`.
+fn proposals_with_step(
+    home: &Path,
+    point: &str,
+    pointer: &str,
+    (from, to): (f64, f64),
+) -> TestResult {
+    let dir = home.join("decisions");
+    fs::create_dir_all(&dir)?;
+    let file = json!({
+        "kind": PROPOSALS_KIND,
+        "version": PROPOSALS_VERSION,
+        "apply": [{
+            "kind": "threshold", "point": point, "question": "noul",
+            "pointer": pointer, "from": from, "to": to,
+        }],
+    });
+    fs::write(dir.join(PROPOSALS_FILE), serde_json::to_vec_pretty(&file)?)?;
+    Ok(())
+}
+
+/// Runs `--apply` with `extra` words and checks the run was refused with `key`, the thresholds
+/// file left byte for byte as shipped.
+fn assert_refused(home: &Path, thresholds: &Path, extra: &[&str], key: &str) -> TestResult {
+    let mut words = vec!["--apply", "--thresholds", "clef-thresholds.json"];
+    words.extend_from_slice(extra);
+
+    let ran = calibrate(home, &words);
+
+    assert_eq!(
+        ran.code.as_ref().ok(),
+        Some(&exit_codes::CALIBRATE_REFUSED.value()),
+        "{:?}",
+        ran.code
+    );
+    assert_eq!(
+        (
+            &ran.envelope["findings"][0]["key"],
+            &ran.envelope["data"]["written"]
+        ),
+        (&json!(key), &json!(false)),
+        "{}",
+        ran.envelope
+    );
+    assert_eq!(
+        fs::read(thresholds)?,
+        decide::thresholds::BUILT_IN.as_bytes(),
+        "nothing written"
+    );
+    Ok(())
+}
+
+#[test]
+fn apply_refuses_steps_that_would_not_read_as_strict_thresholds() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let thresholds = thresholds_copy(home.path())?;
+    // D1's ask band raised above its deny band (0.9): the bands would no longer descend.
+    proposals_with_step(
+        home.path(),
+        "D1",
+        "/points/D1/rules/noul/bands/1/at_least",
+        (0.4, 0.95),
+    )?;
+
+    assert_refused(
+        home.path(),
+        &thresholds,
+        &[],
+        "calibrate/refused:thresholds",
+    )
+}
+
+#[test]
+fn apply_refuses_a_pointer_that_does_not_read_back_its_new_value() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let thresholds = thresholds_copy(home.path())?;
+    // The scanner reads the index `01` as 1; a JSON pointer allows no leading zero, so the
+    // strict read-back finds nothing there.
+    let pointer = "/points/D1/rules/noul/bands/01/at_least";
+    proposals_with_step(home.path(), "D1", pointer, (0.4, 0.3))?;
+
+    assert_refused(
+        home.path(),
+        &thresholds,
+        &[],
+        &format!("calibrate/refused:{pointer}"),
+    )
+}
+
+#[test]
+fn apply_refuses_a_step_whose_pointer_is_not_under_its_own_point() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let thresholds = thresholds_copy(home.path())?;
+    // A D7 step, selected by `--point D7`, that would edit D1's ask band.
+    let pointer = "/points/D1/rules/noul/bands/1/at_least";
+    proposals_with_step(home.path(), "D7", pointer, (0.4, 0.3))?;
+
+    assert_refused(
+        home.path(),
+        &thresholds,
+        &["--point", "D7"],
+        &format!("calibrate/refused:{pointer}"),
+    )
 }

@@ -92,6 +92,16 @@ enum Refusal {
         /// The parse error and its sources, as one line.
         reason: String,
     },
+    /// A step's pointer is not under its own point and question.
+    #[error("{pointer} is not under /points/{point}/rules/{question}/, the step's own rule")]
+    ForeignPointer {
+        /// The pointer.
+        pointer: String,
+        /// The step's point.
+        point: Point,
+        /// The step's question.
+        question: Question,
+    },
     /// A pointer does not read back its new value.
     #[error("{pointer} would not read back as {to}")]
     ReadBack {
@@ -159,8 +169,8 @@ pub(crate) fn run<O: Write>(
         applied: Vec::new(),
         not_applied,
     };
-    let edited = match edit::apply(&text, &edits)
-        .map_err(Refusal::from)
+    let edited = match own_rules(&steps)
+        .and_then(|()| edit::apply(&text, &edits).map_err(Refusal::from))
         .and_then(|edited| read_back(edited, &edits))
     {
         Ok(edited) => edited,
@@ -217,6 +227,25 @@ fn read_proposals(path: &Path) -> Result<ProposalsDto, CalibrateError> {
     }
 }
 
+/// Every step's pointer lies under its own rule, `/points/<point>/rules/<question>/` (the
+/// layout `calibrate::report` writes), since a step is selected by its point and must edit
+/// only that point's numbers.
+fn own_rules(steps: &[&ThresholdStep]) -> Result<(), Refusal> {
+    let foreign = steps.iter().find(|step| {
+        let prefix = format!("/points/{}/rules/{}/", step.point, step.question);
+        !step.pointer.starts_with(&prefix)
+    });
+    match foreign {
+        Some(step) => Err(Refusal::ForeignPointer {
+            // The refusal owns the pointer it names, as `ReadBack` does.
+            pointer: step.pointer.clone(),
+            point: step.point,
+            question: step.question,
+        }),
+        None => Ok(()),
+    }
+}
+
 /// The edited text, once it reads as strict thresholds and every pointer holds its `to`.
 fn read_back(edited: Edited, edits: &[Edit<'_>]) -> Result<Edited, Refusal> {
     Thresholds::parse(edited.text.as_bytes()).map_err(|error| Refusal::invalid(&error))?;
@@ -241,7 +270,7 @@ fn read_back(edited: Edited, edits: &[Edit<'_>]) -> Result<Edited, Refusal> {
 fn refuse<O: Write>(refusal: &Refusal, data: &Data<'_>, out: &mut O) -> Result<Code, CliError> {
     let subject = match refusal {
         Refusal::Edit(error) => error.pointer(),
-        Refusal::ReadBack { pointer, .. } => pointer,
+        Refusal::ReadBack { pointer, .. } | Refusal::ForeignPointer { pointer, .. } => pointer,
         Refusal::Invalid { .. } => "thresholds",
     };
     let findings = [Finding::new(

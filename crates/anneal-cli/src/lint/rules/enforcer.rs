@@ -8,10 +8,12 @@
 
 use std::collections::BTreeSet;
 use std::fmt::{self, Display, Formatter};
-use std::path::{Component, Path};
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::path::{Component, Path, PathBuf};
 
 use crate::lint::skills::LintError;
-use crate::lint::skills::discover::{Capped, read_capped};
+use crate::lint::skills::discover::MAX_READ_BYTES;
 
 /// One enforcer as named, borrowed from the rule's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +54,8 @@ pub(crate) enum Unresolved {
     UnknownHook,
     /// `test` is not followed by exactly one `<file>::<fn>`.
     NotATestName,
-    /// The test file is absolute or climbs out of the root.
+    /// The test file is absolute, climbs out of the root, or resolves (through a symlink)
+    /// outside it.
     OutsideRoot,
     /// No such file under the root.
     NoTestFile,
@@ -73,7 +76,9 @@ impl Display for Unresolved {
             Self::NotAHookId => f.write_str("write one hook id after `hook`"),
             Self::UnknownHook => f.write_str("no hook has that id in hooks.metadata.json"),
             Self::NotATestName => f.write_str("write `test <file>::<fn>`"),
-            Self::OutsideRoot => f.write_str("the test file is not a relative path under the root"),
+            Self::OutsideRoot => {
+                f.write_str("the test file is not a relative path that resolves under the root")
+            }
             Self::NoTestFile => f.write_str("no such test file under the root"),
             Self::TestFileTooLarge => f.write_str("the test file is over the read cap"),
             Self::NoTestFn => f.write_str("the test file defines no such function"),
@@ -81,11 +86,28 @@ impl Display for Unresolved {
     }
 }
 
+/// The repository root, resolved once (symlinks followed), so a test file can be required to
+/// resolve inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Root(PathBuf);
+
+impl Root {
+    /// `path`, resolved.
+    ///
+    /// # Errors
+    /// [`LintError::Io`] when it cannot be resolved.
+    pub(crate) fn resolve(path: &Path) -> Result<Self, LintError> {
+        fs::canonicalize(path)
+            .map(Self)
+            .map_err(|source| LintError::io(path, source))
+    }
+}
+
 /// What enforcers resolve against.
 #[derive(Debug)]
 pub(crate) struct Repository<'a> {
     /// The root test files are relative to.
-    pub(crate) root: &'a Path,
+    pub(crate) root: &'a Root,
     /// The ids of `hooks.metadata.json`.
     pub(crate) hook_ids: &'a BTreeSet<String>,
     /// This binary's command tree.
@@ -168,8 +190,9 @@ fn command(root: &clap::Command, words: &[&str]) -> Result<(), Unresolved> {
     Ok(())
 }
 
-/// Whether `<root>/<file>` defines `fn <name>(`.
-fn test(root: &Path, file: &str, name: &str) -> Result<Result<(), Unresolved>, LintError> {
+/// Whether `<root>/<file>` defines `fn <name>(`. The file must resolve, symlinks followed,
+/// inside the resolved root.
+fn test(root: &Root, file: &str, name: &str) -> Result<Result<(), Unresolved>, LintError> {
     let relative = Path::new(file);
     let under_root = relative
         .components()
@@ -177,18 +200,59 @@ fn test(root: &Path, file: &str, name: &str) -> Result<Result<(), Unresolved>, L
     if !under_root {
         return Ok(Err(Unresolved::OutsideRoot));
     }
-    let path = root.join(relative);
-    if !path.is_file() {
-        return Ok(Err(Unresolved::NoTestFile));
+    let path = root.0.join(relative);
+    let resolved = match fs::canonicalize(&path) {
+        Ok(resolved) => resolved,
+        Err(error) if is_absent(&error) => return Ok(Err(Unresolved::NoTestFile)),
+        Err(source) => return Err(LintError::io(&path, source)),
+    };
+    if !resolved.starts_with(&root.0) {
+        return Ok(Err(Unresolved::OutsideRoot));
     }
-    let Capped { bytes, .. } = read_capped(&path)?;
-    let Some(bytes) = bytes else {
-        return Ok(Err(Unresolved::TestFileTooLarge));
+    let bytes = match read_test_file(&resolved) {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(why)) => return Ok(Err(why)),
+        Err(source) => return Err(LintError::io(&resolved, source)),
     };
     let defined = String::from_utf8_lossy(&bytes).contains(&format!("fn {name}("));
     Ok(if defined {
         Ok(())
     } else {
         Err(Unresolved::NoTestFn)
+    })
+}
+
+/// A path that does not exist, or runs through a file as if it were a directory.
+fn is_absent(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
+/// The bytes of the regular file at `path` (already resolved), read up to [`MAX_READ_BYTES`].
+/// The path is checked before opening, so a FIFO is never opened (it would block), and the
+/// opened handle again, in case the path was swapped in between.
+fn read_test_file(path: &Path) -> io::Result<Result<Vec<u8>, Unresolved>> {
+    if !fs::metadata(path)?.is_file() {
+        return Ok(Err(Unresolved::NoTestFile));
+    }
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Ok(Err(Unresolved::NoTestFile));
+    }
+    if metadata.len() > MAX_READ_BYTES {
+        return Ok(Err(Unresolved::TestFileTooLarge));
+    }
+    let mut bytes = Vec::new();
+    // One byte past the cap tells a file that grew since its size was read.
+    file.take(MAX_READ_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    let over = u64::try_from(bytes.len()).map_or(true, |read| read > MAX_READ_BYTES);
+    Ok(if over {
+        Err(Unresolved::TestFileTooLarge)
+    } else {
+        Ok(bytes)
     })
 }
