@@ -8,7 +8,8 @@
 //! - [`safe_prompt`] is prose as Clef sees it: whitespace collapsed, secrets replaced by
 //!   [`REDACTED`], and cut to [`MAX_PROMPT_CHARS`] (`state::cut_chars`). It applies the same
 //!   word rules, carrying what one word says about the next (a credential option's value, a
-//!   header's value, a quote a secret opens) across words. It is a filter for the obvious
+//!   header's value, a quote a secret opens) across words, past a lone `\` (a line
+//!   continuation), which is no word. It is a filter for the obvious
 //!   cases, not a secret scanner. The prompt hooks send prompts through it, and
 //!   `grill classify` a question and its goal.
 

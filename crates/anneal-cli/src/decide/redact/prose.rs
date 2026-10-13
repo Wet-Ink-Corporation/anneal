@@ -81,6 +81,12 @@ impl Prose {
     /// Writes `word` made safe. Returns `false` when it opened a quote that no later word
     /// closes, so the rest of the prompt went with it.
     fn word<'p>(&mut self, word: &'p str, words: &mut impl Iterator<Item = &'p str>) -> bool {
+        // A line continuation (`Bearer \` then a newline) is no word: the secret a word before
+        // it says comes next is the word after it.
+        if word == "\\" {
+            self.safe.push_str(word);
+            return true;
+        }
         let (lead, core, trail) = split_punctuation(word);
         let header = std::mem::take(&mut self.header);
         let pair = header == HeaderValue::AfterSemicolon && is_pair(word);

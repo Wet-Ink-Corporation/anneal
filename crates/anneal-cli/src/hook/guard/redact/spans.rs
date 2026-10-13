@@ -52,6 +52,57 @@ pub(super) fn closed(text: &str, quoting: Quoting, depth: usize) -> bool {
     true
 }
 
+/// A quote or substitution in a word: the text that opens it, where its inside starts, where
+/// it ends (past its close), the text that closes it, and the quoting of its inside.
+pub(super) type Span = (&'static str, usize, usize, &'static str, Quoting);
+
+/// One unit of a word, as the redaction copies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Unit {
+    /// Plain text (a character, or an escape and the character it escapes) up to this byte.
+    Plain(usize),
+    /// A quote or substitution; `None` when it is never closed.
+    Span(Option<Span>),
+}
+
+/// The unit of `raw` starting at `pos`, read with `quoting` at nesting `depth`; past the end,
+/// the empty rest.
+pub(super) fn unit_at(raw: &str, pos: usize, quoting: Quoting, depth: usize) -> Unit {
+    let Some(c) = char_at(raw, pos) else {
+        return Unit::Plain(raw.len());
+    };
+    let next = after(pos, c);
+    let span = match (c, char_at(raw, next), quoting) {
+        ('\\', Some(escaped), _) => return Unit::Plain(after(next, escaped)),
+        ('\'', _, Quoting::Bare) => {
+            close_single(raw, next).map(|end| ("'", next, end, "'", Quoting::Bare))
+        }
+        ('"', _, _) => {
+            close_double(raw, next, depth).map(|end| ("\"", next, end, "\"", Quoting::Double))
+        }
+        ('`', _, _) => close_backtick(raw, next).map(|end| ("`", next, end, "`", Quoting::Bare)),
+        ('$', Some('\''), Quoting::Bare) => {
+            let start = after(next, '\'');
+            close_ansi(raw, start).map(|end| ("$'", start, end, "'", Quoting::Bare))
+        }
+        ('$', Some(open @ ('(' | '{')), _) => {
+            let start = after(next, open);
+            let (opens, close, closes) = if open == '(' {
+                ("$(", ')', ")")
+            } else {
+                ("${", '}', "}")
+            };
+            close_group(raw, start, close, depth)
+                .map(|end| (opens, start, end, closes, Quoting::Bare))
+        }
+        ('(', _, Quoting::Bare) => {
+            close_group(raw, next, ')', depth).map(|end| ("(", next, end, ")", Quoting::Bare))
+        }
+        _ => return Unit::Plain(next),
+    };
+    Unit::Span(span)
+}
+
 /// Past the quoting or substitution starting at `pos` (or the plain character there); `None`
 /// when it is never closed.
 fn skip_unit(text: &str, pos: usize, quoting: Quoting, depth: usize) -> Option<usize> {
@@ -74,14 +125,14 @@ fn skip_unit(text: &str, pos: usize, quoting: Quoting, depth: usize) -> Option<u
 }
 
 /// Past the `'` closing a single-quoted string whose inside starts at `pos`.
-pub(super) fn close_single(text: &str, pos: usize) -> Option<usize> {
+fn close_single(text: &str, pos: usize) -> Option<usize> {
     let at = text.get(pos..)?.find('\'')?;
     Some(pos.saturating_add(at).saturating_add(1))
 }
 
 /// Past the `'` closing an ANSI-C string (`$'…'`, backslash escapes) whose inside starts at
 /// `pos`.
-pub(super) fn close_ansi(text: &str, mut pos: usize) -> Option<usize> {
+fn close_ansi(text: &str, mut pos: usize) -> Option<usize> {
     loop {
         match char_at(text, pos)? {
             '\'' => return Some(after(pos, '\'')),
@@ -92,7 +143,7 @@ pub(super) fn close_ansi(text: &str, mut pos: usize) -> Option<usize> {
 }
 
 /// Past the backtick closing a substitution whose inside starts at `pos`.
-pub(super) fn close_backtick(text: &str, mut pos: usize) -> Option<usize> {
+fn close_backtick(text: &str, mut pos: usize) -> Option<usize> {
     loop {
         match char_at(text, pos)? {
             '`' => return Some(after(pos, '`')),
@@ -104,7 +155,7 @@ pub(super) fn close_backtick(text: &str, mut pos: usize) -> Option<usize> {
 
 /// Past the `"` closing a double-quoted string whose inside starts at `pos`. Substitutions
 /// inside it are skipped whole; `'` and `$'` are plain characters there.
-pub(super) fn close_double(text: &str, mut pos: usize, depth: usize) -> Option<usize> {
+fn close_double(text: &str, mut pos: usize, depth: usize) -> Option<usize> {
     loop {
         let c = char_at(text, pos)?;
         pos = match c {
@@ -118,7 +169,7 @@ pub(super) fn close_double(text: &str, mut pos: usize, depth: usize) -> Option<u
 
 /// Past the `close` ending a `$( )`, `( )` or `${ }` group whose inside (read unquoted)
 /// starts at `pos`.
-pub(super) fn close_group(text: &str, mut pos: usize, close: char, depth: usize) -> Option<usize> {
+fn close_group(text: &str, mut pos: usize, close: char, depth: usize) -> Option<usize> {
     if depth > MAX_NESTING {
         return None;
     }

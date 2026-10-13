@@ -7,12 +7,15 @@
 //!    credential (`TOKEN=x`, `"API_KEY"=x`, `db_pass=x`);
 //! 2. a credential-named key anywhere in it, before `=` or `:` with optional quotes between
 //!    (`--from-literal=password=x`, `-Dpassword=x`, `/:_authToken=x`, `{"password":"x"}`,
-//!    `X-Api-Key:`, `"Authorization":`); a key with nothing after its `:`, or an
-//!    `Authorization` one, is a header whose value runs on ([`Then::Header`]); a header-shaped
+//!    `X-Api-Key:`, `"Authorization":`); a key with nothing but quotes after its `:`
+//!    (`"X-Api-Key:"`), or an `Authorization` one, is a header whose value runs on
+//!    ([`Then::Header`]); a header-shaped
 //!    one with text after its `:` (`Cookie:a=1;`, `X-Api-Key:k`) hides only that text, and
-//!    after a `;` that ends it the cookie pairs that follow ([`Then::AttachedHeader`]), or,
-//!    when that text is the scheme word `Bearer` or `Basic`, the scheme's credential in the
-//!    next word too (`X-Auth-Token:Bearer xyz`, [`Then::AttachedScheme`]);
+//!    after a `;` that ends it the cookie pairs that follow ([`Then::AttachedHeader`]); and
+//!    when the text attached to any credential key's `:` is the scheme word `Bearer` or
+//!    `Basic`, the scheme's credential in the next word goes too (`X-Auth-Token:Bearer xyz`,
+//!    `Token:Bearer xyz`, [`Then::AttachedScheme`]), but not after `=` (`TOKEN=Bearer ls` is
+//!    an assignment, its next word a command);
 //! 3. a secret option of a known tool ([`super::tools`]);
 //! 4. an option, one dash or two, whose name names a credential (`--password x`,
 //!    `-storepass x`): the next word is its value, unless the name says the value is read
@@ -91,9 +94,9 @@ pub(crate) enum Then {
     /// word alone is the secret, unless a `;` ends it, after which the next `name=value` words
     /// are the header's other cookie pairs ([`is_pair`]).
     AttachedHeader,
-    /// A header-shaped key's attached value is the scheme word itself
-    /// (`X-Auth-Token:Bearer xyz`): that word is the secret, and the next word is the scheme's
-    /// credential, as after a readable `Bearer` or `Basic`.
+    /// A credential key's value attached by `:` is the scheme word itself
+    /// (`X-Auth-Token:Bearer xyz`, `Token:Bearer xyz`): that word is the secret, and the next
+    /// word is the scheme's credential, as after a readable `Bearer` or `Basic`.
     AttachedScheme(Scheme),
 }
 
@@ -163,19 +166,10 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         let rest = after.trim_start_matches(['"', '\'']);
         let separator = at.saturating_add(after.len().saturating_sub(rest.len()));
         let kept = separator.saturating_add(1);
-        let then = if rest.starts_with('=') {
-            Then::Nothing
+        let (kept, then) = if rest.starts_with('=') {
+            (kept, Then::Nothing)
         } else if rest.starts_with(':') && !rest.starts_with("::") {
-            let lower = name.to_ascii_lowercase();
-            if kept >= word.len() || lower.contains("authorization") {
-                Then::Header
-            } else if is_header_name(&lower) {
-                word.get(kept..)
-                    .and_then(|value| scheme(&dequote(value)))
-                    .map_or(Then::AttachedHeader, Then::AttachedScheme)
-            } else {
-                Then::Nothing
-            }
+            after_colon(word, name, kept)
         } else {
             continue;
         };
@@ -184,6 +178,30 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
         }
     }
     None
+}
+
+/// What follows a credential key `name` and its `:`, the word's first `kept` bytes: how much of
+/// the word stays readable, and what the next words are.
+fn after_colon(word: &str, name: &str, kept: usize) -> (usize, Then) {
+    // `kept` is just past an ASCII `:` of `word`, so the slice exists.
+    let value = word.get(kept..).map_or(Cow::Borrowed(""), dequote);
+    // Nothing but quotes after the `:` (`"X-Api-Key:"`): the value is still to come, as after
+    // an unquoted `X-Api-Key:`, and the quotes stay readable.
+    if value.is_empty() {
+        return (word.len(), Then::Header);
+    }
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("authorization") {
+        return (kept, Then::Header);
+    }
+    // A scheme word attached to any credential key (`Token:Bearer xyz`) leaves its credential
+    // for the next word; only a header-shaped key leads on to cookie pairs.
+    let plain = if is_header_name(&lower) {
+        Then::AttachedHeader
+    } else {
+        Then::Nothing
+    };
+    (kept, scheme(&value).map_or(plain, Then::AttachedScheme))
 }
 
 /// Whether a credential key's name, `lower` in ASCII lower case, has the shape of an HTTP

@@ -376,3 +376,74 @@ fn a_cookie_pair_whose_value_opens_a_quote_it_does_not_close_stays_readable() {
         "send Cookie: <redacted>; <redacted>; c='rm -rf ~' now"
     );
 }
+
+// Review of PR 113 (#89 follow-up): line continuations, closing quotes, non-header keys.
+
+#[test]
+fn a_line_continuation_does_not_take_the_pending_secret_slot() {
+    let cases = [
+        (
+            "send X-Auth-Token:Bearer \\\n    xyz now",
+            "send X-Auth-Token:<redacted> \\ <redacted> now",
+        ),
+        (
+            "run curl --password \\\n  hunter2 now",
+            "run curl --password \\ <redacted> now",
+        ),
+        ("use Bearer \\\n  tok now", "use Bearer \\ <redacted> now"),
+        (
+            "use Basic \\ dXNlcjpwYXNz now",
+            "use Basic \\ <redacted> now",
+        ),
+        (
+            "send Authorization: \\ Bearer tok now",
+            "send Authorization: \\ <redacted> <redacted> now",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
+fn a_header_value_that_goes_on_after_its_closing_quote_is_hidden() {
+    let cases = [
+        (
+            "run curl -H \"X-Auth-Token:Bearer \"xyz u",
+            "run curl -H \"X-Auth-Token:<redacted> u",
+        ),
+        (
+            "run curl -H \"X-Api-Key:\"secret u",
+            "run curl -H \"X-Api-Key:<redacted> u",
+        ),
+        (
+            "send \"X-Api-Key:\" secret now",
+            "send \"X-Api-Key:\" <redacted> <redacted>",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
+fn a_credential_key_with_an_attached_scheme_hides_the_credential_after_it() {
+    let cases = [
+        (
+            "send Token:Bearer xyz now",
+            "send Token:<redacted> <redacted> now",
+        ),
+        (
+            "send apikey:Bearer xyz now",
+            "send apikey:<redacted> <redacted> now",
+        ),
+        (
+            "send Auth:Bearer xyz now",
+            "send Auth:<redacted> <redacted> now",
+        ),
+        ("run TOKEN=Bearer ls now", "run TOKEN=<redacted> ls now"),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}

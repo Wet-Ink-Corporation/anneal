@@ -17,8 +17,9 @@
 //! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
 //!   `Cookie:`), every word to the end of its simple command or quote. A header-shaped name
 //!   with its value attached (`Cookie:a=1`, `X-Api-Key:k`, but also `db-password:/p`) hides
-//!   only that value, and when the value is the scheme word (`X-Auth-Token:Bearer xyz`) the
-//!   scheme's credential in the next word as well. Inside a quote or substitution, the
+//!   only that value. When the value attached to any credential name is the scheme word
+//!   (`X-Auth-Token:Bearer xyz`, `Token:Bearer xyz`), the scheme's credential in the next word
+//!   goes as well. Inside a quote or substitution, the
 //!   `name=value` words after a `;` that ends either are hidden too (`"Cookie: a=1; b=2"`,
 //!   `"Cookie:a=1; sid=\"S\""`), but no other word, nor a pair whose value holds a
 //!   substitution, escape, blank, `;` or a quote it does not close, so no header hides a
@@ -29,6 +30,11 @@
 //!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
 //! - **Quoted text is scanned too**: the inside of `'…'`, `$'…'`, `$( )` and backticks as a
 //!   command, the inside of `"…"` with double-quote rules (`'` and `$'` are plain there).
+//!   When the inside ends still owing a secret, the rest of its word goes if the word goes on
+//!   after the close (`"X-Api-Key:"secret`), and a quote ending its word on a scheme word
+//!   hides the next word (`"X-Auth-Token:Bearer" xyz`); a substitution passes nothing on.
+//! - **Line continuations.** `\` and a newline are a blank, so the secret a word says comes
+//!   next is the word after them (`--password \` then `hunter2`).
 //! - **Comments and heredocs.** An unquoted `#` comment to the end of its line, and every
 //!   heredoc body.
 //! - **Anything unclosed.** From a quote, substitution or heredoc that is never closed (or nests
@@ -38,10 +44,7 @@
 //! so it cannot rewrite the command in place; this scanner reads the same quoting to find each
 //! span in the source.
 
-use self::spans::{
-    after, char_at, close_ansi, close_backtick, close_double, close_group, close_single, closed,
-    word_end,
-};
+use self::spans::{Unit, after, char_at, closed, unit_at, word_end};
 use super::shell::MAX_NESTING;
 use crate::decide::redact::rules::{is_pair, secret_assignment_prefix};
 use crate::decide::redact::tools::{self, Tool};
@@ -90,13 +93,15 @@ struct Heredoc {
     strip_tabs: bool,
 }
 
-/// Redacts `text` into `out`, reading it with `quoting` at nesting `depth`.
-fn redact_into(text: &str, quoting: Quoting, depth: usize, out: &mut String) -> Scan {
+/// Redacts `text` into `out`, reading it with `quoting` at nesting `depth`. Returns what its
+/// last words say about the words after it: [`Pending::Nothing`] when something was not
+/// closed, since the rest is already [`REDACTED`].
+fn redact_into(text: &str, quoting: Quoting, depth: usize, out: &mut String) -> Pending {
     if depth > MAX_NESTING {
         out.push_str(REDACTED);
-        return Scan::Unclosed;
+        return Pending::Nothing;
     }
-    Scanner {
+    let mut scanner = Scanner {
         text,
         pos: 0,
         out,
@@ -105,8 +110,11 @@ fn redact_into(text: &str, quoting: Quoting, depth: usize, out: &mut String) -> 
         pending: Pending::Nothing,
         tool: None,
         heredocs: Vec::new(),
+    };
+    match scanner.run() {
+        Scan::Closed => scanner.pending,
+        Scan::Unclosed => Pending::Nothing,
     }
-    .run()
 }
 
 /// What the words before say about the next one, until a command separator.
@@ -130,11 +138,10 @@ enum Pending {
 }
 
 /// Redacts the inside of a closed span; whatever it leaves unclosed is already redacted and
-/// ends at the span's own close, so the outer scan carries on.
-fn redact_nested(text: &str, quoting: Quoting, depth: usize, out: &mut String) {
-    match redact_into(text, quoting, depth.saturating_add(1), out) {
-        Scan::Closed | Scan::Unclosed => {}
-    }
+/// ends at the span's own close, so the outer scan carries on. Returns what the inside's last
+/// words say about the text after the close ([`redact_into`]).
+fn redact_nested(text: &str, quoting: Quoting, depth: usize, out: &mut String) -> Pending {
+    redact_into(text, quoting, depth.saturating_add(1), out)
 }
 
 /// The scan of one text: the cursor, the output, and what the next word or line is.
@@ -159,6 +166,9 @@ impl Scanner<'_, '_> {
             let next = after(self.pos, c);
             let scan = match c {
                 ' ' | '\t' => self.copy_to(next),
+                // A line continuation is a blank: it ends no command and is no word, so it
+                // leaves a pending secret for the word after it.
+                '\\' if char_at(self.text, next) == Some('\n') => self.copy_to(after(next, '\n')),
                 '\n' => {
                     self.copy_to(next);
                     self.end_command(c);
@@ -355,7 +365,7 @@ impl Scanner<'_, '_> {
             self.out.push_str(REDACTED);
             self.out.push_str(trail);
         } else {
-            self.copy_word(raw);
+            self.pending = self.copy_word(raw);
         }
         if self.pending == Pending::Nothing {
             self.pending = match scheme(raw) {
@@ -392,8 +402,9 @@ impl Scanner<'_, '_> {
     }
 
     /// Copies a word with the userinfo of each URL in it (`https://user:token@host`) redacted;
-    /// a URL inside a quote is found by the scan of the quote's inside.
-    fn copy_word(&mut self, raw: &str) {
+    /// a URL inside a quote is found by the scan of the quote's inside. Returns what a quote
+    /// ending the word says about the next word ([`units`]).
+    fn copy_word(&mut self, raw: &str) -> Pending {
         let mut rest = raw;
         while let Some((start, end)) = url_userinfo(rest)
             && let (Some(head), Some(tail)) = (rest.get(..start), rest.get(end..))
@@ -403,7 +414,7 @@ impl Scanner<'_, '_> {
             self.out.push_str(REDACTED);
             rest = tail;
         }
-        units(rest, self.quoting, self.depth, self.out);
+        units(rest, self.quoting, self.depth, self.out)
     }
 }
 
@@ -419,67 +430,70 @@ fn plain_token(raw: &str) -> Option<(&str, &str)> {
 
 /// Copies a word whose spans are all closed, scanning the inside of each quote or
 /// substitution as text.
-fn units(raw: &str, quoting: Quoting, depth: usize, out: &mut String) {
+///
+/// A span whose inside ends in a secret still owed (a credential's value, a header's) hides
+/// the rest of the word when the word goes on after its close (`"X-Api-Key:"secret`). A quote
+/// that ends the word and leaves the next word secret (`"X-Auth-Token:Bearer" xyz`) returns
+/// that for the outer scan; a substitution returns nothing, since its inside is a command and
+/// the word after it may be one (`x=$(echo Bearer) rm -rf /p`).
+fn units(raw: &str, quoting: Quoting, depth: usize, out: &mut String) -> Pending {
     let mut pos = 0;
-    while let Some(c) = char_at(raw, pos) {
-        let next = after(pos, c);
-        let following = char_at(raw, next);
-        let span =
-            match (c, following, quoting) {
-                ('\\', Some(escaped), _) => {
-                    out.push(c);
-                    out.push(escaped);
-                    pos = after(next, escaped);
-                    continue;
-                }
-                ('\'', _, Quoting::Bare) => {
-                    close_single(raw, next).map(|end| ("'", next, end, "'", Quoting::Bare))
-                }
-                ('"', _, _) => close_double(raw, next, depth)
-                    .map(|end| ("\"", next, end, "\"", Quoting::Double)),
-                ('`', _, _) => {
-                    close_backtick(raw, next).map(|end| ("`", next, end, "`", Quoting::Bare))
-                }
-                ('$', Some('\''), Quoting::Bare) => {
-                    let start = after(next, '\'');
-                    close_ansi(raw, start).map(|end| ("$'", start, end, "'", Quoting::Bare))
-                }
-                ('$', Some(open @ ('(' | '{')), _) => {
-                    let start = after(next, open);
-                    let close = if open == '(' { ')' } else { '}' };
-                    close_group(raw, start, close, depth).map(|end| {
-                        (
-                            if open == '(' { "$(" } else { "${" },
-                            start,
-                            end,
-                            if open == '(' { ")" } else { "}" },
-                            Quoting::Bare,
-                        )
-                    })
-                }
-                ('(', _, Quoting::Bare) => close_group(raw, next, ')', depth)
-                    .map(|end| ("(", next, end, ")", Quoting::Bare)),
-                _ => {
-                    out.push(c);
-                    pos = next;
-                    continue;
-                }
-            };
-        // A span `word_end` found closed closes here too; should one not, redact the rest.
-        let Some((open, start, end, close, inner_quoting)) = span else {
-            out.push_str(REDACTED);
-            return;
+    while pos < raw.len() {
+        let (open, start, end, close, inner_quoting) = match unit_at(raw, pos, quoting, depth) {
+            Unit::Plain(end) => {
+                out.push_str(raw.get(pos..end).unwrap_or_default());
+                pos = end;
+                continue;
+            }
+            // A span `word_end` found closed closes here too; should one not, redact the rest.
+            Unit::Span(None) => {
+                out.push_str(REDACTED);
+                return Pending::Nothing;
+            }
+            Unit::Span(Some(span)) => span,
         };
-        let inner_end = end.saturating_sub(close.len());
         out.push_str(open);
-        redact_nested(
-            raw.get(start..inner_end).unwrap_or_default(),
-            inner_quoting,
-            depth,
-            out,
-        );
+        let inner = raw.get(start..end.saturating_sub(close.len()));
+        let owed = redact_nested(inner.unwrap_or_default(), inner_quoting, depth, out);
         out.push_str(close);
         pos = end;
+        match after_span(owed, open, pos < raw.len()) {
+            AfterSpan::ReadOn => {}
+            AfterSpan::Secret => {
+                out.push_str(REDACTED);
+                return Pending::Nothing;
+            }
+            AfterSpan::Next(pending) => return pending,
+        }
+    }
+    Pending::Nothing
+}
+
+/// What a word is after one of its spans closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterSpan {
+    /// Read on as usual.
+    ReadOn,
+    /// The rest of the word is the secret the span's inside still owes.
+    Secret,
+    /// The span ends the word, and the next word is as this says.
+    Next(Pending),
+}
+
+/// What follows a span opened by `open` whose inside still owes `owed`, as [`units`] says;
+/// `goes_on` is whether its word goes on after the close.
+fn after_span(owed: Pending, open: &str, goes_on: bool) -> AfterSpan {
+    let next_word = matches!(owed, Pending::Word | Pending::BasicWord);
+    if goes_on {
+        if next_word || matches!(owed, Pending::Rest | Pending::AttachedValue) {
+            AfterSpan::Secret
+        } else {
+            AfterSpan::ReadOn
+        }
+    } else if next_word && matches!(open, "'" | "\"" | "$'") {
+        AfterSpan::Next(owed)
+    } else {
+        AfterSpan::ReadOn
     }
 }
 

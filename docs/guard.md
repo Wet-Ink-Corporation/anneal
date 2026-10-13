@@ -287,7 +287,8 @@ than too little:
   and its `=` or `:` (`--from-literal=password=x`, `-Dpassword=x`,
   `//registry/:_authToken=x`, `{"password":"x"}`, `pass:x`): the rest of that word. A `::`
   is a path, not a key (`auth::tests` stays);
-- a header: a credential-named key ending its word in `:` (`"X-Api-Key: …"`,
+- a header: a credential-named key ending its word in `:`, quotes aside (`"X-Api-Key: …"`,
+  `"X-Api-Key:" k`,
   `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), any `Authorization:` (any letter
   case, `Proxy-Authorization:` too), hides its own value and every word after it up to the
   end of the simple command or quote it is in: `-H "Authorization: Bearer x"` becomes
@@ -295,10 +296,18 @@ than too little:
   attached (`Cookie`, or a name with a `-` inside that ends in a credential word:
   `Cookie:a=1`, `X-Api-Key:k`) hides only that value, since such a name may be no header at
   all: `docker run -v db-password:/p alpine rm -rf /p` keeps `alpine rm -rf /p`, and
-  `git push origin fix-auth:main --force` keeps `--force`. When that attached value is the
-  scheme word itself (`Bearer`, or `Basic`, in any letter case, quotes removed), the word after
-  it is hidden too, as after a readable scheme word: `-H "X-Auth-Token:Bearer xyz"` becomes
-  `-H "X-Auth-Token:<redacted> <redacted>"`. Every separator (`;`, `&`, `|`, a
+  `git push origin fix-auth:main --force` keeps `--force`. When the value attached to any
+  credential name's `:` is the scheme word itself (`Bearer`, or `Basic`, in any letter case,
+  quotes removed), the word after it is hidden too, as after a readable scheme word:
+  `-H "X-Auth-Token:Bearer xyz"` becomes `-H "X-Auth-Token:<redacted> <redacted>"`, and
+  `-H "Token:Bearer xyz"` becomes `-H "Token:<redacted> <redacted>"`; an assignment's `=` is
+  not such a key (`TOKEN=Bearer ls` keeps `ls`, a command). A header value that goes on past
+  its closing quote in the same word is hidden through the end of the word
+  (`-H "X-Api-Key:"secret` and `-H "X-Auth-Token:Bearer "xyz`), and a quote that ends its word
+  on the scheme word hides the next word (`-H "X-Auth-Token:Bearer" xyz`); a substitution
+  passes nothing on (`x=$(echo Bearer) rm -rf /p` keeps `rm`). A line continuation (`\` and a
+  newline) is a blank, so it never takes the place of the secret a word before it announced
+  (`--password \` then `hunter2` hides `hunter2`). Every separator (`;`, `&`, `|`, a
   newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
   `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
   `name=value` words right after a `;` that ends either form stay hidden
@@ -360,7 +369,13 @@ credential (`-H "X-Signature: …"`); a secret that is just a word in a non-cred
 (`echo hunter2 | login`), which includes the tools that take a password as a positional
 argument (`htpasswd -b file user pass`, `cf auth user pass`); a header value's word after a `;`
 that is not a `name=value` pair, and every word after it (`"Cookie: a=1; Secure; sid=S"` keeps
-`sid=S`); and a secret inside a file the command reads.
+`sid=S`); and a secret inside a file the command reads. The other way, an accepted
+over-redaction: a credential name with a scheme word attached by `:` hides its next word
+whatever that word is, so a branch or refspec named like one costs an option or operand of
+its own command, which Clef then cannot see: `git push origin fix-auth:basic --force` hides
+`--force`, and `rsync -a --delete x-auth:bearer /` hides the `/` (a bare `bearer` before a
+word already costs that word the same way). No command after a separator is hidden; whether
+to narrow this is open for Ryan.
 
 **Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
 on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in

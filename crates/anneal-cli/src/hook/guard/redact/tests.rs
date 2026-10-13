@@ -644,6 +644,9 @@ fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
         "curl -H X-Auth-Token:Bearer",
         "curl -H X-Auth-Token:Bearer x",
         "curl -H X-Auth-Token:basic",
+        "curl -H Token:Bearer x",
+        "curl -H X-Auth-Token:Bearer \\\n x",
+        "curl --password \\\n x",
         "docker run -v db-password:/p alpine",
         "git push origin fix-auth:main --force",
     ];
@@ -870,6 +873,101 @@ fn an_attached_scheme_word_hides_the_credential_after_it() {
             "bash -c 'curl -H X-Auth-Token:Bearer; dropdb production'",
             "bash -c 'curl -H X-Auth-Token:<redacted>; dropdb production'",
         ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+// Review of PR 113 (#89 follow-up): line continuations, closing quotes, non-header keys.
+
+#[test]
+fn a_line_continuation_does_not_take_the_pending_secret_slot() {
+    let cases = [
+        (
+            "curl -H \"X-Auth-Token:Bearer \\\n    xyz\" u",
+            "curl -H \"X-Auth-Token:<redacted> \\\n    <redacted>\" u",
+        ),
+        (
+            "curl --password \\\n  hunter2",
+            "curl --password \\\n  <redacted>",
+        ),
+        ("echo Bearer \\\n  tok", "echo Bearer \\\n  <redacted>"),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_header_value_that_goes_on_after_its_closing_quote_is_hidden() {
+    let cases = [
+        (
+            "curl -H \"X-Auth-Token:Bearer \"xyz u",
+            "curl -H \"X-Auth-Token:<redacted> \"<redacted> u",
+        ),
+        (
+            "curl -H \"X-Api-Key:\"secret u",
+            "curl -H \"X-Api-Key:\"<redacted> u",
+        ),
+        (
+            "curl -H \"X-Auth-Token:Bearer\" xyz u",
+            "curl -H \"X-Auth-Token:<redacted>\" <redacted> u",
+        ),
+        (
+            "curl -H 'X-Auth-Token:Basic' dXNlcjpwYXNz u",
+            "curl -H 'X-Auth-Token:<redacted>' <redacted> u",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_header_name_whose_quote_closes_before_its_value_hides_it_as_an_unquoted_one_does() {
+    let cases = [
+        (
+            "curl -H \"X-Api-Key:\" secret u",
+            "curl -H \"X-Api-Key:\" <redacted> <redacted>",
+        ),
+        (
+            "curl -H 'Authorization:' 'Bearer xyz' u",
+            "curl -H 'Authorization:' <redacted> <redacted>",
+        ),
+        (
+            "bash -c 'curl -H \"X-Api-Key:\"; dropdb production'",
+            "bash -c 'curl -H \"X-Api-Key:\"; dropdb production'",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_scheme_word_inside_a_substitution_does_not_hide_the_next_word() {
+    let command = "x=$(echo Bearer) rm -rf /p";
+
+    assert_eq!(redact(command), command);
+}
+
+#[test]
+fn a_credential_key_with_an_attached_scheme_hides_the_credential_after_it() {
+    let cases = [
+        (
+            "curl -H \"Token:Bearer xyz\" u",
+            "curl -H \"Token:<redacted> <redacted>\" u",
+        ),
+        (
+            "curl -H \"apikey:Bearer xyz\" u",
+            "curl -H \"apikey:<redacted> <redacted>\" u",
+        ),
+        (
+            "curl -H \"Auth:Bearer xyz\" u",
+            "curl -H \"Auth:<redacted> <redacted>\" u",
+        ),
+        ("TOKEN=Bearer ls", "TOKEN=<redacted> ls"),
     ];
     for (command, expected) in cases {
         assert_eq!(redact(command), expected, "{command:?}");
