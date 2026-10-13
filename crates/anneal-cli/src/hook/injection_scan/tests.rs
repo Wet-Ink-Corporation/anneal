@@ -212,7 +212,8 @@ fn a_variation_selector_in_a_path_is_escaped_not_relayed() {
     let supplement = post_tool_use(read_call("/r/a\u{E0100}b.md", 1, INJECTED));
     let basic = post_tool_use(read_call("/r/a\u{FE01}b.md", 1, INJECTED));
 
-    assert_eq!(context(&supplement), note_at("/r/a\\u{e0100}b.md:3"));
+    // A lone supplementary selector is a hit, so the path is withheld (Ryan 2026-10-13, card).
+    assert_eq!(context(&supplement), note_at("a Read result:3"));
     assert_eq!(context(&basic), note_at("/r/a\\u{fe01}b.md:3"));
 }
 

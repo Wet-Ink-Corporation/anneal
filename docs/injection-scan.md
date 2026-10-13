@@ -49,7 +49,7 @@ the hidden-character check and the place escaping share.
 | Hidden comment | An HTML comment (`<!-- ... -->`) holding any phrase above (weak ones need no address there), or naming an AI, saying `you` and holding a directive verb (`must`, `should`, `run`, `send`, `ignore`, ...). Reported on the comment's first line. |
 | Markup | Chat-template and tool-call markup outside code fences: `<\|im_start\|>`, `[INST]`, `<<SYS>>`, `<system-reminder>`, `<function_calls>`, `<invoke name=`, `<tool_use>`, ... |
 | Tool-call JSON | `"tool_use"`, `"tool_calls"`, `"tool_call"` or `"function_call"` followed within 400 bytes by `"name"` and `"input"`, `"arguments"` or `"parameters"`, outside code fences. |
-| Hidden characters | A line with a Unicode tag character (U+E0000..U+E007F) or a bidi embedding, override or isolate control, or two or more other invisible characters. Not counted: a byte-order mark that starts the text; a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction text), an emoji presentation selector counting as part of its emoji; an emoji presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII or right before the keycap mark U+20E3 (`1️⃣`); a soft hyphen between two letters; a supplementary variation selector (U+E0100..U+E01EF) right after a Han ideograph (an ideographic variation sequence, as Japanese names use). A run of selectors after one emoji or ideograph still counts from the second, so a run of three or more is seen; one selector per line is not (see Known gaps). |
+| Hidden characters | A line with a Unicode tag character (U+E0000..U+E007F), a bidi embedding, override or isolate control, or a supplementary variation selector (U+E0100..U+E01EF, one of which carries a byte) that does not follow a Han ideograph, or two or more other invisible characters. Not counted: a byte-order mark that starts the text; a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction text), an emoji presentation selector counting as part of its emoji; an emoji presentation selector (U+FE0E, U+FE0F) right after a visible character outside ASCII or right before the keycap mark U+20E3 (`1️⃣`); a soft hyphen between two letters; a supplementary variation selector (U+E0100..U+E01EF) right after a Han ideograph (an ideographic variation sequence, as Japanese names use). A run of selectors after one emoji still counts from the second, so a run of three or more is seen; a second supplementary selector after one ideograph is a hit on its own. |
 
 Code fences (three backticks or tildes) hide markup and tool-call JSON only when closed: when
 the text ends inside a fence, the lines after its opener are scanned as unfenced, so an opener
@@ -58,7 +58,8 @@ with no close cannot silence the rest of a file.
 The note names the first hit by call, then line, and counts every hit in the batch. It never
 quotes the content, which would put the instruction back in front of the model. The path or URL
 it names is treated as untrusted too: when the place itself, or its percent-decoded form, scans as a
-hit (an injection phrase, tag characters, a bidi override) the note says `a Read result` or `a WebFetch result` instead;
+hit (an injection phrase, tag characters, a bidi override, a supplementary variation selector
+not after a Han ideograph) the note says `a Read result` or `a WebFetch result` instead;
 otherwise control characters become spaces, and invisible characters (the table above) and
 the other format, line and paragraph separator characters (Unicode Cf, Zl, Zp, such as U+2028)
 are written escaped, as `\u{2028}` or `\u{e0100}`. The place is
@@ -91,9 +92,8 @@ an override.
   is not seen, and one it keeps is reported by the summary's line.
 - Bash output (`cat`, `curl`) and MCP tool results are not scanned.
 - Hidden characters are judged per line, and one invisible character on a line is tolerated, so
-  text can still carry bits the check does not see: one variation selector per line (a
-  supplementary one, U+E0100..U+E01EF, encodes a whole byte), any number of supplementary
-  selectors each right after a Han ideograph, and in each gap the exemptions leave open, 1 to 2
-  bits: a single left-to-right or right-to-left mark, zero-width joiner or non-joiner between
-  two letters outside ASCII, or an emoji presentation selector (U+FE0E, U+FE0F) after a
-  character outside ASCII.
+  text can still carry bits the check does not see: one basic variation selector
+  (U+FE00..U+FE0D) per line, any number of supplementary selectors each right after a Han
+  ideograph, and in each gap the exemptions leave open, 1 to 2 bits: a single left-to-right or
+  right-to-left mark, zero-width joiner or non-joiner between two letters outside ASCII, or an
+  emoji presentation selector (U+FE0E, U+FE0F) after a character outside ASCII.

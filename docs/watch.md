@@ -133,8 +133,9 @@ Only through `gh`, read-only, with the same bounded runner as `dag`'s GitHub tra
   REST API has no resolved state for a thread. Claude Code's cloud sessions refuse GraphQL and
   serve the same data on their GitHub proxy at
   `GET repos/{owner}/{repo}/pulls/<n>/ccr/review_threads`; when the query fails, that route is
-  read instead, and when it fails too (as it does outside that proxy), the GraphQL failure is
-  the error;
+  read instead, and when it fails too (as it does outside that proxy), the error (exit 7) names
+  both: the GraphQL failure, then the route's (`...; the review thread route of Claude Code's
+  proxy failed too: gh api .../ccr/review_threads: not found`);
 - a deployment: `GET repos/<repo>/deployments/<id>/statuses?per_page=1`, newest first.
 
 `{owner}` and `{repo}` are gh's placeholders for the current repository unless `--repo` names

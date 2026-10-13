@@ -132,12 +132,14 @@ fn tool_call_on_line(text: &str, line_start: usize, line: &str) -> bool {
     })
 }
 
-/// Adds a hit for each line that holds a Unicode tag character (U+E0000..U+E007F) or a bidi
-/// embedding, override or isolate control, or two or more other default-ignorable characters
-/// ([`super::is_ignorable`]). Some uses in ordinary text are not counted:
+/// Adds a hit for each line that holds a Unicode tag character (U+E0000..U+E007F), a bidi
+/// embedding, override or isolate control, or a supplementary variation selector
+/// (U+E0100..U+E01EF, one of which carries a byte) that does not follow a Han ideograph, or
+/// two or more other default-ignorable characters ([`super::is_ignorable`]). Some uses in
+/// ordinary text are not counted:
 ///
-/// - a supplementary variation selector (U+E0100..U+E01EF) right after a Han ideograph: an
-///   ideographic variation sequence, as Japanese names use;
+/// - a supplementary variation selector right after a Han ideograph: an ideographic
+///   variation sequence, as Japanese names use;
 /// - a byte-order mark that starts the text;
 /// - a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two
 ///   visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction
@@ -157,8 +159,9 @@ pub(super) fn hidden_characters(text: &str, found: &mut Scan) {
                 '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {
                     hard = true;
                 }
-                SUPPLEMENTARY_SELECTORS_START..=SUPPLEMENTARY_SELECTORS_END
-                    if previous.is_some_and(han) => {}
+                SUPPLEMENTARY_SELECTORS_START..=SUPPLEMENTARY_SELECTORS_END => {
+                    hard = hard || !previous.is_some_and(han);
+                }
                 '\u{FEFF}' if index == 0 && previous.is_none() => {}
                 '\u{200C}'..='\u{200F}' if joins(previous) && joins(next) => {}
                 '\u{FE0E}' | '\u{FE0F}'

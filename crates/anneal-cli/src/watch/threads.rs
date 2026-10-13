@@ -4,7 +4,8 @@
 //! Claude Code's cloud sessions refuse `gh api graphql` and answer the same question on a REST
 //! route of their GitHub proxy (`repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`). When the
 //! GraphQL query fails, that route is read instead; when it fails too (as it does anywhere but
-//! behind that proxy), the GraphQL failure is the error. At most [`MAX_THREADS`] threads are
+//! behind that proxy), the error is [`WatchError::Threads`]: the GraphQL failure, with the
+//! route's as its source. At most [`MAX_THREADS`] threads are
 //! read; more fail the poll rather than judge part of them (H-13). The proxy's list carries no
 //! total, so a list of [`MAX_THREADS`] or more from it fails too: it may have been cut short.
 
@@ -27,8 +28,9 @@ pub(crate) const THREADS_QUERY: &str = "query($owner: String!, $name: String!, $
 /// repository, each as a [`Blocker::Thread`] in GitHub's order.
 ///
 /// # Errors
-/// The GraphQL failure when neither GraphQL nor the proxy's route answers, a [`WatchError`]
-/// when an answer cannot be read, and [`WatchError::TooMany`] past [`MAX_THREADS`].
+/// [`WatchError::Threads`] (both failures) when GraphQL fails and the proxy's route does too,
+/// [`WatchError::Gh`] for any other GraphQL failure, a [`WatchError`] when an answer cannot be
+/// read, and [`WatchError::TooMany`] past [`MAX_THREADS`].
 pub(crate) fn unresolved<G: GhApi + GhGraphql>(
     gh: &G,
     pr: u64,
@@ -42,11 +44,11 @@ pub(crate) fn unresolved<G: GhApi + GhGraphql>(
     ];
     match gh.graphql(THREADS_QUERY, &fields) {
         Ok(body) => from_graphql(&body, pr),
-        Err(refused @ GhError::Failed { .. }) => {
+        Err(graphql @ GhError::Failed { .. }) => {
             let route = format!("repos/{{owner}}/{{repo}}/pulls/{pr}/ccr/review_threads");
             match gh.get(&route) {
                 Ok(body) => from_proxy(&body, pr_url),
-                Err(_unavailable) => Err(refused.into()),
+                Err(proxy) => Err(WatchError::Threads { graphql, proxy }),
             }
         }
         Err(error) => Err(error.into()),

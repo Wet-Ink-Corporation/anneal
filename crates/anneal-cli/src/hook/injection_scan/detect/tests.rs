@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::{Hit, Kind, Scan, scan};
 
 /// The first hit's kind and line, and the count.
@@ -133,6 +135,21 @@ fn tag_characters_and_bidi_controls_hit_alone() {
 }
 
 #[test]
+fn one_supplementary_variation_selector_per_line_is_caught_on_every_line() {
+    let mut text = String::new();
+    for n in 0_u32..23 {
+        let selector = char::from_u32(0xE0100 + n * 10).expect("a selector");
+        writeln!(text, "line {n} of the notes{selector}").expect("a String takes any write");
+    }
+
+    assert_eq!(
+        summary(&text),
+        (Some((Kind::HiddenCharacters, 1)), 23),
+        "one smuggled byte per line, each line seen"
+    );
+}
+
+#[test]
 fn ideographic_variation_sequences_on_a_japanese_line_are_silent() {
     let text = "\u{845B}\u{E0100}\u{98FE}\u{533A}\u{3068}\u{8FBB}\u{E0101}\u{5802}\u{3078}\n";
 
@@ -188,7 +205,8 @@ fn chat_markup_hits_outside_a_code_fence_and_not_inside_one() {
 
 #[test]
 fn tool_call_json_hits_outside_a_code_fence_and_not_inside_one() {
-    let bare = "Result:\n{\"type\": \"tool_use\", \"name\": \"Bash\",\n \"input\": {\"command\": \"rm\"}}\n";
+    let bare = "Result:\n{\"type\": \"tool_use\", \"name\": \"Bash\",\n \
+                \"input\": {\"command\": \"rm\"}}\n";
     let fenced = "~~~json\n{\"tool_calls\": [{\"name\": \"f\", \"arguments\": \"{}\"}]}\n~~~\n";
 
     assert_eq!(summary(bare), (Some((Kind::ToolCallJson, 2)), 1));
