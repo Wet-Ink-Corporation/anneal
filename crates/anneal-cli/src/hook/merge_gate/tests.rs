@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::PathBuf;
 
-use super::pull::{Pull, origin_repo, pull};
+use super::pull::{Pull, check_repo, origin_repo, pull};
 use super::{Check, run};
 use crate::hook::HookEnv;
 use crate::hook::guard::{PrMerge, Target};
@@ -112,6 +112,96 @@ fn a_merge_without_a_number_or_in_another_repository_is_denied_with_its_check() 
         assert_eq!(denial.check, check, "{merge:?}");
         assert!(denial.reason.starts_with("merge-gate: "), "{denial:?}");
     }
+}
+
+#[test]
+fn a_repository_named_as_host_owner_and_repository_passes_to_the_gate() {
+    let named = merge(
+        Target::Number(7),
+        Some("github.com/owner/repo"),
+        Some("abc"),
+    );
+
+    assert_eq!(
+        pull(&named),
+        Ok(Pull {
+            pr: 7,
+            pin: Some("abc"),
+            url_repo: None
+        })
+    );
+}
+
+#[test]
+fn a_repository_not_named_as_host_owner_and_repository_is_denied() {
+    let rows = [
+        "owner/repo",
+        "https://github.com/owner/repo",
+        "github.com/owner/repo.git",
+        "github.com/owner/repo/extra",
+        "github.com//repo",
+        "github.com/owner/$REPO",
+        "github.com/owner/{repo,other}",
+        "github.com/owner/rep*",
+        "",
+    ];
+
+    for repo in rows {
+        let denial = pull(&merge(Target::Number(7), Some(repo), None)).expect_err(repo);
+        assert_eq!(
+            (denial.check, denial.reason.contains("HOST/OWNER/REPO")),
+            (Check::Repo, true),
+            "{repo}: {denial:?}"
+        );
+    }
+}
+
+#[test]
+fn a_merge_must_name_the_judged_repository_with_repo() {
+    let origin = "github.com/owner/repo";
+    let command = "`gh pr merge 7 --match-head-commit abc --repo github.com/owner/repo`";
+    let rows = [
+        (Some("github.com/owner/repo"), None),
+        (Some("GitHub.com/Owner/Repo"), None),
+        (None, Some("names no --repo")),
+        (
+            Some("github.com/other/repo"),
+            Some("names github.com/other/repo"),
+        ),
+        (
+            Some("ghe.example/owner/repo"),
+            Some("names ghe.example/owner/repo"),
+        ),
+    ];
+
+    for (repo, denied) in rows {
+        let denial = check_repo(7, "abc", repo, Some(origin));
+        let found = denial
+            .as_ref()
+            .map(|denial| (denial.check, denial.reason.as_str()));
+        match denied {
+            None => assert_eq!(found, None, "{repo:?}"),
+            Some(why) => {
+                let (check, reason) = found.expect("denied");
+                assert_eq!(
+                    (check, reason.contains(why), reason.contains(command)),
+                    (Check::Repo, true, true),
+                    "{repo:?}: {reason}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_merge_in_a_repository_without_a_readable_origin_is_denied() {
+    let denial = check_repo(7, "abc", Some("github.com/owner/repo"), None).expect("denied");
+
+    assert_eq!(
+        (denial.check, denial.reason.contains("origin")),
+        (Check::Repo, true),
+        "{denial:?}"
+    );
 }
 
 #[test]

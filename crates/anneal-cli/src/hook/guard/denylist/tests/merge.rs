@@ -298,13 +298,66 @@ fn a_directory_change_before_gh_is_noted_on_the_merge() {
 }
 
 #[test]
+fn a_directory_change_anywhere_in_the_command_is_noted_on_the_merge() {
+    // A function or trap body is read where it is defined, but runs later.
+    let rows = [
+        "gh pr merge 5 && cd /tmp",
+        "f(){ gh pr merge 5; }; cd /other && f",
+        "trap 'gh pr merge 5' EXIT; cd /other",
+    ];
+
+    for command in rows {
+        assert_eq!(moved(command), [Some("cd")], "{command}");
+    }
+}
+
+#[test]
+fn a_login_shell_of_sudo_or_su_is_noted_as_a_directory_change() {
+    let rows = [
+        ("sudo -i gh pr merge 5", "sudo --login"),
+        ("sudo --login gh pr merge 5", "sudo --login"),
+        ("sudo -iu me gh pr merge 5", "sudo --login"),
+        ("su - me -c 'gh pr merge 5'", "su --login"),
+        ("su -l -c 'gh pr merge 5'", "su --login"),
+        ("su --login me -c 'gh pr merge 5'", "su --login"),
+    ];
+
+    for (command, how) in rows {
+        assert_eq!(moved(command), [Some(how)], "{command}");
+    }
+    assert_eq!(moved("su me -c 'gh pr merge 5'"), [None], "no login shell");
+}
+
+#[test]
+fn a_gh_variable_built_by_a_brace_sequence_is_unreadable() {
+    let rows = [
+        "export GH_REP{O..O}=o/x; gh pr merge 5",
+        "env GH_HO{S..S}T=ghe.example gh pr merge 5",
+        "export {G..G}H_REPO=o/x; gh pr merge 5",
+        "export G{H..H}_REPO=o/x; gh pr merge 5",
+    ];
+
+    for command in rows {
+        let scan = find_pr_merge(command, &context());
+        assert!(
+            matches!(scan, MergeScan::Unreadable(ref denial) if denial.rule == Rule::Unparseable),
+            "{command}: {scan:?}"
+        );
+    }
+    assert_eq!(
+        targets("echo {1..3}; gh pr merge 5"),
+        [Target::Number(5)],
+        "a sequence that cannot name a GH_ variable"
+    );
+}
+
+#[test]
 fn a_merge_run_where_the_command_started_is_not_moved() {
     let rows = [
         "gh pr merge 5",
         "env GH_PROMPT_DISABLED=1 gh pr merge 5",
         "sudo -u me gh pr merge 5",
         "env -C /tmp ls; gh pr merge 5",
-        "gh pr merge 5 && cd /tmp",
     ];
 
     for command in rows {

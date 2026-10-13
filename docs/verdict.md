@@ -137,18 +137,33 @@ or `true`), which merges nothing; `--disable-auto=false` is a merge. For each me
 1. The pull request must be named by number (`7`, `#7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`). With no argument gh merges
    the current branch's pull request, and a branch name needs a network lookup; both are denied,
-   as are `-R`/`--repo`, any other URL, and a `GH_REPO` or `GH_HOST` the command sets, also
-   through brace expansion (`export GH_RE{PO,X}=o/x`): another repository's verdicts are not in
-   this ledger. gh finds its repository from the working directory's git remotes, so a merge the
-   command runs after changing directory is denied too (`directory`): after a `cd`, `pushd` or
-   `popd` anywhere before it, under `env -C`/`--chdir` or `sudo -D`/`--chdir`, or as a
-   `find -execdir`/`-okdir` action.
+   as is any other URL.
 2. The head must be pinned with `--match-head-commit <full 40-hex commit>`, so gh refuses the
    merge if the remote head differs from the commit judged. Without a pin the denial names the
-   command to run, with the worktree's `HEAD` filled in.
-3. A fresh tests verdict must hold for the head. Otherwise it denies with `no-verdict`, `stale`,
+   command to run, with the worktree's `HEAD` (and `--repo`) filled in.
+3. The merge must name the repository the gate judges, the worktree's `origin`, as
+   `-R`/`--repo <host>/<owner>/<repo>` (`--repo=`, `-R<value>` and `-R=<value>` too; the last one
+   given counts, as in pflag), compared without case. This is what the gate's invariant rests
+   on: gh takes the repository from `--repo` before `GH_REPO` and before the working directory's
+   git remotes, and takes the host in it before `GH_HOST` (a bare `owner/repo` would take
+   `GH_HOST`'s, so it is denied). So no `cd`, wrapper, environment variable or function body can
+   point gh at a repository other than the one whose verdicts were judged. A merge without
+   `--repo`, with another repository, or in a worktree whose `origin` does not read as
+   `<host>/<owner>/<repo>` is denied (`repo`), and the denial names the exact command:
+   `gh pr merge <n> --match-head-commit <HEAD> --repo <origin>`.
+
+   As defence in depth the gate also denies a command that sets `GH_REPO` or `GH_HOST` (`env`),
+   also through brace expansion (`export GH_RE{PO,X}=o/x`; a brace sequence that may build such
+   a name, `GH_REP{O..O}`, is unreadable), and one that changes directory (`directory`): a `cd`,
+   `pushd` or `popd` anywhere in it (a function or trap body defined before a later `cd` runs
+   after it), `env -C`/`--chdir`, `sudo -D`/`--chdir`, a login shell (`sudo -i`/`--login`,
+   `su -`/`-l`/`--login`), or a `find -execdir`/`-okdir` action. These checks do not see every
+   form (an `env` short cluster such as `env -vu X -C /tmp`, a gh run from a git pager under
+   `git -C`, a name built at run time as in `export $(printf GH_RE%sPO)=o/x`); `--repo` covers
+   them.
+4. A fresh tests verdict must hold for the head. Otherwise it denies with `no-verdict`, `stale`,
    `changes-requested` or `tests`, naming `anneal verdict set ... --level tests-verified`.
-4. A review verdict must hold, unless the skip-rule skips the change from the base the latest
+5. A review verdict must hold, unless the skip-rule skips the change from the base the latest
    verdict recorded (else the default base). Otherwise it denies with `review`, naming the review
    plugin and, while `review.require_plugin` is false, `anneal verdict set ... --level approved
    --source human`.
@@ -168,11 +183,9 @@ The gate judges what it can see in a Bash command, for an honest agent:
 
 - merges outside `gh pr merge`: `gh api` calls to the merge endpoint, a gh alias, the web UI, or
   another tool;
-- `GH_REPO` or `GH_HOST` already in the process environment (only an assignment in the command
-  is seen), and a gh configured for another host than `origin`'s;
-- a working directory changed by a program the guard does not know (`chroot`, `nsenter --wd`,
-  `systemd-run --working-directory`) or by an earlier Bash call, and `GIT_DIR` or
-  `GIT_WORK_TREE` pointing gh's git at another repository;
+- the gate judges the worktree it runs in: `origin` and the ledger are read from the hook's
+  working directory, so a Bash call that an earlier call moved into another repository's
+  worktree is judged against that repository, and `--repo` must then name it;
 - freshness by patch id trusts the local base ref: the base is recorded as a name
   (`origin/main`) and resolved again when the merge is judged, so moving that ref locally
   changes the diff the head's patch id is taken from. Recording the base's commit and requiring

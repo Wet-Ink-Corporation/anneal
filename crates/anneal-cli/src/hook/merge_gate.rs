@@ -4,11 +4,14 @@
 //! command runs, read as the guard reads commands (`guard::find_pr_merge`: wrappers, `bash -c`,
 //! `eval`, scripts on stdin, variables). A call that runs none, and any other tool, is allowed
 //! silently. Each merge must name its pull request by number (`7`, `#7`, or an
-//! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), name no other
-//! repository (`-R`/`--repo`, `GH_REPO`/`GH_HOST` set in the command, or a directory change
-//! before gh: `cd`, `pushd`, `popd`, `env --chdir`, `sudo --chdir`, `find -execdir`), and pin
-//! its head with a full `--match-head-commit` (the denial names the command with the worktree's
-//! `HEAD`); then it needs, for that head (`pull` holds these checks):
+//! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin its head with a
+//! full `--match-head-commit`, and name the repository the gate judges, the `origin` remote's,
+//! with `-R`/`--repo <host>/<owner>/<repo>`: gh takes the repository from `--repo` before
+//! `GH_REPO` or the working directory, and the host in it before `GH_HOST`, so what gh merges
+//! is what was judged. Each denial names the exact command, with the worktree's `HEAD`. As
+//! defence in depth it also denies a command that sets `GH_REPO`/`GH_HOST` or changes directory
+//! (`cd`, `pushd`, `popd`, `env --chdir`, `sudo --chdir`/`--login`, `su --login`,
+//! `find -execdir`) anywhere. Then it needs, for that head (`pull` holds the checks above):
 //!
 //! - a fresh `tests_verified`-or-better verdict after the latest fresh `changes_requested`
 //!   (fresh: recorded for the head's commit, or for the same patch id from the same base, so a
@@ -66,7 +69,8 @@ pub(crate) enum Check {
     Unreadable,
     /// The merge names no pull request by number.
     Target,
-    /// The merge names another repository (`-R`, or a URL not of `origin`).
+    /// The merge does not name `origin`'s repository with `-R`/`--repo <host>/<owner>/<repo>`,
+    /// or names it by a URL not of `origin`.
     Repo,
     /// The command sets `GH_REPO` or `GH_HOST`.
     Env,
@@ -328,12 +332,18 @@ fn judge_merges(
     cwd: &Path,
     budget: Budget,
 ) -> Option<Denial> {
-    let pulls = match merges.iter().map(pull::pull).collect::<Result<Vec<_>, _>>() {
+    let pulls = merges
+        .iter()
+        .map(|merge| pull::pull(merge).map(|pull| (pull, merge.repo.as_deref())))
+        .collect::<Result<Vec<_>, _>>();
+    let pulls = match pulls {
         Ok(pulls) => pulls,
         Err(denial) => return Some(denial),
     };
     with_gate(store, cwd, budget, |gate| {
-        pulls.into_iter().find_map(|pull| gate.judge(pull))
+        pulls
+            .into_iter()
+            .find_map(|(pull, repo)| gate.judge(pull, repo))
     })
 }
 
@@ -414,25 +424,34 @@ struct Gate<'a> {
 }
 
 impl Gate<'_> {
-    /// The denial for merging `pull`, if any.
-    fn judge(&self, pull: Pull<'_>) -> Option<Denial> {
-        if let Some(url_repo) = pull.url_repo {
-            let denial = match self.budget.next() {
-                Ok(timeout) => pull::check_origin(url_repo, self.root, timeout),
-                Err(error) => Some(unjudged("no time is left for git", &error)),
-            };
-            if denial.is_some() {
-                return denial;
-            }
+    /// The denial for merging `pull` with `--repo` `repo`, if any.
+    fn judge(&self, pull: Pull<'_>, repo: Option<&str>) -> Option<Denial> {
+        let origin = match self.budget.next() {
+            Ok(timeout) => pull::read_origin(self.root, timeout),
+            Err(error) => Err(unjudged("no time is left for git", &error)),
+        };
+        let origin = match origin {
+            Ok(origin) => origin,
+            Err(denial) => return Some(denial),
+        };
+        let origin = origin.as_deref();
+        if let Some(denial) = pull
+            .url_repo
+            .and_then(|url_repo| pull::check_url(url_repo, origin))
+        {
+            return Some(denial);
         }
         let pinned = match self.budget.next() {
-            Ok(timeout) => pull::pinned_head(pull, self.root, timeout),
+            Ok(timeout) => pull::pinned_head(pull, origin, self.root, timeout),
             Err(error) => Err(unjudged("no time is left for git", &error)),
         };
         let head = match pinned {
             Ok(head) => head,
             Err(denial) => return Some(denial),
         };
+        if let Some(denial) = pull::check_repo(pull.pr, head, repo, origin) {
+            return Some(denial);
+        }
         self.judge_pinned(pull.pr, ("--match-head-commit", head))
     }
 

@@ -1,6 +1,8 @@
 //! What the gate needs of one `gh pr merge` before it reads any verdict: a pull request number,
-//! no other repository (`-R`/`--repo`, `GH_REPO`/`GH_HOST`, a URL of another repository), and
-//! no directory change before gh, and a head pinned by a full `--match-head-commit`.
+//! the judged repository named by `-R`/`--repo <host>/<owner>/<repo>` (so neither the working
+//! directory nor `GH_REPO`/`GH_HOST` chooses it), no `GH_REPO`/`GH_HOST` set and no directory
+//! change before gh (defence in depth), a URL of no other repository, and a head pinned by a
+//! full `--match-head-commit`.
 
 use std::path::Path;
 use std::time::Duration;
@@ -26,12 +28,13 @@ pub(super) struct Pull<'a> {
 
 /// The pull request of `merge`, or why the gate refuses it without reading anything.
 pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
-    if let Some(repo) = &merge.repo {
+    if let Some(repo) = merge.repo.as_deref().filter(|repo| !is_full_name(repo)) {
         return Err(Denial::new(
             Check::Repo,
             &format!(
-                "gh pr merge --repo {repo} merges in another repository, whose verdicts are \
-                 not in this ledger; run it without --repo from that repository's worktree"
+                "gh pr merge --repo {repo} does not name a repository as HOST/OWNER/REPO, so \
+                 GH_HOST or gh's reading of it could choose another; name this repository's \
+                 origin: --repo <host>/<owner>/<repo>"
             ),
         ));
     }
@@ -73,10 +76,12 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
     }
 }
 
-/// The full head commit `pull` pins, or the denial naming the exact command to run: the pin is
-/// what makes gh refuse to merge a head other than the one judged.
+/// The full head commit `pull` pins, or the denial naming the exact command to run (with
+/// `--repo` naming `origin` when it reads): the pin is what makes gh refuse to merge a head
+/// other than the one judged.
 pub(super) fn pinned_head<'a>(
     pull: Pull<'a>,
+    origin: Option<&str>,
     root: &Path,
     timeout: Duration,
 ) -> Result<&'a str, Denial> {
@@ -93,28 +98,53 @@ pub(super) fn pinned_head<'a>(
         || "no --match-head-commit".to_owned(),
         |pin| format!("--match-head-commit {pin}, not a full commit id"),
     );
+    let repo = origin.map_or_else(String::new, |origin| format!(" --repo {origin}"));
     Err(Denial::new(
         Check::Head,
         &format!(
             "gh pr merge {} has {given}, so gh could merge a head the gate did not judge; pin \
-             it: `gh pr merge {} --match-head-commit {head}`",
+             it: `gh pr merge {} --match-head-commit {head}{repo}`",
             pull.pr, pull.pr
         ),
     ))
 }
 
+/// Whether `repo` is `<host>/<owner>/<repo>` in the characters host names and GitHub
+/// repository names use, which leaves out every expansion, glob and quote: gh then takes the
+/// host from it, not from `GH_HOST`.
+fn is_full_name(repo: &str) -> bool {
+    let name_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_');
+    let mut parts = repo.split('/');
+    let (Some(host), Some(owner), Some(name), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    [host, owner, name]
+        .iter()
+        .all(|part| !part.is_empty() && part.chars().all(name_char))
+        && name
+            .rsplit_once('.')
+            .is_none_or(|(_, extension)| !extension.eq_ignore_ascii_case("git"))
+}
+
+/// The `<host>/<owner>/<repo>` of the `origin` remote under `root`: `None` when there is no
+/// `origin` or its URL does not read as one, or the denial when git cannot be run.
+pub(super) fn read_origin(root: &Path, timeout: Duration) -> Result<Option<String>, Denial> {
+    let args = ["remote", "get-url", "origin"];
+    match paths::run_git_capped(root, &args, timeout, REMOTE_OUTPUT_BYTES) {
+        Ok(output) if output.status.success() => {
+            Ok(origin_repo(&String::from_utf8_lossy(&output.stdout)))
+        }
+        // git ran and found no `origin`.
+        Ok(_) => Ok(None),
+        Err(error) => Err(unjudged("the origin remote cannot be read", &error)),
+    }
+}
+
 /// `None` when `url_repo`, the repository a pull request URL named, is `origin`'s; else the
 /// denial. A repository with no `origin`, or one whose URL does not read, is denied too.
-pub(super) fn check_origin(url_repo: &str, root: &Path, timeout: Duration) -> Option<Denial> {
-    let args = ["remote", "get-url", "origin"];
-    let origin = match paths::run_git_capped(root, &args, timeout, REMOTE_OUTPUT_BYTES) {
-        Ok(output) if output.status.success() => {
-            origin_repo(&String::from_utf8_lossy(&output.stdout))
-        }
-        // git ran and found no `origin`: denied below.
-        Ok(_) => None,
-        Err(error) => return Some(unjudged("the origin remote cannot be read", &error)),
-    };
+pub(super) fn check_url(url_repo: &str, origin: Option<&str>) -> Option<Denial> {
     match origin {
         Some(origin) if origin == url_repo => None,
         Some(origin) => Some(Denial::new(
@@ -132,6 +162,41 @@ pub(super) fn check_origin(url_repo: &str, root: &Path, timeout: Duration) -> Op
             ),
         )),
     }
+}
+
+/// `None` when `repo`, the `--repo` of a merge of `pr` pinned to `head`, names `origin`, the
+/// repository the gate judges; else the denial naming the exact command. gh reads the
+/// repository from `--repo` before `GH_REPO` and the working directory, and the host in it
+/// before `GH_HOST`, so this pins what gh merges in. With no readable `origin` the gate cannot
+/// tell which repository it judges, so it denies.
+pub(super) fn check_repo(
+    pr: u64,
+    head: &str,
+    repo: Option<&str>,
+    origin: Option<&str>,
+) -> Option<Denial> {
+    let Some(origin) = origin else {
+        return Some(Denial::new(
+            Check::Repo,
+            "this repository's origin remote cannot be read as <host>/<owner>/<repo>, so the \
+             gate cannot tell which repository gh pr merge --repo must name; add the origin \
+             remote of the pull request's repository",
+        ));
+    };
+    let given = match repo {
+        Some(repo) if repo.eq_ignore_ascii_case(origin) => return None,
+        Some(repo) => format!("names {repo}, not this repository's origin ({origin})"),
+        None => {
+            "names no --repo, so the working directory or GH_REPO chooses the repository".to_owned()
+        }
+    };
+    Some(Denial::new(
+        Check::Repo,
+        &format!(
+            "gh pr merge {pr} {given}; name the repository the gate judged: \
+             `gh pr merge {pr} --match-head-commit {head} --repo {origin}`"
+        ),
+    ))
 }
 
 /// The `<host>/<owner>/<repo>` (lower-cased, no port, user or `.git`) of a remote URL:

@@ -232,6 +232,15 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 These are left undecided and go to Clef D1 (below).
 
+The merge gate (`docs/verdict.md`) reads commands with this checker in a probe mode
+(`Entries::PrMerge`) that collects `gh pr merge` calls and notes `GH_REPO`/`GH_HOST`
+assignments and directory changes (`cd`, `pushd`, `popd` anywhere; `env -C`, `sudo -D`,
+`sudo -i`, `su -`/`-l`, `find -execdir`). Those notes are defence in depth with the same
+limits as above (an `env` short cluster such as `env -vu X -C`, a gh run from a git pager, a
+name built at run time): the merge gate's invariant rests on the merge naming its repository
+with `--repo <host>/<owner>/<repo>`, which gh reads before the working directory and the `GH_*`
+variables.
+
 ## Clef D1: `destructive_or_irreversible` (#30)
 
 The denylist only denies a command or leaves it undecided (`denylist::Verdict`). An undecided

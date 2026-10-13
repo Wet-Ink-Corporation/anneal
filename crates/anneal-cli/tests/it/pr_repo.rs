@@ -12,6 +12,12 @@ use tempfile::TempDir;
 
 use crate::support::anneal_in;
 
+/// The `origin` remote [`PrRepo::ensure_origin`] adds.
+pub(crate) const ORIGIN_URL: &str = "git@github.com:owner/repo.git";
+
+/// The repository [`ORIGIN_URL`] names, as `gh pr merge --repo` must name it.
+pub(crate) const ORIGIN_REPO: &str = "github.com/owner/repo";
+
 /// A test's result.
 pub(crate) type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
@@ -160,10 +166,23 @@ impl PrRepo {
         self.hook_stdin(&input)
     }
 
-    /// Runs the merge gate on `command` with `--match-head-commit <HEAD>` appended, the pin
-    /// the gate requires.
+    /// Adds [`ORIGIN_URL`] as the `origin` remote, unless one is set.
+    pub(crate) fn ensure_origin(&self) -> TestResult {
+        if self.git(&["remote", "get-url", "origin"]).is_err() {
+            self.git(&["remote", "add", "origin", ORIGIN_URL])?;
+        }
+        Ok(())
+    }
+
+    /// Runs the merge gate on `command` with `--match-head-commit <HEAD> --repo
+    /// <`[`ORIGIN_REPO`]`>` appended, the pin and the repository the gate requires, after
+    /// [`PrRepo::ensure_origin`].
     pub(crate) fn merge_pinned(&self, command: &str) -> TestResult<Output> {
-        let pinned = format!("{command} --match-head-commit {}", self.head()?);
+        self.ensure_origin()?;
+        let pinned = format!(
+            "{command} --match-head-commit {} --repo {ORIGIN_REPO}",
+            self.head()?
+        );
         self.merge_gate(&pinned)
     }
 
