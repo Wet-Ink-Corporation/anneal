@@ -50,7 +50,8 @@ belongs in this table's row.
       suite check, run in CI through `cargo test`. Tiers 2 and 3 have no CI job yet, so Ryan
       runs them locally, in a container, with `claude` signed in; they spend money:
       `anneal eval routing --router claude --trust-plugin` and
-      `anneal eval uplift --trust-plugin`.
+      `anneal eval uplift --trust-plugin --allow-gated-tools` (the seed `build` suite names
+      `Bash`, so without the flag the run is refused before anything is spent).
 - [ ] The 7 model-invoked descriptions total 2,100 characters or fewer (`anneal lint skills`).
 - [ ] The Clef verdict table above is filled in, and any promoted point's mode is recorded.
 - [ ] `v0.1.0` tagged on `main` and pushed, by Ryan.

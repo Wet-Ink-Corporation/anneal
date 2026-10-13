@@ -170,7 +170,8 @@ Routing says a skill fires; Tier 3 asks whether firing it changes what the agent
 ```sh
 anneal eval uplift [--skills plugin/skills] [--suites evals/uplift] [--skill <name>]... \
   [--check] [--baseline <plugin dir>] [--max-cost-usd 25] [--timeout 3600] \
-  [--concurrency 4] [--model <model>] [--claude <path>] [--trust-plugin] [--changed-since <ref>]
+  [--concurrency 4] [--model <model>] [--claude <path>] [--trust-plugin] [--changed-since <ref>] \
+  [--allow-gated-tools]
 ```
 
 `--check` reads and checks the suites and reports each skill's coverage (`data.coverage`); it runs nothing, and a run flag beside it is a usage error. `cargo test` runs it over this directory (`tests/it/repo_gates.rs`), so CI refuses an invalid case or an entry skill without both suites. `--skill` (repeatable) runs one skill's suites; naming a skill with no suite directory is a usage error.
@@ -204,7 +205,7 @@ evals/uplift/<skill>/capability/<case>.json   # passes rarely for now, and shoul
 - `pressure` (optional): a pressure fixture whose sentence is added after a blank line at the end of the prompt. `authority`: "The tech lead says to skip the tests for this one." `time`: "We ship in 5 minutes, so be quick." `sunk-cost`: "We already wrote it, so just merge it."
 - `seed`: the real failure the case was seeded from (an issue and the review finding or hook message), with no secrets, home-directory paths or email addresses.
 - `max_turns` 1 to 50 (default 10), `timeout_seconds` 30 to 1800 (default 300).
-- `allowed_tools`: from `Skill`, `Read`, `Grep`, `Glob`, `Write`, `Edit`, `Bash` (default the first four; `Skill` is required, or the skill could never load). `claude plugin eval` withholds `Write`, `Edit` and `Bash` unless they are granted, so a run passes `--allow-tools` with exactly the gated tools its cases name. No other tool, so no case reaches the network. The grant comes from the case files alone, so every case that names a gated tool is listed in `data.granted_tools` (`{case, tools}`) and named in one `eval/uplift/granted-tools` finding, in `--check` and in a run: review those cases before running a suite you did not write.
+- `allowed_tools`: from `Skill`, `Read`, `Grep`, `Glob`, `Write`, `Edit`, `Bash` (default the first four; `Skill` is required, or the skill could never load). `claude plugin eval` withholds `Write`, `Edit` and `Bash` unless they are granted, so a run passes `--allow-tools` with exactly the gated tools its cases name. No other tool, so no case reaches the network. The grant comes from the case files alone, so every case that names a gated tool is listed in `data.granted_tools` (`{case, tools}`) and named in one `eval/uplift/granted-tools` finding, in `--check` and in a run: review those cases before running a suite you did not write. A run grants them only with `--allow-gated-tools` (Ryan, 2026-10-13): without it, a run whose selected cases (after `--skill` and `--changed-since`) name a gated tool is refused before anything is copied, spent or run, exiting 2 with one `ERROR` line that names the flag and the case files (the first 3, then a count), and nothing on stdout. A selection with no such case needs no flag. `--check` lists the grants as before and, like every run flag, refuses `--allow-gated-tools` beside it. The seed suites need the flag for a full run: `build/regression/red-before-green.json` names `Bash`.
 - `graders`: `claude plugin eval`'s own types (case schema 1.1, read from Claude Code 2.1.296), written through unchanged: `tool_order`, `regex`, `file_exists` and `tool_used` first, `llm` last (an `llm` grader before a deterministic one is refused), unique names, and at least one grader that checks the outcome rather than only `tool_used`. Its `baseline` grader and `arm` field are not accepted: each arm is its own run. A run passes when every one of its case's graders is reported passed: a grader the result leaves out failed, and a result naming a grader the case does not have, or one grader twice in a run, is refused.
 
 Graders check behaviour, not routing: a `tool_used: Skill` grader would pass with the skill and fail without it by construction, inflating the uplift.
@@ -234,7 +235,7 @@ Listed but never failing the run:
 |---|---|
 | 0 | every skill meets every bar; `--check` with valid suites; or `--changed-since` found no change (`data.skipped`) |
 | 1 | below bound: an uplift lower bound below 0, a guard not pass^3, or a regressed regression suite |
-| 2 | invalid suites, cases or skills (nothing ran), or a usage error |
+| 2 | invalid suites, cases or skills (nothing ran), or a usage error (gated tools without `--allow-gated-tools` among them) |
 | 3 | incomplete: the cost cap, the time limit or a failed later batch stopped the run, or a case has fewer than 3 runs in an arm |
 | 4 | `claude plugin eval` could not run its first batch |
 
@@ -263,7 +264,7 @@ Scaffolding hooks (tagged in `plugin/hooks/hooks.metadata.json`) exist to make u
    anneal eval uplift --skill <skill> --baseline <copy> --model <new model> --trust-plugin
    ```
 
-   The with arm is the plugin with the hook; the baseline is the plugin without it.
+   The with arm is the plugin with the hook; the baseline is the plugin without it. Add `--allow-gated-tools` when the skill's cases name `Write`, `Edit` or `Bash` (`build`'s do), after reviewing them; without it the run is refused before anything is spent.
 3. If no skill's uplift lower bound is 0 or higher, the hook adds nothing measurable under the new model: retire it in a pull request that records the run (the envelope, the model and the date) in the hook's metadata row and the decisions log. If any skill's lower bound is 0 or higher, keep it.
 
 ### CI (pending)
@@ -286,12 +287,12 @@ jobs:
       - run: curl --proto '=https' -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
       - run: ~/.cargo/bin/cargo build --locked -p anneal-cli
       - run: >
-          ./target/debug/anneal eval uplift --trust-plugin
+          ./target/debug/anneal eval uplift --trust-plugin --allow-gated-tools
           --max-cost-usd 25 --changed-since "origin/${{ github.base_ref }}"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-The path filter starts the job on any skill body or suite edit; `--changed-since` then runs only the skills whose files or suites changed, and `--max-cost-usd 25` caps the run.
+The path filter starts the job on any skill body or suite edit; `--changed-since` then runs only the skills whose files or suites changed, and `--max-cost-usd 25` caps the run. The job passes `--allow-gated-tools` because the seed `build` suite names `Bash` (`build/regression/red-before-green.json`), so a change to `build` would otherwise be refused; the cases it grants are the ones the pull request's review read, and each run lists them in `data.granted_tools` and the `eval/uplift/granted-tools` finding. `pull_request` runs from forks get no secrets, so a fork's new case never runs with the key. A maintainer who would rather not grant tools in CI drops the flag: a change selecting a gated case then fails the job (exit 2) without spending anything.
 
 The Tier 3 code is proved without a model: the Newcombe interval against reference values, the case reader, suites layout, tally, batch loop and report with fakes of the `Evaluator` port, and the whole command against a fake `claude` script (`crates/anneal-cli/tests/it/eval_uplift.rs`).

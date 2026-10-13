@@ -19,6 +19,14 @@ batch (25 US dollars by default) and `--timeout` the whole run (3600 s). The plu
 the host during the eval, so run it in a container. Ask the human before each run;
 `anneal eval uplift --check` and Tiers 0 and 1 cost nothing.
 
+## Gated tools
+
+A case may name `Write`, `Edit` or `Bash` in `allowed_tools`, and a run grants them from the case
+file alone. So a Tier 3 run whose selected cases name one is refused (exit 2, nothing spent)
+unless it is given `--allow-gated-tools`: read those cases (`anneal eval uplift --check` lists
+them in `data.granted_tools`), then run `anneal eval uplift --skill <name> --allow-gated-tools`.
+A skill whose cases name none needs no flag.
+
 ## The no-guidance control
 
 The baseline arm of `anneal eval uplift` runs each case against the plugin with the skill's

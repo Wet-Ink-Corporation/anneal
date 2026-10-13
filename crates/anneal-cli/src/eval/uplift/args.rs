@@ -4,7 +4,8 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::Args;
+use clap::builder::{BoolishValueParser, TypedValueParser as _};
+use clap::{ArgAction, Args};
 
 use crate::error::CliError;
 use crate::eval::routing::real::args::{
@@ -55,6 +56,30 @@ pub struct UpliftArgs {
     /// changed, report the run as skipped and exit 0
     #[arg(long, value_name = "REF")]
     pub changed_since: Option<String>,
+    /// Let cases grant the gated tools (Write, Edit, Bash) their files name; without it a run
+    /// whose selected cases name one is refused before anything runs
+    #[arg(
+        long = "allow-gated-tools",
+        action = ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new().map(GatedTools::from_flag)
+    )]
+    pub gated_tools: GatedTools,
+}
+
+/// Whether a run may grant the gated tools its cases name (`--allow-gated-tools`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatedTools {
+    /// Refuse a run whose selected cases name a gated tool.
+    Refuse,
+    /// Grant them, as `--allow-gated-tools` asks.
+    Allow,
+}
+
+impl GatedTools {
+    /// [`Self::Allow`] when the flag was given.
+    const fn from_flag(given: bool) -> Self {
+        if given { Self::Allow } else { Self::Refuse }
+    }
 }
 
 /// What `eval uplift` does.
@@ -80,6 +105,8 @@ pub(crate) struct Settings<'a> {
     /// The name of the plugin's skills directory (`--skills`' last component), from which a
     /// skill-removed copy removes the skill.
     pub(crate) skills_dir: &'a OsStr,
+    /// Whether the selected cases may be granted the gated tools they name.
+    pub(crate) gated_tools: GatedTools,
 }
 
 impl UpliftArgs {
@@ -94,6 +121,7 @@ impl UpliftArgs {
             ("--model", self.model.is_some()),
             ("--trust-plugin", self.trust_plugin),
             ("--changed-since", self.changed_since.is_some()),
+            ("--allow-gated-tools", self.gated_tools == GatedTools::Allow),
         ]
         .into_iter()
         .find_map(|(flag, given)| given.then_some(flag))
@@ -151,6 +179,7 @@ impl UpliftArgs {
             max_cost_usd: self.max_cost_usd.unwrap_or(DEFAULT_MAX_COST_USD),
             changed_since: self.changed_since.as_deref(),
             baseline: self.baseline.as_deref(),
+            gated_tools: self.gated_tools,
         }))
     }
 }
@@ -159,7 +188,7 @@ impl UpliftArgs {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Mode, UpliftArgs};
+    use super::{GatedTools, Mode, UpliftArgs};
     use crate::error::CliError;
 
     fn args() -> UpliftArgs {
@@ -176,6 +205,7 @@ mod tests {
             model: None,
             trust_plugin: false,
             changed_since: None,
+            gated_tools: GatedTools::Refuse,
         }
     }
 
@@ -267,6 +297,41 @@ mod tests {
         assert_eq!(
             reason(args.mode()),
             Some("--check runs nothing, so --model does not apply".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_run_refuses_gated_tools_unless_allow_gated_tools_is_given() {
+        let refused = args();
+        let allowed = UpliftArgs {
+            gated_tools: GatedTools::Allow,
+            ..args()
+        };
+
+        let modes = (refused.mode(), allowed.mode());
+
+        assert!(
+            matches!(
+                &modes,
+                (Ok(Mode::Run(refused)), Ok(Mode::Run(allowed)))
+                    if refused.gated_tools == GatedTools::Refuse
+                        && allowed.gated_tools == GatedTools::Allow
+            ),
+            "{modes:?}"
+        );
+    }
+
+    #[test]
+    fn allow_gated_tools_with_check_is_a_usage_error() {
+        let args = UpliftArgs {
+            check: true,
+            gated_tools: GatedTools::Allow,
+            ..args()
+        };
+
+        assert_eq!(
+            reason(args.mode()),
+            Some("--check runs nothing, so --allow-gated-tools does not apply".to_owned())
         );
     }
 }

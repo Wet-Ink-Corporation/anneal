@@ -14,6 +14,7 @@ mod case;
 mod changed;
 mod claude;
 mod drive;
+mod gated;
 mod report;
 mod stats;
 mod suites;
@@ -21,8 +22,9 @@ mod tally;
 
 use std::path::Path;
 
-pub use args::UpliftArgs;
+pub use args::{GatedTools, UpliftArgs};
 pub(crate) use args::{Mode, Settings};
+pub use gated::GatedCases;
 pub(crate) use report::report;
 
 use crate::eval::routing::real::args::plugin_of;
@@ -89,18 +91,26 @@ pub enum UpliftError {
     /// `--changed-since` could not compare.
     #[error("--changed-since")]
     Changed(#[source] ChangedError),
+    /// A run's selected cases name gated tools and `--allow-gated-tools` was not given.
+    #[error(
+        "gated tools (Write, Edit or Bash) are named by {0}; review them, then pass \
+         --allow-gated-tools to grant them"
+    )]
+    GatedTools(GatedCases),
 }
 
 impl UpliftError {
-    /// The documented exit code: an unknown `--skill` is a usage error, as is a `--baseline`
-    /// whose manifest cannot be read (a bad argument, not a router failure) and a missing or
-    /// wrong-kind path ([`LintError::code`]); the evaluator's failures are
-    /// [`RouterError::code`]'s.
+    /// The documented exit code: an unknown `--skill` is a usage error, as are a `--baseline`
+    /// whose manifest cannot be read (a bad argument, not a router failure), gated tools
+    /// without `--allow-gated-tools` and a missing or wrong-kind path ([`LintError::code`]);
+    /// the evaluator's failures are [`RouterError::code`]'s.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Skills(error) | Self::Suites(error) => error.code(),
-            Self::UnknownSkill { .. } | Self::Baseline(_) => crate::exit_codes::USAGE,
+            Self::UnknownSkill { .. } | Self::Baseline(_) | Self::GatedTools(_) => {
+                crate::exit_codes::USAGE
+            }
             Self::Router(error) => error.code(),
             Self::Changed(error) => error.code(),
         }
@@ -112,35 +122,12 @@ impl UpliftError {
 ///
 /// # Errors
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
-/// `--changed-since` cannot compare, or the evaluator cannot run its first batch.
+/// `--changed-since` cannot compare, a run's selected cases name gated tools without
+/// `--allow-gated-tools`, or the evaluator cannot run its first batch.
 pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutcome, UpliftError> {
-    let skills: Vec<String> = listings(std::slice::from_ref(&args.skills))
-        .map_err(UpliftError::Skills)?
-        .into_iter()
-        .map(|listed| match listed {
-            Ok(listing) => listing.name,
-            Err(unparsed) => unparsed.name,
-        })
-        .collect();
-    let mut suites = suites::read(&args.suites, &skills).map_err(UpliftError::Suites)?;
-    if let Some(name) = args
-        .skill
-        .iter()
-        .find(|name| !suites.coverage.iter().any(|row| &row.skill == *name))
-    {
-        return Err(UpliftError::UnknownSkill {
-            name: name.to_owned(),
-        });
-    }
-    if !args.skill.is_empty() {
-        suites.cases.retain(|case| args.skill.contains(&case.skill));
-        suites
-            .coverage
-            .retain(|row| args.skill.contains(&row.skill));
-    }
     let mut outcome = UpliftOutcome {
         check: matches!(mode, Mode::Check),
-        suites,
+        suites: select(args)?,
         drove: None,
         skipped: false,
         baseline: None,
@@ -171,10 +158,46 @@ pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutco
         outcome.skipped = true;
         return Ok(outcome);
     }
+    // The selection is final: refuse gated tools before anything is copied, spent or run.
+    if settings.gated_tools == GatedTools::Refuse
+        && let Some(cases) = gated::refusal(&outcome.suites.cases)
+    {
+        return Err(UpliftError::GatedTools(cases));
+    }
     let (drove, cleanup) = run(settings, &args.skills, &outcome.suites)?;
     outcome.drove = Some(drove);
     outcome.cleanup = cleanup;
     Ok(outcome)
+}
+
+/// Reads the suites under `args.suites` for the skills under `args.skills`, keeping only the
+/// `--skill`s' cases and coverage when any is named.
+fn select(args: &UpliftArgs) -> Result<Suites, UpliftError> {
+    let skills: Vec<String> = listings(std::slice::from_ref(&args.skills))
+        .map_err(UpliftError::Skills)?
+        .into_iter()
+        .map(|listed| match listed {
+            Ok(listing) => listing.name,
+            Err(unparsed) => unparsed.name,
+        })
+        .collect();
+    let mut suites = suites::read(&args.suites, &skills).map_err(UpliftError::Suites)?;
+    if let Some(name) = args
+        .skill
+        .iter()
+        .find(|name| !suites.coverage.iter().any(|row| &row.skill == *name))
+    {
+        return Err(UpliftError::UnknownSkill {
+            name: name.to_owned(),
+        });
+    }
+    if !args.skill.is_empty() {
+        suites.cases.retain(|case| args.skill.contains(&case.skill));
+        suites
+            .coverage
+            .retain(|row| args.skill.contains(&row.skill));
+    }
+    Ok(suites)
 }
 
 /// Runs `suites`' cases in both arms; with the run, why the workspace could not be removed
