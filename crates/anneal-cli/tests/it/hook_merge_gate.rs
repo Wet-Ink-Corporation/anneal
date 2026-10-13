@@ -7,7 +7,7 @@ use std::process::Output;
 
 use serde_json::Value;
 
-use crate::pr_repo::{PrRepo, TestResult};
+use crate::pr_repo::{ORIGIN_REPO, PrRepo, TestResult};
 
 /// The deny decision's reason, or an error when `output` is not one deny decision.
 fn deny_reason(output: &Output) -> TestResult<String> {
@@ -199,11 +199,12 @@ fn a_later_changes_requested_verdict_voids_the_tests_verified_one() -> TestResul
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn match_head_commit_names_the_head_that_is_merged() -> TestResult {
     let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
     let verified = repo.head()?;
     repo.set_verdict("tests-verified", "local")?;
     repo.change_code()?;
 
-    let pinned = format!("gh pr merge 7 --match-head-commit {verified}");
+    let pinned = format!("gh pr merge 7 --match-head-commit {verified} --repo {ORIGIN_REPO}");
     assert_allowed(&repo.merge_gate(&pinned)?);
     Ok(())
 }
@@ -305,5 +306,434 @@ fn a_gh_repository_or_host_set_in_the_command_is_denied() -> TestResult {
         assert!(reason.contains("GH_"), "{command}: {reason}");
     }
     assert_eq!(blocked_points(&repo)?, ["merge-gate.env", "merge-gate.env"]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn gh_repository_variables_set_through_brace_expansion_are_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    let reason = deny_reason(&repo.merge_pinned("export GH_RE{PO,X}=o/x; gh pr merge 7")?)?;
+
+    assert!(reason.contains("sets GH_REPO"), "{reason}");
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.env"]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_after_a_directory_change_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    for command in ["cd /tmp && gh pr merge 7", "env -C /tmp gh pr merge 7"] {
+        let reason = deny_reason(&repo.merge_pinned(command)?)?;
+        assert!(reason.contains("before gh pr merge"), "{command}: {reason}");
+    }
+    assert_eq!(
+        blocked_points(&repo)?,
+        ["merge-gate.directory", "merge-gate.directory"]
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_naming_the_origin_repository_in_every_form_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+
+    for named in [
+        format!("--repo {ORIGIN_REPO}"),
+        format!("--repo={ORIGIN_REPO}"),
+        format!("-R {ORIGIN_REPO}"),
+        format!("-R{ORIGIN_REPO}"),
+        "-R GitHub.com/Owner/Repo".to_owned(),
+        format!("--repo github.com/other/repo --repo {ORIGIN_REPO}"),
+    ] {
+        let command = format!("gh pr merge 7 --match-head-commit {head} {named}");
+        assert_allowed(&repo.merge_gate(&command)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_without_the_origin_repository_named_is_denied_naming_the_command() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let exact = format!("`gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}`");
+
+    let rows = [
+        ("", "names no --repo"),
+        (
+            "--repo github.com/other/repo",
+            "names github.com/other/repo",
+        ),
+        (
+            "--repo=ghe.example/owner/repo",
+            "names ghe.example/owner/repo",
+        ),
+        ("-R github.com/owner/other", "names github.com/owner/other"),
+        (
+            "--repo github.com/owner/repo --repo github.com/other/repo",
+            "names github.com/other/repo",
+        ),
+    ];
+    for (named, why) in rows {
+        let command = format!("gh pr merge 7 --match-head-commit {head} {named}");
+        let reason = deny_reason(&repo.merge_gate(&command)?)?;
+        assert!(
+            reason.contains(why) && reason.contains(&exact),
+            "{command}: {reason}"
+        );
+    }
+    let short = format!("gh pr merge 7 --match-head-commit {head} --repo owner/repo");
+    let reason = deny_reason(&repo.merge_gate(&short)?)?;
+    assert!(reason.contains("HOST/OWNER/REPO"), "{reason}");
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.repo"; 6]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_in_a_command_defining_a_function_or_alias_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let merge = format!("gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}");
+    let rest = format!("7 --match-head-commit {head} --repo github.com/other/repo");
+
+    for command in [
+        format!(r#"f(){{ gh pr merge "$@"; }}; f {rest}"#),
+        format!(r#"gh(){{ command gh "$@" --repo github.com/other/repo; }}; {merge}"#),
+        format!("alias f='gh pr merge'; f {rest}"),
+        format!("alias gh='gh --repo github.com/other/repo'; {merge}"),
+    ] {
+        let output = repo.merge_gate(&command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("merge-gate"), "{command}: {reason}");
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_with_a_brace_word_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let pin = format!("--match-head-commit {head} --repo {ORIGIN_REPO}");
+
+    for command in [
+        format!("gh pr merge 7 --body {{a..b}} {pin}"),
+        format!("gh pr merge 7 --body {{a,b}} {pin}"),
+        format!("gh pr merge 7 {{1..2}} {pin}"),
+        format!("gh pr merge 7 {{a,b}} {pin}"),
+    ] {
+        let output = repo.merge_gate(&command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("merge-gate"), "{command}: {reason}");
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn every_bypass_from_the_fourth_review_of_89_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let pin = format!("--match-head-commit {head} --repo {ORIGIN_REPO}");
+    let merge = format!("gh pr merge 7 {pin}");
+
+    let rows = [
+        // F1: a quoted word joined to a brace or glob.
+        format!(r#"gh pr merge 7 --body "$b"{{x,--repo=github.com/other/repo}} {pin}"#),
+        format!(r#"{merge} --body "$b"*"#),
+        // F2: arguments appended at run time.
+        format!("cat args | xargs {merge}"),
+        format!("xargs -a args {merge}"),
+        format!("xargs {merge} < args"),
+        format!("find . -name x -exec {merge} {{}} +"),
+        // F3: another gh, or definitions read before the merge.
+        format!("hash -p ./evil/gh gh; {merge}"),
+        format!("PATH=./evil:$PATH {merge}"),
+        format!("export PATH=./evil:$PATH; {merge}"),
+        format!(". ./defs; {merge}"),
+        format!("source ./defs; {merge}"),
+        format!("BASH_ENV=./defs bash -c '{merge}'"),
+        format!("bash --rcfile ./defs -i -c '{merge}'"),
+        format!("enable -f ./evil.so gh; {merge}"),
+    ];
+    for command in &rows {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(
+            reason.contains("gh pr merge <number>"),
+            "{command}: {reason}"
+        );
+    }
+
+    assert_eq!(blocked_points(&repo)?, vec!["merge-gate.shape"; rows.len()]);
+    Ok(())
+}
+
+/// Commands that run a merge the probe cannot see, from the fifth review of #89, and a lone
+/// gh call whose subcommand is known only at run time (denied with or without `merge`).
+const UNSEEN_MERGES: [&str; 14] = [
+    r#"gh "$@""#,
+    r#"f() { gh "$@"; }; f pr merge 7"#,
+    "alias g=gh\ng pr merge 7",
+    "alias g='gh pr'\ng merge 7",
+    r#"set -- pr merge 7; gh "$@""#,
+    r#"arr=(pr merge 7); gh "${arr[@]}""#,
+    r#"read -r x <<< "pr merge 7"; gh $x"#,
+    "gh $(echo pr merge) 7",
+    "gh $(cat args)",
+    "gh `cat args`",
+    "${GH:-gh} pr merge 7",
+    "${GH-gh} pr merge 7",
+    "g$x pr merge 7",
+    "f() { gh \"$@\"; }; f pr MERGE 7",
+];
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    for command in UNSEEN_MERGES {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(
+            reason.contains("gh pr merge <number>"),
+            "{command}: {reason}"
+        );
+    }
+
+    assert_eq!(
+        blocked_points(&repo)?,
+        vec!["merge-gate.shape"; UNSEEN_MERGES.len()]
+    );
+    Ok(())
+}
+
+/// Commands whose words name `merge` and gh, or `merge` and a definition, around a merge the
+/// probe cannot read (the sixth review of #89): appended arguments, quotes splitting `merge`,
+/// another name for gh, a program that runs its arguments. The probe reads the alias body
+/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`. The
+/// seventh review added gh words a run-time call hides and a `gh api` call to the merge endpoint.
+const TRIPWIRE_MERGES: [(&str, &str); 17] = [
+    (r"printf '%s\n' pr merge 7 | xargs gh", "merge-gate.shape"),
+    (r"printf 'pr\nmerge\n7\n' | xargs gh", "merge-gate.shape"),
+    ("echo pr merge 7 > f; xargs gh < f", "merge-gate.shape"),
+    ("echo pr merge 7 > f; cat f | xargs gh", "merge-gate.shape"),
+    ("echo merge | xargs -I% gh pr % 7", "merge-gate.shape"),
+    ("alias g=gh\ng pr \"merg\"e 7", "merge-gate.shape"),
+    ("alias g='gh pr'\ng 'mer'ge 7", "merge-gate.shape"),
+    ("alias g='gh pr'\ng me\\rge 7", "merge-gate.shape"),
+    ("alias g='gh pr mer''ge'\ng 7", "merge-gate.target"),
+    ("hash -p /usr/bin/gh g; g pr merge 7", "merge-gate.shape"),
+    (
+        "builtin hash -p /usr/bin/gh g; g pr merge 7",
+        "merge-gate.shape",
+    ),
+    (
+        r#"cp "$(command -v gh)" /tmp/g && /tmp/g pr merge 7"#,
+        "merge-gate.shape",
+    ),
+    (
+        "ln -sf /usr/bin/gh /tmp/g; /tmp/g pr merge 7",
+        "merge-gate.shape",
+    ),
+    ("parallel gh ::: pr ::: merge ::: 7", "merge-gate.shape"),
+    (
+        "G=gh; $G pr view 1; echo pr merge 7 > f; cat f | xargs gh",
+        "merge-gate.shape",
+    ),
+    (
+        r#"x="gh pr view 1"; $x; echo merge > f; cat f | xargs gh"#,
+        "merge-gate.shape",
+    ),
+    ("gh api -X PUT repos/o/r/pulls/7/merge", "merge-gate.shape"),
+];
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_command_naming_merge_and_gh_or_a_definition_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    let mut expected = Vec::new();
+    for (command, point) in TRIPWIRE_MERGES {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("gh pr merge"), "{command}: {reason}");
+        expected.push(point);
+    }
+
+    assert_eq!(blocked_points(&repo)?, expected);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_git_merge_naming_no_gh_word_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    for command in ["git merge gh-pages", "git merge --no-ff feature"] {
+        assert_allowed(&repo.merge_gate(command)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_gh_api_call_naming_no_merge_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    assert_allowed(&repo.merge_gate("gh api repos/o/r/pulls/7")?);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_run_time_program_or_a_function_without_merge_in_the_command_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    for command in ["$EDITOR x", "f(){ :; }; f", "alias ll='ls -l'"] {
+        assert_allowed(&repo.merge_gate(command)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn the_canonical_merge_command_with_its_flags_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+
+    for command in [
+        format!("gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}"),
+        format!(
+            "gh pr merge --squash --delete-branch --subject 'Ship it (#7)' --body \"Merged.\" \
+             --repo {ORIGIN_REPO} 7 --match-head-commit {head}"
+        ),
+    ] {
+        assert_allowed(&repo.merge_gate(&command)?);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_in_a_repository_without_an_origin_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+
+    let command = format!("gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}");
+    let reason = deny_reason(&repo.merge_gate(&command)?)?;
+
+    assert!(reason.contains("origin remote"), "{reason}");
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.repo"]);
+    Ok(())
+}
+
+/// The bypasses the reviews of #89 found, around `merge`, each with the check that denies it.
+fn bypass_rows(merge: &str) -> Vec<(String, &'static str)> {
+    vec![
+        // Brace sequences building GH_REPO or GH_HOST.
+        (
+            format!("export GH_REP{{O..O}}=o/x; {merge}"),
+            "merge-gate.unreadable",
+        ),
+        (
+            format!("env GH_HO{{S..S}}T=ghe.example {merge}"),
+            "merge-gate.unreadable",
+        ),
+        // A function or trap body run after a later cd.
+        (
+            format!("f(){{ {merge}; }}; cd /other && f"),
+            "merge-gate.directory",
+        ),
+        (
+            format!("trap '{merge}' EXIT; cd /other"),
+            "merge-gate.directory",
+        ),
+        // Login shells start in the user's home.
+        (format!("sudo -i {merge}"), "merge-gate.directory"),
+        (format!("sudo --login {merge}"), "merge-gate.directory"),
+        (format!("su - -c '{merge}'"), "merge-gate.directory"),
+        (format!("su -l -c '{merge}'"), "merge-gate.directory"),
+        (format!("su --login -c '{merge}'"), "merge-gate.directory"),
+        // env -S splits its string into env's own options, -C among them.
+        (format!("env -S '-C /tmp {merge}'"), "merge-gate.directory"),
+        // Not the canonical command: an env short cluster, a git pager, a dynamic name.
+        (format!("env -vu X -C /tmp {merge}"), "merge-gate.shape"),
+        (
+            format!("git -C /other -c core.pager='{merge}' log"),
+            "merge-gate.shape",
+        ),
+        (
+            format!("export $(printf GH_RE%sPO)=o/x; {merge}"),
+            "merge-gate.shape",
+        ),
+        // Round 2: a --repo the command does not write out, or one a vanishing word shifts.
+        (
+            format!(r#"r={ORIGIN_REPO}; {merge} --repo "$r""#),
+            "merge-gate.shape",
+        ),
+        (
+            format!(r#"false && r={ORIGIN_REPO}; {merge} --repo "$r""#),
+            "merge-gate.shape",
+        ),
+        (
+            format!("r={ORIGIN_REPO}; unset r; {merge} --repo $r"),
+            "merge-gate.shape",
+        ),
+        (
+            format!("{merge} --body $x --repo {ORIGIN_REPO}"),
+            "merge-gate.shape",
+        ),
+        (
+            format!("{merge} $x --repo {ORIGIN_REPO}"),
+            "merge-gate.shape",
+        ),
+    ]
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn every_bypass_from_the_review_of_89_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let merge = format!("gh pr merge 7 --match-head-commit {head}");
+
+    let rows = bypass_rows(&merge);
+    let mut expected = Vec::new();
+    for (command, point) in &rows {
+        deny_reason(&repo.merge_gate(command)?)?;
+        expected.push(*point);
+    }
+
+    assert_eq!(blocked_points(&repo)?, expected);
     Ok(())
 }

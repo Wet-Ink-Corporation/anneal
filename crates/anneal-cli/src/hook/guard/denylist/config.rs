@@ -1,5 +1,6 @@
 //! Bash writes to lint or hook config: redirections, `tee`, `truncate`, `sed -i`, `cp`, `mv`,
-//! `ln`, `install`, `rm` and `chmod` aimed at a protected path.
+//! `ln`, `install`, `rm` and `chmod` aimed at a protected path, and hard links to one (`ln`
+//! without `-s`, `link`, `cp -l`), since writing the link writes the file.
 //!
 //! Paths are matched on their components ([`paths`]), so `docs/hooks.md` and `myhooks/x` are
 //! not `hooks/`. A component with an unquoted glob matches when it could match a protected name
@@ -50,7 +51,7 @@ pub(super) fn check(program: &str, args: &[Word], cwd: &Cwd) -> Option<Denial> {
             })
         }
         "sed" => sed(args, cwd),
-        "cp" | "install" | "ln" => copy(program, args, false, cwd),
+        "cp" | "install" | "ln" | "link" => copy(program, args, false, cwd),
         "mv" => copy(program, args, true, cwd),
         _ => None,
     }
@@ -137,12 +138,25 @@ fn sed(args: &[Word], cwd: &Cwd) -> Option<Denial> {
 /// Short options of `cp`, `mv`, `ln` and `install` that take the next word as a value.
 const COPY_VALUES: [char; 4] = ['S', 'm', 'o', 'g'];
 
+/// Every short option of `cp`, `mv`, `ln` and `install` that takes a value: in a cluster, the
+/// rest of the word after one is its value, not more options.
+const COPY_SHORT_VALUES: [char; 5] = ['t', 'S', 'm', 'o', 'g'];
+
+/// How a denial names a hard-linked source that is the working directory or the root, either of
+/// which may hold any of [`CONTAINERS`].
+const WHOLE_TREE: &str = "a directory that may hold .claude/ or .anneal/";
+
 /// The destination and sources of `cp`, `mv`, `ln` or `install`.
 #[derive(Debug, Default)]
 struct CopyArgs<'a> {
     /// `-t DIR` or `--target-directory=DIR`.
     target_dir: Option<(&'a str, Shape)>,
     operands: Vec<&'a Word>,
+    /// `-s` or `--symbolic` (`ln`): a symbolic link rather than a hard one. An abbreviation
+    /// `--suffix` shares (`--s`) is not one, so it reads as the hard link the guard denies.
+    symbolic: bool,
+    /// `-l` or `--link` (`cp`): hard links instead of copies.
+    link: bool,
 }
 
 impl<'a> CopyArgs<'a> {
@@ -170,8 +184,10 @@ impl<'a> CopyArgs<'a> {
                 if valued && long.value.is_none() {
                     rest = skip_one(rest);
                 }
+                copy.symbolic |= long.is("--symbolic") && !long.is("--suffix");
+                copy.link |= long.is("--link");
             } else if text.starts_with("--") {
-            } else if let Some((_, dir)) = text.split_once('t') {
+            } else if let Some((_, dir)) = copy.cluster(text) {
                 if dir.is_empty() {
                     copy.target_dir = tail.first().map(|dir| (dir.text.as_str(), dir.shape));
                     rest = skip_one(rest);
@@ -184,6 +200,49 @@ impl<'a> CopyArgs<'a> {
         }
         copy
     }
+
+    /// Reads the flags of the short-option cluster `cluster` before its first value-taking
+    /// option; returns the cluster split at its `t` (the target directory follows it).
+    fn cluster(&mut self, cluster: &'a str) -> Option<(&'a str, &'a str)> {
+        let flags = cluster.strip_prefix('-').unwrap_or(cluster);
+        let flags = flags.split(COPY_SHORT_VALUES).next().unwrap_or(flags);
+        self.symbolic |= flags.contains('s');
+        self.link |= flags.contains('l');
+        cluster.split_once('t')
+    }
+
+    /// Whether `program` run with these options makes hard links to its sources: `ln`
+    /// without `-s`, `link`, and `cp -l`.
+    fn hard_links(&self, program: &str) -> bool {
+        match program {
+            "ln" => !self.symbolic,
+            "link" => true,
+            "cp" => self.link,
+            _ => false,
+        }
+    }
+
+    /// The operands linked or copied: every one with `-t`, the only one (`ln FILE` links it
+    /// into `.`), else all but the last.
+    fn sources(&self) -> &[&'a Word] {
+        match (self.target_dir, self.operands.as_slice()) {
+            (Some(_), all) | (None, all @ [_]) => all,
+            (None, all) => all.split_last().map_or(all, |(_, sources)| sources),
+        }
+    }
+}
+
+/// The denial for `program` hard-linking a protected source: writing the link writes the file
+/// (a source that is the working directory or the root may hold one, for `cp -al`).
+fn hard_link(program: &str, copy: &CopyArgs<'_>, cwd: &Cwd) -> Option<Denial> {
+    copy.sources().iter().find_map(|source| {
+        let label = contains_protected(&source.text, source.shape, cwd)
+            .or_else(|| last_component(&source.text).is_none().then_some(WHOLE_TREE))?;
+        Some(deny(
+            &format!("{program} hard-links {}", source.text),
+            label,
+        ))
+    })
 }
 
 /// The last component of `path`.
@@ -196,6 +255,11 @@ fn basename(path: &str) -> &str {
 
 fn copy(program: &str, args: &[Word], moves: bool, cwd: &Cwd) -> Option<Denial> {
     let copy = CopyArgs::parse(args);
+    if copy.hard_links(program)
+        && let Some(denial) = hard_link(program, &copy, cwd)
+    {
+        return Some(denial);
+    }
     // A source lands at `<dest>/<its name>` when the destination is a directory: always for
     // `-t`, and, since the guard cannot look, when the destination ends in `/` or names a
     // directory that holds config.

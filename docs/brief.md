@@ -66,7 +66,9 @@ nothing on stdout.
 
 The files are written only when `.anneal/briefs` resolves to the resolved worktree root's own
 `.anneal/briefs`: a symlinked `.anneal` or `briefs` leading elsewhere exits 70 with one `ERROR`
-line naming where it leads, and nothing is written there. git failing to resolve the range
+line naming where it leads, and nothing is written there. The directories are made one at a
+time, `.anneal` then `briefs`, each checked before the next is made, so a symlinked `.anneal`
+does not get an empty `briefs` directory where it leads. git failing to resolve the range
 (`resolving the range`) or to read the diff (`reading the diff`) is also 70.
 
 ## `anneal lint brief <file>`

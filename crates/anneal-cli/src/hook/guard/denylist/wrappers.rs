@@ -19,9 +19,9 @@ const SHELLS: [&str; 7] = ["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"];
 
 /// Programs the guard checks, or that run shell text: the arguments of a program it does not
 /// know are read as a command from each word naming one of these (or a wrapper).
-const CHECKED: [&str; 15] = [
-    "rm", "git", "tee", "truncate", "cp", "mv", "install", "ln", "sed", "unlink", "rmdir", "shred",
-    "chmod", "chown", "chgrp",
+const CHECKED: [&str; 16] = [
+    "rm", "git", "tee", "truncate", "cp", "mv", "install", "ln", "link", "sed", "unlink", "rmdir",
+    "shred", "chmod", "chown", "chgrp",
 ];
 
 /// Programs and keywords that only print, search, test or describe their arguments.
@@ -170,6 +170,59 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
                     appended,
                 };
             }
+        };
+    }
+}
+
+/// How a wrapper of `words` changes the working directory before the command it wraps runs
+/// (`env --chdir`, `sudo --chdir`, `find -execdir`), walking the wrappers as [`unwrap`] does.
+pub(super) fn chdir(words: &[Word]) -> Option<&'static str> {
+    walk(words, strings::chdir)
+}
+
+/// Whether `words` define a function, an alias or a path for a command name:
+/// `function NAME ...`, `alias ...` or `hash -p PATH NAME`, under any wrapper [`unwrap`]
+/// removes (`builtin alias`, `command hash -p`), or a word that exports a function to a
+/// child bash (`BASH_FUNC_NAME%%=...`).
+pub(super) fn defines(words: &[Word]) -> bool {
+    if words.iter().any(|word| word.text.contains("BASH_FUNC_")) {
+        return true;
+    }
+    walk(words, |name, rest| {
+        let hash_path = name == "hash" && rest.iter().any(sets_hash_path);
+        (matches!(name, "function" | "alias") || hash_path).then_some(())
+    })
+    .is_some()
+}
+
+/// Whether `word` is a `hash` option cluster holding `-p` (`-p`, `-rp`).
+fn sets_hash_path(word: &Word) -> bool {
+    word.text
+        .strip_prefix('-')
+        .is_some_and(|cluster| !cluster.starts_with('-') && cluster.contains('p'))
+}
+
+/// The first answer `visit` gives for a program of `words` and its arguments, walking the
+/// wrappers as [`unwrap`] does (leading assignments and keywords, then each wrapper peeled);
+/// `None` at a program that is not a literal name or a command that wraps nothing more.
+fn walk<'w, T>(
+    words: &'w [Word],
+    mut visit: impl FnMut(&'w str, &'w [Word]) -> Option<T>,
+) -> Option<T> {
+    let mut words = skip_prefix(words);
+    loop {
+        let [first, rest @ ..] = words else {
+            return None;
+        };
+        let Program::Named(name) = program(first) else {
+            return None;
+        };
+        if let Some(found) = visit(name, rest) {
+            return Some(found);
+        }
+        words = match peel(name, rest) {
+            Peel::Inner(inner) | Peel::Appending(inner) => skip_prefix(inner),
+            Peel::Done(_) | Peel::Program => return None,
         };
     }
 }

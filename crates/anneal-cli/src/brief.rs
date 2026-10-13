@@ -268,10 +268,7 @@ fn write_files(
     let package_text = render::review_package(inputs, diff);
     let brief = under(root, &brief_file(inputs.ticket));
     let package = under(root, &package_file(inputs.ticket));
-    if let Some(dir) = brief.parent() {
-        fs::create_dir_all(dir).map_err(|source| write_failed(dir, source))?;
-        own_directory(root, dir)?;
-    }
+    make_own_directory(root)?;
     // Both are staged before either is renamed, and the package goes first: a failure leaves
     // no new brief pointing at a package that was not written.
     let staged_brief =
@@ -293,20 +290,30 @@ fn write_files(
         .collect())
 }
 
-/// Refuses a briefs directory `dir` that does not resolve to the resolved worktree `root`'s own
-/// `.anneal/briefs`, as the brief hook does: a symlinked `.anneal` or `briefs` would put the
-/// files outside the worktree.
-fn own_directory(root: &Path, dir: &Path) -> Result<(), BriefError> {
-    let resolved = fs::canonicalize(dir).map_err(|source| write_failed(dir, source))?;
-    let own = fs::canonicalize(root)
-        .map_err(|source| write_failed(root, source))?
-        .join(".anneal")
-        .join("briefs");
-    if resolved == own {
-        Ok(())
-    } else {
-        Err(BriefError::NotOwnDirectory { resolved })
+/// Makes [`BRIEFS_DIR`] under the worktree `root` one component at a time, each checked to
+/// resolve to the resolved root's own before the next is made, as the brief hook checks it: a
+/// symlinked `.anneal` or `briefs` would put the files, or an empty `briefs`, outside the
+/// worktree. A component that exists already is kept.
+fn make_own_directory(root: &Path) -> Result<(), BriefError> {
+    let mut own = fs::canonicalize(root).map_err(|source| write_failed(root, source))?;
+    let mut dir = root.to_path_buf();
+    let mut parts = BRIEFS_DIR.split('/');
+    while let Some(part) = parts.next() {
+        dir.push(part);
+        own.push(part);
+        if let Err(error) = fs::create_dir(&dir)
+            && error.kind() != io::ErrorKind::AlreadyExists
+        {
+            return Err(write_failed(&dir, error));
+        }
+        let resolved = fs::canonicalize(&dir).map_err(|source| write_failed(&dir, source))?;
+        if resolved != own {
+            // Named as where `.anneal/briefs` resolves: the rest of the path under this part.
+            let resolved = parts.fold(resolved, |path, rest| path.join(rest));
+            return Err(BriefError::NotOwnDirectory { resolved });
+        }
     }
+    Ok(())
 }
 
 /// The error for `path` that could not be written; the path is kept for the message.

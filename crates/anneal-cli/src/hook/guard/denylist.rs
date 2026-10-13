@@ -29,7 +29,7 @@ use std::path::{Component, Path, PathBuf};
 use super::Denial;
 use checker::{Checker, Entries, Scope};
 use feed::Feed;
-pub(crate) use gh::{PrMerge, Target};
+pub(crate) use gh::{PrMerge, Target, read_target};
 
 /// How deep `bash -c`, `eval`, `env -S` and `find -exec` may nest before a command is refused.
 pub(crate) const MAX_DEPTH: usize = 8;
@@ -105,19 +105,33 @@ pub(crate) fn check(command: &str, context: &Context) -> Verdict {
 /// What the merge gate's probe found in a command.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MergeScan {
-    /// Every `gh pr merge` call it runs, in order (none when it runs none).
-    Merges(Vec<PrMerge>),
+    /// The command was read.
+    Read {
+        /// Every `gh pr merge` call it runs, in order (none when it runs none).
+        merges: Vec<PrMerge>,
+        /// How it may run a merge the probe cannot read, as a phrase, if it may: it calls gh
+        /// with a first or second operand known only at run time, or a word of it holds
+        /// `merge` and it runs a program known only at run time, defines a function, alias or
+        /// `hash -p`, or has a word naming gh the probe read no call from. A tripwire, not a
+        /// proof: see `docs/verdict.md`.
+        unseen: Option<&'static str>,
+    },
     /// The command cannot be read (the guard denies it too).
     Unreadable(Denial),
 }
 
 /// Every `gh pr merge` the Bash command `command` runs, read as the guard reads commands
-/// (wrappers, `bash -c`, `eval`, scripts on stdin, variables), without the denylist's entries.
+/// (wrappers, `bash -c`, `eval`, scripts on stdin, variables), without the denylist's entries,
+/// and how it may run one the probe cannot read.
 pub(crate) fn find_pr_merge(command: &str, context: &Context) -> MergeScan {
     let mut checker = Checker::new(context, Entries::PrMerge);
-    match checker.text(command, top_level()) {
-        Some(denial) => MergeScan::Unreadable(denial),
-        None => MergeScan::Merges(checker.into_merges()),
+    if let Some(denial) = checker.text(command, top_level()) {
+        return MergeScan::Unreadable(denial);
+    }
+    let unseen = checker.unseen();
+    MergeScan::Read {
+        merges: checker.into_merges(),
+        unseen,
     }
 }
 
@@ -127,6 +141,7 @@ const fn top_level() -> Scope<'static> {
         feed: &Feed::Empty,
         depth: 0,
         appended: false,
+        moved: None,
     }
 }
 

@@ -1,9 +1,12 @@
 //! One check of a command: every simple command it runs, in order, with what it has set so
-//! far (the bytes lexed, the directory `cd` moved to, the variables assigned).
+//! far (the bytes lexed, the directory `cd` moved to, the variables assigned). What the merge
+//! gate's probe notes on the way is in [`probe`].
+
+mod probe;
 
 use super::config::{self, Cwd};
 use super::feed::{Feed, own_feed};
-use super::gh::{self, PrMerge};
+use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
 use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, rm};
@@ -17,6 +20,9 @@ pub(super) struct Scope<'a> {
     pub(super) feed: &'a Feed<'a>,
     pub(super) depth: usize,
     pub(super) appended: bool,
+    /// How a wrapper of this command (or of one it nests in) changed the working directory
+    /// first: `env --chdir`, `sudo --chdir`, `find -execdir`. Noted by the probe only.
+    pub(super) moved: Option<&'static str>,
 }
 
 impl Scope<'_> {
@@ -52,16 +58,30 @@ pub(super) struct Checker<'c> {
     cwd: Cwd,
     variables: Variables,
     merges: Vec<PrMerge>,
-    /// The first of [`GH_TARGET_VARIABLES`] a word of the command sets or names.
+    /// The first of `GH_REPO` and `GH_HOST` a word of the command sets or names.
     gh_env: Option<&'static str>,
+    /// The first `cd`, `pushd` or `popd` the command ran, so far.
+    moved: Option<&'static str>,
+    /// The first way the command may run a call the probe cannot read, so far: a program
+    /// known only at run time, or a function or alias definition. Noted by the probe only.
+    unseen: Option<&'static str>,
+    /// Whether the command calls gh with a first or second operand known only at run time
+    /// (`gh "$@"`). Only the probe reads gh calls.
+    unseen_gh_call: bool,
+    /// Whether a word of the command, or a here-document or here-string it reads, holds
+    /// `merge` in any case, after quote removal. Noted by the probe only.
+    mentions_merge: bool,
+    /// The strongest way a gh word or call of the command may hide a merge, so far. Noted by
+    /// the probe only.
+    gh_hides: probe::GhHides,
+    /// How many gh calls the probe read in full in the simple command it is checking: run as
+    /// the program itself or under a known wrapper, with no arguments appended at run time and
+    /// not found by scanning an unknown program's arguments.
+    gh_calls_here: usize,
+    /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
+    /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
+    argument_depth: usize,
 }
-
-/// The variables that point gh at another repository or host; the probe notes a command that
-/// sets or names one (`GH_REPO=o/x gh ...`, `env`, `export`), wherever it does.
-const GH_TARGET_VARIABLES: [&str; 2] = ["GH_REPO", "GH_HOST"];
-
-/// The most `gh pr merge` calls one command may make before the probe refuses it (H-13).
-const MAX_MERGES: usize = 8;
 
 /// The most commands arguments are read as in one check (H-13): each read walks the rest of
 /// the arguments and may read some of them again, so the total is capped, which also bounds
@@ -84,35 +104,14 @@ impl<'c> Checker<'c> {
             variables: Variables::default(),
             merges: Vec::new(),
             gh_env: None,
+            moved: None,
+            unseen: None,
+            unseen_gh_call: false,
+            mentions_merge: false,
+            gh_hides: probe::GhHides::Nothing,
+            gh_calls_here: 0,
+            argument_depth: 0,
         }
-    }
-
-    /// The `gh pr merge` calls found, in order, each once, each noting a [`GH_TARGET_VARIABLES`]
-    /// the command sets anywhere.
-    pub(super) fn into_merges(self) -> Vec<PrMerge> {
-        let env = self.gh_env;
-        self.merges
-            .into_iter()
-            .map(|merge| PrMerge {
-                env: env.map(str::to_owned),
-                ..merge
-            })
-            .collect()
-    }
-
-    /// Notes the first word of `words` that sets or names one of [`GH_TARGET_VARIABLES`]
-    /// (`GH_REPO`, `GH_REPO=...`, `GH_REPO+=...`), in the probe only.
-    fn note_gh_env(&mut self, words: &[Word]) {
-        if self.entries != Entries::PrMerge || self.gh_env.is_some() {
-            return;
-        }
-        self.gh_env = words.iter().find_map(|word| {
-            GH_TARGET_VARIABLES.into_iter().find(|name| {
-                word.text.strip_prefix(name).is_some_and(|after| {
-                    after.is_empty() || after.starts_with('=') || after.starts_with("+=")
-                })
-            })
-        });
     }
 
     /// `check`'s denial, when this check applies the denylist's entries; `None` for the probe.
@@ -121,20 +120,6 @@ impl<'c> Checker<'c> {
             Entries::Denylist => check(),
             Entries::PrMerge => None,
         }
-    }
-
-    /// Records the `gh pr merge` that `gh <args>` runs, if any; past [`MAX_MERGES`] denies.
-    fn gh(&mut self, args: &[Word]) -> Option<Denial> {
-        let merge = gh::pr_merge(args)?;
-        if !self.merges.contains(&merge) {
-            self.merges.push(merge);
-        }
-        (self.merges.len() > MAX_MERGES).then(|| {
-            unreadable(format!(
-                "the command runs more than {MAX_MERGES} gh pr merge calls; merge one pull \
-                 request at a time"
-            ))
-        })
     }
 
     /// Checks shell text.
@@ -157,6 +142,10 @@ impl<'c> Checker<'c> {
             }
         };
         commands.iter().find_map(|command| {
+            if command.defines_function {
+                self.note_unseen(probe::DEFINITION);
+            }
+            self.note_mentions(command);
             self.variables.record(command);
             let own = own_feed(command, &commands);
             let feed = own.as_ref().unwrap_or(scope.feed);
@@ -167,15 +156,24 @@ impl<'c> Checker<'c> {
     fn command(&mut self, command: &SimpleCommand, scope: Scope<'_>) -> Option<Denial> {
         let writes = self.variables.substitute(&command.writes);
         let words = self.variables.substitute(&command.words);
-        writes
+        let outer = self.enter_command();
+        let denial = writes
             .iter()
             .find_map(|target| config::redirect(target, &self.cwd))
-            .or_else(|| self.words(&words, scope))
+            .or_else(|| self.words(&words, scope));
+        self.leave_command(&words, outer);
+        denial
     }
 
     /// Checks one simple command's words.
     fn words(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
-        self.note_gh_env(words);
+        if let Some(denial) = self.note_gh_env(words) {
+            return Some(denial);
+        }
+        if wrappers::defines(words) {
+            self.note_unseen(probe::DEFINITION);
+        }
+        let scope = self.moved_by_wrapper(words, scope);
         match wrappers::unwrap(words) {
             Run::Nothing => None,
             Run::Script(text) => self.text(&text, scope.nested()),
@@ -247,7 +245,7 @@ impl<'c> Checker<'c> {
         };
         let args = args.as_ref();
         match program {
-            Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args),
+            Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args, scope),
             Program::Named("git") => {
                 let scripts = git::settings(args).scripts;
                 scripts
@@ -259,10 +257,9 @@ impl<'c> Checker<'c> {
                 rm::check(args, self.context, scope.appended)
                     .or_else(|| config::check("rm", args, &self.cwd))
             }),
-            Program::Named("cd" | "pushd") => {
-                self.cwd.change(args);
-                None
-            }
+            Program::Named("cd") => self.change_directory("cd", Some(args)),
+            Program::Named("pushd") => self.change_directory("pushd", Some(args)),
+            Program::Named("popd") => self.change_directory("popd", None),
             Program::Named(name) => {
                 self.entry(|| config::check(name, args, &self.cwd))
                     .or_else(|| {
@@ -271,8 +268,22 @@ impl<'c> Checker<'c> {
                             .flatten()
                     })
             }
-            Program::Unknown(word) => self.unknown(word, args, scope),
+            Program::Unknown(word) => {
+                self.note_unseen(probe::RUN_TIME_PROGRAM);
+                self.unknown(word, args, scope)
+            }
         }
+    }
+
+    /// Follows `cd` or `pushd <args>`, or `popd` (`None`: back to a directory the guard never
+    /// saw, so relative paths may start anywhere), and notes the first change for the probe.
+    fn change_directory(&mut self, how: &'static str, args: Option<&[Word]>) -> Option<Denial> {
+        match args {
+            Some(args) => self.cwd.change(args),
+            None => self.cwd = Cwd::Unknown,
+        }
+        self.moved.get_or_insert(how);
+        None
     }
 
     /// Whether `word` names a program whose arguments are read as a command: one the guard
@@ -301,8 +312,11 @@ impl<'c> Checker<'c> {
             let Some(command) = args.get(at..) else {
                 continue;
             };
-            if let Some(denial) = self.words(command, scope) {
-                return Some(denial);
+            self.argument_depth = self.argument_depth.saturating_add(1);
+            let denial = self.words(command, scope);
+            self.argument_depth = self.argument_depth.saturating_sub(1);
+            if denial.is_some() {
+                return denial;
             }
         }
         None

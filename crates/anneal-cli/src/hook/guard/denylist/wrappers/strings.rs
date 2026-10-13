@@ -17,6 +17,47 @@ const SU_VALUES: &[&str] = &["-s", "-g", "-G", "-w", "--shell", "--group", "--su
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
 
+/// How the wrapper `name`, given `words`, changes the working directory before its command
+/// runs: `env -C DIR` (`--chdir`), `sudo -D DIR` (`--chdir`), a login shell started in the
+/// user's home (`sudo -i`/`--login`, `su -`/`-l`/`--login`), or a `find` action run from each
+/// match's directory (`-execdir`, `-okdir`).
+pub(super) fn chdir(name: &str, words: &[Word]) -> Option<&'static str> {
+    match name {
+        "env" => options_hold(words, ENV_VALUES, "--chdir", 'C').then_some("env --chdir"),
+        "sudo" => options_hold(words, SUDO_VALUES, "--chdir", 'D')
+            .then_some("sudo --chdir")
+            .or_else(|| options_hold(words, SUDO_VALUES, "--login", 'i').then_some("sudo --login")),
+        "su" => su_login(words).then_some("su --login"),
+        "find" => words
+            .iter()
+            .any(|word| matches!(word.text.as_str(), "-execdir" | "-okdir"))
+            .then_some("find -execdir"),
+        _ => None,
+    }
+}
+
+/// Whether the options leading `words` (each of `with_value` skipping its value) include
+/// `long`, abbreviated or not, or a short cluster holding `short`. A cluster where the
+/// letter is another option's value counts too: the guard reads it as the change.
+fn options_hold(words: &[Word], with_value: &[&str], long: &str, short: char) -> bool {
+    let mut rest = words;
+    while let [first, tail @ ..] = rest {
+        let text = first.text.as_str();
+        if text == "--" || !is_option(first) {
+            return false;
+        }
+        if is_long(text, long) || (!text.starts_with("--") && text.contains(short)) {
+            return true;
+        }
+        rest = if takes_value(text, with_value) {
+            skip_one(tail)
+        } else {
+            tail
+        };
+    }
+    false
+}
+
 /// `sudo` and `doas`: the command after their options, or, with `-s` or `-i` and no command,
 /// a shell reading stdin.
 pub(super) fn sudo(words: &[Word]) -> Peel<'_> {
@@ -122,6 +163,29 @@ pub(super) fn trap(words: &[Word]) -> Peel<'_> {
         .map_or(Peel::Done(Run::Nothing), |action| {
             Peel::Done(Run::Script(Cow::Borrowed(&action.text)))
         })
+}
+
+/// Whether `su [options] [USER]` starts a login shell, which runs from the user's home: `-`,
+/// `--login` (abbreviated or not) or a short cluster holding `l`, before `-c`/`--command`.
+/// `su` takes options after the user too, so the walk goes on past operands.
+fn su_login(words: &[Word]) -> bool {
+    let mut rest = words;
+    while let [first, tail @ ..] = rest {
+        let text = first.text.as_str();
+        if text == "--" || text == "-c" || is_long(text, "--command") {
+            return false;
+        }
+        let cluster = is_option(first) && !text.starts_with("--") && text.contains('l');
+        if text == "-" || is_long(text, "--login") || cluster {
+            return true;
+        }
+        rest = if takes_value(text, SU_VALUES) {
+            skip_one(tail)
+        } else {
+            tail
+        };
+    }
+    false
 }
 
 /// `su [options] [USER]`: the `-c` string, or, without one, a shell reading stdin.

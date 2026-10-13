@@ -487,3 +487,6 @@ fn write_denial<W: Write>(
     };
     write_deny(out, &line)
 }
+
+#[cfg(test)]
+mod tests;

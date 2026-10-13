@@ -56,6 +56,9 @@ pub(crate) struct PrMerge {
     pub(crate) url_repo: Option<String>,
     /// `GH_REPO` or `GH_HOST`, when the command sets either anywhere.
     pub(crate) env: Option<String>,
+    /// How the command changed the working directory before gh ran (`cd`, `env --chdir`, ...),
+    /// so gh may read another repository's remotes.
+    pub(crate) moved: Option<&'static str>,
 }
 
 /// What a pass over `gh`'s arguments found.
@@ -93,7 +96,27 @@ pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
         match_head: parsed.match_head.map(str::to_owned),
         url_repo,
         env: None,
+        moved: None,
     })
+}
+
+/// Whether `gh <args>` has a word known only at run time among its first two operands
+/// (`gh "$@"`, `gh $(cat args) 7`): the call it makes, `pr merge` or another, cannot be read.
+pub(super) fn call_unseen(args: &[Word]) -> bool {
+    parse(args)
+        .operands
+        .iter()
+        .take(2)
+        .any(|word| !word.is_literal())
+}
+
+/// Whether `gh <args>` runs `gh api`, which may call the merge endpoint
+/// (`gh api -X PUT repos/o/r/pulls/7/merge`): its first operand is `api`.
+pub(super) fn calls_api(args: &[Word]) -> bool {
+    parse(args)
+        .operands
+        .first()
+        .is_some_and(|word| word.is_literal() && word.text == "api")
 }
 
 /// The target of `operands` when they run `pr merge`: they begin with `pr merge`, or with words
@@ -192,7 +215,12 @@ fn target_of(operand: &Word) -> (Target, Option<String>) {
     if !operand.is_literal() {
         return (Target::Unnumbered, None);
     }
-    let text = operand.text.as_str();
+    read_target(&operand.text)
+}
+
+/// The pull request the literal operand `text` names (`42`, `#42` or a pull request URL), and
+/// the repository of a URL naming it.
+pub(crate) fn read_target(text: &str) -> (Target, Option<String>) {
     let digits = text.strip_prefix('#').unwrap_or(text);
     if let Ok(number) = digits.parse::<u64>() {
         return (Target::Number(number), None);

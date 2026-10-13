@@ -33,7 +33,7 @@ use crate::paths::{self, PathError};
 pub(crate) use clef::Ports;
 use denylist::Verdict;
 /// The merge gate reads commands as the guard does.
-pub(crate) use denylist::{Context, MergeScan, PrMerge, Target, find_pr_merge};
+pub(crate) use denylist::{Context, MergeScan, PrMerge, Target, find_pr_merge, read_target};
 
 /// The most stdin the guard reads; a larger input is denied (H-13). Commands carry heredoc
 /// bodies, so the cap is well above a `PreToolUse` input's usual size.
