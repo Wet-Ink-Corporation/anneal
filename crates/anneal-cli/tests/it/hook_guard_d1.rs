@@ -100,7 +100,7 @@ fn in_shadow_mode_an_unreachable_clef_is_logged_and_the_command_allowed() -> Tes
     assert_eq!(row["subject"], "destructive_or_irreversible");
     assert_eq!(row["mode"], "shadow");
     assert_eq!(row["unreachable"], true);
-    assert_eq!(row["input"], "TOKEN=<redacted> rm -r build");
+    assert_eq!(row["input"], "TOKEN=<redacted> rm -r <redacted>");
     Ok(())
 }
 

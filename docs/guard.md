@@ -285,96 +285,86 @@ logged, but the verdict stays the denylist's until D1 is configured `enforce` an
 answered decisions; unanswered calls do not count toward them.
 
 **Redaction** (`hook::guard::redact`). The command Clef gets (state
-`{"tool": "Bash", "input": {"command": ...}}`) and the row keeps (its `input` field) is
-redacted, then trimmed and cut to 1,024 characters (marked `…`). The rule does not depend on
-where a word stands, so no wrapper (`sudo`, `nohup`, `timeout`, `env -u NAME`, `command export`)
-or nested shell (`bash -c '…'`, `eval "…"`) can carry a secret past it; it redacts too much rather
-than too little:
+`{"tool": "Bash", "input": {"command": ...}}`) and the row keeps (its `input` field) is an
+allowlist skeleton of it: programs, flags and separators, with every argument value replaced by
+`<redacted>` unless a fixed table names it. It is built from the guard's own lexer
+(`shell::parse`) and the denylist's wrapper table (`denylist::layout`, from
+`denylist::wrappers::unwrap`), the view the denylist judges, so it never reads bash differently
+from the guard, and no text the command's author chose reaches Clef unless an allowlist names
+it. There are no leaks by design (the scanner it replaces leaked through `$( )` bodies,
+wrappers and ANSI-C escapes in four rounds of review); D1 sees less. Then it is trimmed and cut
+to 1,024 characters (marked `…`). A command the lexer cannot read (an unclosed quote or
+substitution, nesting past 32, a redirection with no target) is `<unparsed>`, nothing else; the
+denylist denies it anyway.
 
-- the value of every `NAME=value` anywhere in the command (also `NAME+=`, `NAME[i]=` and the
-  array form `NAME=(…)`) when `NAME`, with any quotes in it stripped (`export "API_KEY"=x`,
-  `declare -x 'PASSWORD'=x`), looks like an environment variable (`[A-Z_][A-Z0-9_]*`) or
-  holds a credential word in any letter case (`token`, `password`, `passwd`, `pass`, `secret`,
-  `apikey`, `api-key`, `api_key`, `credential`, `private-key`, `private_key`, `auth`,
-  `bearer`, `cookie`; so `api_token=x` and `db_pass=x` too, but not `author` as a whole word,
-  so `--author=` stays readable). Lower-case operands such as `dd of=/dev/sda bs=1M` stay
-  readable, since they are what Clef judges; `make CC=gcc` is redacted. A quote opened anywhere
-  in a value (`TOKEN=abc"def ghi"`) is part of it, through its close;
-- the value after a credential-named key anywhere in a word, with any quotes between the key
-  and its `=` or `:` (`--from-literal=password=x`, `-Dpassword=x`,
-  `//registry/:_authToken=x`, `{"password":"x"}`, `pass:x`): the rest of that word. A `::`
-  is a path, not a key (`auth::tests` stays);
-- a header: a credential-named key ending its word in `:` (`"X-Api-Key: …"`,
-  `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), any `Authorization:` (any letter
-  case, `Proxy-Authorization:` too), hides its own value and every word after it up to the
-  end of the simple command or quote it is in: `-H "Authorization: Bearer x"` becomes
-  `-H "Authorization: <redacted> <redacted>"`. A header-shaped credential name with its value
-  attached (`Cookie`, or a name with a `-` inside that ends in a credential word:
-  `Cookie:a=1`, `X-Api-Key:k`) hides only that value, since such a name may be no header at
-  all: `docker run -v db-password:/p alpine rm -rf /p` keeps `alpine rm -rf /p`, and
-  `git push origin fix-auth:main --force` keeps `--force`. Every separator (`;`, `&`, `|`, a
-  newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
-  `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
-  `name=value` words right after a `;` that ends either form stay hidden
-  (`"Cookie: a=1; b=2"` and `"Cookie:a=1; b=2"` become `"Cookie: <redacted>; <redacted>"`
-  and `"Cookie:<redacted>; <redacted>"`), read through the punctuation around them, so a
-  quoted value (`sid="S"`) or a quote closing the header's own (`'Cookie: a=1; sid=S'` inside
-  `bash -c "…"`) counts too, but not a word holding a substitution or escape (`b=$(…)`) or
-  whose value holds a blank or a `;` or opens a quote it does not close (`c="rm -rf ~"`),
-  which could run a command. The first word after a `;` that is not such a pair is read as
-  usual, and so stays readable, as does every word after it: `"Cookie: a=1; Secure; b=2"`
-  keeps `Secure; b=2`. The words after the header in its own simple command stay hidden;
-- the value of every option, one dash or two, whose name holds a credential word, attached or
-  as the next word (`--token=x`, `--password x`, `-storepass x`, `-passout pass:x`), except
-  one whose name ends in `-stdin`, `-file` or `-env`, whose value is not on the command line
-  (`docker login --password-stdin -u me` keeps `-u me`);
-- the word after a configuration key naming a credential, a whole word of letters, digits,
-  `-`, `_` and `.` that holds a `.` or `_` and is not an option (`aws configure set
-  aws_secret_access_key x`, `git config user.password x`), with the same exceptions; a file
-  named like one (`cat id_token.txt out`) costs its next word;
-- the word after `Bearer`, and the word after `Basic` unless it is plain lower-case letters
-  (`basic usage` stays);
-- the userinfo of every URL, up to the last `@` before the path or query, so a `#` in a
-  password is covered (`https://user:p#ss@host` becomes `https://<redacted>@host`), and so is
-  a `?` when a `:` comes before it and an `@` after it (`https://user:p?X@host`), while
-  `https://host?to=a@b` stays; `git@host:repo` is not a URL and stays. A port before the
-  query reads like a password, so `https://host:8080?to=a@b` becomes `https://<redacted>@b`, an
-  accepted over-redaction;
-- an unquoted word that looks like a token: a known prefix (`sk-`, `ghp_`, `gho_`, `ghu_`,
-  `ghs_`, `ghr_`, `github_pat_`, `xox[abps]-`, `glpat-`, Vault's `hvs.` and `hvb.`, `eyJ`),
-  an AWS access key id, or 32 or more letters and digits mixed (a full commit hash too);
-- the word after `vault login`, whatever it is (a legacy `s.` token has no prefix worth
-  matching alone; `vault login -method=userpass` costs that option);
-- the options whose value is a secret though their name names none, for the tools known to
-  take them (`decide::redact::tools`), from the tool's name (its last path component, quotes
-  and backslashes removed, so `sudo /usr/bin/mysql`, `"mysql"` and `\mysql` count) to the end
-  of its simple command, the option read with its quotes removed (`'-pX'`): `-p` attached for
-  `mysql`, `mysqldump` and the other MySQL and MariaDB clients (`-pX`; `-p` alone prompts and
-  `-p db` names a database); `-u`, `-U` and `-b` (cookie) for `curl`, attached, in a cluster
-  (`-su x`) or as the next word, and `--user` and `--proxy-user`; `-p` for `sshpass` and the
-  MongoDB tools; `-a` for `redis-cli`; `-P` for `sqlcmd` and `bcp`; `-w` for the OpenLDAP
-  clients; `-U` (`user%pass`) for `smbclient`, `rpcclient` and `smbcacls`; `-p` after `login`
-  for `docker`, `podman`, `nerdctl` and `helm`; `-p` for `twine`, and after `login` for `az`;
-  `-b` and `--body` after `secret` for `gh`.
-  Other tools' short options stay readable (`mkdir -p`, `docker run -p 8080:80`);
-- the inside of quotes and substitutions, scanned as text: `'…'`, `$'…'`, `$( )` and backticks
-  as a command, `"…"` with double-quote rules (there `'` and `$'` are plain characters);
-- an unquoted `#` comment, to the end of its line, and every heredoc body (its closing line is
-  kept);
-- from any quote, substitution or heredoc that is never closed (or nested past 32 levels), the
-  whole rest of the command.
+Each simple command the lexer lists is rendered in order. Those of `$( )`, backticks, subshells
+and process substitutions come out as commands of their own, before the command that holds
+them (`x=$(cat f)` is `cat <redacted>; x=<redacted>`). Commands are joined by `; `, or ` | `
+when a command reads the pipe of the one just before it: the lexer keeps no other separator,
+so `&&`, `||`, `&` and newlines all show as `; `.
 
-The guard's lexer keeps no source positions, so a small scanner with the same quoting rules
-finds each span and rewrites only what it redacts. A word's secret is taken where the readable
-part before it closes every quote it opens; otherwise the inside of the quote is scanned and
-finds it there. The word rules live in `decide::redact`, shared with the prompt redaction
-(`docs/hooks.md`). Known gaps: an option whose value is a secret but whose name names no
-credential, for a tool not listed above (`sometool -k s3cret`); a header whose name names no
-credential (`-H "X-Signature: …"`); a secret that is just a word in a non-credential position
-(`echo hunter2 | login`), which includes the tools that take a password as a positional
-argument (`htpasswd -b file user pass`, `cf auth user pass`); a header value's word after a `;`
-that is not a `name=value` pair, and every word after it (`"Cookie: a=1; Secure; sid=S"` keeps
-`sid=S`); and a secret inside a file the command reads.
+- **Words before the program**: keywords (`if`, `then`, `{`, `!`) as written; an assignment
+  the denylist reads as one (before the program, or after a wrapper that runs a command:
+  `TOKEN=x deploy`, `sudo K=v run`, `env -i A=b cmd`) as `NAME=<redacted>`, a name over 64
+  characters hidden too; the denylist's wrappers (`sudo`, `doas`, `env`, `command`, `nohup`,
+  `exec`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`,
+  `busybox`, `flock`, `xargs`, `coproc`, shells, `eval`, `su`, `script`, `trap`, `watch`,
+  `find`, ...) by the program rule, their options by the option rule and their values hidden
+  (`sudo -u <redacted>`, `timeout <redacted>`). The wrapper list and each wrapper's option
+  arity are the denylist's own, so the program after any wrapper is shown as a bare one is.
+- **The program**: kept when it is literal (no expansion, glob or brace) and 1 to 64 of
+  `[A-Za-z0-9._+/-]` (`rm`, `/usr/bin/python3.12`, `./deploy.sh`); otherwise `<redacted>`
+  (`"$CMD"`, `./my tool`).
+- **Options**: `--` and `-` kept. A long option keeps its name when it is 1 to 64 of
+  `[A-Za-z0-9._-]`, its value hidden (`--token=<redacted>`, `--force`); a word that only looks
+  like one (`--a:b`, `--$x`) is `<redacted>`. A short option can carry its value attached
+  (`mysql -psecret`), so it is kept only when it cannot: one ASCII letter or digit (`-p`,
+  `-f`), a cluster of flags the program's table says take no value (`rm -rf`,
+  `git clean -fdx`, `docker system prune -af`; tables for `rm`, `git`, `docker`, `podman`,
+  `kubectl`, `cp`, `mv`, `chmod`, `chown`, `chgrp`, `ln`, `shred`), or one of the program's
+  single-dash flags (`terraform -auto-approve`, `find -delete`, `-exec`, `-name`); any other
+  is `-<redacted>`.
+- **Arguments**: `<redacted>`, except
+  - a subcommand that matters to "destructive or irreversible", for its program only: `git`
+    (`push`, `reset`, `clean`, `checkout`, `switch`, `restore`, `branch`, `rebase`,
+    `filter-branch`, `filter-repo`, `stash`, `rm`, `drop`, `clear`, `tag`, `update-ref`,
+    `reflog`, `expire`, `gc`, `prune`, `worktree`, `remove`, `commit`, `merge`), `gh` (`pr`,
+    `merge`, `close`, `repo`, `delete`, `archive`, `rename`, `release`, `issue`, `secret`,
+    `variable`, `run`, `cancel`, `workflow`, `disable`), `cargo`, `npm`/`pnpm`/`yarn`,
+    `docker`/`podman`, `kubectl` (verbs and resource kinds: `delete`, `ns`, `pod`, ...),
+    `terraform`/`tofu`, `helm`, `aws`, `gcloud`, `az`, `systemctl`, and `find`'s `;` and `+`;
+  - the key of a keyed operand, with its value kept only when it is a sensitive target:
+    `dd if=/dev/zero of=/dev/sda bs=1M` is `dd if=/dev/zero of=/dev/sda <redacted>`;
+  - a sensitive target, wherever it stands: `/`, `/*`, `~`, `~/`, `~/*`, `.`, `..`, `*`,
+    `./*`, `{}`, `HEAD`, `main`, `master`, `origin`, `origin/main`, `origin/master`,
+    `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/stdin`, and block devices
+    by an exact pattern (`/dev/sd[a-z]{1,2}[0-9]{0,3}`, likewise `hd`, `vd`, `xvd`;
+    `nvme<n>n<n>[p<n>]`, `mmcblk<n>[p<n>]`, `disk<n>[s<n>]`, `rdisk<n>[s<n>]`, `md<n>`).
+- **Redirections**, after the words: `> <target>` for each file written (`>`, `>>`, `>|`, `&>`
+  and `>&file` all show as `>`), `< <redacted>` for a file read, `<<< <redacted>` for a heredoc
+  or here-string; a target is kept only when it is a sensitive target (`> /dev/null`,
+  `> /dev/sda`). Comments are dropped.
+- **Bodies**: the shell text a wrapper runs (`bash -c`, `sh -c`, `eval`, `su -c`,
+  `script -c`, `flock -c`, `env -S`, `trap`, `watch`; the denylist's `Script`), when the words
+  it comes from are literal, is lexed and rendered the same way one level deeper, in `'…'`, in
+  place of those words (`bash -c 'rm -rf /; git push -f origin main'`, `eval 'rm -rf /'`), or
+  after them when it is part of a word (`env -Srm\ -rf\ /` is `env -<redacted> 'rm -rf /'`); a
+  body from a word with an expansion is `<redacted>` (`bash -c "$CMD"`), one that does not lex
+  `'<unparsed>'`, and one past 32 levels or the denylist's 4 MiB lexing budget `<redacted>`.
+  `find`'s actions are rendered as commands (`find / -exec rm -rf {} ;`).
+
+**What D1 no longer sees.** Every argument value outside the tables: file names and paths
+(`rm -rf build` is `rm -rf <redacted>`), branch names other than `main` and `master`, resource
+names (`kubectl delete ns <redacted>`), numbers (`gh pr merge <redacted>`), URLs, messages,
+`echo` and `printf` text, option values (`--repo <redacted>`), clusters that may hold a value
+(`ls -<redacted>`), the names of declared variables (`export <redacted>`), what a heredoc,
+here-string or file on stdin holds, and which of `;`, `&&`, `||`, `&` or a newline separates
+two commands. Variables set in the command are not followed (the denylist puts their values in;
+the skeleton never shows a value). A program name is shown whatever it is, so a secret written
+as a program word (`./deploy-hunter2.sh`) or as a short assignment name would reach Clef: that
+is the design's one accepted exposure. The prompt hooks' prose redaction
+(`decide::redact::safe_prompt`, `docs/hooks.md`) is a different, word-rule filter and is
+unchanged.
 
 **Outcome labels: not yet.** The blueprint labels a D1 decision from the human's approve or deny
 on an ask, and a revert within 24 h as destructive. No deterministic signal for either exists in
