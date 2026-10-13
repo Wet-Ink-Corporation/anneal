@@ -9,7 +9,7 @@ use crate::hook::guard::Denial;
 use crate::hook::guard::denylist::braces;
 use crate::hook::guard::denylist::gh::{self, PrMerge};
 use crate::hook::guard::denylist::wrappers;
-use crate::hook::guard::shell::{Shape, Word};
+use crate::hook::guard::shell::{Shape, SimpleCommand, Stdin, Word};
 
 /// The variables that point gh at another repository or host; the probe notes a command that
 /// sets or names one (`GH_REPO=o/x gh ...`, `env`, `export`), wherever it does.
@@ -27,8 +27,29 @@ pub(super) const RUN_TIME_GH_CALL: &str = "a gh call whose subcommand is known o
 /// A program known only at run time (`${GH:-gh}`, `g$x`).
 pub(super) const RUN_TIME_PROGRAM: &str = "a program known only at run time";
 
-/// A function or alias definition, or a `BASH_FUNC_` export.
-pub(super) const DEFINITION: &str = "a function or alias definition";
+/// A function, alias or `hash -p` definition, or a `BASH_FUNC_` export.
+pub(super) const DEFINITION: &str = "a function, alias or hash -p definition";
+
+/// A word naming gh where the probe reads no gh call with it (`xargs gh`, `parallel gh`,
+/// `ln -s /usr/bin/gh`).
+const GH_WORD: &str = "gh where the probe cannot read its arguments";
+
+/// The word whose presence in the command's words, in any case, arms the tripwire.
+const MERGE_WORD: &str = "merge";
+
+/// The names gh's program file has, compared without ASCII case.
+const GH_NAMES: [&str; 2] = ["gh", "gh.exe"];
+
+/// Whether `text` holds [`MERGE_WORD`] in any case.
+fn holds_merge(text: &str) -> bool {
+    text.to_lowercase().contains(MERGE_WORD)
+}
+
+/// Whether the last path component of `text` (after `/` or `\`) is one of [`GH_NAMES`].
+fn names_gh(text: &str) -> bool {
+    let name = text.rsplit(['/', '\\']).next().unwrap_or(text);
+    GH_NAMES.iter().any(|gh| name.eq_ignore_ascii_case(gh))
+}
 
 /// The one of [`GH_TARGET_VARIABLES`] `text` sets or names: `NAME`, `NAME=...` or `NAME+=...`.
 fn gh_target(text: &str) -> Option<&'static str> {
@@ -107,17 +128,40 @@ impl Checker<'_> {
         None
     }
 
-    /// How the command may run a call the probe cannot read, if it may: [`RUN_TIME_GH_CALL`]
-    /// whenever it makes one, else the first of [`RUN_TIME_PROGRAM`] and [`DEFINITION`] when
-    /// `mentions_merge` (its text holds `merge`).
-    pub(in crate::hook::guard::denylist) fn unseen(
-        &self,
-        mentions_merge: bool,
-    ) -> Option<&'static str> {
+    /// How the command may run a merge the probe cannot read, if it may: [`RUN_TIME_GH_CALL`]
+    /// whenever it makes one; else, when a word holds `merge`, the first of
+    /// [`RUN_TIME_PROGRAM`] and [`DEFINITION`], or [`GH_WORD`] when more words name gh than
+    /// the probe read gh calls in full (`gh pr merge 3 --disable-auto` is read; `xargs gh`,
+    /// `parallel gh` and `ln -s /usr/bin/gh` are not).
+    pub(in crate::hook::guard::denylist) fn unseen(&self) -> Option<&'static str> {
         if self.unseen_gh_call {
             return Some(RUN_TIME_GH_CALL);
         }
-        self.unseen.filter(|_| mentions_merge)
+        if !self.mentions_merge {
+            return None;
+        }
+        let gh_unread = self.gh_words > self.gh_calls;
+        self.unseen.or_else(|| gh_unread.then_some(GH_WORD))
+    }
+
+    /// Notes, in the probe only, whether `command`'s words (after quote removal, so `'mer'ge`
+    /// and `me\rge` read `merge`) or the here-document or here-string it reads hold `merge`,
+    /// and whether a word names gh. Substitutions and `bash -c` strings are lexed into
+    /// commands of their own, so their words are noted too.
+    pub(super) fn note_mentions(&mut self, command: &SimpleCommand) {
+        if self.entries != Entries::PrMerge {
+            return;
+        }
+        let texts = command.words.iter().map(|word| word.text.as_str());
+        for text in texts {
+            self.mentions_merge |= holds_merge(text);
+            if names_gh(text) {
+                self.gh_words = self.gh_words.saturating_add(1);
+            }
+        }
+        if let Stdin::Text(body) = &command.stdin {
+            self.mentions_merge |= holds_merge(&body.text);
+        }
     }
 
     /// Notes `how` the command may run a call the probe cannot read ([`RUN_TIME_PROGRAM`],
@@ -130,9 +174,14 @@ impl Checker<'_> {
 
     /// Records the `gh pr merge` that `gh <args>` runs in `scope`, if any, with how the command
     /// changed directory before it; past [`MAX_MERGES`] denies. A call whose first operands are
-    /// known only at run time is noted ([`RUN_TIME_GH_CALL`]).
+    /// known only at run time is noted ([`RUN_TIME_GH_CALL`]), and one read in full is counted
+    /// against the words naming gh (see [`Checker::unseen`]).
     pub(super) fn gh(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         self.unseen_gh_call |= gh::call_unseen(args);
+        // A bare `gh` reads as no call: `command -v gh` unwraps to it, though it only names gh.
+        if !scope.appended && self.argument_depth == 0 && !args.is_empty() {
+            self.gh_calls = self.gh_calls.saturating_add(1);
+        }
         let merge = PrMerge {
             moved: scope.moved.or(self.moved),
             ..gh::pr_merge(args)?

@@ -153,14 +153,30 @@ or cannot read it (`unreadable`), it is denied: with `env` when it sets `GH_REPO
 unreadable), `directory` when it changes directory anywhere (`cd`, `pushd`, `popd`, a function or
 trap body defined before a later `cd`, `env -C`/`--chdir`, `sudo -D`/`--chdir`, a login shell,
 `find -execdir`/`-okdir`), `target` when the merge names no pull request number, and otherwise
-`shape`, naming the canonical command. The read can miss a merge whose words exist only at run
-time, so a command is also denied (`shape`) when it calls gh with a first or second operand
-known only at run time (`gh "$@"`, `gh $(cat args)`), or when its text holds `merge`, in any
-case, and it runs a program known only at run time (`${GH:-gh} pr merge 7`) or defines a
-function or alias (`f() { gh "$@"; }; f pr merge 7`, `alias g=gh`, `BASH_FUNC_`). Every other
-command is allowed silently, as is `gh pr merge --disable-auto` (bare, or set to a true value
-such as `1` or `true`), which merges nothing. That rule is all the gate checks outside the
-canonical command; what it cannot see is listed under Known gaps. For the canonical command:
+`shape`, naming the canonical command.
+
+The read can miss a merge whose words exist only at run time, so one tripwire backs it, also
+denying with `shape`:
+
+- a gh call whose first or second operand is known only at run time (`gh "$@"`,
+  `gh $(cat args)`), whatever else the command holds;
+- a command one of whose words holds `merge` in any case, after quote removal (`'mer'ge` and
+  `me\rge` read `merge`; words inside `$( )`, backticks and `bash -c` strings count, and so do
+  here-documents and here-strings), together with any of: a word naming gh (its last path
+  component is `gh` or `gh.exe`) that the read took no full gh call from (`xargs gh`,
+  `parallel gh`, `ln -s /usr/bin/gh g`, `command -v gh`); a program known only at run time
+  (`${GH:-gh} pr merge 7`); or a definition (`f() { … }`, `function`, `alias`, `hash -p`, bare
+  or under `builtin` or `command`, `BASH_FUNC_`).
+
+`git merge gh-pages` passes, since no word is exactly `gh`. Every other command is allowed
+silently, as is `gh pr merge --disable-auto` (bare, or set to a true value such as `1` or
+`true`), which merges nothing.
+
+**Threat model.** The canonical command is the only path that gets judged. The fallback is a
+best-effort tripwire against mistakes and casual workarounds; it is not complete against a
+determined adversary in a Turing-complete shell, and Known gaps lists what it cannot see.
+Strong enforcement is a GitHub required check or branch protection on the repository, which is
+a follow-up. For the canonical command:
 
 1. The pull request must be named by number (`7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`; an unquoted `#7` starts a
@@ -208,9 +224,13 @@ The gate judges what it can see in a Bash command, for an honest agent:
 - merges outside `gh pr merge`: a gh alias (`gh alias set`), `gh api` calls to the merge
   endpoint, the web UI, or another tool;
 - interpreters and words built at run time: a merge run by `python -c`, `perl -e`, `node -e`,
-  make, or a script on disk, or built at run time from text that does not hold `merge`
-  (`m=$(printf 'm%serge' ''); $EDITOR pr $m 7` with `EDITOR=gh`, read from a file, decoded),
-  is outside what the command text shows. The gate reads the text, not what runs;
+  make, or a script on disk, or built at run time from words that do not hold the literal text
+  `merge` or name `gh` (`m=$(printf 'm%serge' ''); $EDITOR pr $m 7` with `EDITOR=gh`, read
+  from a file, decoded), is outside what the command text shows. The gate reads the text, not
+  what runs;
+- the tripwire's false positives: a command that holds `merge` and names gh outside a call the
+  read takes in full (`echo gh pr merge 3`, `gh pr view 7 | xargs gh pr comment -b merged`) is
+  denied too; run such commands without the word `merge`, or split them;
 - an `origin` that names an ssh host alias (`git@github-work:org/repo.git`, with
   `github-work` defined in `~/.ssh/config`) reads as `github-work/org/repo`, a host gh cannot
   reach, so every merge in that worktree is denied or fails. The gate stays offline and does

@@ -5,12 +5,16 @@
 //! <host>/<owner>/<repo>` and a few flags, every word written out, nothing around it) is
 //! judged; any other merge is denied. Any other command is read as the guard reads commands
 //! (`guard::find_pr_merge`: wrappers, `bash -c`, `eval`, scripts on stdin, variables) and is
-//! denied when the read finds a `gh pr merge` in it or cannot read it, when it calls gh with a
-//! first or second operand known only at run time, or when its text holds `merge` (in any
-//! case) and it runs a program known only at run time or defines a function or alias. Every
-//! other command, and any other tool, is allowed silently. The read sees only the command's
-//! text: a merge run by an interpreter (`python -c`, `node -e`), make or a script on disk, or
-//! built at run time from text without `merge`, is not seen (`docs/verdict.md`, Known gaps).
+//! denied when the read finds a `gh pr merge` in it or cannot read it, or when the probe's
+//! tripwire fires: a gh call with a first or second operand known only at run time, or a word
+//! holding `merge` (any case, after quote removal) beside a word naming gh that the read took
+//! no full call from, a program known only at run time, or a definition (function, alias,
+//! `hash -p`). Every other command, and any other tool, is allowed silently. The canonical
+//! command is the only judged path; the tripwire is best effort against mistakes and casual
+//! workarounds, not complete against a determined adversary in a Turing-complete shell, and
+//! misses what the text does not show (interpreters, make, scripts on disk, words built at run
+//! time without `merge` or `gh`; `docs/verdict.md`, Known gaps). Strong enforcement is a
+//! GitHub required check or branch protection.
 //! The canonical command must name its pull request by number (or an
 //! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin its head with
 //! a full `--match-head-commit`, and name the repository the gate judges, the `origin` remote's,
@@ -317,8 +321,7 @@ fn judge(
 /// What the gate does with a Bash command before it reads git or the ledger.
 #[derive(Debug, PartialEq, Eq)]
 enum Screen {
-    /// The probe finds no `gh pr merge` in it and no unseen call ([`MergeScan::Unseen`]):
-    /// allow.
+    /// The probe finds no `gh pr merge` in it and its tripwire does not fire: allow.
     NoMerge,
     /// It runs one, or may, in a shape the gate does not judge: deny.
     Deny(Denial),
@@ -327,23 +330,24 @@ enum Screen {
 }
 
 /// Screens `command`: the accepted merge command is judged; any other command in which the
-/// guard's probe finds a merge, or which it cannot read, is denied, as is one that may run a
-/// merge the probe cannot read ([`MergeScan::Unseen`]). A merge
-/// found elsewhere is denied with the probe's most specific reason (`GH_REPO` set, a directory
-/// change, no pull request number), else as not the accepted command (`shape`).
+/// guard's probe finds a merge, or which it cannot read, is denied, as is one on which the
+/// probe's tripwire fires (`MergeScan::Read`'s `unseen`). A merge found elsewhere is denied
+/// with the probe's most specific reason (`GH_REPO` set, a directory change, no pull request
+/// number), else as not the accepted command (`shape`).
 fn screen(command: &str, context: &Context) -> Screen {
     if let Some(merge) = canonical::read(command) {
         return Screen::Judge(merge);
     }
     match find_pr_merge(command, context) {
-        MergeScan::Merges(merges) if merges.is_empty() => Screen::NoMerge,
-        MergeScan::Merges(merges) => Screen::Deny(
-            merges
-                .iter()
-                .find_map(|merge| pull::pull(merge).err())
-                .unwrap_or_else(not_canonical),
-        ),
-        MergeScan::Unseen(how) => Screen::Deny(unseen(how)),
+        MergeScan::Read { merges, unseen } => {
+            let found = merges.iter().find_map(|merge| pull::pull(merge).err());
+            match (found, merges.is_empty(), unseen) {
+                (Some(denial), _, _) => Screen::Deny(denial),
+                (None, false, _) => Screen::Deny(not_canonical()),
+                (None, true, Some(how)) => Screen::Deny(tripped(how)),
+                (None, true, None) => Screen::NoMerge,
+            }
+        }
         MergeScan::Unreadable(denial) => Screen::Deny(Denial::new(
             Check::Unreadable,
             &format!(
@@ -370,9 +374,9 @@ fn not_canonical() -> Denial {
     Denial::new(Check::Shape, &accepted_shape())
 }
 
-/// The denial for a command that runs `how` (a call the probe cannot read), so it may run a
-/// merge the gate does not see.
-fn unseen(how: &str) -> Denial {
+/// The denial for a command on which the probe's tripwire fired: it runs `how` (a call the
+/// probe cannot read), so it may run a merge the gate does not see.
+fn tripped(how: &str) -> Denial {
     Denial::new(
         Check::Shape,
         &format!(

@@ -530,6 +530,66 @@ fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() -> TestResult {
     Ok(())
 }
 
+/// Commands whose words name `merge` and gh, or `merge` and a definition, around a merge the
+/// probe cannot read (the sixth review of #89): appended arguments, quotes splitting `merge`,
+/// another name for gh, a program that runs its arguments. The probe reads the alias body
+/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`.
+const TRIPWIRE_MERGES: [(&str, &str); 14] = [
+    (r"printf '%s\n' pr merge 7 | xargs gh", "merge-gate.shape"),
+    (r"printf 'pr\nmerge\n7\n' | xargs gh", "merge-gate.shape"),
+    ("echo pr merge 7 > f; xargs gh < f", "merge-gate.shape"),
+    ("echo pr merge 7 > f; cat f | xargs gh", "merge-gate.shape"),
+    ("echo merge | xargs -I% gh pr % 7", "merge-gate.shape"),
+    ("alias g=gh\ng pr \"merg\"e 7", "merge-gate.shape"),
+    ("alias g='gh pr'\ng 'mer'ge 7", "merge-gate.shape"),
+    ("alias g='gh pr'\ng me\\rge 7", "merge-gate.shape"),
+    ("alias g='gh pr mer''ge'\ng 7", "merge-gate.target"),
+    ("hash -p /usr/bin/gh g; g pr merge 7", "merge-gate.shape"),
+    (
+        "builtin hash -p /usr/bin/gh g; g pr merge 7",
+        "merge-gate.shape",
+    ),
+    (
+        r#"cp "$(command -v gh)" /tmp/g && /tmp/g pr merge 7"#,
+        "merge-gate.shape",
+    ),
+    (
+        "ln -sf /usr/bin/gh /tmp/g; /tmp/g pr merge 7",
+        "merge-gate.shape",
+    ),
+    ("parallel gh ::: pr ::: merge ::: 7", "merge-gate.shape"),
+];
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_command_naming_merge_and_gh_or_a_definition_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    let mut expected = Vec::new();
+    for (command, point) in TRIPWIRE_MERGES {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("gh pr merge"), "{command}: {reason}");
+        expected.push(point);
+    }
+
+    assert_eq!(blocked_points(&repo)?, expected);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_git_merge_naming_no_gh_word_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    for command in ["git merge gh-pages", "git merge --no-ff feature"] {
+        assert_allowed(&repo.merge_gate(command)?);
+    }
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_run_time_program_or_a_function_without_merge_in_the_command_is_allowed() -> TestResult {

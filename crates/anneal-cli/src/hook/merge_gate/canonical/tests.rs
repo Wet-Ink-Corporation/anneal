@@ -137,10 +137,9 @@ fn other_shapes() -> Vec<String> {
     ]
 }
 
-/// Commands the reader refuses that no test pinned before the fifth review of #89: a
-/// double-quoted text with an escape or a history expansion, a trailing CR or NUL, quotes
-/// joined into one word, one word past the limit.
-fn fifth_review_shapes() -> Vec<String> {
+/// Texts and endings the reader refuses: a double-quoted text holding `\` or `!`, a trailing
+/// CR or NUL, quoted parts joined into one word, and one word past [`super::MAX_WORDS`].
+fn refused_texts_and_endings() -> Vec<String> {
     let merge = format!("gh pr merge 7 --match-head-commit {HEAD} --repo github.com/o/r");
     vec![
         format!(r#"{merge} --body "a\"b""#),
@@ -180,7 +179,10 @@ fn one_word_past_the_limit_is_not_read() {
 
 #[test]
 fn any_other_command_holding_a_merge_is_not_read() {
-    for command in other_shapes().into_iter().chain(fifth_review_shapes()) {
+    for command in other_shapes()
+        .into_iter()
+        .chain(refused_texts_and_endings())
+    {
         assert_eq!(read(&command), None, "{command}");
     }
 }

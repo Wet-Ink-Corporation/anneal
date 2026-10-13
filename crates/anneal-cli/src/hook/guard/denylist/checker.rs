@@ -68,6 +68,19 @@ pub(super) struct Checker<'c> {
     /// Whether the command calls gh with a first or second operand known only at run time
     /// (`gh "$@"`). Only the probe reads gh calls.
     unseen_gh_call: bool,
+    /// Whether a word of the command, or a here-document or here-string it reads, holds
+    /// `merge` in any case, after quote removal. Noted by the probe only.
+    mentions_merge: bool,
+    /// How many words of the command name gh (last path component `gh` or `gh.exe`). Noted
+    /// by the probe only.
+    gh_words: usize,
+    /// How many gh calls the probe read in full: run as the program itself or under a known
+    /// wrapper, with no arguments appended at run time and not found by scanning an unknown
+    /// program's arguments.
+    gh_calls: usize,
+    /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
+    /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
+    argument_depth: usize,
 }
 
 /// The most commands arguments are read as in one check (H-13): each read walks the rest of
@@ -94,6 +107,10 @@ impl<'c> Checker<'c> {
             moved: None,
             unseen: None,
             unseen_gh_call: false,
+            mentions_merge: false,
+            gh_words: 0,
+            gh_calls: 0,
+            argument_depth: 0,
         }
     }
 
@@ -128,6 +145,7 @@ impl<'c> Checker<'c> {
             if command.defines_function {
                 self.note_unseen(probe::DEFINITION);
             }
+            self.note_mentions(command);
             self.variables.record(command);
             let own = own_feed(command, &commands);
             let feed = own.as_ref().unwrap_or(scope.feed);
@@ -291,8 +309,11 @@ impl<'c> Checker<'c> {
             let Some(command) = args.get(at..) else {
                 continue;
             };
-            if let Some(denial) = self.words(command, scope) {
-                return Some(denial);
+            self.argument_depth = self.argument_depth.saturating_add(1);
+            let denial = self.words(command, scope);
+            self.argument_depth = self.argument_depth.saturating_sub(1);
+            if denial.is_some() {
+                return denial;
             }
         }
         None

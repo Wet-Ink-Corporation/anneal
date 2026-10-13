@@ -6,9 +6,8 @@ use crate::hook::guard::denylist::{MergeScan, PrMerge, Target, find_pr_merge};
 
 fn merges(command: &str) -> Vec<PrMerge> {
     match find_pr_merge(command, &context()) {
-        MergeScan::Merges(merges) => merges,
+        MergeScan::Read { merges, .. } => merges,
         MergeScan::Unreadable(denial) => panic!("{command:?} read as unreadable: {denial:?}"),
-        MergeScan::Unseen(how) => panic!("{command:?} read as unseen: {how}"),
     }
 }
 
@@ -370,7 +369,7 @@ fn a_merge_run_where_the_command_started_is_not_moved() {
 fn a_call_the_probe_cannot_read_is_unseen_when_the_command_may_merge() {
     let gh_call = "a gh call whose subcommand is known only at run time";
     let program = "a program known only at run time";
-    let definition = "a function or alias definition";
+    let definition = "a function, alias or hash -p definition";
     let rows = [
         // A gh call whose first or second operand is known only at run time, merge or not.
         (r#"gh "$@""#, Some(gh_call)),
@@ -399,14 +398,57 @@ fn a_call_the_probe_cannot_read_is_unseen_when_the_command_may_merge() {
     ];
 
     for (command, expected) in rows {
-        let scan = find_pr_merge(command, &context());
-        let found = match scan {
-            MergeScan::Unseen(how) => Some(how),
-            MergeScan::Merges(ref merges) if merges.is_empty() => None,
-            other => panic!("{command}: {other:?}"),
-        };
-        assert_eq!(found, expected, "{command}");
+        assert_eq!(unseen(command), expected, "{command}");
     }
+}
+
+/// How `command`, which runs no merge the probe reads, may run one it cannot read.
+fn unseen(command: &str) -> Option<&'static str> {
+    match find_pr_merge(command, &context()) {
+        MergeScan::Read { merges, unseen } if merges.is_empty() => unseen,
+        other => panic!("{command}: {other:?}"),
+    }
+}
+
+#[test]
+fn a_word_naming_gh_beside_merge_trips_unless_the_probe_read_that_gh_call() {
+    let gh_word = "gh where the probe cannot read its arguments";
+    let rows = [
+        // A gh the probe reads no call from: appended arguments, an unknown program's
+        // arguments, a path, a quote that splits merge, a name looked up.
+        ("xargs -a merge-args gh", Some(gh_word)),
+        ("cp \"$(command -v gh)\" g; ./g pr merge 7", Some(gh_word)),
+        ("parallel gh ::: pr ::: merge ::: 7", Some(gh_word)),
+        ("ln -s /usr/bin/gh g; ./g pr merge 7", Some(gh_word)),
+        ("echo gh pr merge 3", Some(gh_word)),
+        ("echo 'mer'ge | xargs GH.EXE", Some(gh_word)),
+        // Every gh read as a call, or no word naming gh exactly.
+        ("gh pr merge 3 --disable-auto", None),
+        ("gh pr view 7 && git merge gh-pages", None),
+        ("/usr/bin/gh pr checks 7; git merge main", None),
+        ("echo gh", None),
+    ];
+
+    for (command, expected) in rows {
+        assert_eq!(unseen(command), expected, "{command}");
+    }
+}
+
+#[test]
+fn hash_p_is_a_definition_bare_or_under_builtin_or_command() {
+    let definition = "a function, alias or hash -p definition";
+    for command in [
+        "hash -p /tmp/x g; g merge",
+        "builtin hash -p /tmp/x g; g merge",
+        "command hash -rp /tmp/x g; g merge",
+    ] {
+        assert_eq!(unseen(command), Some(definition), "{command}");
+    }
+    assert_eq!(
+        unseen("hash -r; echo merge"),
+        None,
+        "hash -r defines nothing"
+    );
 }
 
 #[test]

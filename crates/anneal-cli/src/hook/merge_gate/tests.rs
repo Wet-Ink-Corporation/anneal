@@ -391,6 +391,45 @@ fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() {
     }
 }
 
+/// Commands whose words name `merge` and gh, or `merge` and a definition, around a merge the
+/// probe cannot read (the sixth review of #89). The probe reads the alias body
+/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`.
+const TRIPWIRE_MERGES: [(&str, Check); 14] = [
+    (r"printf '%s\n' pr merge 7 | xargs gh", Check::Shape),
+    (r"printf 'pr\nmerge\n7\n' | xargs gh", Check::Shape),
+    ("echo pr merge 7 > f; xargs gh < f", Check::Shape),
+    ("echo pr merge 7 > f; cat f | xargs gh", Check::Shape),
+    ("echo merge | xargs -I% gh pr % 7", Check::Shape),
+    ("alias g=gh\ng pr \"merg\"e 7", Check::Shape),
+    ("alias g='gh pr'\ng 'mer'ge 7", Check::Shape),
+    ("alias g='gh pr'\ng me\\rge 7", Check::Shape),
+    ("alias g='gh pr mer''ge'\ng 7", Check::Target),
+    ("hash -p /usr/bin/gh g; g pr merge 7", Check::Shape),
+    ("builtin hash -p /usr/bin/gh g; g pr merge 7", Check::Shape),
+    (
+        r#"cp "$(command -v gh)" /tmp/g && /tmp/g pr merge 7"#,
+        Check::Shape,
+    ),
+    ("ln -sf /usr/bin/gh /tmp/g; /tmp/g pr merge 7", Check::Shape),
+    ("parallel gh ::: pr ::: merge ::: 7", Check::Shape),
+];
+
+#[test]
+fn a_command_naming_merge_and_gh_or_a_definition_is_denied() {
+    for (command, check) in TRIPWIRE_MERGES {
+        assert_eq!(screened(command), Some(check), "{command}");
+    }
+}
+
+#[test]
+fn a_git_merge_naming_no_gh_word_is_allowed() {
+    for command in ["git merge gh-pages", "git merge --no-ff feature"] {
+        let screened = screen(command, &Context::new(|_: &str| None));
+
+        assert_eq!(screened, Screen::NoMerge, "{command}");
+    }
+}
+
 #[test]
 fn a_run_time_program_or_a_definition_without_merge_in_the_command_is_allowed() {
     for command in ["$EDITOR x", "f(){ :; }; f", "alias ll='ls -l'"] {

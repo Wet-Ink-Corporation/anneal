@@ -134,10 +134,10 @@ judged only as the canonical command, `gh pr merge <n> --match-head-commit <full
 <host>/<owner>/<repo>` run as a Bash call of its own with every word written out; any other
 merge is denied (`shape`, or `env`, `directory` or `target` when that is the reason). Other
 commands are read with the guard's lexer and unwrapping (`guard::find_pr_merge`): one in which
-that read finds a merge, one it cannot read, one that calls gh with a first or second operand
-known only at run time, and one whose text holds `merge` and which runs a program known only at
-run time or defines a function or alias, are denied; every other call is allowed silently (the
-rule and its gaps are in `docs/verdict.md`). The canonical command must name its pull request by
+that read finds a merge, one it cannot read, and one on which its best-effort tripwire fires (a
+gh call with a run-time first or second operand, or a word holding `merge` beside an unread gh
+word, a run-time program or a definition) are denied; every other call is allowed silently (the
+rule, its threat model and its gaps are in `docs/verdict.md`). The canonical command must name its pull request by
 number (or by a `/pull/<n>` URL of the worktree's `origin`), name `origin`'s repository with
 `--repo` (gh reads it before the working directory, `GH_REPO` and `GH_HOST`), pin its head with
 `--match-head-commit <full commit>` (each denial names the command), and needs a fresh `tests_verified`-or-better verdict for that head (fresh by
