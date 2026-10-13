@@ -101,7 +101,13 @@ impl<G: GhApi + GhGraphql, H: HeadGate> Source for PullRequestWatch<'_, G, H> {
         }
         snapshot.blockers.extend(unresolved);
         read_checks(self.gh, RepoRef::Current, &head.sha, &mut snapshot)?;
-        merge.judge_after_checks(pr, url, &mut snapshot);
+        let still_blocked = || {
+            let again: Pull = get(self.gh, &endpoint, || format!("pull request {pr}"))?;
+            Ok(again.still_blocked(&head.sha))
+        };
+        merge
+            .after_checks(&snapshot, still_blocked)?
+            .record(pr, url, &mut snapshot);
         if snapshot.blockers.is_empty()
             && snapshot.pending.is_empty()
             && let Some(block) = self.gate.judge(pr, &head.sha)
@@ -273,29 +279,59 @@ impl Merge {
         }
     }
 
-    /// Adds what the state means once the checks are read: `blocked` with nothing else
-    /// blocking or pending is branch protection the checks do not show (a required review, or
-    /// a required check that never reported), so it blocks; while anything else is pending it
-    /// waits with them. `unstable` waits.
-    fn judge_after_checks(self, pr: u64, url: String, snapshot: &mut Snapshot) {
-        let state = match self {
-            Self::Clean | Self::Conflict | Self::Draft | Self::Unknown => return,
-            Self::Unstable => {
-                return snapshot.pending.push(Pending::MergeState {
-                    state: "unstable".to_owned(),
-                });
+    /// What the state means once the checks are read into `snapshot`: `blocked` with nothing
+    /// else blocking or pending is branch protection the checks do not show (a required
+    /// review, or a required check that never reported), so it blocks, but only when
+    /// `still_blocked`, a second read of the pull request, confirms it: the first read came
+    /// before the checks, so a last check that finished in between left it stale. Unconfirmed,
+    /// or while anything else is pending, it waits. `unstable` waits.
+    ///
+    /// # Errors
+    /// The failure of `still_blocked`, which is called only in that one case.
+    fn after_checks(
+        self,
+        snapshot: &Snapshot,
+        still_blocked: impl FnOnce() -> Result<bool, WatchError>,
+    ) -> Result<AfterChecks, WatchError> {
+        Ok(match self {
+            Self::Clean | Self::Conflict | Self::Draft | Self::Unknown => AfterChecks::Judged,
+            Self::Unstable => AfterChecks::Waits("unstable"),
+            Self::Blocked
+                if !snapshot.blockers.is_empty()
+                    || !snapshot.pending.is_empty()
+                    || !still_blocked()? =>
+            {
+                AfterChecks::Waits("blocked")
             }
-            Self::Blocked if !snapshot.blockers.is_empty() || !snapshot.pending.is_empty() => {
-                return snapshot.pending.push(Pending::MergeState {
-                    state: "blocked".to_owned(),
-                });
-            }
-            Self::Blocked => "blocked".to_owned(),
-            Self::Refused(state) => state,
-        };
-        snapshot
-            .blockers
-            .push(Blocker::MergeState { pr, state, url });
+            Self::Blocked => AfterChecks::Blocks("blocked".to_owned()),
+            Self::Refused(state) => AfterChecks::Blocks(state),
+        })
+    }
+}
+
+/// What a merge state adds once the checks are read.
+#[derive(Debug, PartialEq, Eq)]
+enum AfterChecks {
+    /// Nothing: the state was judged before the checks.
+    Judged,
+    /// Pending, as `mergeable_state` this.
+    Waits(&'static str),
+    /// A `merge_state` blocker, as `mergeable_state` this.
+    Blocks(String),
+}
+
+impl AfterChecks {
+    /// Adds this to `snapshot`, naming pull request `pr` at `url`.
+    fn record(self, pr: u64, url: String, snapshot: &mut Snapshot) {
+        match self {
+            Self::Judged => {}
+            Self::Waits(state) => snapshot.pending.push(Pending::MergeState {
+                state: state.to_owned(),
+            }),
+            Self::Blocks(state) => snapshot
+                .blockers
+                .push(Blocker::MergeState { pr, state, url }),
+        }
     }
 }
 
@@ -317,6 +353,16 @@ struct Pull {
     mergeable: Option<bool>,
     mergeable_state: String,
     head: Head,
+}
+
+impl Pull {
+    /// Whether this read still shows the pull request open, unmerged and `blocked` at `head`.
+    fn still_blocked(self, head: &str) -> bool {
+        !self.merged
+            && self.state == "open"
+            && self.head.sha == head
+            && Merge::of(self.mergeable, self.mergeable_state) == Merge::Blocked
+    }
 }
 
 #[derive(Debug, Deserialize)]

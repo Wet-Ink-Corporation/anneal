@@ -147,6 +147,25 @@ fn exit_3_for_unresolved_review_threads_naming_each_url() {
 }
 
 #[test]
+fn threads_with_no_comment_get_distinct_keys() {
+    let gh = pull_request(
+        "pull-open.json",
+        "check-runs-pass.json",
+        "status-pass.json",
+        "threads-no-comment.json",
+    );
+
+    let ran = run(&["pr", "7"], &gh, &FakeGate::default());
+
+    assert_eq!(ran.code, 3);
+    assert_eq!(
+        keys(&ran.envelope),
+        ["watch/thread:no-comment", "watch/thread:no-comment:2"],
+        "two threads, two findings, two keys"
+    );
+}
+
+#[test]
 fn exit_4_for_failing_checks_naming_each_check() {
     let gh = pull_request(
         "pull-open.json",

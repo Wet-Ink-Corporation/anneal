@@ -4,6 +4,8 @@
 //! blocked watch is the lowest code among its blockers (conflict 2, threads 3, checks and
 //! deployments 4, draft, merge state and the merge gate 6), and every blocker is listed.
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
 use crate::envelope::Finding;
@@ -80,9 +82,9 @@ pub(crate) enum Blocker {
         url: String,
     },
     /// GitHub refuses the merge for a reason the checks and threads read do not show: branch
-    /// protection still `blocked` once every check passed and every thread is resolved (a
-    /// required review, or a required check that never reported), `behind`, or a state this
-    /// version does not know.
+    /// protection still `blocked` once every check passed and every thread is resolved, and
+    /// again on a second read of the pull request (a required review, or a required check
+    /// that never reported), `behind`, or a state this version does not know.
     MergeState {
         /// The pull request number.
         pr: u64,
@@ -121,12 +123,14 @@ impl Blocker {
                 format!("pull request {pr} conflicts with its base ({url}); merge or rebase it"),
             ),
             Self::Thread { url, path } => {
-                let at = url.as_deref().unwrap_or("a thread with no comment");
                 let on = path
                     .as_deref()
                     .map_or_else(String::new, |path| format!(" on {path}"));
+                let (key, at) = url
+                    .as_deref()
+                    .map_or(("no-comment", "a thread with no comment"), |url| (url, url));
                 Finding::new(
-                    format!("watch/thread:{at}"),
+                    format!("watch/thread:{key}"),
                     format!("unresolved review thread{on}: {at}"),
                 )
             }
@@ -177,8 +181,8 @@ pub(crate) enum Pending {
     NoChecks,
     /// GitHub has not computed whether the pull request merges cleanly.
     Mergeable,
-    /// GitHub does not yet allow the merge (`mergeable_state` `blocked` while checks still run,
-    /// or `unstable`).
+    /// GitHub does not yet allow the merge (`mergeable_state` `blocked` while checks still run
+    /// or until a second read confirms it, or `unstable`).
     MergeState {
         /// GitHub's `mergeable_state`.
         state: String,
@@ -225,9 +229,30 @@ fn at(url: Option<&str>) -> String {
     url.map_or_else(String::new, |url| format!(" ({url})"))
 }
 
+/// Makes the keys of `findings` distinct, in order: a key already used gets the first free
+/// `:<n>` suffix from `:2`. Two blockers can name the same thing (two threads with no comment,
+/// a check run and a status of one name), and each finding needs its own key.
+pub(crate) fn unique_keys(findings: &mut [Finding]) {
+    let mut used: HashSet<String> = HashSet::with_capacity(findings.len());
+    for finding in findings {
+        if used.contains(&finding.key) {
+            let mut n = 2_usize;
+            let mut key = format!("{}:{n}", finding.key);
+            while used.contains(&key) {
+                n = n.saturating_add(1);
+                key = format!("{}:{n}", finding.key);
+            }
+            finding.key = key;
+        }
+        // The set and the finding each keep the key.
+        used.insert(finding.key.clone());
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Blocker, Pending, Snapshot};
+    use super::{Blocker, Pending, Snapshot, unique_keys};
+    use crate::envelope::Finding;
     use crate::exit_codes::Code;
 
     fn check(name: &str) -> Blocker {
@@ -262,6 +287,30 @@ mod tests {
             code,
             Some(3),
             "threads (3) before checks (4) and the gate (6)"
+        );
+    }
+
+    #[test]
+    fn a_repeated_key_takes_the_first_free_suffix() {
+        let mut findings: Vec<Finding> =
+            ["watch/check:lint", "watch/check:lint:2", "watch/check:lint"]
+                .into_iter()
+                .map(|key| Finding::new(key, "m"))
+                .collect();
+
+        unique_keys(&mut findings);
+
+        let keys: Vec<&str> = findings
+            .iter()
+            .map(|finding| finding.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "watch/check:lint",
+                "watch/check:lint:2",
+                "watch/check:lint:3"
+            ]
         );
     }
 

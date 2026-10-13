@@ -78,6 +78,24 @@ fn a_proxy_list_as_long_as_the_cap_fails_since_it_may_have_been_cut_short() {
 }
 
 #[test]
+fn when_both_fail_the_error_line_names_both_failures() {
+    let gh = FakeGh::new()
+        .failing("graphql", REFUSED)
+        .missing("/ccr/review_threads");
+
+    let error = unresolved(&gh, 7, PR_URL).expect_err("both fail");
+
+    assert_eq!(
+        crate::error_chain::reason(&error),
+        format!(
+            "gh api graphql failed: {REFUSED}; the review thread route of Claude Code's proxy \
+             failed too: gh api repos/{{owner}}/{{repo}}/pulls/7/ccr/review_threads: not found"
+        )
+    );
+    assert_eq!(error.code().value(), 7);
+}
+
+#[test]
 fn when_both_fail_the_graphql_failure_is_reported() {
     let gh = FakeGh::new()
         .failing("graphql", REFUSED)
@@ -88,8 +106,10 @@ fn when_both_fail_the_graphql_failure_is_reported() {
     assert!(
         matches!(
             &result,
-            Err(WatchError::Gh(crate::dag::tracker::github::GhError::Failed { endpoint, .. }))
-                if endpoint == "graphql"
+            Err(WatchError::Threads {
+                graphql: crate::dag::tracker::github::GhError::Failed { endpoint, .. },
+                ..
+            }) if endpoint == "graphql"
         ),
         "{result:?}"
     );

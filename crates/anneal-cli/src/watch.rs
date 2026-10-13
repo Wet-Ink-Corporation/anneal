@@ -142,6 +142,16 @@ pub enum WatchError {
     /// A `gh` call failed.
     #[error(transparent)]
     Gh(#[from] GhError),
+    /// The review threads could be read neither by GraphQL nor from the Claude Code proxy's
+    /// route; the GraphQL failure leads, the route's follows as the source.
+    #[error("{graphql}; the review thread route of Claude Code's proxy failed too")]
+    Threads {
+        /// Why the GraphQL query failed.
+        graphql: GhError,
+        /// Why the proxy's route failed.
+        #[source]
+        proxy: GhError,
+    },
     /// An answer was not the shape expected.
     #[error("gh did not return {what} as expected")]
     Json {
@@ -186,6 +196,7 @@ impl WatchError {
     pub const fn code(&self) -> Code {
         match self {
             Self::Gh(_)
+            | Self::Threads { .. }
             | Self::Json { .. }
             | Self::Closed { .. }
             | Self::Missing { .. }
@@ -317,6 +328,7 @@ fn report<O: Write>(
     if watched.timed_out {
         findings.extend(snapshot.pending.iter().map(Pending::finding));
     }
+    snapshot::unique_keys(&mut findings);
     let subcommand = target.subcommand();
     let data = WatchData {
         target,
