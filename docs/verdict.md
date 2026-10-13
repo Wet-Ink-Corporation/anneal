@@ -163,10 +163,12 @@ denying with `shape`:
 - a command one of whose words holds `merge` in any case, after quote removal (`'mer'ge` and
   `me\rge` read `merge`; words inside `$( )`, backticks and `bash -c` strings count, and so do
   here-documents and here-strings), together with any of: a word naming gh (its last path
-  component is `gh` or `gh.exe`) that the read took no full gh call from (`xargs gh`,
-  `parallel gh`, `ln -s /usr/bin/gh g`, `command -v gh`); a program known only at run time
-  (`${GH:-gh} pr merge 7`); or a definition (`f() { … }`, `function`, `alias`, `hash -p`, bare
-  or under `builtin` or `command`, `BASH_FUNC_`).
+  component is `gh` or `gh.exe`, after the command's variables are put in) that the read took
+  no full gh call from in the same simple command (`xargs gh`, `parallel gh`,
+  `ln -s /usr/bin/gh g`, `command -v gh`; with `G=gh`, `$G pr view 1` is a full call and
+  covers no other word); a `gh api` call (`gh api -X PUT repos/o/r/pulls/7/merge`); a program
+  known only at run time (`${GH:-gh} pr merge 7`); or a definition (`f() { … }`, `function`,
+  `alias`, `hash -p`, bare or under `builtin` or `command`, `BASH_FUNC_`).
 
 `git merge gh-pages` passes, since no word is exactly `gh`. Every other command is allowed
 silently, as is `gh pr merge --disable-auto` (bare, or set to a true value such as `1` or
@@ -222,15 +224,22 @@ The gate judges what it can see in a Bash command, for an honest agent:
   session's environment rather than in the command. The canonical command runs whatever `gh`
   means in that shell;
 - merges outside `gh pr merge`: a gh alias (`gh alias set`), `gh api` calls to the merge
-  endpoint, the web UI, or another tool;
+  endpoint (caught when the text holds `merge`; not when the path is built at run time without
+  it), the web UI, or another tool;
 - interpreters and words built at run time: a merge run by `python -c`, `perl -e`, `node -e`,
   make, or a script on disk, or built at run time from words that do not hold the literal text
   `merge` or name `gh` (`m=$(printf 'm%serge' ''); $EDITOR pr $m 7` with `EDITOR=gh`, read
   from a file, decoded), is outside what the command text shows. The gate reads the text, not
   what runs;
-- the tripwire's false positives: a command that holds `merge` and names gh outside a call the
-  read takes in full (`echo gh pr merge 3`, `gh pr view 7 | xargs gh pr comment -b merged`) is
-  denied too; run such commands without the word `merge`, or split them;
+- the tripwire's false positives: a command that holds `merge` is denied too when it names gh
+  outside a call the read takes in full (`echo gh pr merge 3`,
+  `gh pr view 7 | xargs gh pr comment -b merged`), runs `gh api` (`gh api repos/o/r/merges`),
+  runs a program known only at run time
+  (`$(git rev-parse --show-toplevel)/scripts/check.sh && git merge --ff-only main`,
+  `"$CARGO" test && git merge main`) or holds a definition (`f() { git merge "$1"; }; f main`,
+  `alias gs='git status'; git merge main`, and `[[ ( -f x ) ]] && git merge main`, whose
+  `( -f x )` reads as a function definition). Split such a command into separate Bash calls,
+  keeping the part that holds `merge` apart from the gh word, run-time program or definition;
 - an `origin` that names an ssh host alias (`git@github-work:org/repo.git`, with
   `github-work` defined in `~/.ssh/config`) reads as `github-work/org/repo`, a host gh cannot
   reach, so every merge in that worktree is denied or fails. The gate stays offline and does

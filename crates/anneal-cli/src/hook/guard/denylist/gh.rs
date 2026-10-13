@@ -110,6 +110,15 @@ pub(super) fn call_unseen(args: &[Word]) -> bool {
         .any(|word| !word.is_literal())
 }
 
+/// Whether `gh <args>` runs `gh api`, which may call the merge endpoint
+/// (`gh api -X PUT repos/o/r/pulls/7/merge`): its first operand is `api`.
+pub(super) fn calls_api(args: &[Word]) -> bool {
+    parse(args)
+        .operands
+        .first()
+        .is_some_and(|word| word.is_literal() && word.text == "api")
+}
+
 /// The target of `operands` when they run `pr merge`: they begin with `pr merge`, or with words
 /// known only at run time that may be or hide it.
 fn target(operands: &[&Word]) -> Option<(Target, Option<String>)> {

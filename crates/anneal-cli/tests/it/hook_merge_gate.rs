@@ -533,8 +533,9 @@ fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() -> TestResult {
 /// Commands whose words name `merge` and gh, or `merge` and a definition, around a merge the
 /// probe cannot read (the sixth review of #89): appended arguments, quotes splitting `merge`,
 /// another name for gh, a program that runs its arguments. The probe reads the alias body
-/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`.
-const TRIPWIRE_MERGES: [(&str, &str); 14] = [
+/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`. The
+/// seventh review added gh words a run-time call hides and a `gh api` call to the merge endpoint.
+const TRIPWIRE_MERGES: [(&str, &str); 17] = [
     (r"printf '%s\n' pr merge 7 | xargs gh", "merge-gate.shape"),
     (r"printf 'pr\nmerge\n7\n' | xargs gh", "merge-gate.shape"),
     ("echo pr merge 7 > f; xargs gh < f", "merge-gate.shape"),
@@ -558,6 +559,15 @@ const TRIPWIRE_MERGES: [(&str, &str); 14] = [
         "merge-gate.shape",
     ),
     ("parallel gh ::: pr ::: merge ::: 7", "merge-gate.shape"),
+    (
+        "G=gh; $G pr view 1; echo pr merge 7 > f; cat f | xargs gh",
+        "merge-gate.shape",
+    ),
+    (
+        r#"x="gh pr view 1"; $x; echo merge > f; cat f | xargs gh"#,
+        "merge-gate.shape",
+    ),
+    ("gh api -X PUT repos/o/r/pulls/7/merge", "merge-gate.shape"),
 ];
 
 #[test]
@@ -587,6 +597,15 @@ fn a_git_merge_naming_no_gh_word_is_allowed() -> TestResult {
     for command in ["git merge gh-pages", "git merge --no-ff feature"] {
         assert_allowed(&repo.merge_gate(command)?);
     }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_gh_api_call_naming_no_merge_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    assert_allowed(&repo.merge_gate("gh api repos/o/r/pulls/7")?);
     Ok(())
 }
 

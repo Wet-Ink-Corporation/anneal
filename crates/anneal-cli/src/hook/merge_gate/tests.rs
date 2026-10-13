@@ -393,8 +393,9 @@ fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() {
 
 /// Commands whose words name `merge` and gh, or `merge` and a definition, around a merge the
 /// probe cannot read (the sixth review of #89). The probe reads the alias body
-/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`.
-const TRIPWIRE_MERGES: [(&str, Check); 14] = [
+/// `gh pr mer''ge` as a merge naming no pull request, so that one is denied as `target`. The
+/// seventh review added gh words a run-time call hides and a `gh api` call to the merge endpoint.
+const TRIPWIRE_MERGES: [(&str, Check); 17] = [
     (r"printf '%s\n' pr merge 7 | xargs gh", Check::Shape),
     (r"printf 'pr\nmerge\n7\n' | xargs gh", Check::Shape),
     ("echo pr merge 7 > f; xargs gh < f", Check::Shape),
@@ -412,6 +413,15 @@ const TRIPWIRE_MERGES: [(&str, Check); 14] = [
     ),
     ("ln -sf /usr/bin/gh /tmp/g; /tmp/g pr merge 7", Check::Shape),
     ("parallel gh ::: pr ::: merge ::: 7", Check::Shape),
+    (
+        "G=gh; $G pr view 1; echo pr merge 7 > f; cat f | xargs gh",
+        Check::Shape,
+    ),
+    (
+        r#"x="gh pr view 1"; $x; echo merge > f; cat f | xargs gh"#,
+        Check::Shape,
+    ),
+    ("gh api -X PUT repos/o/r/pulls/7/merge", Check::Shape),
 ];
 
 #[test]
@@ -428,6 +438,13 @@ fn a_git_merge_naming_no_gh_word_is_allowed() {
 
         assert_eq!(screened, Screen::NoMerge, "{command}");
     }
+}
+
+#[test]
+fn a_gh_api_call_naming_no_merge_is_allowed() {
+    let screened = screen("gh api repos/o/r/pulls/7", &Context::new(|_: &str| None));
+
+    assert_eq!(screened, Screen::NoMerge);
 }
 
 #[test]

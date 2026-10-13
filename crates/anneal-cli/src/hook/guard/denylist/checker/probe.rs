@@ -34,6 +34,32 @@ pub(super) const DEFINITION: &str = "a function, alias or hash -p definition";
 /// `ln -s /usr/bin/gh`).
 const GH_WORD: &str = "gh where the probe cannot read its arguments";
 
+/// A `gh api` call, which may call the merge endpoint (`gh api -X PUT .../pulls/7/merge`).
+const GH_API: &str = "gh api, which may call the merge endpoint";
+
+/// How a gh word or call of a command may hide a merge from the probe, ranked: a later
+/// variant outranks an earlier one, and the strongest seen is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum GhHides {
+    /// Every word naming gh is a call read in full, and none is `gh api`.
+    Nothing,
+    /// A simple command has more words naming gh than gh calls read in full ([`GH_WORD`]).
+    UnreadWord,
+    /// A `gh api` call ([`GH_API`]).
+    Api,
+}
+
+impl GhHides {
+    /// How the command may run a merge the probe cannot read, if it may.
+    fn how(self) -> Option<&'static str> {
+        match self {
+            Self::Nothing => None,
+            Self::UnreadWord => Some(GH_WORD),
+            Self::Api => Some(GH_API),
+        }
+    }
+}
+
 /// The word whose presence in the command's words, in any case, arms the tripwire.
 const MERGE_WORD: &str = "merge";
 
@@ -130,9 +156,10 @@ impl Checker<'_> {
 
     /// How the command may run a merge the probe cannot read, if it may: [`RUN_TIME_GH_CALL`]
     /// whenever it makes one; else, when a word holds `merge`, the first of
-    /// [`RUN_TIME_PROGRAM`] and [`DEFINITION`], or [`GH_WORD`] when more words name gh than
-    /// the probe read gh calls in full (`gh pr merge 3 --disable-auto` is read; `xargs gh`,
-    /// `parallel gh` and `ln -s /usr/bin/gh` are not).
+    /// [`RUN_TIME_PROGRAM`] and [`DEFINITION`], then [`GH_API`] when it runs `gh api`, then
+    /// [`GH_WORD`] when a simple command has more words naming gh than the probe read gh calls
+    /// in it in full (`gh pr merge 3 --disable-auto` is read; `xargs gh`, `parallel gh` and
+    /// `ln -s /usr/bin/gh` are not).
     pub(in crate::hook::guard::denylist) fn unseen(&self) -> Option<&'static str> {
         if self.unseen_gh_call {
             return Some(RUN_TIME_GH_CALL);
@@ -140,28 +167,43 @@ impl Checker<'_> {
         if !self.mentions_merge {
             return None;
         }
-        let gh_unread = self.gh_words > self.gh_calls;
-        self.unseen.or_else(|| gh_unread.then_some(GH_WORD))
+        self.unseen.or_else(|| self.gh_hides.how())
     }
 
     /// Notes, in the probe only, whether `command`'s words (after quote removal, so `'mer'ge`
-    /// and `me\rge` read `merge`) or the here-document or here-string it reads hold `merge`,
-    /// and whether a word names gh. Substitutions and `bash -c` strings are lexed into
-    /// commands of their own, so their words are noted too.
+    /// and `me\rge` read `merge`) or the here-document or here-string it reads hold `merge`.
+    /// Substitutions and `bash -c` strings are lexed into commands of their own, so their
+    /// words are noted too.
     pub(super) fn note_mentions(&mut self, command: &SimpleCommand) {
         if self.entries != Entries::PrMerge {
             return;
         }
-        let texts = command.words.iter().map(|word| word.text.as_str());
-        for text in texts {
-            self.mentions_merge |= holds_merge(text);
-            if names_gh(text) {
-                self.gh_words = self.gh_words.saturating_add(1);
-            }
+        for word in &command.words {
+            self.mentions_merge |= holds_merge(&word.text);
         }
         if let Stdin::Text(body) = &command.stdin {
             self.mentions_merge |= holds_merge(&body.text);
         }
+    }
+
+    /// Starts reading one simple command's gh calls; the count of the command it nests in is
+    /// returned, for [`Checker::leave_command`] to restore.
+    pub(super) fn enter_command(&mut self) -> usize {
+        std::mem::take(&mut self.gh_calls_here)
+    }
+
+    /// Ends reading a simple command whose words, with its variables put in, are `words`:
+    /// notes, in the probe only, a word naming gh that no gh call read in full in it pairs
+    /// with (`$G pr view 1` with `G=gh` is a call; `xargs gh` is not), and restores the count
+    /// `outer` of the command it nests in.
+    pub(super) fn leave_command(&mut self, words: &[Word], outer: usize) {
+        if self.entries == Entries::PrMerge {
+            let named = words.iter().filter(|word| names_gh(&word.text)).count();
+            if named > self.gh_calls_here {
+                self.gh_hides = self.gh_hides.max(GhHides::UnreadWord);
+            }
+        }
+        self.gh_calls_here = outer;
     }
 
     /// Notes `how` the command may run a call the probe cannot read ([`RUN_TIME_PROGRAM`],
@@ -174,13 +216,17 @@ impl Checker<'_> {
 
     /// Records the `gh pr merge` that `gh <args>` runs in `scope`, if any, with how the command
     /// changed directory before it; past [`MAX_MERGES`] denies. A call whose first operands are
-    /// known only at run time is noted ([`RUN_TIME_GH_CALL`]), and one read in full is counted
-    /// against the words naming gh (see [`Checker::unseen`]).
+    /// known only at run time is noted ([`RUN_TIME_GH_CALL`]), as is `gh api` ([`GH_API`]), and
+    /// one read in full is counted against the words naming gh in its simple command (see
+    /// [`Checker::leave_command`]).
     pub(super) fn gh(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         self.unseen_gh_call |= gh::call_unseen(args);
+        if gh::calls_api(args) {
+            self.gh_hides = GhHides::Api;
+        }
         // A bare `gh` reads as no call: `command -v gh` unwraps to it, though it only names gh.
         if !scope.appended && self.argument_depth == 0 && !args.is_empty() {
-            self.gh_calls = self.gh_calls.saturating_add(1);
+            self.gh_calls_here = self.gh_calls_here.saturating_add(1);
         }
         let merge = PrMerge {
             moved: scope.moved.or(self.moved),

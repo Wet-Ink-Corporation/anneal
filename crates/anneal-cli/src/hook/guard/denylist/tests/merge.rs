@@ -422,11 +422,35 @@ fn a_word_naming_gh_beside_merge_trips_unless_the_probe_read_that_gh_call() {
         ("ln -s /usr/bin/gh g; ./g pr merge 7", Some(gh_word)),
         ("echo gh pr merge 3", Some(gh_word)),
         ("echo 'mer'ge | xargs GH.EXE", Some(gh_word)),
+        // A gh call taken from a variable does not cover another command's unread gh.
+        (
+            "G=gh; $G pr view 1; echo pr merge 7 > f; cat f | xargs gh",
+            Some(gh_word),
+        ),
+        (
+            r#"x="gh pr view 1"; $x; echo merge > f; cat f | xargs gh"#,
+            Some(gh_word),
+        ),
         // Every gh read as a call, or no word naming gh exactly.
         ("gh pr merge 3 --disable-auto", None),
         ("gh pr view 7 && git merge gh-pages", None),
         ("/usr/bin/gh pr checks 7; git merge main", None),
         ("echo gh", None),
+    ];
+
+    for (command, expected) in rows {
+        assert_eq!(unseen(command), expected, "{command}");
+    }
+}
+
+#[test]
+fn a_gh_api_call_trips_only_when_a_word_holds_merge() {
+    let gh_api = "gh api, which may call the merge endpoint";
+    let rows = [
+        ("gh api -X PUT repos/o/r/pulls/7/merge", Some(gh_api)),
+        ("gh -R o/r api -X PUT repos/o/r/pulls/7/MERGE", Some(gh_api)),
+        ("gh api repos/o/r/pulls/7", None),
+        ("gh api repos/o/r/pulls/7 && git status", None),
     ];
 
     for (command, expected) in rows {

@@ -71,13 +71,13 @@ pub(super) struct Checker<'c> {
     /// Whether a word of the command, or a here-document or here-string it reads, holds
     /// `merge` in any case, after quote removal. Noted by the probe only.
     mentions_merge: bool,
-    /// How many words of the command name gh (last path component `gh` or `gh.exe`). Noted
-    /// by the probe only.
-    gh_words: usize,
-    /// How many gh calls the probe read in full: run as the program itself or under a known
-    /// wrapper, with no arguments appended at run time and not found by scanning an unknown
-    /// program's arguments.
-    gh_calls: usize,
+    /// The strongest way a gh word or call of the command may hide a merge, so far. Noted by
+    /// the probe only.
+    gh_hides: probe::GhHides,
+    /// How many gh calls the probe read in full in the simple command it is checking: run as
+    /// the program itself or under a known wrapper, with no arguments appended at run time and
+    /// not found by scanning an unknown program's arguments.
+    gh_calls_here: usize,
     /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
     /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
     argument_depth: usize,
@@ -108,8 +108,8 @@ impl<'c> Checker<'c> {
             unseen: None,
             unseen_gh_call: false,
             mentions_merge: false,
-            gh_words: 0,
-            gh_calls: 0,
+            gh_hides: probe::GhHides::Nothing,
+            gh_calls_here: 0,
             argument_depth: 0,
         }
     }
@@ -156,10 +156,13 @@ impl<'c> Checker<'c> {
     fn command(&mut self, command: &SimpleCommand, scope: Scope<'_>) -> Option<Denial> {
         let writes = self.variables.substitute(&command.writes);
         let words = self.variables.substitute(&command.words);
-        writes
+        let outer = self.enter_command();
+        let denial = writes
             .iter()
             .find_map(|target| config::redirect(target, &self.cwd))
-            .or_else(|| self.words(&words, scope))
+            .or_else(|| self.words(&words, scope));
+        self.leave_command(&words, outer);
+        denial
     }
 
     /// Checks one simple command's words.
