@@ -8,3 +8,6 @@ whose `llm` grader comes first.
 
 `baseline-plugin/` is a plugin with no skills whose manifest names it `fixture-baseline`, for
 `--baseline`: the fake answers a batch run against the `baseline/` copy under that name.
+
+`gated/` is a valid suite set whose `plan` case (`run-the-tests.json`) names `Bash`, beside a
+`spec` case that names no gated tool, for `--allow-gated-tools`.

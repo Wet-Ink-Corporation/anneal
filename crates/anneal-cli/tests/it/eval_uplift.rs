@@ -270,6 +270,26 @@ impl FakeRun {
 
     /// Runs the fixture suites against the fake, with `env` set and `args` added.
     fn with_args(env: &[(&str, &str)], args: &[&std::ffi::OsStr]) -> Result<Self, Box<dyn Error>> {
+        Self::with_suites(&fixtures().join("eval-uplift/suites"), env, args)
+    }
+
+    /// Runs `suites` against the fake, with `env` set and `args` added.
+    fn with_suites(
+        suites: &Path,
+        env: &[(&str, &str)],
+        args: &[&std::ffi::OsStr],
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::in_dirs(&plugin_skills(), suites, env, args)
+    }
+
+    /// Runs `suites` against the fake with the plugin whose skills directory is `skills`,
+    /// with `env` set and `args` added.
+    fn in_dirs(
+        skills: &Path,
+        suites: &Path,
+        env: &[(&str, &str)],
+        args: &[&std::ffi::OsStr],
+    ) -> Result<Self, Box<dyn Error>> {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir()?;
@@ -279,9 +299,9 @@ impl FakeRun {
         std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))?;
         let output = Command::new(env!("CARGO_BIN_EXE_anneal"))
             .args(["eval", "uplift", "--skills"])
-            .arg(plugin_skills())
+            .arg(skills)
             .arg("--suites")
-            .arg(fixtures().join("eval-uplift/suites"))
+            .arg(suites)
             .arg("--claude")
             .arg(&claude)
             .args(args)
@@ -513,6 +533,195 @@ fn a_baseline_without_a_plugin_manifest_is_a_usage_error() -> TestResult {
         stderr.starts_with("ERROR eval: reading the --baseline plugin")
             && stderr.lines().count() == 1,
         "{stderr:?}"
+    );
+    Ok(())
+}
+
+/// The refusal a run of `eval-uplift/gated/` gives without `--allow-gated-tools`.
+const GATED_REFUSAL: &str = "ERROR eval: gated tools (Write, Edit or Bash) are named by 1 \
+                             selected case (plan/regression/run-the-tests.json); review them, \
+                             then pass --allow-gated-tools to grant them\n";
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_case_naming_a_gated_tool_is_refused_without_allow_gated_tools() -> TestResult {
+    let work = tempfile::tempdir()?;
+    let missing = work.path().join("no-such-claude");
+
+    let output = eval_uplift(
+        &fixtures().join("eval-uplift/gated"),
+        &["--claude", &missing.to_string_lossy()],
+    )?;
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a missing claude would have exited 4"
+    );
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    assert_eq!(String::from_utf8(output.stderr)?, GATED_REFUSAL);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_refused_gated_run_never_starts_claude_and_leaves_no_workspace() -> TestResult {
+    let run = FakeRun::with_suites(&fixtures().join("eval-uplift/gated"), &[], &[])?;
+
+    assert_eq!(
+        (
+            run.output.status.code(),
+            run.output.stdout.is_empty(),
+            std::str::from_utf8(&run.output.stderr)?,
+        ),
+        (Some(2), true, GATED_REFUSAL)
+    );
+    assert_eq!(
+        (
+            run.left_in_tmp()?,
+            std::fs::read_to_string(run.dir.path().join("claude.log")).ok()
+        ),
+        (Vec::<String>::new(), None),
+        "no workspace made and claude never started"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn with_allow_gated_tools_the_gated_case_runs_with_its_tools_granted() -> TestResult {
+    let run = FakeRun::with_suites(
+        &fixtures().join("eval-uplift/gated"),
+        &[],
+        &["--allow-gated-tools".as_ref()],
+    )?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(run.output.status.code(), Some(0), "{envelope}");
+    assert_eq!(
+        run.log()?,
+        "plugin anneal-uplift-1 12.50 3 Bash\n\
+         without-plan anneal-uplift-2 24.75 3 Bash\n\
+         without-spec anneal-uplift-3 24.50 3 \n",
+        "every batch holding the gated case grants its tool"
+    );
+    assert_eq!(
+        &envelope["data"]["granted_tools"],
+        &json!([{"case": "plan/regression/run-the-tests.json", "tools": ["Bash"]}])
+    );
+    Ok(())
+}
+
+/// A git repository holding the fixture plugin at `plugin/` and `eval-uplift/gated` at
+/// `evals/uplift/`, committed, with `skill`'s `SKILL.md` then changed in the working tree.
+#[cfg(unix)]
+fn gated_repo_with_a_change_to(skill: &str) -> Result<tempfile::TempDir, Box<dyn Error>> {
+    use std::io::Write as _;
+
+    let repo = tempfile::tempdir()?;
+    crate::support::copy_dir(
+        &fixtures().join("eval-routing"),
+        &repo.path().join("plugin"),
+    )?;
+    crate::support::copy_dir(
+        &fixtures().join("eval-uplift/gated"),
+        &repo.path().join("evals/uplift"),
+    )?;
+    crate::support::git(repo.path(), &["init", "-q"]);
+    crate::support::git(repo.path(), &["add", "-A"]);
+    crate::support::git(repo.path(), &["commit", "-q", "-m", "base"]);
+    let skill_file = repo
+        .path()
+        .join("plugin/skills")
+        .join(skill)
+        .join("SKILL.md");
+    writeln!(
+        std::fs::OpenOptions::new().append(true).open(skill_file)?,
+        "\nA changed line."
+    )?;
+    Ok(repo)
+}
+
+/// Runs `repo`'s suites against the fake with `--changed-since HEAD` and no
+/// `--allow-gated-tools`.
+#[cfg(unix)]
+fn changed_since_head(repo: &Path) -> Result<FakeRun, Box<dyn Error>> {
+    FakeRun::in_dirs(
+        &repo.join("plugin/skills"),
+        &repo.join("evals/uplift"),
+        &[],
+        &["--changed-since".as_ref(), "HEAD".as_ref()],
+    )
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_gated_case_of_a_skill_unchanged_since_the_base_does_not_need_allow_gated_tools() -> TestResult
+{
+    let repo = gated_repo_with_a_change_to("spec")?;
+
+    let run = changed_since_head(repo.path())?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(
+        run.output.status.code(),
+        Some(0),
+        "the refusal judged the selection before --changed-since: {envelope}"
+    );
+    assert_eq!(
+        run.log()?,
+        "plugin anneal-uplift-1 12.50 3 \n\
+         without-spec anneal-uplift-2 24.75 3 \n",
+        "the changed spec case alone, granted nothing"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_gated_case_of_a_skill_changed_since_the_base_is_refused_without_allow_gated_tools()
+-> TestResult {
+    let repo = gated_repo_with_a_change_to("plan")?;
+
+    let run = changed_since_head(repo.path())?;
+
+    assert_eq!(
+        (
+            run.output.status.code(),
+            run.output.stdout.is_empty(),
+            std::str::from_utf8(&run.output.stderr)?,
+        ),
+        (Some(2), true, GATED_REFUSAL)
+    );
+    assert_eq!(
+        std::fs::read_to_string(run.dir.path().join("claude.log")).ok(),
+        None,
+        "claude never started"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_selection_with_no_gated_case_runs_without_allow_gated_tools() -> TestResult {
+    let run = FakeRun::with_suites(
+        &fixtures().join("eval-uplift/gated"),
+        &[],
+        &["--skill".as_ref(), "spec".as_ref()],
+    )?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(run.output.status.code(), Some(0), "{envelope}");
+    assert_eq!(
+        run.log()?,
+        "plugin anneal-uplift-1 12.50 3 \n\
+         without-spec anneal-uplift-2 24.75 3 \n",
+        "the spec case alone, granted nothing"
     );
     Ok(())
 }

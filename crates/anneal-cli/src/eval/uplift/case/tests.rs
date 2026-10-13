@@ -163,6 +163,17 @@ fn an_unknown_field_tool_or_grader_type_does_not_parse() {
 }
 
 #[test]
+fn a_tool_name_parses_only_in_its_exact_spelling() {
+    // A near-miss spelling must not be case-folded, trimmed or widened into `Bash`, so it
+    // can neither slip past the gated-tool opt-in nor grant a tool the case did not name.
+    for spelling in ["bash", "BASH", " Bash", "Bash ", "Bash(git:*)"] {
+        let value = with("allowed_tools", json!(["Skill", spelling]));
+
+        assert!(matches!(read(&value), Err(Fault::Parse(_))), "{spelling:?}");
+    }
+}
+
+#[test]
 fn only_bash_write_and_edit_need_an_operator_grant() {
     let gated: Vec<Tool> = [
         Tool::Skill,
