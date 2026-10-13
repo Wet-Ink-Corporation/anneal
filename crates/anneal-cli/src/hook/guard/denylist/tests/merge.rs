@@ -255,6 +255,64 @@ fn a_gh_repository_or_host_set_in_the_command_is_noted() {
 }
 
 #[test]
+fn a_gh_repository_or_host_set_through_brace_expansion_is_noted() {
+    let rows = [
+        ("export GH_RE{PO,X}=o/x; gh pr merge 5", "GH_REPO"),
+        ("readonly GH_{HOST,X}=ghe.example; gh pr merge 5", "GH_HOST"),
+        ("declare -x {GH_REPO,X}=o/x; gh pr merge 5", "GH_REPO"),
+    ];
+
+    for (command, name) in rows {
+        let found = merges(command);
+        let names: Vec<Option<&str>> = found.iter().map(|merge| merge.env.as_deref()).collect();
+        assert_eq!(names, [Some(name)], "{command}");
+    }
+    // `env` takes a word with a brace for its program, which the checker cannot read.
+    let scan = find_pr_merge("env GH_{HOST,X}=ghe.example gh pr merge 5", &context());
+    assert!(matches!(scan, MergeScan::Unreadable(_)), "{scan:?}");
+}
+
+/// How each merge `command` runs was moved to another directory, in order.
+fn moved(command: &str) -> Vec<Option<&'static str>> {
+    merges(command).iter().map(|merge| merge.moved).collect()
+}
+
+#[test]
+fn a_directory_change_before_gh_is_noted_on_the_merge() {
+    let rows = [
+        ("cd /tmp && gh pr merge 5", "cd"),
+        ("pushd /tmp; gh pr merge 5", "pushd"),
+        ("popd; gh pr merge 5", "popd"),
+        ("bash -c 'cd ../other && gh pr merge 5'", "cd"),
+        ("env -C /tmp gh pr merge 5", "env --chdir"),
+        ("env --chdir=/tmp gh pr merge 5", "env --chdir"),
+        ("sudo -D /tmp gh pr merge 5", "sudo --chdir"),
+        ("nohup env -iC /tmp gh pr merge 5", "env --chdir"),
+        ("env -C /tmp bash -c 'gh pr merge 5'", "env --chdir"),
+        ("find . -execdir gh pr merge 5 ';'", "find -execdir"),
+    ];
+
+    for (command, how) in rows {
+        assert_eq!(moved(command), [Some(how)], "{command}");
+    }
+}
+
+#[test]
+fn a_merge_run_where_the_command_started_is_not_moved() {
+    let rows = [
+        "gh pr merge 5",
+        "env GH_PROMPT_DISABLED=1 gh pr merge 5",
+        "sudo -u me gh pr merge 5",
+        "env -C /tmp ls; gh pr merge 5",
+        "gh pr merge 5 && cd /tmp",
+    ];
+
+    for command in rows {
+        assert_eq!(moved(command), [None], "{command}");
+    }
+}
+
+#[test]
 fn a_command_the_guard_cannot_read_is_unreadable_here_too() {
     let scan = find_pr_merge("gh pr merge 'unclosed", &context());
 

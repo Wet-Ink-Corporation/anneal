@@ -17,6 +17,9 @@ pub(super) struct Scope<'a> {
     pub(super) feed: &'a Feed<'a>,
     pub(super) depth: usize,
     pub(super) appended: bool,
+    /// How a wrapper of this command (or of one it nests in) changed the working directory
+    /// first: `env --chdir`, `sudo --chdir`, `find -execdir`. Noted by the probe only.
+    pub(super) moved: Option<&'static str>,
 }
 
 impl Scope<'_> {
@@ -54,6 +57,8 @@ pub(super) struct Checker<'c> {
     merges: Vec<PrMerge>,
     /// The first of [`GH_TARGET_VARIABLES`] a word of the command sets or names.
     gh_env: Option<&'static str>,
+    /// The first `cd`, `pushd` or `popd` the command ran, so far.
+    moved: Option<&'static str>,
 }
 
 /// The variables that point gh at another repository or host; the probe notes a command that
@@ -67,6 +72,15 @@ const MAX_MERGES: usize = 8;
 /// the arguments and may read some of them again, so the total is capped, which also bounds
 /// how deeply such reads nest.
 const MAX_ARGUMENT_COMMANDS: usize = 32;
+
+/// The one of [`GH_TARGET_VARIABLES`] `text` sets or names: `NAME`, `NAME=...` or `NAME+=...`.
+fn gh_target(text: &str) -> Option<&'static str> {
+    GH_TARGET_VARIABLES.into_iter().find(|name| {
+        text.strip_prefix(name).is_some_and(|after| {
+            after.is_empty() || after.starts_with('=') || after.starts_with("+=")
+        })
+    })
+}
 
 /// A denial for a command the guard cannot read.
 fn unreadable(reason: String) -> Denial {
@@ -84,6 +98,7 @@ impl<'c> Checker<'c> {
             variables: Variables::default(),
             merges: Vec::new(),
             gh_env: None,
+            moved: None,
         }
     }
 
@@ -101,18 +116,26 @@ impl<'c> Checker<'c> {
     }
 
     /// Notes the first word of `words` that sets or names one of [`GH_TARGET_VARIABLES`]
-    /// (`GH_REPO`, `GH_REPO=...`, `GH_REPO+=...`), in the probe only.
-    fn note_gh_env(&mut self, words: &[Word]) {
+    /// (`GH_REPO`, `GH_REPO=...`, `GH_REPO+=...`), in the probe only. A word holding a brace
+    /// group is read as each word it expands to (`export GH_RE{PO,X}=o/x` sets `GH_REPO`).
+    ///
+    /// # Errors
+    /// The unreadable denial when one word expands to more than the brace cap.
+    fn note_gh_env(&mut self, words: &[Word]) -> Option<Denial> {
         if self.entries != Entries::PrMerge || self.gh_env.is_some() {
-            return;
+            return None;
         }
-        self.gh_env = words.iter().find_map(|word| {
-            GH_TARGET_VARIABLES.into_iter().find(|name| {
-                word.text.strip_prefix(name).is_some_and(|after| {
-                    after.is_empty() || after.starts_with('=') || after.starts_with("+=")
-                })
-            })
-        });
+        for word in words {
+            let expanded = match braces::expand(std::slice::from_ref(word)) {
+                Ok(expanded) => expanded,
+                Err(denial) => return Some(denial),
+            };
+            self.gh_env = expanded.iter().find_map(|word| gh_target(&word.text));
+            if self.gh_env.is_some() {
+                break;
+            }
+        }
+        None
     }
 
     /// `check`'s denial, when this check applies the denylist's entries; `None` for the probe.
@@ -123,9 +146,13 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// Records the `gh pr merge` that `gh <args>` runs, if any; past [`MAX_MERGES`] denies.
-    fn gh(&mut self, args: &[Word]) -> Option<Denial> {
-        let merge = gh::pr_merge(args)?;
+    /// Records the `gh pr merge` that `gh <args>` runs in `scope`, if any, with how the command
+    /// changed directory before it; past [`MAX_MERGES`] denies.
+    fn gh(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        let merge = PrMerge {
+            moved: scope.moved.or(self.moved),
+            ..gh::pr_merge(args)?
+        };
         if !self.merges.contains(&merge) {
             self.merges.push(merge);
         }
@@ -175,7 +202,10 @@ impl<'c> Checker<'c> {
 
     /// Checks one simple command's words.
     fn words(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
-        self.note_gh_env(words);
+        if let Some(denial) = self.note_gh_env(words) {
+            return Some(denial);
+        }
+        let scope = self.moved_by_wrapper(words, scope);
         match wrappers::unwrap(words) {
             Run::Nothing => None,
             Run::Script(text) => self.text(&text, scope.nested()),
@@ -247,7 +277,7 @@ impl<'c> Checker<'c> {
         };
         let args = args.as_ref();
         match program {
-            Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args),
+            Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args, scope),
             Program::Named("git") => {
                 let scripts = git::settings(args).scripts;
                 scripts
@@ -259,10 +289,9 @@ impl<'c> Checker<'c> {
                 rm::check(args, self.context, scope.appended)
                     .or_else(|| config::check("rm", args, &self.cwd))
             }),
-            Program::Named("cd" | "pushd") => {
-                self.cwd.change(args);
-                None
-            }
+            Program::Named("cd") => self.change_directory("cd", Some(args)),
+            Program::Named("pushd") => self.change_directory("pushd", Some(args)),
+            Program::Named("popd") => self.change_directory("popd", None),
             Program::Named(name) => {
                 self.entry(|| config::check(name, args, &self.cwd))
                     .or_else(|| {
@@ -272,6 +301,29 @@ impl<'c> Checker<'c> {
                     })
             }
             Program::Unknown(word) => self.unknown(word, args, scope),
+        }
+    }
+
+    /// Follows `cd` or `pushd <args>`, or `popd` (`None`: back to a directory the guard never
+    /// saw, so relative paths may start anywhere), and notes the first change for the probe.
+    fn change_directory(&mut self, how: &'static str, args: Option<&[Word]>) -> Option<Denial> {
+        match args {
+            Some(args) => self.cwd.change(args),
+            None => self.cwd = Cwd::Unknown,
+        }
+        self.moved.get_or_insert(how);
+        None
+    }
+
+    /// `scope`, noting in the probe how a wrapper of `words` changes the working directory
+    /// before its command runs ([`wrappers::chdir`]); an outer one is kept.
+    fn moved_by_wrapper<'s>(&self, words: &[Word], scope: Scope<'s>) -> Scope<'s> {
+        if self.entries != Entries::PrMerge || scope.moved.is_some() {
+            return scope;
+        }
+        Scope {
+            moved: wrappers::chdir(words),
+            ..scope
         }
     }
 

@@ -5,9 +5,10 @@
 //! `eval`, scripts on stdin, variables). A call that runs none, and any other tool, is allowed
 //! silently. Each merge must name its pull request by number (`7`, `#7`, or an
 //! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), name no other
-//! repository (`-R`/`--repo`, or `GH_REPO`/`GH_HOST` set in the command), and pin its head with
-//! a full `--match-head-commit` (the denial names the command with the worktree's `HEAD`); then
-//! it needs, for that head (`pull` holds these checks):
+//! repository (`-R`/`--repo`, `GH_REPO`/`GH_HOST` set in the command, or a directory change
+//! before gh: `cd`, `pushd`, `popd`, `env --chdir`, `sudo --chdir`, `find -execdir`), and pin
+//! its head with a full `--match-head-commit` (the denial names the command with the worktree's
+//! `HEAD`); then it needs, for that head (`pull` holds these checks):
 //!
 //! - a fresh `tests_verified`-or-better verdict after the latest fresh `changes_requested`
 //!   (fresh: recorded for the head's commit, or for the same patch id from the same base, so a
@@ -69,6 +70,8 @@ pub(crate) enum Check {
     Repo,
     /// The command sets `GH_REPO` or `GH_HOST`.
     Env,
+    /// The command changes the working directory before gh runs (`cd`, `env --chdir`, ...).
+    Directory,
     /// The merge does not pin its head with a full `--match-head-commit`.
     Head,
     /// The pull request has no verdict.
@@ -94,6 +97,7 @@ impl Check {
             Self::Target => "target",
             Self::Repo => "repo",
             Self::Env => "env",
+            Self::Directory => "directory",
             Self::Head => "head",
             Self::NoVerdict => "no-verdict",
             Self::Stale => "stale",

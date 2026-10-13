@@ -14,6 +14,7 @@ fn merge(target: Target, repo: Option<&str>, match_head: Option<&str>) -> PrMerg
         match_head: match_head.map(str::to_owned),
         url_repo: None,
         env: None,
+        moved: None,
     }
 }
 
@@ -55,6 +56,24 @@ fn a_merge_whose_command_sets_gh_repo_or_host_is_denied() {
     let denial = pull(&set).expect_err("denied");
 
     assert_eq!(denial.check, Check::Env, "{denial:?}");
+}
+
+#[test]
+fn a_merge_run_after_a_directory_change_is_denied_naming_the_change() {
+    let mut moved = merge(Target::Number(7), None, None);
+    moved.moved = Some("cd");
+
+    let denial = pull(&moved).expect_err("denied");
+
+    assert_eq!(
+        (denial.check, denial.reason.as_str()),
+        (
+            Check::Directory,
+            "merge-gate: the command runs cd before gh pr merge, so gh may read another \
+             repository; run gh pr merge from this worktree without changing directory first"
+        ),
+        "{denial:?}"
+    );
 }
 
 #[test]
@@ -103,6 +122,7 @@ fn every_check_has_its_own_id() {
         Check::Target,
         Check::Repo,
         Check::Env,
+        Check::Directory,
         Check::Head,
         Check::NoVerdict,
         Check::Stale,

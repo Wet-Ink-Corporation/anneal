@@ -241,6 +241,37 @@ fn an_anneal_directory_that_is_a_symlink_out_of_the_worktree_is_refused() -> Tes
     assert_refused_through(&repo, &repo.path().join(".anneal"))
 }
 
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_symlinked_anneal_directory_gets_no_briefs_directory_where_it_leads() -> TestResult {
+    let repo = PrRepo::new()?;
+    let outside = tempfile::tempdir()?;
+    std::os::unix::fs::symlink(outside.path(), repo.path().join(".anneal"))?;
+    let args = build_args(&[]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let output = repo.anneal(&args)?;
+
+    assert_eq!(output.status.code(), Some(70), "{output:?}");
+    let expected = format!(
+        "ERROR .anneal/briefs resolves to {}, not this worktree's own \
+         .anneal/briefs; make it a plain directory\n",
+        outside.path().canonicalize()?.join("briefs").display()
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        expected,
+        "where .anneal/briefs would resolve"
+    );
+    assert_eq!(
+        fs::read_dir(outside.path())?.count(),
+        0,
+        "no briefs directory made outside the worktree"
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn an_unknown_field_key_is_a_usage_error() -> TestResult {

@@ -127,6 +127,7 @@ const fn top_level() -> Scope<'static> {
         feed: &Feed::Empty,
         depth: 0,
         appended: false,
+        moved: None,
     }
 }
 

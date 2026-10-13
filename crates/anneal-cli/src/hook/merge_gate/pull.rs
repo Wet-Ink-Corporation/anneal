@@ -1,6 +1,6 @@
 //! What the gate needs of one `gh pr merge` before it reads any verdict: a pull request number,
 //! no other repository (`-R`/`--repo`, `GH_REPO`/`GH_HOST`, a URL of another repository), and
-//! a head pinned by a full `--match-head-commit`.
+//! no directory change before gh, and a head pinned by a full `--match-head-commit`.
 
 use std::path::Path;
 use std::time::Duration;
@@ -41,6 +41,15 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
             &format!(
                 "the command sets {name}, which can point gh pr merge at another repository or \
                  host; run gh pr merge without setting {name}"
+            ),
+        ));
+    }
+    if let Some(how) = merge.moved {
+        return Err(Denial::new(
+            Check::Directory,
+            &format!(
+                "the command runs {how} before gh pr merge, so gh may read another repository; \
+                 run gh pr merge from this worktree without changing directory first"
             ),
         ));
     }

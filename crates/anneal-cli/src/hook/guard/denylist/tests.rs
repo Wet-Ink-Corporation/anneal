@@ -228,6 +228,32 @@ fn bash_writes_to_the_anneal_config_are_denied_and_the_rest_of_anneal_is_not() {
 }
 
 #[test]
+fn a_hard_link_to_protected_config_is_a_write_of_it() {
+    assert_table(&[
+        ("ln .anneal/config.json x", CONFIG),
+        ("ln -f .anneal/config.json x", CONFIG),
+        ("ln -v -- .anneal/config.json x", CONFIG),
+        ("ln .anneal/config.json", CONFIG),
+        ("ln -t /tmp .anneal/config.json", CONFIG),
+        ("ln .claude/settings.json /tmp/s.json", CONFIG),
+        ("ln --suffix=.bak .claude/settings.local.json x", CONFIG),
+        ("ln --s=.bak .claude/settings.local.json x", CONFIG),
+        ("ln -Ss .claude/settings.json x", CONFIG),
+        ("link .anneal/config.json x", CONFIG),
+        ("cp -l .anneal/config.json x", CONFIG),
+        ("cp -al .claude /tmp/c", CONFIG),
+        ("cp --link .claude/settings.json x", CONFIG),
+        ("sudo ln .anneal/config.json x", CONFIG),
+        ("ln -s .anneal/config.json x", ALLOW),
+        ("ln -sf .claude/settings.json x", ALLOW),
+        ("ln --sym .claude/settings.json x", ALLOW),
+        ("ln notes.md x", ALLOW),
+        ("cp .anneal/config.json x", ALLOW),
+        ("cp -s .anneal/config.json x", ALLOW),
+    ]);
+}
+
+#[test]
 fn reads_and_writes_elsewhere_are_allowed() {
     assert_table(&[
         ("cat .claude/settings.json", ALLOW),

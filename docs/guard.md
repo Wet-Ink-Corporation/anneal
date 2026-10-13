@@ -155,7 +155,12 @@ The writes it checks:
   also checked joined with each source's name, so `cp settings.json .claude/` is denied;
 - what `mv` moves away, and what `rm`, `unlink`, `rmdir`, `shred`, `chmod`, `chown` and `chgrp`
   touch. These also deny `.anneal`, `.claude`, `.github` or `.cargo` itself, because removing or
-  re-permissioning that directory changes the config inside it.
+  re-permissioning that directory changes the config inside it;
+- the sources of a hard link: `ln` without `-s`/`--symbolic` (also `ln FILE` alone, which links
+  into `.`), `link`, and `cp -l`/`--link`. Writing a hard link writes the file it links, so
+  `ln .anneal/config.json x` is a write of `.anneal/config.json`, as are a source directory that
+  holds config (`cp -al .claude /tmp/c`) and the working directory or `/` as a source. A
+  symbolic link is not denied: a later write through it is a gap (below).
 
 A path component with an unquoted glob is denied when it could match a protected name
 (`.cl*/settings.json`). Reading these files (`cat`, `cp clippy.toml /tmp/x`) is allowed.
@@ -169,8 +174,8 @@ entry that needs a parent on its name alone: `../settings.json` counts as
 A `cd` (or `pushd`) earlier in the command moves where relative paths start. Each relative
 target is checked as written and also joined to the directory the `cd` named, so
 `cd .claude && echo x > settings.json` is denied (`cd` alone and `cd ~` go home). After a `cd`
-to a variable or to `-`, relative paths may start anywhere, so they are matched as climbing
-above their start (`cd "$DIR" && echo x > settings.json` is denied).
+to a variable or to `-`, or a `popd`, relative paths may start anywhere, so they are matched as
+climbing above their start (`cd "$DIR" && echo x > settings.json` is denied).
 
 ## Bypass handling
 
@@ -194,7 +199,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | `eval`, `alias NAME=VALUE`, `trap '...' SIG`, `su -c`, `script -c`, `watch`, `flock -c`, `env -S '...'` | the string is lexed and checked (`eval` and `watch` join their arguments) |
 | Environment: `VAR=x cmd`, `env [-i] [-u N] VAR=x cmd` | assignments and options are skipped |
 | Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked |
-| Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
+| Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `link`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
 | Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
 | Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied |
@@ -215,7 +220,8 @@ it cannot model instead of modelling every shell feature, and it does not try to
   `GIT_EDITOR`);
 - `PATH` changes, functions or aliases defined by an earlier Bash call, and how a pipe's
   writer that is not a static `echo` or `printf` reaches `xargs`;
-- symbolic links (`/tmp/link` that points elsewhere);
+- symbolic links (`/tmp/link` that points elsewhere), including one the command makes to
+  protected config and then writes through (`ln -s .anneal/config.json x; echo > x`);
 - a command string given to a program it does not know as one word (`ssh host 'rm -rf /'`,
   `tmux new 'git push -f'`): only words that name a program are read, not shell text inside
   one;

@@ -137,8 +137,12 @@ or `true`), which merges nothing; `--disable-auto=false` is a merge. For each me
 1. The pull request must be named by number (`7`, `#7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`). With no argument gh merges
    the current branch's pull request, and a branch name needs a network lookup; both are denied,
-   as are `-R`/`--repo`, any other URL, and a `GH_REPO` or `GH_HOST` the command sets (another
-   repository's verdicts are not in this ledger).
+   as are `-R`/`--repo`, any other URL, and a `GH_REPO` or `GH_HOST` the command sets, also
+   through brace expansion (`export GH_RE{PO,X}=o/x`): another repository's verdicts are not in
+   this ledger. gh finds its repository from the working directory's git remotes, so a merge the
+   command runs after changing directory is denied too (`directory`): after a `cd`, `pushd` or
+   `popd` anywhere before it, under `env -C`/`--chdir` or `sudo -D`/`--chdir`, or as a
+   `find -execdir`/`-okdir` action.
 2. The head must be pinned with `--match-head-commit <full 40-hex commit>`, so gh refuses the
    merge if the remote head differs from the commit judged. Without a pin the denial names the
    command to run, with the worktree's `HEAD` filled in.
@@ -151,7 +155,7 @@ or `true`), which merges nothing; `--disable-auto=false` is a merge. For each me
 
 A denial is Claude Code's deny decision whose reason is one `ERROR merge-gate: ...` line, plus a
 `gate_blocked` event (`point` `merge-gate.<check>`, the checks being `target`, `repo`, `env`,
-`head`, `no-verdict`, `stale`, `changes-requested`, `tests`, `review`, `bad-input`, `unreadable`
+`directory`, `head`, `no-verdict`, `stale`, `changes-requested`, `tests`, `review`, `bad-input`, `unreadable`
 and `unjudged`) in the ledger when one exists; the gate never creates a ledger, and with none
 every pull request has no verdict. Unreadable input or commands, a merge naming no number, and a
 ledger, git or `.anneal/config.json` it cannot read are denied. git and ledger reads share 3.5 s
@@ -166,6 +170,14 @@ The gate judges what it can see in a Bash command, for an honest agent:
   another tool;
 - `GH_REPO` or `GH_HOST` already in the process environment (only an assignment in the command
   is seen), and a gh configured for another host than `origin`'s;
+- a working directory changed by a program the guard does not know (`chroot`, `nsenter --wd`,
+  `systemd-run --working-directory`) or by an earlier Bash call, and `GIT_DIR` or
+  `GIT_WORK_TREE` pointing gh's git at another repository;
+- freshness by patch id trusts the local base ref: the base is recorded as a name
+  (`origin/main`) and resolved again when the merge is judged, so moving that ref locally
+  changes the diff the head's patch id is taken from. Recording the base's commit and requiring
+  it to be an ancestor of the judged base would close this, but needs a new `verdict_set` field
+  (a registry change); the commit pin still makes gh refuse a head other than the one judged;
 - `.anneal/config.json` is read from the working tree, so an uncommitted edit changes the
   settings; and anyone can record `--source human` or append a verdict with `anneal ledger
   append`.

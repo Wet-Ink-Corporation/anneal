@@ -19,9 +19,9 @@ const SHELLS: [&str; 7] = ["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"];
 
 /// Programs the guard checks, or that run shell text: the arguments of a program it does not
 /// know are read as a command from each word naming one of these (or a wrapper).
-const CHECKED: [&str; 15] = [
-    "rm", "git", "tee", "truncate", "cp", "mv", "install", "ln", "sed", "unlink", "rmdir", "shred",
-    "chmod", "chown", "chgrp",
+const CHECKED: [&str; 16] = [
+    "rm", "git", "tee", "truncate", "cp", "mv", "install", "ln", "link", "sed", "unlink", "rmdir",
+    "shred", "chmod", "chown", "chgrp",
 ];
 
 /// Programs and keywords that only print, search, test or describe their arguments.
@@ -170,6 +170,27 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
                     appended,
                 };
             }
+        };
+    }
+}
+
+/// How a wrapper of `words` changes the working directory before the command it wraps runs
+/// (`env --chdir`, `sudo --chdir`, `find -execdir`), walking the wrappers as [`unwrap`] does.
+pub(super) fn chdir(words: &[Word]) -> Option<&'static str> {
+    let mut words = skip_prefix(words);
+    loop {
+        let [first, rest @ ..] = words else {
+            return None;
+        };
+        let Program::Named(name) = program(first) else {
+            return None;
+        };
+        if let Some(how) = strings::chdir(name, rest) {
+            return Some(how);
+        }
+        words = match peel(name, rest) {
+            Peel::Inner(inner) | Peel::Appending(inner) => skip_prefix(inner),
+            Peel::Done(_) | Peel::Program => return None,
         };
     }
 }

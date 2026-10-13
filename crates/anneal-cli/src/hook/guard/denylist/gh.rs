@@ -56,6 +56,9 @@ pub(crate) struct PrMerge {
     pub(crate) url_repo: Option<String>,
     /// `GH_REPO` or `GH_HOST`, when the command sets either anywhere.
     pub(crate) env: Option<String>,
+    /// How the command changed the working directory before gh ran (`cd`, `env --chdir`, ...),
+    /// so gh may read another repository's remotes.
+    pub(crate) moved: Option<&'static str>,
 }
 
 /// What a pass over `gh`'s arguments found.
@@ -93,6 +96,7 @@ pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
         match_head: parsed.match_head.map(str::to_owned),
         url_repo,
         env: None,
+        moved: None,
     })
 }
 

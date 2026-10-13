@@ -307,3 +307,33 @@ fn a_gh_repository_or_host_set_in_the_command_is_denied() -> TestResult {
     assert_eq!(blocked_points(&repo)?, ["merge-gate.env", "merge-gate.env"]);
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn gh_repository_variables_set_through_brace_expansion_are_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    let reason = deny_reason(&repo.merge_pinned("export GH_RE{PO,X}=o/x; gh pr merge 7")?)?;
+
+    assert!(reason.contains("sets GH_REPO"), "{reason}");
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.env"]);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_after_a_directory_change_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    for command in ["cd /tmp && gh pr merge 7", "env -C /tmp gh pr merge 7"] {
+        let reason = deny_reason(&repo.merge_pinned(command)?)?;
+        assert!(reason.contains("before gh pr merge"), "{command}: {reason}");
+    }
+    assert_eq!(
+        blocked_points(&repo)?,
+        ["merge-gate.directory", "merge-gate.directory"]
+    );
+    Ok(())
+}

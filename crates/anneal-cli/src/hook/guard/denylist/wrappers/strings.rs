@@ -17,6 +17,43 @@ const SU_VALUES: &[&str] = &["-s", "-g", "-G", "-w", "--shell", "--group", "--su
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
 
+/// How the wrapper `name`, given `words`, changes the working directory before its command
+/// runs: `env -C DIR` (`--chdir`), `sudo -D DIR` (`--chdir`), or a `find` action run from each
+/// match's directory (`-execdir`, `-okdir`).
+pub(super) fn chdir(name: &str, words: &[Word]) -> Option<&'static str> {
+    match name {
+        "env" => options_hold(words, ENV_VALUES, 'C').then_some("env --chdir"),
+        "sudo" => options_hold(words, SUDO_VALUES, 'D').then_some("sudo --chdir"),
+        "find" => words
+            .iter()
+            .any(|word| matches!(word.text.as_str(), "-execdir" | "-okdir"))
+            .then_some("find -execdir"),
+        _ => None,
+    }
+}
+
+/// Whether the options leading `words` (each of `with_value` skipping its value) include
+/// `--chdir`, abbreviated or not, or a short cluster holding `short`. A cluster where the
+/// letter is another option's value counts too: the guard reads it as the change.
+fn options_hold(words: &[Word], with_value: &[&str], short: char) -> bool {
+    let mut rest = words;
+    while let [first, tail @ ..] = rest {
+        let text = first.text.as_str();
+        if text == "--" || !is_option(first) {
+            return false;
+        }
+        if is_long(text, "--chdir") || (!text.starts_with("--") && text.contains(short)) {
+            return true;
+        }
+        rest = if takes_value(text, with_value) {
+            skip_one(tail)
+        } else {
+            tail
+        };
+    }
+    false
+}
+
 /// `sudo` and `doas`: the command after their options, or, with `-s` or `-i` and no command,
 /// a shell reading stdin.
 pub(super) fn sudo(words: &[Word]) -> Peel<'_> {
