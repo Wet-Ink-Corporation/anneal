@@ -7,19 +7,26 @@
 //! Each simple command the lexer lists (those of `$( )`, backticks, subshells and process
 //! substitutions come out as their own, before the command holding them) is rendered in order:
 //!
-//! - **Words before the program**: keywords (`if`, `{`, `!`) as written; assignments as
-//!   `NAME=<redacted>` (a name over 64 characters is hidden too); the denylist's wrappers
-//!   (`sudo`, `env`, `nohup`, `timeout`, `nice`, `exec`, `command`, `xargs`, ...) by the program
-//!   rule, their options by the option rule and their values (`sudo -u root`, `timeout 5`)
-//!   hidden, so the program after any wrapper is shown as a bare one is.
-//! - **The program word**: kept when it is literal and 1 to 64 of `[A-Za-z0-9._+/-]`
-//!   ([`allow::is_program`]); otherwise hidden.
+//! - **Words before the program**, each by the role the denylist's walk gives it
+//!   ([`denylist::roles`]), never by its text alone: keywords (`if`, `{`, `!`) as written;
+//!   assignments as `NAME=<redacted>` (a name over 64 characters is hidden too); the words
+//!   standing in the place of a program that the walk reads as wrappers (`sudo`, `env`,
+//!   `nohup`, `timeout`, `nice`, `exec`, `command`, `xargs`, a shell, `source`, `find`, ...) by
+//!   the program rule, their options by the option rule and their values and operands
+//!   (`sudo -u root`, `timeout 5`, `bash script`) as arguments, so the program after any
+//!   wrapper is shown as a bare one is, and a value that names a wrapper (`sudo -D /x/nice`,
+//!   `find /a/env`) is hidden like any other.
+//! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
+//!   `/usr/bin/rm` is `rm`), kept when the word is literal and the name 1 to 64 of
+//!   `[A-Za-z0-9._+-]` ([`allow::is_program`]); otherwise hidden. Wrappers are shown the same
+//!   way.
 //! - **Options**: `--` and `-` kept; a long option's name kept when it is 1 to 64 of
 //!   `[A-Za-z0-9._-]`, its `=value` hidden (`--token=<redacted>`); a short option kept when it
 //!   is one ASCII letter or digit, or a cluster of the program's flags that take no value
 //!   (`rm -rf`, `git clean -fdx`), or one of the program's exact single-dash flags
 //!   (`terraform -auto-approve`, `find -delete`); any other is `-<redacted>`, since its letters
-//!   may hold a value (`mysql -psecret`).
+//!   may hold a value (`mysql -psecret`). After a literal `--` every word up to the next
+//!   wrapper is an operand, shown only as an argument is (`grep -- <redacted>`).
 //! - **Arguments**: hidden, except a subcommand of the program (`git push`, `kubectl delete`,
 //!   `docker system prune`), the key of a keyed operand (`dd of=`), and a sensitive target
 //!   (`/`, `~`, `.`, `*`, `HEAD`, `main`, `origin`, `/dev/null`, `/dev/sda`, ...).
@@ -29,7 +36,8 @@
 //! - **Bodies**: a `bash -c`, `eval`, `su -c`, `trap` or `watch` body (the denylist's
 //!   [`denylist::Layout::Script`]) that is literal is lexed and rendered in turn, in `'…'`, at
 //!   most [`MAX_NESTING`] deep and within the denylist's lexing budget; any other body is
-//!   hidden. `find`'s actions are rendered as commands.
+//!   hidden. `find`'s actions are rendered as commands, and its own words by its tables
+//!   wherever the walk finds it (`sudo find`, `X=1 find`).
 //!
 //! Commands are joined by `; `, or ` | ` when a command reads the pipe of the one just before
 //! it: the lexer keeps no other separator. A command the lexer cannot read is [`UNPARSED`],
@@ -41,7 +49,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::ptr;
 
-use super::denylist::{self, Layout};
+use super::denylist::{self, FindActions, Layout, Role};
 use super::shell::{self, MAX_NESTING, ParseError, Shape, Stdin, Word};
 use crate::decide::redact::REDACTED;
 use crate::decide::state::cut_chars;
@@ -172,10 +180,10 @@ impl Skeleton {
 
     /// Renders one simple command's words, as the denylist lays them out.
     fn words(&mut self, words: &[Word], line: &mut Line) {
-        let assigned = denylist::assignments(words);
+        let roles = denylist::roles(words);
         let all = Lead {
             words,
-            assigned: &assigned,
+            roles: &roles,
         };
         match denylist::layout(words) {
             Layout::Program(at) => {
@@ -184,13 +192,15 @@ impl Skeleton {
                 if let Some((program, args)) = rest.words.split_first() {
                     line.word(&shown_program(program));
                     let name = denylist::program_name(program);
+                    let mut options = Options::Open;
                     for arg in args {
-                        line.word(&shown_argument(arg, name));
+                        line.word(&shown_argument(arg, name, options));
+                        options = options.after(arg);
                     }
                 }
             }
             Layout::Script(body) => self.script(all, &body, line),
-            Layout::Exec(actions) => self.exec(all, &actions, line),
+            Layout::Exec(exec) => self.exec(all, &exec, line),
             Layout::Other => render_lead(all, None, line),
         }
     }
@@ -219,13 +229,13 @@ impl Skeleton {
         render_lead(after, None, line);
     }
 
-    /// `find` with actions: its own words as wrapper words, each action as a command one
-    /// level deeper.
-    fn exec(&mut self, all: Lead<'_>, actions: &[Range<usize>], line: &mut Line) {
-        let find = all.words.first().and_then(denylist::program_name);
+    /// `find` with actions: its own words as wrapper words, by `find`'s tables wherever the
+    /// walk found it, each action as a command one level deeper.
+    fn exec(&mut self, all: Lead<'_>, exec: &FindActions, line: &mut Line) {
+        let find = all.words.get(exec.find).and_then(denylist::program_name);
         // `rest` is `all` from index `at`; the actions come in order and do not overlap.
         let (mut rest, mut at) = (all, 0);
-        for range in actions {
+        for range in &exec.actions {
             let (before, tail) = rest.split_at(range.start.saturating_sub(at));
             let (action, tail) = tail.split_at(range.len());
             render_lead(before, find, line);
@@ -239,27 +249,24 @@ impl Skeleton {
     }
 }
 
-/// Words outside a program's arguments, and which of them the denylist reads as assignments
-/// (`denylist::assignments`), index for index.
+/// Words outside a program's arguments, and the role the denylist's walk gives each
+/// (`denylist::roles`), index for index.
 #[derive(Debug, Clone, Copy)]
 struct Lead<'w> {
     words: &'w [Word],
-    assigned: &'w [bool],
+    roles: &'w [Role],
 }
 
 impl Lead<'_> {
     /// The words before index `at` and from it; past the end, all of them and none.
     fn split_at(self, at: usize) -> (Self, Self) {
         let (words, words_after) = self.words.split_at_checked(at).unwrap_or((self.words, &[]));
-        let (assigned, assigned_after) = self
-            .assigned
-            .split_at_checked(at)
-            .unwrap_or((self.assigned, &[]));
+        let (roles, roles_after) = self.roles.split_at_checked(at).unwrap_or((self.roles, &[]));
         (
-            Self { words, assigned },
+            Self { words, roles },
             Self {
                 words: words_after,
-                assigned: assigned_after,
+                roles: roles_after,
             },
         )
     }
@@ -307,33 +314,56 @@ fn quoted(skeleton: &str) -> String {
     format!("'{skeleton}'")
 }
 
-/// Renders words outside a program's arguments: keywords, assignments, wrappers with their
-/// options and values. `program` names the wrapper before them, for its option tables. A
-/// sensitive target is only that: `.` also names `source`, but `find .` stays `find`'s.
+/// Renders words outside a program's arguments by the role the denylist's walk gives each:
+/// keywords, assignments, wrappers, and their options, values and operands as arguments.
+/// `program` names the wrapper before them, for its option tables.
 fn render_lead(lead: Lead<'_>, program: Option<&str>, line: &mut Line) {
     let mut wrapper = program;
-    for (at, word) in lead.words.iter().enumerate() {
-        if denylist::is_keyword(word) {
-            line.word(&word.text);
-        } else if lead.assigned.get(at).copied().unwrap_or(false) {
-            line.word(&shown_assignment(word));
-        } else if word.shape != Shape::Dynamic && allow::is_target(&word.text) {
-            line.word(&word.text);
-        } else if denylist::names_wrapper(word) {
-            wrapper = denylist::program_name(word);
-            line.word(&shown_program(word));
-        } else {
-            line.word(&shown_argument(word, wrapper));
+    let mut options = Options::Open;
+    for (word, role) in lead.words.iter().zip(lead.roles) {
+        match role {
+            Role::Keyword => line.word(&word.text),
+            Role::Assignment => line.word(&shown_assignment(word)),
+            Role::Wrapper => {
+                wrapper = denylist::program_name(word);
+                options = Options::Open;
+                line.word(&shown_program(word));
+            }
+            Role::Other => {
+                line.word(&shown_argument(word, wrapper, options));
+                options = options.after(word);
+            }
         }
     }
 }
 
-/// A program word: as written when literal and of [`allow::is_program`]'s shape.
+/// Whether a program's options may still come, or a literal `--` ended them and every word
+/// after it is an operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Options {
+    /// A word starting with `-` is read as an option.
+    Open,
+    /// Every word is an operand.
+    Ended,
+}
+
+impl Options {
+    /// The state after the argument `word`.
+    fn after(self, word: &Word) -> Self {
+        if word.is_literal() && word.text == "--" {
+            Self::Ended
+        } else {
+            self
+        }
+    }
+}
+
+/// A program or wrapper word: the name it runs, without a path or `.exe`
+/// ([`denylist::program_name`]), when literal and of [`allow::is_program`]'s shape.
 fn shown_program(word: &Word) -> Cow<'_, str> {
-    if word.is_literal() && allow::is_program(&word.text) {
-        Cow::Borrowed(&word.text)
-    } else {
-        Cow::Borrowed(REDACTED)
+    match denylist::program_name(word) {
+        Some(name) if allow::is_program(name) => Cow::Borrowed(name),
+        _ => Cow::Borrowed(REDACTED),
     }
 }
 
@@ -347,14 +377,14 @@ fn shown_assignment(word: &Word) -> Cow<'static, str> {
     }
 }
 
-/// An argument of `program`: an option by the option rule, an allowlisted word as written,
-/// anything else hidden.
-fn shown_argument<'w>(word: &'w Word, program: Option<&str>) -> Cow<'w, str> {
+/// An argument of `program`: an option by the option rule while `options` are open, an
+/// allowlisted word as written, anything else hidden.
+fn shown_argument<'w>(word: &'w Word, program: Option<&str>, options: Options) -> Cow<'w, str> {
     let text = word.text.as_str();
     if word.shape == Shape::Dynamic {
         return Cow::Borrowed(REDACTED);
     }
-    if word.is_literal() && text.starts_with('-') {
+    if options == Options::Open && word.is_literal() && text.starts_with('-') {
         return shown_option(text, program);
     }
     if allow::is_target(text) || (word.is_literal() && allow::is_subcommand(program, text)) {

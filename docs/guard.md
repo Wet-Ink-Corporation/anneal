@@ -303,18 +303,24 @@ them (`x=$(cat f)` is `cat <redacted>; x=<redacted>`). Commands are joined by `;
 when a command reads the pipe of the one just before it: the lexer keeps no other separator,
 so `&&`, `||`, `&` and newlines all show as `; `.
 
-- **Words before the program**: keywords (`if`, `then`, `{`, `!`) as written; an assignment
-  the denylist reads as one (before the program, or after a wrapper that runs a command:
+- **Words before the program**, each by the role the denylist's walk gives it
+  (`denylist::roles`), never by its text alone: keywords (`if`, `then`, `{`, `!`) as written;
+  an assignment the denylist reads as one (before the program, or after a wrapper that runs a command:
   `TOKEN=x deploy`, `sudo K=v run`, `env -i A=b cmd`) as `NAME=<redacted>`, a name over 64
-  characters hidden too; the denylist's wrappers (`sudo`, `doas`, `env`, `command`, `nohup`,
+  characters hidden too; a word standing in the place of a program that the walk reads as a
+  wrapper (`sudo`, `doas`, `env`, `command`, `nohup`,
   `exec`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`,
   `busybox`, `flock`, `xargs`, `coproc`, shells, `eval`, `su`, `script`, `trap`, `watch`,
-  `find`, ...) by the program rule, their options by the option rule and their values hidden
-  (`sudo -u <redacted>`, `timeout <redacted>`). The wrapper list and each wrapper's option
-  arity are the denylist's own, so the program after any wrapper is shown as a bare one is.
-- **The program**: kept when it is literal (no expansion, glob or brace) and 1 to 64 of
-  `[A-Za-z0-9._+/-]` (`rm`, `/usr/bin/python3.12`, `./deploy.sh`); otherwise `<redacted>`
-  (`"$CMD"`, `./my tool`).
+  `find`, ...) by the program rule, their options by the option rule and their values and
+  operands as arguments (`sudo -u <redacted>`, `timeout <redacted>`, `bash <redacted>`). The
+  wrapper list and each wrapper's option arity are the denylist's own, so the program after any
+  wrapper is shown as a bare one is, and a value or operand that names a wrapper is hidden like
+  any other (`sudo -D /x/nice rm` is `sudo -D <redacted> rm`, `find /a/env -delete` is
+  `find <redacted> -delete`).
+- **The program**: its name without a path or `.exe` (`/usr/bin/python3.12` is `python3.12`,
+  `./deploy.sh` is `deploy.sh`), kept when the word is literal (no expansion, glob or brace)
+  and the name 1 to 64 of `[A-Za-z0-9._+-]`; otherwise `<redacted>` (`"$CMD"`, `./my tool`).
+  A wrapper is shown the same way (`/usr/bin/sudo` is `sudo`).
 - **Options**: `--` and `-` kept. A long option keeps its name when it is 1 to 64 of
   `[A-Za-z0-9._-]`, its value hidden (`--token=<redacted>`, `--force`); a word that only looks
   like one (`--a:b`, `--$x`) is `<redacted>`. A short option can carry its value attached
@@ -323,12 +329,14 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `git clean -fdx`, `docker system prune -af`; tables for `rm`, `git`, `docker`, `podman`,
   `kubectl`, `cp`, `mv`, `chmod`, `chown`, `chgrp`, `ln`, `shred`), or one of the program's
   single-dash flags (`terraform -auto-approve`, `find -delete`, `-exec`, `-name`); any other
-  is `-<redacted>`.
+  is `-<redacted>`. After a literal `--`, every word up to the next wrapper is an operand and
+  shown only as an argument is (`grep -- --token-name f` is `grep -- <redacted> <redacted>`).
 - **Arguments**: `<redacted>`, except
   - a subcommand that matters to "destructive or irreversible", for its program only: `git`
     (`push`, `reset`, `clean`, `checkout`, `switch`, `restore`, `branch`, `rebase`,
     `filter-branch`, `filter-repo`, `stash`, `rm`, `drop`, `clear`, `tag`, `update-ref`,
-    `reflog`, `expire`, `gc`, `prune`, `worktree`, `remove`, `commit`, `merge`), `gh` (`pr`,
+    `reflog`, `expire`, `gc`, `prune`, `worktree`, `remove`, `commit`, `merge`, and `--all`
+    for `filter-branch -- --all`), `gh` (`pr`,
     `merge`, `close`, `repo`, `delete`, `archive`, `rename`, `release`, `issue`, `secret`,
     `variable`, `run`, `cancel`, `workflow`, `disable`), `cargo`, `npm`/`pnpm`/`yarn`,
     `docker`/`podman`, `kubectl` (verbs and resource kinds: `delete`, `ns`, `pod`, ...),
@@ -351,7 +359,8 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   after them when it is part of a word (`env -Srm\ -rf\ /` is `env -<redacted> 'rm -rf /'`); a
   body from a word with an expansion is `<redacted>` (`bash -c "$CMD"`), one that does not lex
   `'<unparsed>'`, and one past 32 levels or the denylist's 4 MiB lexing budget `<redacted>`.
-  `find`'s actions are rendered as commands (`find / -exec rm -rf {} ;`).
+  `find`'s actions are rendered as commands (`find / -exec rm -rf {} ;`), and its own words by
+  its tables wherever the walk finds it (`sudo find . -exec rm {} ; -delete`).
 
 **What D1 no longer sees.** Every argument value outside the tables: file names and paths
 (`rm -rf build` is `rm -rf <redacted>`), branch names other than `main` and `master`, resource
@@ -360,8 +369,8 @@ names (`kubectl delete ns <redacted>`), numbers (`gh pr merge <redacted>`), URLs
 (`ls -<redacted>`), the names of declared variables (`export <redacted>`), what a heredoc,
 here-string or file on stdin holds, and which of `;`, `&&`, `||`, `&` or a newline separates
 two commands. Variables set in the command are not followed (the denylist puts their values in;
-the skeleton never shows a value). A program name is shown whatever it is, so a secret written
-as a program word (`./deploy-hunter2.sh`) or as a short assignment name would reach Clef: that
+the skeleton never shows a value). A program name is shown whatever it is (its path is not), so a secret
+written as a program name (`./deploy-hunter2.sh` is `deploy-hunter2.sh`) or as a short assignment name would reach Clef: that
 is the design's one accepted exposure. The prompt hooks' prose redaction
 (`decide::redact::safe_prompt`, `docs/hooks.md`) is a different, word-rule filter and is
 unchanged.

@@ -136,22 +136,31 @@ pub(super) enum Run<'a> {
 /// Where [`unwrap`] finds what a simple command runs, by word position: the view the guard's
 /// redaction (`guard::redact`) renders, so it reads wrappers exactly as the denylist does.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Layout<'a> {
+pub(in crate::hook::guard) enum Layout<'a> {
     /// The program is the word at this index: the words before it are keywords, assignments
     /// and wrappers with their options and values, the words after it its arguments.
     Program(usize),
     /// Shell text the wrappers run: a `-c` string, `eval`'s or `watch`'s words joined,
     /// `env -S`, `trap`'s action, an alias's value.
     Script(Cow<'a, str>),
-    /// The words of each `find` action (`-exec ... ;`), by index range.
-    Exec(Vec<Range<usize>>),
+    /// `find` with actions (`-exec ... ;`).
+    Exec(FindActions),
     /// No program to read further: only keywords and assignments, a shell reading its
     /// script from standard input or a file, or no command at all.
     Other,
 }
 
+/// Where `find` and its actions are in a simple command, by word position.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::hook::guard) struct FindActions {
+    /// The index of the word naming `find`, the last wrapper the walk reads.
+    pub(in crate::hook::guard) find: usize,
+    /// The words of each action, by index range, in order.
+    pub(in crate::hook::guard) actions: Vec<Range<usize>>,
+}
+
 /// How the words of one simple command are laid out once wrappers are read ([`unwrap`]).
-pub(crate) fn layout(words: &[Word]) -> Layout<'_> {
+pub(in crate::hook::guard) fn layout(words: &[Word]) -> Layout<'_> {
     match unwrap(words) {
         // `unwrap` only ever drops words from the front, so the arguments end `words`.
         Run::Command { args, .. } => words
@@ -160,39 +169,72 @@ pub(crate) fn layout(words: &[Word]) -> Layout<'_> {
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
         Run::Script(text) => Layout::Script(text),
-        Run::Exec(actions) => Layout::Exec(
-            actions
-                .into_iter()
-                .filter_map(|action| range_in(words, action))
-                .collect(),
-        ),
+        // `find` peeled last, ending the walk with its actions.
+        Run::Exec(actions) => roles(words)
+            .iter()
+            .rposition(|role| *role == Role::Wrapper)
+            .map_or(Layout::Other, |find| {
+                Layout::Exec(FindActions {
+                    find,
+                    actions: actions
+                        .into_iter()
+                        .filter_map(|action| range_in(words, action))
+                        .collect(),
+                })
+            }),
         Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) => Layout::Other,
     }
 }
 
-/// Which words of `words` [`unwrap`] reads as assignments (`NAME=value` before the program,
-/// or after a wrapper that runs a command, as in `sudo K=v cmd`), by index. An argument
-/// shaped like one (`find -name x=y`, `make CC=gcc`) is not.
-pub(crate) fn assignments(words: &[Word]) -> Vec<bool> {
-    let mut assigned = vec![false; words.len()];
+/// The part a word of a simple command plays as [`unwrap`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::hook::guard) enum Role {
+    /// A keyword before the program (`if`, `{`, `!`).
+    Keyword,
+    /// `NAME=value` before the program, or after a wrapper that runs a command
+    /// (`sudo K=v cmd`). An argument shaped like one (`find -name x=y`) is not.
+    Assignment,
+    /// A word naming a wrapper the walk removes (`sudo`, `env`, a shell, `find`, ...), in
+    /// the place of a program.
+    Wrapper,
+    /// Anything else: the program, an option, a value or an operand.
+    Other,
+}
+
+/// The role [`unwrap`]'s walk gives each word of `words`, by index: a word is a wrapper only
+/// where it stands in the place of a program, never as a value or an operand
+/// (`sudo -D /x/nice rm`, `find /a/env -delete`).
+pub(in crate::hook::guard) fn roles(words: &[Word]) -> Vec<Role> {
+    let mut roles = vec![Role::Other; words.len()];
     let mut rest = words;
     loop {
-        let at = words.len().saturating_sub(rest.len());
         let skipped = skip_prefix(rest);
-        let count = rest.len().saturating_sub(skipped.len());
-        let prefix = rest.iter().take(count).zip(assigned.iter_mut().skip(at));
-        for (word, slot) in prefix {
-            *slot = is_assignment(word);
+        let prefix = rest.len().saturating_sub(skipped.len());
+        let at = words.len().saturating_sub(rest.len());
+        for (word, slot) in rest.iter().take(prefix).zip(roles.iter_mut().skip(at)) {
+            // `skip_prefix` skips only keywords and assignments.
+            *slot = if is_keyword(word) {
+                Role::Keyword
+            } else {
+                Role::Assignment
+            };
         }
         let [first, tail @ ..] = skipped else {
-            return assigned;
+            return roles;
         };
-        rest = match program(first) {
-            Program::Named(name) => match peel(name, tail) {
-                Peel::Inner(inner) | Peel::Appending(inner) => inner,
-                Peel::Done(_) | Peel::Program => return assigned,
-            },
-            Program::Unknown(_) => return assigned,
+        let Program::Named(name) = program(first) else {
+            return roles;
+        };
+        let peeled = peel(name, tail);
+        if matches!(peeled, Peel::Program) {
+            return roles;
+        }
+        if let Some(slot) = roles.get_mut(words.len().saturating_sub(skipped.len())) {
+            *slot = Role::Wrapper;
+        }
+        rest = match peeled {
+            Peel::Inner(inner) | Peel::Appending(inner) => inner,
+            Peel::Done(_) | Peel::Program => return roles,
         };
     }
 }
@@ -204,19 +246,9 @@ fn range_in(words: &[Word], part: &[Word]) -> Option<Range<usize>> {
     Some(start..start.saturating_add(part.len()))
 }
 
-/// Whether `word` names a wrapper the denylist unwraps (`sudo`, `env`, `nohup`, `timeout`,
-/// a shell, `eval`, `find`, ...), by path or with `.exe` too.
-pub(crate) fn names_wrapper(word: &Word) -> bool {
-    match program(word) {
-        // Every wrapper peels something off even with no arguments; other programs do not.
-        Program::Named(name) => !matches!(peel(name, &[]), Peel::Program),
-        Program::Unknown(_) => false,
-    }
-}
-
 /// The program a literal `word` names, without a path or `.exe`; `None` for a word that is
 /// not literal.
-pub(crate) fn program_name(word: &Word) -> Option<&str> {
+pub(in crate::hook::guard) fn program_name(word: &Word) -> Option<&str> {
     match program(word) {
         Program::Named(name) => Some(name),
         Program::Unknown(_) => None,
@@ -407,7 +439,7 @@ pub(super) fn skip_keywords(words: &[Word]) -> &[Word] {
 }
 
 /// Whether `word` is an unquoted keyword that may start a simple command (`if`, `{`, `!`).
-pub(crate) fn is_keyword(word: &Word) -> bool {
+fn is_keyword(word: &Word) -> bool {
     !word.quoted && KEYWORDS.contains(&word.text.as_str())
 }
 

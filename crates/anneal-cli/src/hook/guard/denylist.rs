@@ -30,7 +30,7 @@ use super::Denial;
 use checker::{Checker, Entries, Scope};
 use feed::Feed;
 pub(crate) use gh::{PrMerge, Target, read_target};
-pub(crate) use wrappers::{Layout, assignments, is_keyword, layout, names_wrapper, program_name};
+pub(in crate::hook::guard) use wrappers::{FindActions, Layout, Role, layout, program_name, roles};
 
 /// How deep `bash -c`, `eval`, `env -S` and `find -exec` may nest before a command is refused.
 pub(crate) const MAX_DEPTH: usize = 8;

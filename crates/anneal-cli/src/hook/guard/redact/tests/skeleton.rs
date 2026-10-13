@@ -36,7 +36,7 @@ fn a_program_word_that_is_not_a_short_literal_name_is_hidden() {
     assert_cases(&[
         ("\"$CMD\" x", "<redacted> <redacted>"),
         ("./my\\ tool x", "<redacted> <redacted>"),
-        ("/usr/bin/python3.12 x", "/usr/bin/python3.12 <redacted>"),
+        ("/usr/bin/python3.12 x", "python3.12 <redacted>"),
         ("c++ x", "c++ <redacted>"),
         (&long, REDACTED),
         (&longest, &longest),
@@ -246,7 +246,7 @@ fn wrapper_options_and_values_follow_the_option_rules() {
             "sudo -u <redacted> env -u <redacted> A=<redacted> timeout -s <redacted> <redacted> \
              rm -rf /",
         ),
-        ("/usr/bin/sudo rm -rf /", "/usr/bin/sudo rm -rf /"),
+        ("/usr/bin/sudo rm -rf /", "sudo rm -rf /"),
     ]);
 }
 
@@ -325,6 +325,62 @@ fn d1_keeps_the_signal_of_destructive_commands() {
     ]);
 }
 
+// Review round 1 of PR 120.
+
+#[test]
+fn a_value_or_operand_naming_a_wrapper_is_hidden_like_any_other() {
+    assert_cases(&[
+        (
+            "find /home/alice/acme/env -delete",
+            "find <redacted> -delete",
+        ),
+        ("bash /opt/x/script", "bash <redacted>"),
+        ("source dir/env", "source <redacted>"),
+        (". dir/sudo", ". <redacted>"),
+        ("sudo -D /x/nice rm", "sudo -D <redacted> rm"),
+        ("script -c x /logs/s/env", "script -c 'x' <redacted>"),
+        ("flock /tmp/env rm", "flock <redacted> rm"),
+        ("function nice", "function <redacted>"),
+    ]);
+}
+
+#[test]
+fn a_program_or_wrapper_is_shown_by_its_name_without_its_path() {
+    assert_cases(&[
+        ("./deploy.sh x", "deploy.sh <redacted>"),
+        ("/opt/alice/bin/env -i rm", "env -i rm"),
+        ("timeout 5 /x/acme/nice rm", "timeout <redacted> nice rm"),
+        ("/x/acme/sudo.exe rm -rf /", "sudo rm -rf /"),
+    ]);
+}
+
+#[test]
+fn find_keeps_its_flag_tables_under_a_wrapper_or_an_assignment() {
+    assert_cases(&[
+        (
+            "sudo find . -name x -exec rm {} \\; -delete",
+            "sudo find . -name <redacted> -exec rm {} ; -delete",
+        ),
+        (
+            "X=1 find . -exec rm {} + -print",
+            "X=<redacted> find . -exec rm {} + -print",
+        ),
+    ]);
+}
+
+#[test]
+fn after_a_literal_double_dash_every_word_is_an_operand() {
+    assert_cases(&[
+        (
+            "grep -- --secret-token-name file",
+            "grep -- <redacted> <redacted>",
+        ),
+        ("rm -- -rf /", "rm -- <redacted> /"),
+        ("bash -- --x", "bash -- <redacted>"),
+        ("sudo -- env --x=1 rm", "sudo -- env --x=<redacted> rm"),
+    ]);
+}
+
 /// A deterministic generator of argument tokens no allowlist names: `zq` and 8 characters.
 struct Tokens(u64);
 
@@ -346,45 +402,67 @@ impl Tokens {
     }
 }
 
+/// Commands with `{}` where a random token goes, in every position no allowlist names.
+const TEMPLATES: &[&str] = &[
+    "echo {}",
+    "rm -rf {}",
+    "git push origin {}",
+    "curl -H 'X: {}' u",
+    "mysql -p{} db",
+    "tool --opt={}",
+    "tool --opt {}",
+    "K={} cmd",
+    "cmd > {}",
+    "cat < {}",
+    "cat <<< {}",
+    "x=$(echo {})",
+    "bash -c 'echo {}'",
+    "eval echo {}",
+    "sudo -u {} dropdb",
+    "timeout {} dropdb",
+    "env -u {} dropdb",
+    "find . -name {} -exec rm {} \\;",
+    "cat <<EOF\n{}\nEOF",
+    "git -C {} push",
+    "echo \"{}\"",
+    "printf '%s' '{}'",
+    "kubectl delete ns {}",
+    "docker rm -f {}",
+    "ls -{}",
+    "rm -r{}",
+    "dd of={}",
+    "nohup env x={} dropdb {}",
+    "bash -c \"tool --k={} | sh\"",
+    "echo `echo {}`",
+    "find . -name x{}=y",
+    "trap 'echo {}' EXIT",
+    // Wrapper names in value and operand positions (PR 120 review round 1).
+    "find /home/{}/env -delete",
+    "find {}/nice -name x",
+    "bash /opt/{}/script",
+    "source {}/env",
+    ". {}/sudo",
+    "sudo -D /x/{}/nice rm",
+    "sudo -u {}/env rm",
+    "script -c x /logs/{}/env",
+    "timeout -s {}/nice 5 rm",
+    "env -C {}/bash rm",
+    "flock /tmp/{}/env rm",
+    "xargs -I {}/sh rm",
+    "exec -a {}/bash rm",
+    "nice -n {}/env rm",
+    "find . -exec rm x \\; /a/{}/env",
+    "/opt/{}/bin/rm -rf /",
+    "sudo /opt/{}/env rm",
+    "grep -- --{} file",
+    "bash -- --{}",
+];
+
 #[test]
 fn an_argument_no_allowlist_names_never_reaches_the_output() {
     // TST-06 by plain loops: every template, many random tokens.
-    let templates = [
-        "echo {}",
-        "rm -rf {}",
-        "git push origin {}",
-        "curl -H 'X: {}' u",
-        "mysql -p{} db",
-        "tool --opt={}",
-        "tool --opt {}",
-        "K={} cmd",
-        "cmd > {}",
-        "cat < {}",
-        "cat <<< {}",
-        "x=$(echo {})",
-        "bash -c 'echo {}'",
-        "eval echo {}",
-        "sudo -u {} dropdb",
-        "timeout {} dropdb",
-        "env -u {} dropdb",
-        "find . -name {} -exec rm {} \\;",
-        "cat <<EOF\n{}\nEOF",
-        "git -C {} push",
-        "echo \"{}\"",
-        "printf '%s' '{}'",
-        "kubectl delete ns {}",
-        "docker rm -f {}",
-        "ls -{}",
-        "rm -r{}",
-        "dd of={}",
-        "nohup env x={} dropdb {}",
-        "bash -c \"tool --k={} | sh\"",
-        "echo `echo {}`",
-        "find . -name x{}=y",
-        "trap 'echo {}' EXIT",
-    ];
     let mut tokens = Tokens(0x5eed);
-    for template in templates {
+    for template in TEMPLATES {
         for _ in 0..40 {
             let token = tokens.next();
             let command = template.replace("{}", &token);

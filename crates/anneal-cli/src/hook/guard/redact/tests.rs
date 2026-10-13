@@ -61,7 +61,7 @@ fn export_env_and_the_declaration_builtins_have_their_values_redacted() {
 }
 
 #[test]
-fn lowercase_operand_assignments_are_kept() {
+fn an_operand_assignment_shows_only_a_dd_key_and_a_sensitive_target() {
     assert_cases(&[
         (
             "dd if=/dev/zero of=/dev/sda bs=1M",
@@ -118,7 +118,7 @@ fn array_and_element_assignments_are_redacted() {
 fn a_comment_is_redacted_to_the_end_of_its_line() {
     assert_eq!(
         redact("# let's deploy\nAPI_KEY=sk-live-123 ./deploy.sh"),
-        "API_KEY=<redacted> ./deploy.sh"
+        "API_KEY=<redacted> deploy.sh"
     );
     assert_eq!(redact("ls # TOKEN is x"), "ls");
 }
@@ -183,7 +183,7 @@ fn values_of_credential_flags_are_redacted() {
 }
 
 #[test]
-fn flags_that_only_resemble_credentials_are_kept() {
+fn flags_that_only_resemble_credentials_keep_their_names_and_hide_their_values() {
     assert_cases(&[
         (
             "git commit --author='A <a@b>' -m x",
@@ -287,7 +287,7 @@ fn the_credential_after_bearer_or_basic_is_redacted() {
 }
 
 #[test]
-fn a_plain_lowercase_word_after_basic_is_kept() {
+fn a_plain_lowercase_word_after_basic_is_hidden_like_any_argument() {
     assert_eq!(redact("echo basic usage"), "echo <redacted> <redacted>");
 }
 
@@ -307,7 +307,7 @@ fn url_userinfo_is_redacted() {
 }
 
 #[test]
-fn urls_without_userinfo_are_kept() {
+fn urls_without_userinfo_are_hidden_like_any_argument() {
     assert_cases(&[
         (
             "git clone git@github.com:o/r.git",
@@ -327,7 +327,7 @@ fn secret_short_options_of_known_tools_are_redacted() {
         ),
         (
             "sudo /usr/bin/mysqldump -p'p w' db",
-            "sudo /usr/bin/mysqldump -<redacted> <redacted>",
+            "sudo mysqldump -<redacted> <redacted>",
         ),
         (
             "curl -u user:pass https://x",
@@ -452,7 +452,7 @@ fn an_openssl_pass_phrase_is_redacted() {
 }
 
 #[test]
-fn a_github_secret_body_is_redacted_and_other_bodies_kept() {
+fn a_github_secret_body_and_any_other_body_are_redacted() {
     assert_cases(&[
         (
             "gh secret set TOKEN --body hunter2",
@@ -554,7 +554,7 @@ fn a_credential_key_with_its_value_in_the_word_hides_only_that_word() {
 }
 
 #[test]
-fn a_path_separator_is_not_a_key() {
+fn a_word_holding_a_path_separator_is_hidden_like_any_argument() {
     assert_eq!(
         redact("cargo test auth::tests::login"),
         "cargo <redacted> <redacted>"
@@ -712,7 +712,7 @@ fn a_cookie_pair_ending_in_the_quote_that_closes_its_header_is_hidden() {
 }
 
 #[test]
-fn a_word_after_a_cookie_semicolon_holding_a_substitution_stays_readable() {
+fn a_substitution_after_a_cookie_semicolon_shows_its_command_and_hides_the_word() {
     assert_eq!(
         redact("bash -c 'curl -H Cookie: a=1; b=$(dropdb production)'"),
         "bash -c 'curl -H <redacted> <redacted>; dropdb <redacted>; b=<redacted>'"
@@ -735,7 +735,7 @@ fn a_query_holding_an_at_after_a_port_is_redacted_as_userinfo() {
 // Review round 1 of the #89 follow-up.
 
 #[test]
-fn an_attached_header_value_hides_only_its_own_word() {
+fn an_attached_header_value_is_hidden_by_the_argument_rule_and_hides_nothing_more() {
     assert_cases(&[
         (
             "docker run -v db-password:/p alpine rm -rf /p",
@@ -754,7 +754,7 @@ fn an_attached_header_value_hides_only_its_own_word() {
 }
 
 #[test]
-fn a_cookie_pair_whose_value_holds_a_blank_or_semicolon_stays_readable() {
+fn a_cookie_pair_whose_value_holds_a_blank_or_semicolon_shows_only_its_name() {
     assert_cases(&[
         (
             "bash -c 'curl -H Cookie: a=1; c=\"rm -rf ~\"'",

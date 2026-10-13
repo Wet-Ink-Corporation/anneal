@@ -107,6 +107,8 @@ const GIT: &[&str] = &[
     "remove",
     "commit",
     "merge",
+    // Rev-list options after `--` (`filter-branch -- --all`), where every word is an operand.
+    "--all",
 ];
 
 const GH: &[&str] = &[
