@@ -159,8 +159,10 @@ pub(crate) fn drive<R: Router>(
             if round == 1 {
                 return Err(error);
             }
-            // The batch reported its cost, so the spend stays exact; its runs are dropped.
+            // The batch's reported cost counts, and so does any mark that it is a lower bound,
+            // as in `take`; its runs are dropped.
             drove.spent_usd += ran.cost_usd;
+            drove.cost_is_lower_bound |= ran.cost_is_lower_bound;
             drove.rounds = round;
             drove.stop = Some(Stop::Failed {
                 reason: error_chain::reason(&error),
@@ -446,6 +448,38 @@ mod tests {
             [3, 3],
             "the padded batch's runs are not kept"
         );
+    }
+
+    #[test]
+    fn a_later_refused_batch_keeps_its_lower_bound_mark() -> Result<(), RouterError> {
+        /// Round 1 costs 0.50 exactly; round 2 answers 12 runs per case at a lower-bound 0.25.
+        struct PaddedSecond;
+        impl Router for PaddedSecond {
+            fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
+                let second = batch.round > 1;
+                Ok(Ran {
+                    runs: batch
+                        .cases
+                        .iter()
+                        .map(|c| (c.name.clone(), fired("plan", if second { 12 } else { 3 })))
+                        .collect(),
+                    cost_usd: if second { 0.25 } else { 0.5 },
+                    cost_is_lower_bound: second,
+                    counted_errors: 0,
+                    stop: None,
+                })
+            }
+        }
+
+        let drove = drive(&mut PaddedSecond, &mut probes(), 5.0)?;
+
+        assert!(
+            matches!(&drove.stop, Some(Stop::Failed { reason }) if reason.contains("12 runs")),
+            "{:?}",
+            drove.stop
+        );
+        assert_eq!((drove.spent_usd, drove.cost_is_lower_bound), (0.75, true));
+        Ok(())
     }
 
     #[test]
