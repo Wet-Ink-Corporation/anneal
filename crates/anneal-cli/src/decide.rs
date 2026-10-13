@@ -37,9 +37,11 @@ pub mod state;
 pub mod thresholds;
 pub mod transport;
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::string::FromUtf8Error;
 use std::time::SystemTimeError;
 
 use clap::{Args, Subcommand};
@@ -141,6 +143,15 @@ pub enum DecideError {
         /// The path looked at.
         path: PathBuf,
     },
+    /// The thresholds file is not UTF-8 text.
+    #[error("thresholds {path} is not UTF-8", path = path.display())]
+    ThresholdsNotUtf8 {
+        /// The file.
+        path: PathBuf,
+        /// The decoding error, which holds the bytes.
+        #[source]
+        source: FromUtf8Error,
+    },
     /// The thresholds file is invalid.
     #[error("thresholds {from}")]
     Thresholds {
@@ -171,6 +182,7 @@ impl DecideError {
             Self::Ask(_)
             | Self::ThresholdsFile(_)
             | Self::ThresholdsMissing { .. }
+            | Self::ThresholdsNotUtf8 { .. }
             | Self::Thresholds { .. }
             | Self::Log(_)
             | Self::Clock(_) => exit_codes::INTERNAL,
@@ -251,11 +263,19 @@ pub(crate) fn thresholds_path(
 /// Reads the thresholds file at `path`, which must exist and be a regular file, or the copy
 /// built in for `None`.
 pub(crate) fn read_thresholds(path: Option<&Path>) -> Result<Thresholds, DecideError> {
+    read_thresholds_text(path).map(|(thresholds, _text)| thresholds)
+}
+
+/// As [`read_thresholds`], with the text that was read, for `calibrate`'s diff and `--apply`.
+pub(crate) fn read_thresholds_text(
+    path: Option<&Path>,
+) -> Result<(Thresholds, Cow<'static, str>), DecideError> {
     let Some(path) = path else {
-        return Thresholds::built_in().map_err(|source| DecideError::Thresholds {
+        let built_in = Thresholds::built_in().map_err(|source| DecideError::Thresholds {
             from: "built in".to_owned(),
             source,
-        });
+        })?;
+        return Ok((built_in, Cow::Borrowed(thresholds::BUILT_IN)));
     };
     let Some(bytes) = baseline::read_state_bytes(path).map_err(DecideError::ThresholdsFile)? else {
         return Err(DecideError::ThresholdsMissing {
@@ -263,10 +283,17 @@ pub(crate) fn read_thresholds(path: Option<&Path>) -> Result<Thresholds, DecideE
             path: path.to_path_buf(),
         });
     };
-    Thresholds::parse(&bytes).map_err(|source| DecideError::Thresholds {
+    // Decoded before parsing, so the text `calibrate` diffs and edits is exactly the bytes read.
+    let text = String::from_utf8(bytes).map_err(|source| DecideError::ThresholdsNotUtf8 {
+        // The error owns the path it names.
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let parsed = Thresholds::parse(text.as_bytes()).map_err(|source| DecideError::Thresholds {
         from: path.display().to_string(),
         source,
-    })
+    })?;
+    Ok((parsed, Cow::Owned(text)))
 }
 
 /// A label row: `{"kind": "label", "id", "outcome", "ts_ms"}`.

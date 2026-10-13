@@ -234,6 +234,7 @@ A green result proves the decision was obtained and recorded. It does **not** pr
 | Code | Meaning |
 |---|---|
 | 0 | ok |
+| 3 | --apply: a proposal no longer matches the thresholds file; nothing written |
 
 A green result proves the calibration run completed and was recorded. It does **not** prove that the decision point is calibrated well enough to enforce.
 

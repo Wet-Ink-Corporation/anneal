@@ -13,10 +13,14 @@
 //!
 //! - [`brief`]: `lint brief`, the nine fields of a brief (`brief::fields`), each present once
 //!   and filled; its findings are [`brief::BriefFinding`]s.
+//! - [`rules`]: `lint rules`, every rule of a rule document names an enforcer that exists;
+//!   its findings are rule 10's `enforcer` [`finding::LintFinding`]s, reported as `lint skills`
+//!   reports its own.
 
 pub mod brief;
 pub mod finding;
 pub mod plan;
+pub mod rules;
 pub mod skills;
 pub mod spec;
 pub mod terms;
@@ -64,6 +68,10 @@ pub enum LintTarget {
     /// Check a brief: each of its nine fields present once and filled
     #[command(after_help = command_help(CommandName::Lint))]
     Brief(brief::BriefArgs),
+    /// Check rule documents: every rule under `## Rules` names an enforcer (a hook, an anneal
+    /// command or a test) that exists
+    #[command(after_help = command_help(CommandName::Lint))]
+    Rules(rules::RulesArgs),
 }
 
 /// Runs `anneal lint <target>` and writes its envelope to `out`.
@@ -97,6 +105,15 @@ pub fn run<O: Write>(args: &LintArgs, out: &mut O) -> Result<Code, CliError> {
         LintTarget::Brief(brief_args) => {
             let outcome = brief::lint(brief_args)?;
             brief::report(&outcome, out)
+        }
+        LintTarget::Rules(rules_args) => {
+            let outcome = rules::lint(rules_args)?;
+            report(
+                "rules",
+                &outcome.findings,
+                Counts::new(outcome.documents, 0),
+                out,
+            )
         }
     }
 }

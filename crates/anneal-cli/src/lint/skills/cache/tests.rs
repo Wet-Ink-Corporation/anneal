@@ -135,15 +135,17 @@ fn file_boundaries_are_part_of_the_hash() {
 
 /// Lint sources that do not decide per-skill findings, so they are not in `RULE_SOURCES`:
 /// `cache.rs` stores snapshots (a change to its format bumps `FORMAT_VERSION`); `listing.rs`
-/// lists skills for `eval routing` and no lint check reads it; `../terms.rs` is `lint terms`
-/// `../spec.rs` is `lint spec` and `../plan.rs` is `lint plan`, which no skill check calls.
-const NOT_RULE_SOURCES: [&str; 6] = [
+/// lists skills for `eval routing` and no lint check reads it; `../terms.rs` is `lint terms`,
+/// `../spec.rs` is `lint spec`, `../plan.rs` is `lint plan`, `../brief.rs` is `lint brief` and
+/// `../rules.rs` is `lint rules`, which no skill check calls.
+const NOT_RULE_SOURCES: [&str; 7] = [
     "cache.rs",
     "listing.rs",
     "../terms.rs",
     "../spec.rs",
     "../plan.rs",
     "../brief.rs",
+    "../rules.rs",
 ];
 
 /// The `.rs` files directly in `src/<dir>`, as paths relative to `src/lint/skills/`.

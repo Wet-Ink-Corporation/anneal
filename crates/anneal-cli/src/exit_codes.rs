@@ -249,6 +249,13 @@ const EVAL_CODES: [Code; 5] = [
     EVAL_INCOMPLETE,
     EVAL_ROUTER_FAILED,
 ];
+/// `calibrate --apply`: a threshold step no longer matches the thresholds file (its pointer
+/// does not hold the proposal's `from`, or the edited file would not read back), so nothing
+/// was written.
+pub const CALIBRATE_REFUSED: Code = Code::new(
+    3,
+    "--apply: a proposal no longer matches the thresholds file; nothing written",
+);
 /// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
 /// failure noted in its output or on stderr.
 pub const HOOK_DONE: Code = Code::new(
@@ -316,7 +323,8 @@ impl CommandCodes {
             CommandName::Decide => ("", &[DECIDE_DECIDED, DECIDE_OFF, DECIDE_CLEF_UNREACHABLE]),
             // No scope: `routing|uplift` would widen the help's title column.
             CommandName::Eval => ("", &EVAL_CODES),
-            CommandName::Calibrate | CommandName::Statusline => ("", &[OK]),
+            CommandName::Calibrate => ("", &[OK, CALIBRATE_REFUSED]),
+            CommandName::Statusline => ("", &[OK]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };
         Self {

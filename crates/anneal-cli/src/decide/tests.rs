@@ -327,3 +327,23 @@ fn the_token_is_in_no_envelope_or_row() {
         assert!(!log.contains(SECRET), "{log}");
     }
 }
+
+#[test]
+fn a_thresholds_file_that_is_not_utf8_is_its_own_error_before_any_parse()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("clef-thresholds.json");
+    std::fs::write(&path, b"{\"version\": 1, \"models\": \"\xff\"}")?;
+
+    let read = super::read_thresholds_text(Some(&path));
+
+    assert!(
+        matches!(&read, Err(super::DecideError::ThresholdsNotUtf8 { path: named, .. }) if *named == path),
+        "{read:?}"
+    );
+    assert_eq!(
+        read.map(|_read| ()).map_err(|error| error.code()),
+        Err(crate::exit_codes::INTERNAL)
+    );
+    Ok(())
+}

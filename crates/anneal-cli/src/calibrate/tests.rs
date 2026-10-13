@@ -443,3 +443,5 @@ fn no_log_reports_every_point_in_shadow() -> TestResult {
     assert_eq!(verdicts, [&json!("stay-shadow"); 7]);
     Ok(())
 }
+
+mod apply;

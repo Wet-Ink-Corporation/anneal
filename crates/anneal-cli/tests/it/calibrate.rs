@@ -132,6 +132,53 @@ fn a_short_summary_goes_to_stderr_and_the_proposals_to_the_anneal_home() -> Test
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn only_apply_writes_the_proposed_threshold_into_the_file_it_names() -> TestResult {
+    let home = tempfile::tempdir()?;
+    copy_dir(&fixture(), &home.path().join("decisions"))?;
+    let shipped =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/playbooks/clef-thresholds.json");
+    let thresholds = home.path().join("clef-thresholds.json");
+    fs::copy(&shipped, &thresholds)?;
+    let before = fs::read_to_string(&thresholds)?;
+
+    let proposed = anneal(home.path())
+        .args(["calibrate", "--point", "D1", "--thresholds"])
+        .arg(&thresholds)
+        .output()?;
+    let unchanged = fs::read_to_string(&thresholds)?;
+    let applied = anneal(home.path())
+        .args(["calibrate", "--apply", "--point", "D1", "--thresholds"])
+        .arg(&thresholds)
+        .output()?;
+
+    assert_eq!(proposed.status.code(), Some(0), "{proposed:?}");
+    assert_eq!(unchanged, before, "proposing writes no thresholds");
+    let diff = &envelope(&proposed)?["data"]["diff"];
+    assert_eq!(applied.status.code(), Some(0), "{applied:?}");
+    assert_eq!(
+        envelope(&applied)?["data"]["applied"][0]["after"],
+        diff[0]["after"],
+        "apply writes what the diff showed"
+    );
+    let after = fs::read_to_string(&thresholds)?;
+    let changed: Vec<(&str, &str)> = before
+        .lines()
+        .zip(after.lines())
+        .filter(|(old, new)| old != new)
+        .collect();
+    assert_eq!(
+        changed,
+        [(
+            "            { \"at_least\": 0.4, \"action\": \"ask\" }",
+            "            { \"at_least\": 0.3, \"action\": \"ask\" }"
+        )],
+        "one number changed, the layout kept"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_point_with_49_labelled_decisions_is_never_eligible_to_enforce() -> TestResult {
     let home = tempfile::tempdir()?;
     let dir = home.path().join("decisions");
