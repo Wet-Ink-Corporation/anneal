@@ -561,3 +561,46 @@ fn blocked_with_a_new_head_on_the_second_read_is_pending() {
         "the checks read were the old head's"
     );
 }
+
+#[test]
+fn blocked_while_checks_still_run_is_read_once() {
+    let gh = pull_request(
+        "pull-blocked.json",
+        "check-runs-running.json",
+        "status-pass.json",
+        "threads-none.json",
+    );
+
+    poll_pr(&gh, &FakeGate::default()).expect("the fixtures read");
+
+    let pull_reads = gh
+        .calls
+        .borrow()
+        .iter()
+        .filter(|call| *call == "repos/{owner}/{repo}/pulls/7")
+        .count();
+    assert_eq!(
+        pull_reads, 1,
+        "nothing hinges on a second read while a check runs"
+    );
+}
+
+#[test]
+fn blocked_that_is_merged_on_the_second_read_is_pending() {
+    let gate = FakeGate::default();
+    let gh = green_read_twice("pull-blocked.json", "pull-merged.json");
+
+    let snapshot = poll_pr(&gh, &gate).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (
+            Vec::new(),
+            vec![Pending::MergeState {
+                state: "blocked".to_owned()
+            }]
+        ),
+        "merged between the reads: the next poll finds it merged"
+    );
+    assert!(gate.judged.borrow().is_empty(), "the gate waits");
+}

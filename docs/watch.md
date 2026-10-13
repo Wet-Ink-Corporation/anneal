@@ -162,6 +162,9 @@ interrupted this way; it still ends at `--timeout`, plus the poll in progress.
 - Without branch protection that requires the checks, GitHub reports `clean` before CI has
   created its check runs, so a pull request whose one fast status or check has passed, before
   the rest of CI has registered, can exit 0.
+- GitHub recomputes `mergeable_state` asynchronously, so a stale `blocked` that survives the
+  second read at the same head still exits 6 one poll early; the re-read narrows that race but
+  cannot close it.
 - Pagination is not followed: more than 100 check runs, statuses or threads exit 7.
 - Only GitHub Deployments is a deployment provider so far; another one implements
   `watch::deploy::DeployProvider` and gets its own `--provider` value.
