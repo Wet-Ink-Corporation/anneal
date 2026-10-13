@@ -495,3 +495,69 @@ fn any_other_merge_state_blocks_as_a_gate_naming_it() {
     assert_eq!(snapshot.blockers, vec![merge_state("behind")]);
     assert!(gate.judged.borrow().is_empty(), "GitHub already refuses it");
 }
+
+/// A `gh` for pull request 7 whose pull request reads `first`, then `again`, with every check
+/// passed and no thread open.
+fn green_read_twice(first: &'static str, again: &'static str) -> FakeGh {
+    FakeGh::new()
+        .route("/pulls/7", &[first, again])
+        .route("/check-runs", &["check-runs-pass.json"])
+        .route("/status", &["status-pass.json"])
+        .route("graphql", &["threads-resolved.json"])
+}
+
+#[test]
+fn blocked_is_read_twice_before_it_blocks() {
+    let gh = green("pull-blocked.json");
+
+    poll_pr(&gh, &FakeGate::default()).expect("the fixtures read");
+
+    let calls = gh.calls.borrow();
+    let pull_reads = calls
+        .iter()
+        .filter(|call| *call == "repos/{owner}/{repo}/pulls/7")
+        .count();
+    assert_eq!(
+        (pull_reads, calls.last().map(String::as_str)),
+        (2, Some("repos/{owner}/{repo}/pulls/7")),
+        "the second read comes after the checks"
+    );
+}
+
+#[test]
+fn blocked_that_clears_on_a_second_read_is_pending_not_a_blocker() {
+    let gate = FakeGate::default();
+    let gh = green_read_twice("pull-blocked.json", "pull-open.json");
+
+    let snapshot = poll_pr(&gh, &gate).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (
+            Vec::new(),
+            vec![Pending::MergeState {
+                state: "blocked".to_owned()
+            }]
+        ),
+        "the last check finished between the reads: the next poll judges afresh"
+    );
+    assert!(gate.judged.borrow().is_empty(), "the gate waits");
+}
+
+#[test]
+fn blocked_with_a_new_head_on_the_second_read_is_pending() {
+    let gh = green_read_twice("pull-blocked.json", "pull-blocked-new-head.json");
+
+    let snapshot = poll_pr(&gh, &FakeGate::default()).expect("the fixtures read");
+
+    assert_eq!(
+        (snapshot.blockers, snapshot.pending),
+        (
+            Vec::new(),
+            vec![Pending::MergeState {
+                state: "blocked".to_owned()
+            }]
+        ),
+        "the checks read were the old head's"
+    );
+}

@@ -133,6 +133,24 @@ fn tag_characters_and_bidi_controls_hit_alone() {
 }
 
 #[test]
+fn ideographic_variation_sequences_on_a_japanese_line_are_silent() {
+    let text = "\u{845B}\u{E0100}\u{98FE}\u{533A}\u{3068}\u{8FBB}\u{E0101}\u{5802}\u{3078}\n";
+
+    assert_eq!(summary(text), (None, 0));
+}
+
+#[test]
+fn supplementary_selectors_not_after_han_still_count() {
+    let text = "\u{845B}\u{E0100}\u{E0101}x\u{E0102}\n";
+
+    assert_eq!(
+        summary(text),
+        (Some((Kind::HiddenCharacters, 1)), 1),
+        "the second and third selectors follow no ideograph"
+    );
+}
+
+#[test]
 fn a_leading_byte_order_mark_is_silent() {
     assert_eq!(summary("\u{FEFF}# Title\u{200B}\n"), (None, 0));
 }

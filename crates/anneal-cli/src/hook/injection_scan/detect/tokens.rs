@@ -1,8 +1,9 @@
 //! Words and punctuation of scanned text, with their line and HTML comment.
 //!
 //! Default-ignorable characters (zero-width, bidi controls, variation selectors, fillers, tag
-//! characters, soft hyphens; [`super::is_ignorable`]) are dropped without ending a word, so `ig<U+200B>nore` reads as `ignore`. Words are lowercased; an
-//! apostrophe between letters stays in the word (`don't`), and `’` reads as `'`.
+//! characters, soft hyphens; [`super::is_ignorable`]) are dropped without ending a word, so
+//! `ig<U+200B>nore` reads as `ignore`. Words are lowercased; an apostrophe between letters
+//! stays in the word (`don't`), and `’` reads as `'`.
 
 /// One word (a run of alphanumeric characters, lowercased) or one punctuation character.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -136,6 +136,8 @@ fn tool_call_on_line(text: &str, line_start: usize, line: &str) -> bool {
 /// embedding, override or isolate control, or two or more other default-ignorable characters
 /// ([`super::is_ignorable`]). Some uses in ordinary text are not counted:
 ///
+/// - a supplementary variation selector (U+E0100..U+E01EF) right after a Han ideograph: an
+///   ideographic variation sequence, as Japanese names use;
 /// - a byte-order mark that starts the text;
 /// - a zero-width joiner or non-joiner, or a left-to-right or right-to-left mark, between two
 ///   visible characters outside ASCII (emoji sequences, Persian, Indic scripts, mixed-direction
@@ -155,6 +157,8 @@ pub(super) fn hidden_characters(text: &str, found: &mut Scan) {
                 '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' => {
                     hard = true;
                 }
+                SUPPLEMENTARY_SELECTORS_START..=SUPPLEMENTARY_SELECTORS_END
+                    if previous.is_some_and(han) => {}
                 '\u{FEFF}' if index == 0 && previous.is_none() => {}
                 '\u{200C}'..='\u{200F}' if joins(previous) && joins(next) => {}
                 '\u{FE0E}' | '\u{FE0F}'
@@ -177,6 +181,24 @@ pub(super) fn hidden_characters(text: &str, found: &mut Scan) {
 /// The combining enclosing keycap, which follows a digit, `#` or `*` and its presentation
 /// selector in a keycap emoji.
 const KEYCAP: char = '\u{20E3}';
+
+/// The first supplementary variation selector (VS17).
+const SUPPLEMENTARY_SELECTORS_START: char = '\u{E0100}';
+/// The last supplementary variation selector (VS256).
+const SUPPLEMENTARY_SELECTORS_END: char = '\u{E01EF}';
+
+/// Whether `c` is a Han ideograph, the only base an ideographic variation sequence has: CJK
+/// Unified Ideographs and Extension A, the Compatibility Ideographs, and the Supplementary and
+/// Tertiary Ideographic Planes (U+20000..U+3FFFF) whole.
+fn han(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{3FFFF}'
+    )
+}
 
 /// Whether `c` prints something and is outside ASCII.
 fn visible_outside_ascii(c: char) -> bool {

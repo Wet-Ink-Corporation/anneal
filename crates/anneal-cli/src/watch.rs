@@ -317,6 +317,7 @@ fn report<O: Write>(
     if watched.timed_out {
         findings.extend(snapshot.pending.iter().map(Pending::finding));
     }
+    snapshot::unique_keys(&mut findings);
     let subcommand = target.subcommand();
     let data = WatchData {
         target,

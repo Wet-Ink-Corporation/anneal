@@ -42,9 +42,10 @@ then 20 s, 40 s, and 60 s from then on, never past the deadline. The default tim
 **1800 s (30 minutes)**; `--timeout 0` polls once and exits 5 if anything is still pending.
 The deadline is checked between polls, never inside one: a poll that has started runs to its
 end, so a watch can end up to one poll's time after `--timeout`. A poll's calls run one after
-another, each `gh` call bounded at 30 s: up to 5 calls for `pr` (150 s, when GraphQL is refused
-and the proxy route is read), 3 for `ci` (90 s) and 1 for `deploy` (30 s). For `pr`, the merge
-gate's git calls follow, each bounded at 10 s, with no overall limit on them.
+another, each `gh` call bounded at 30 s: up to 6 calls for `pr` (180 s, when GraphQL is refused
+and the proxy route is read, and a `blocked` pull request is read again), 3 for `ci` (90 s)
+and 1 for `deploy` (30 s). For `pr`, the merge gate's git calls follow, each bounded at 10 s,
+with no overall limit on them.
 
 ## What blocks, and what is pending
 
@@ -63,7 +64,7 @@ gate's git calls follow, each bounded at 10 s, with no overall limit on them.
 | `pr`: `mergeable_state` `clean` or `has_hooks` | passes (the merge gate is then asked) |
 | `pr`: `mergeable_state` `unstable` | pending: a check that is not required has not passed |
 | `pr`: `mergeable_state` `blocked` while anything else is pending | pending |
-| `pr`: `mergeable_state` `blocked` once every check read passed and every thread is resolved | blocks (6), blocker `merge_state`: branch protection the checks read do not show, such as a required review, or a required check that never reported |
+| `pr`: `mergeable_state` `blocked` once every check read passed and every thread is resolved | the pull request is read again, since its first read came before the checks and a last check that finished in between leaves it stale; still open, unmerged and `blocked` at the same head, it blocks (6), blocker `merge_state`: branch protection the checks read do not show, such as a required review, or a required check that never reported; otherwise pending, and the next poll judges afresh |
 | `pr`: `mergeable_state` `behind`, or any state not listed here | blocks (6), blocker `merge_state` naming it |
 | `pr`: an unresolved review thread, outdated or not | blocks (3) |
 | `pr`: merged | clear, nothing else read |
@@ -108,8 +109,11 @@ The envelope's `data`:
 | `polls`, `waited_secs`, `timeout_secs` | how many polls were made, how long the watch took, and the limit |
 
 `findings` has one entry per blocker, keyed `watch/<kind>:<name>` (`watch/check:lint`,
-`watch/thread:<url>`, `watch/conflict:7`, `watch/draft:7`, `watch/merge-state:blocked`,
-`watch/gate:no-verdict`, `watch/deployment:42`), and on a timeout one per pending item (`watch/pending:...`).
+`watch/thread:<url>` (`watch/thread:no-comment` for a thread with no comment),
+`watch/conflict:7`, `watch/draft:7`, `watch/merge-state:blocked`, `watch/gate:no-verdict`,
+`watch/deployment:42`), and on a timeout one per pending item (`watch/pending:...`).
+Keys are distinct: a key already used in the envelope (two threads with no comment, a check run
+and a status of one name) gets the first free suffix from `:2`, in the order listed.
 
 ## How GitHub is read
 
@@ -135,7 +139,8 @@ Only through `gh`, read-only, with the same bounded runner as `dag`'s GitHub tra
 
 `{owner}` and `{repo}` are gh's placeholders for the current repository unless `--repo` names
 one. A pull request poll makes four calls (five when GraphQL is refused and the proxy route is
-read); a commit poll three; a deployment poll one.
+read, and one more when a `blocked` pull request is read again); a commit poll three; a
+deployment poll one.
 
 ## Ctrl-C
 
@@ -153,6 +158,9 @@ interrupted this way; it still ends at `--timeout`, plus the poll in progress.
 - `GH_REPO` in the environment points `watch pr` at another repository while the gate still
   reads this worktree's ledger, as the merge gate's own known gap (`docs/verdict.md`).
 - The thread fallback depends on the Claude Code proxy's route, which is not a GitHub API.
+- Without branch protection that requires the checks, GitHub reports `clean` before CI has
+  created its check runs, so a pull request whose one fast status or check has passed, before
+  the rest of CI has registered, can exit 0.
 - Pagination is not followed: more than 100 check runs, statuses or threads exit 7.
 - Only GitHub Deployments is a deployment provider so far; another one implements
   `watch::deploy::DeployProvider` and gets its own `--provider` value.
