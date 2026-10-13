@@ -30,13 +30,14 @@
 //!   an unquoted word that looks like a token (`decide::redact::looks_like_token`) goes whole.
 //! - **Quoted text is scanned too**: the inside of `'…'`, `$'…'`, `$( )` and backticks as a
 //!   command, the inside of `"…"` with double-quote rules (`'` and `$'` are plain there).
-//!   When the inside ends still owing a secret, the rest of its word goes if the word goes on
-//!   after the close (`"X-Api-Key:"secret`), and a quote ending its word on a scheme word
-//!   hides the next word (`"X-Auth-Token:Bearer" xyz`); a substitution passes nothing on.
-//! - **Line continuations.** `\` and a newline are a blank, so the secret a word says comes
-//!   next is the word after them (`--password \` then `hunter2`).
-//! - **Comments and heredocs.** An unquoted `#` comment to the end of its line, and every
-//!   heredoc body.
+//! - **Each word judged as bash reads it** (`word`): its text with quotes removed and line
+//!   continuations dropped is judged whole by `decide::redact::judge`, which decides what it
+//!   owes the next word (`"X-Api-Key: " secret`, `Bearer\` then a newline and `tok`); an
+//!   assignment (`x="Bearer" dropdb`) owes nothing. A word whose rewrite still holds a secret
+//!   when read back that way is hidden whole. An unquoted line continuation between words is a
+//!   blank.
+//! - **Comments and heredocs** (`heredoc`). An unquoted `#` comment to the end of its line,
+//!   and every heredoc body.
 //! - **Anything unclosed.** From a quote, substitution or heredoc that is never closed (or nests
 //!   past [`MAX_NESTING`]), the rest of the command.
 //!
@@ -44,14 +45,12 @@
 //! so it cannot rewrite the command in place; this scanner reads the same quoting to find each
 //! span in the source.
 
-use self::spans::{Unit, after, char_at, closed, unit_at, word_end};
+use self::heredoc::Heredoc;
+use self::spans::{after, char_at, word_end};
 use super::shell::MAX_NESTING;
 use crate::decide::redact::rules::{is_pair, secret_assignment_prefix};
-use crate::decide::redact::tools::{self, Tool};
-use crate::decide::redact::{
-    REDACTED, Scheme, Secret, Then, basic_credential, find_secret, looks_like_token, scheme,
-    split_punctuation, url_userinfo,
-};
+use crate::decide::redact::tools::Tool;
+use crate::decide::redact::{REDACTED, basic_credential};
 use crate::decide::state::cut_chars;
 
 /// Characters that open a quote or substitution: a word part holding none is plain text.
@@ -83,14 +82,6 @@ enum Quoting {
     Bare,
     /// Inside `"…"`: `'` and `$'` are plain characters.
     Double,
-}
-
-/// A heredoc whose body starts after the current line.
-#[derive(Debug)]
-struct Heredoc {
-    delimiter: String,
-    /// `<<-`: leading tabs are stripped from the closing line.
-    strip_tabs: bool,
 }
 
 /// Redacts `text` into `out`, reading it with `quoting` at nesting `depth`. Returns what its
@@ -230,78 +221,6 @@ impl Scanner<'_, '_> {
         Scan::Unclosed
     }
 
-    /// A run of `<` or `>`; exactly `<<` (or `<<-`) outside double quotes opens a heredoc.
-    fn redirection(&mut self, c: char) -> Scan {
-        let run = self
-            .text
-            .get(self.pos..)
-            .map_or(0, |rest| rest.chars().take_while(|&d| d == c).count());
-        let end = self.pos.saturating_add(run);
-        if c == '<' && run == 2 && self.quoting == Quoting::Bare {
-            self.copy_to(end);
-            self.heredoc()
-        } else {
-            self.copy_to(end)
-        }
-    }
-
-    /// After `<<`: an optional `-`, blanks and the delimiter word, queued for the next line.
-    fn heredoc(&mut self) -> Scan {
-        let strip_tabs = char_at(self.text, self.pos) == Some('-');
-        if strip_tabs {
-            self.copy_to(after(self.pos, '-'));
-        }
-        while let Some(blank @ (' ' | '\t')) = char_at(self.text, self.pos) {
-            self.copy_to(after(self.pos, blank));
-        }
-        let Some(end) = word_end(self.text, self.pos, self.quoting, self.depth) else {
-            return self.redact_rest();
-        };
-        let raw = self.text.get(self.pos..end).unwrap_or_default();
-        let delimiter = raw
-            .chars()
-            .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-            .collect();
-        self.heredocs.push(Heredoc {
-            delimiter,
-            strip_tabs,
-        });
-        self.copy_to(end)
-    }
-
-    /// At the start of a line: each queued heredoc's body becomes [`REDACTED`], its closing
-    /// line is kept.
-    fn heredoc_bodies(&mut self) -> Scan {
-        for heredoc in std::mem::take(&mut self.heredocs) {
-            let mut line_start = self.pos;
-            loop {
-                let rest = self.text.get(line_start..).unwrap_or_default();
-                let line_len = rest.find('\n').unwrap_or(rest.len());
-                let line = rest.get(..line_len).unwrap_or_default();
-                let closing = if heredoc.strip_tabs {
-                    line.trim_start_matches('\t')
-                } else {
-                    line
-                };
-                if closing == heredoc.delimiter {
-                    if line_start > self.pos {
-                        self.out.push_str(REDACTED);
-                        self.out.push('\n');
-                    }
-                    self.pos = line_start;
-                    let newline = usize::from(line_len < rest.len());
-                    self.copy_to(line_start.saturating_add(line_len).saturating_add(newline));
-                    break;
-                }
-                if line_len == rest.len() {
-                    return self.redact_rest();
-                }
-                line_start = line_start.saturating_add(line_len).saturating_add(1);
-            }
-        }
-        Scan::Closed
-    }
-
     /// `#` at the start of a word: a comment to the end of the line.
     fn comment(&mut self) -> Scan {
         let rest = self.text.get(self.pos..).unwrap_or_default();
@@ -352,152 +271,11 @@ impl Scanner<'_, '_> {
         self.pos = end;
         Scan::Closed
     }
-
-    /// A word not hidden by the words before it: its own secret, a token, or the word with any
-    /// URL userinfo redacted; then what it says about the next words.
-    fn readable_word(&mut self, raw: &str) {
-        let secret = find_secret(raw, self.tool)
-            .filter(|secret| closed(&secret.shown, self.quoting, self.depth));
-        if let Some(secret) = secret {
-            self.write_secret(&secret);
-        } else if let Some((lead, trail)) = plain_token(raw) {
-            self.out.push_str(lead);
-            self.out.push_str(REDACTED);
-            self.out.push_str(trail);
-        } else {
-            self.pending = self.copy_word(raw);
-        }
-        if self.pending == Pending::Nothing {
-            self.pending = match scheme(raw) {
-                Some(Scheme::Bearer) => Pending::Word,
-                Some(Scheme::Basic) => Pending::BasicWord,
-                None => Pending::Nothing,
-            };
-        }
-        if let Some(tool) = self.tool.as_mut()
-            && tool.note(raw)
-        {
-            self.pending = Pending::Word;
-        }
-        if let Some(tool) = tools::known(raw) {
-            self.tool = Some(tool);
-        }
-    }
-
-    /// Writes a word's secret: what stays readable, the mark, and what the next words are.
-    fn write_secret(&mut self, secret: &Secret<'_>) {
-        self.out.push_str(&secret.shown);
-        if secret.redacts {
-            self.out.push_str(REDACTED);
-        }
-        match secret.then {
-            Then::Nothing => {}
-            // An attached `Bearer` (`X-Auth-Token:Bearer xyz`) went with its word; the next
-            // word is its credential, as for a credential option's value.
-            Then::NextWord | Then::AttachedScheme(Scheme::Bearer) => self.pending = Pending::Word,
-            Then::Header => self.pending = Pending::Rest,
-            Then::AttachedHeader => self.pending = Pending::AttachedValue,
-            Then::AttachedScheme(Scheme::Basic) => self.pending = Pending::BasicWord,
-        }
-    }
-
-    /// Copies a word with the userinfo of each URL in it (`https://user:token@host`) redacted;
-    /// a URL inside a quote is found by the scan of the quote's inside. Returns what a quote
-    /// ending the word says about the next word ([`units`]).
-    fn copy_word(&mut self, raw: &str) -> Pending {
-        let mut rest = raw;
-        while let Some((start, end)) = url_userinfo(rest)
-            && let (Some(head), Some(tail)) = (rest.get(..start), rest.get(end..))
-            && !head.contains(QUOTING)
-        {
-            self.out.push_str(head);
-            self.out.push_str(REDACTED);
-            rest = tail;
-        }
-        units(rest, self.quoting, self.depth, self.out)
-    }
 }
 
-/// The punctuation around an unquoted word that looks like a token (`ghp_…`), so the token
-/// goes whole; a quoted one is found by the scan of the quote's inside.
-fn plain_token(raw: &str) -> Option<(&str, &str)> {
-    if raw.contains(QUOTING) {
-        return None;
-    }
-    let (lead, core, trail) = split_punctuation(raw);
-    looks_like_token(core).then_some((lead, trail))
-}
-
-/// Copies a word whose spans are all closed, scanning the inside of each quote or
-/// substitution as text.
-///
-/// A span whose inside ends in a secret still owed (a credential's value, a header's) hides
-/// the rest of the word when the word goes on after its close (`"X-Api-Key:"secret`). A quote
-/// that ends the word and leaves the next word secret (`"X-Auth-Token:Bearer" xyz`) returns
-/// that for the outer scan; a substitution returns nothing, since its inside is a command and
-/// the word after it may be one (`x=$(echo Bearer) rm -rf /p`).
-fn units(raw: &str, quoting: Quoting, depth: usize, out: &mut String) -> Pending {
-    let mut pos = 0;
-    while pos < raw.len() {
-        let (open, start, end, close, inner_quoting) = match unit_at(raw, pos, quoting, depth) {
-            Unit::Plain(end) => {
-                out.push_str(raw.get(pos..end).unwrap_or_default());
-                pos = end;
-                continue;
-            }
-            // A span `word_end` found closed closes here too; should one not, redact the rest.
-            Unit::Span(None) => {
-                out.push_str(REDACTED);
-                return Pending::Nothing;
-            }
-            Unit::Span(Some(span)) => span,
-        };
-        out.push_str(open);
-        let inner = raw.get(start..end.saturating_sub(close.len()));
-        let owed = redact_nested(inner.unwrap_or_default(), inner_quoting, depth, out);
-        out.push_str(close);
-        pos = end;
-        match after_span(owed, open, pos < raw.len()) {
-            AfterSpan::ReadOn => {}
-            AfterSpan::Secret => {
-                out.push_str(REDACTED);
-                return Pending::Nothing;
-            }
-            AfterSpan::Next(pending) => return pending,
-        }
-    }
-    Pending::Nothing
-}
-
-/// What a word is after one of its spans closes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AfterSpan {
-    /// Read on as usual.
-    ReadOn,
-    /// The rest of the word is the secret the span's inside still owes.
-    Secret,
-    /// The span ends the word, and the next word is as this says.
-    Next(Pending),
-}
-
-/// What follows a span opened by `open` whose inside still owes `owed`, as [`units`] says;
-/// `goes_on` is whether its word goes on after the close.
-fn after_span(owed: Pending, open: &str, goes_on: bool) -> AfterSpan {
-    let next_word = matches!(owed, Pending::Word | Pending::BasicWord);
-    if goes_on {
-        if next_word || matches!(owed, Pending::Rest | Pending::AttachedValue) {
-            AfterSpan::Secret
-        } else {
-            AfterSpan::ReadOn
-        }
-    } else if next_word && matches!(open, "'" | "\"" | "$'") {
-        AfterSpan::Next(owed)
-    } else {
-        AfterSpan::ReadOn
-    }
-}
-
+mod heredoc;
 mod spans;
+mod word;
 
 #[cfg(test)]
 mod tests;

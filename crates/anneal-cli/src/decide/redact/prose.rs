@@ -1,8 +1,8 @@
 //! Prose as Clef sees it: [`safe_prompt`].
 
 use super::rules::{
-    Scheme, Secret, Then, basic_credential, find_secret, is_pair, is_punctuation, looks_like_token,
-    quote_after, scheme, split_punctuation, url_userinfo,
+    Scheme, Secret, Then, basic_credential, dequote, find_secret, is_assignment, is_pair,
+    is_punctuation, looks_like_token, quote_after, scheme, split_punctuation, url_userinfo,
 };
 use super::tools::{self, Tool};
 use super::{MAX_PROMPT_CHARS, REDACTED};
@@ -44,6 +44,9 @@ struct Prose {
     pending: usize,
     /// Words are secrets until this quote, opened with a header name, closes.
     header_quote: Option<char>,
+    /// Whether the quote [`Prose::header_quote`] holds a value: a header name it holds alone
+    /// (`"X-Api-Key: "`) leaves its value to the words after the close.
+    quote_value: bool,
     /// The word before was `Basic`.
     after_basic: bool,
     /// The last known tool named, whose secret options are redacted from then on.
@@ -87,6 +90,12 @@ impl Prose {
             self.safe.push_str(word);
             return true;
         }
+        // A word ending in one: bash reads the word without it (`--password\`).
+        if let Some(stem) = continued(word) {
+            let went_on = self.word(stem, words);
+            self.safe.push('\\');
+            return went_on;
+        }
         let (lead, core, trail) = split_punctuation(word);
         let header = std::mem::take(&mut self.header);
         let pair = header == HeaderValue::AfterSemicolon && is_pair(word);
@@ -119,7 +128,13 @@ impl Prose {
     fn after_hidden<'p>(&mut self, word: &str, words: &mut impl Iterator<Item = &'p str>) -> bool {
         self.pending = self.pending.saturating_sub(1);
         if let Some(open) = self.header_quote {
+            let (_, core, trail) = split_punctuation(word);
+            self.quote_value |= !core.is_empty();
             self.header_quote = quote_after(Some(open), word);
+            if self.header_quote.is_none() && !self.quote_value {
+                self.pending = HEADER_WORDS;
+                self.header = HeaderValue::after(trail);
+            }
             return true;
         }
         let open = opened_by(word);
@@ -155,10 +170,18 @@ impl Prose {
             self.safe.push_str(REDACTED);
         }
         let open = quote_after(None, word);
-        Some(match secret.then {
+        // The word after an assignment is a command: it owes nothing.
+        let then = match secret.then {
+            Then::NextWord | Then::AttachedScheme(_) if is_assignment(&dequote(word)) => {
+                Then::Nothing
+            }
+            then => then,
+        };
+        Some(match then {
             Then::Header => {
                 if open.is_some() {
                     self.header_quote = open;
+                    self.quote_value = secret.redacts;
                 } else {
                     self.pending = HEADER_WORDS;
                     self.header = HeaderValue::after(split_punctuation(word).2);
@@ -209,6 +232,14 @@ impl Prose {
             self.tool = Some(tool);
         }
     }
+}
+
+/// `word` without the `\` ending it, when that `\` escapes nothing but the line break after it
+/// (an odd run of them), and something stays.
+fn continued(word: &str) -> Option<&str> {
+    let stem = word.strip_suffix('\\')?;
+    let run = stem.len().saturating_sub(stem.trim_end_matches('\\').len());
+    (run.is_multiple_of(2) && !stem.is_empty()).then_some(stem)
 }
 
 /// The quote a hidden word leaves open: one its punctuation or core opens and its trailing

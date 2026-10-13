@@ -185,9 +185,9 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
 fn after_colon(word: &str, name: &str, kept: usize) -> (usize, Then) {
     // `kept` is just past an ASCII `:` of `word`, so the slice exists.
     let value = word.get(kept..).map_or(Cow::Borrowed(""), dequote);
-    // Nothing but quotes after the `:` (`"X-Api-Key:"`): the value is still to come, as after
-    // an unquoted `X-Api-Key:`, and the quotes stay readable.
-    if value.is_empty() {
+    // Nothing but quotes and blanks after the `:` (`"X-Api-Key:"`, `"X-Api-Key: "`): the value
+    // is still to come, as after an unquoted `X-Api-Key:`, and the quotes stay readable.
+    if value.trim().is_empty() {
         return (word.len(), Then::Header);
     }
     let lower = name.to_ascii_lowercase();
@@ -282,6 +282,19 @@ pub(crate) fn dequote(word: &str) -> Cow<'_, str> {
 /// `NAME` (its quotes stripped, as in `"API_KEY"=x`) is an environment-style name or holds a
 /// credential word.
 pub(crate) fn secret_assignment_prefix(word: &str) -> Option<&str> {
+    let (name, prefix) = assignment_prefix(word)?;
+    (is_env_name(&name) || is_credential(&name)).then_some(prefix)
+}
+
+/// Whether `word` starts with a shell assignment of any name (`x=`, `cfg+=`, `a[0]=`). Its
+/// next word is a command, or another assignment, never a value it announces.
+pub(crate) fn is_assignment(word: &str) -> bool {
+    assignment_prefix(word).is_some()
+}
+
+/// The name (its quotes stripped) and the prefix through `=` of an assignment at the start of
+/// `word`: `NAME=`, `NAME+=`, `NAME[…]=` or `NAME[…]+=`.
+fn assignment_prefix(word: &str) -> Option<(Cow<'_, str>, &str)> {
     let name_len = assignment_name_len(word)?;
     let quoted = word.get(..name_len)?;
     let name: Cow<'_, str> = if quoted.contains(['\'', '"']) {
@@ -294,7 +307,7 @@ pub(crate) fn secret_assignment_prefix(word: &str) -> Option<&str> {
     } else {
         Cow::Borrowed(quoted)
     };
-    if !(is_name(&name) && (is_env_name(&name) || is_credential(&name))) {
+    if !is_name(&name) {
         return None;
     }
     let mut end = name_len;
@@ -310,7 +323,7 @@ pub(crate) fn secret_assignment_prefix(word: &str) -> Option<&str> {
     } else {
         return None;
     };
-    word.get(..end.saturating_add(equals))
+    Some((name, word.get(..end.saturating_add(equals))?))
 }
 
 /// The length of the name at the start of `word`: name characters, some of them inside

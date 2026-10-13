@@ -9,10 +9,15 @@
 //!   [`REDACTED`], and cut to [`MAX_PROMPT_CHARS`] (`state::cut_chars`). It applies the same
 //!   word rules, carrying what one word says about the next (a credential option's value, a
 //!   header's value, a quote a secret opens) across words, past a lone `\` (a line
-//!   continuation), which is no word. It is a filter for the obvious
-//!   cases, not a secret scanner. The prompt hooks send prompts through it, and
-//!   `grill classify` a question and its goal.
+//!   continuation), which is no word, and reading a word that ends in one without it; an
+//!   assignment word owes the next word nothing. It is a filter for the obvious cases, not a
+//!   secret scanner. The prompt hooks send prompts through it, and `grill classify` a
+//!   question and its goal.
+//! - [`judge`] reads one shell word's text as bash passes it on (quotes removed, line
+//!   continuations dropped) with the same rules: whether it still holds a secret, and what it
+//!   owes the word after it. The guard judges each word with it.
 
+pub(crate) mod judge;
 mod prose;
 pub(crate) mod rules;
 pub(crate) mod tools;

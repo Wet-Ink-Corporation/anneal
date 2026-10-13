@@ -52,9 +52,64 @@ pub(super) fn closed(text: &str, quoting: Quoting, depth: usize) -> bool {
     true
 }
 
-/// A quote or substitution in a word: the text that opens it, where its inside starts, where
-/// it ends (past its close), the text that closes it, and the quoting of its inside.
-pub(super) type Span = (&'static str, usize, usize, &'static str, Quoting);
+/// What a span of a word is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SpanKind {
+    /// `'…'`: its inside is literal.
+    Single,
+    /// `$'…'`: its inside is literal but for backslash escapes.
+    Ansi,
+    /// `"…"`: its inside is read with double-quote rules.
+    Double,
+    /// `$( )`, `${ }`, backticks or `( )`: its inside is a command or expansion, known only
+    /// when it runs.
+    Substitution,
+}
+
+/// A closed quote or substitution in a word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Span {
+    pub(super) kind: SpanKind,
+    /// The text that opens it (`"`, `$(`).
+    pub(super) open: &'static str,
+    /// Where its inside starts.
+    pub(super) start: usize,
+    /// Where it ends, past its close.
+    pub(super) end: usize,
+    /// The text that closes it.
+    pub(super) close: &'static str,
+}
+
+impl Span {
+    /// Where its inside ends, before its close.
+    pub(super) const fn inner_end(&self) -> usize {
+        self.end.saturating_sub(self.close.len())
+    }
+
+    /// The quoting its inside is read with.
+    pub(super) const fn quoting(&self) -> Quoting {
+        match self.kind {
+            SpanKind::Double => Quoting::Double,
+            SpanKind::Single | SpanKind::Ansi | SpanKind::Substitution => Quoting::Bare,
+        }
+    }
+}
+
+/// A span of `kind` opened by `open`, its inside from `start`, closed by `close` at `end`.
+const fn span(
+    kind: SpanKind,
+    open: &'static str,
+    start: usize,
+    close: &'static str,
+) -> impl Fn(usize) -> Span {
+    move |end| Span {
+        kind,
+        open,
+        start,
+        end,
+        close,
+    }
+}
 
 /// One unit of a word, as the redaction copies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,15 +130,13 @@ pub(super) fn unit_at(raw: &str, pos: usize, quoting: Quoting, depth: usize) -> 
     let span = match (c, char_at(raw, next), quoting) {
         ('\\', Some(escaped), _) => return Unit::Plain(after(next, escaped)),
         ('\'', _, Quoting::Bare) => {
-            close_single(raw, next).map(|end| ("'", next, end, "'", Quoting::Bare))
+            close_single(raw, next).map(span(SpanKind::Single, "'", next, "'"))
         }
-        ('"', _, _) => {
-            close_double(raw, next, depth).map(|end| ("\"", next, end, "\"", Quoting::Double))
-        }
-        ('`', _, _) => close_backtick(raw, next).map(|end| ("`", next, end, "`", Quoting::Bare)),
+        ('"', _, _) => close_double(raw, next, depth).map(span(SpanKind::Double, "\"", next, "\"")),
+        ('`', _, _) => close_backtick(raw, next).map(span(SpanKind::Substitution, "`", next, "`")),
         ('$', Some('\''), Quoting::Bare) => {
             let start = after(next, '\'');
-            close_ansi(raw, start).map(|end| ("$'", start, end, "'", Quoting::Bare))
+            close_ansi(raw, start).map(span(SpanKind::Ansi, "$'", start, "'"))
         }
         ('$', Some(open @ ('(' | '{')), _) => {
             let start = after(next, open);
@@ -92,11 +145,15 @@ pub(super) fn unit_at(raw: &str, pos: usize, quoting: Quoting, depth: usize) -> 
             } else {
                 ("${", '}', "}")
             };
-            close_group(raw, start, close, depth)
-                .map(|end| (opens, start, end, closes, Quoting::Bare))
+            close_group(raw, start, close, depth).map(span(
+                SpanKind::Substitution,
+                opens,
+                start,
+                closes,
+            ))
         }
         ('(', _, Quoting::Bare) => {
-            close_group(raw, next, ')', depth).map(|end| ("(", next, end, ")", Quoting::Bare))
+            close_group(raw, next, ')', depth).map(span(SpanKind::Substitution, "(", next, ")"))
         }
         _ => return Unit::Plain(next),
     };

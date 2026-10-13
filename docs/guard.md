@@ -287,8 +287,8 @@ than too little:
   and its `=` or `:` (`--from-literal=password=x`, `-Dpassword=x`,
   `//registry/:_authToken=x`, `{"password":"x"}`, `pass:x`): the rest of that word. A `::`
   is a path, not a key (`auth::tests` stays);
-- a header: a credential-named key ending its word in `:`, quotes aside (`"X-Api-Key: …"`,
-  `"X-Api-Key:" k`,
+- a header: a credential-named key ending its word in `:`, quotes and blanks aside
+  (`"X-Api-Key: …"`, `"X-Api-Key:" k`, `"X-Api-Key: " k`, `'Cookie: ' 'sid=S'`,
   `PRIVATE-TOKEN:`, `Cookie:`, `{"Authorization": …}`), any `Authorization:` (any letter
   case, `Proxy-Authorization:` too), hides its own value and every word after it up to the
   end of the simple command or quote it is in: `-H "Authorization: Bearer x"` becomes
@@ -300,14 +300,22 @@ than too little:
   credential name's `:` is the scheme word itself (`Bearer`, or `Basic`, in any letter case,
   quotes removed), the word after it is hidden too, as after a readable scheme word:
   `-H "X-Auth-Token:Bearer xyz"` becomes `-H "X-Auth-Token:<redacted> <redacted>"`, and
-  `-H "Token:Bearer xyz"` becomes `-H "Token:<redacted> <redacted>"`; an assignment's `=` is
-  not such a key (`TOKEN=Bearer ls` keeps `ls`, a command). A header value that goes on past
-  its closing quote in the same word is hidden through the end of the word
-  (`-H "X-Api-Key:"secret` and `-H "X-Auth-Token:Bearer "xyz`), and a quote that ends its word
-  on the scheme word hides the next word (`-H "X-Auth-Token:Bearer" xyz`); a substitution
-  passes nothing on (`x=$(echo Bearer) rm -rf /p` keeps `rm`). A line continuation (`\` and a
-  newline) is a blank, so it never takes the place of the secret a word before it announced
-  (`--password \` then `hunter2` hides `hunter2`). Every separator (`;`, `&`, `|`, a
+  `-H "Token:Bearer xyz"` becomes `-H "Token:<redacted> <redacted>"`. An assignment word
+  (`name=`, `name+=`, `name[…]=`, in any letter case, alone or after `env` or `export`) never
+  hides the word after it, which may be a command: `TOKEN=Bearer ls`, `x="Bearer" dropdb
+  production` and `cfg=auth:bearer dropdb production` keep the word after the assignment,
+  though the assignment's own value may go. A header value that goes on past its closing quote
+  in the same word is hidden through the end of the word (`-H "X-Api-Key:"secret` and
+  `-H "X-Auth-Token:Bearer "xyz`), and a quote that ends its word on the scheme word hides the
+  next word (`-H "X-Auth-Token:Bearer" xyz`, `-H "X-Auth-Token:Bearer"'' xyz`); a substitution
+  passes nothing on (`x=$(echo Bearer) rm -rf /p` keeps `rm`). Each word is also judged as
+  bash reads it, with its quotes removed and its line continuations (`\` and a newline)
+  dropped: what that text announces is what the next word owes, and a word whose redacted text,
+  read back the same way, still holds a secret is hidden whole. So a line continuation never
+  takes the place of the secret a word before it announced, whether it stands between words
+  (`--password \` then `hunter2`) or ends one (`--password\` then `hunter2`,
+  `X-Auth-Token:Bearer\` then `xyz`, `-H "Authorization: Bearer"\` then `tok`); between words
+  it is a blank. Every separator (`;`, `&`, `|`, a
   newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
   `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
   `name=value` words right after a `;` that ends either form stay hidden

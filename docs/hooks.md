@@ -380,7 +380,8 @@ Shared behaviour:
   key ids, and opaque words of 32 or more letters and digits mixed). Since prose has no command
   end, what one word says about the next is carried across words: a header name
   (`Authorization:`, `X-Api-Key:`, `Cookie:`) hides the words through its quote when it opens
-  one (`"Cookie: s=1; t=2"`), else its next two words (scheme and credential) and, while each
+  one (`"Cookie: s=1; t=2"`) and, when that quote holds no value (`send "X-Api-Key: " secret
+  now`), the two words after its close too, else its next two words (scheme and credential) and, while each
   word of its value ends in `;`, the `name=value` pairs after them (`Cookie: a=1; b=2; c=3`
   hides all three; the first other word, such as `Secure;`, ends it, and a pair holding `$`,
   a backtick, `\`, `(` or a `;` inside, or opening a quote it does not close, is no pair). A
@@ -390,9 +391,12 @@ Shared behaviour:
   When the value attached to any credential name's `:` is the scheme word `Bearer` or
   `Basic` and opens no quote, the next word goes too (`X-Auth-Token:Bearer xyz now` and
   `Token:Bearer xyz now` become `X-Auth-Token:<redacted> <redacted> now` and
-  `Token:<redacted> <redacted> now`; `TOKEN=Bearer ls` keeps `ls`). A lone `\` (a line
-  continuation) is kept and is no word, so it never takes the place of the secret a word
-  before it announced (`--password \ hunter2` hides `hunter2`). A quote
+  `Token:<redacted> <redacted> now`). An assignment word never hides the word after it
+  (`TOKEN=Bearer ls`, `x="Bearer" dropdb` and `cfg=auth:bearer dropdb` keep the next word). A
+  line continuation is kept and is no word, so it never takes the place of the secret a word
+  before it announced: a lone `\` is skipped (`--password \ hunter2` hides `hunter2`), and a
+  word ending in one `\` is read without it (`--password\ hunter2`, `Bearer\ tok` and
+  `X-Auth-Token:Bearer\ xyz` hide the word after). A quote
   opened before a name, in a value or by a hidden word is redacted through the word that
   closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes
   `DB_PASS=<redacted> then go`, `TOKEN=abc"def ghi" then go` becomes

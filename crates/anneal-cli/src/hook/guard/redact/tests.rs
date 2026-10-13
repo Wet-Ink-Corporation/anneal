@@ -973,3 +973,73 @@ fn a_credential_key_with_an_attached_scheme_hides_the_credential_after_it() {
         assert_eq!(redact(command), expected, "{command:?}");
     }
 }
+
+// Review round 2 of PR 113: each word is judged as bash reads it.
+
+#[test]
+fn a_header_quote_holding_only_a_blank_hides_the_words_after_it() {
+    let cases = [
+        (
+            "curl -H \"X-Api-Key: \" secret u",
+            "curl -H \"X-Api-Key: \" <redacted> <redacted>",
+        ),
+        (
+            "curl -H 'Cookie: ' 'sid=S' u",
+            "curl -H 'Cookie: ' <redacted> <redacted>",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn a_line_continuation_inside_a_word_is_read_as_bash_reads_it() {
+    let cases = [
+        (
+            "curl -H X-Auth-Token:Bearer\\\n  xyz u",
+            "curl -H X-Auth-Token:<redacted>  <redacted> u",
+        ),
+        ("echo Bearer\\\n tok", "echo Bearer\\\n <redacted>"),
+        (
+            "curl --password\\\n hunter2",
+            "curl --password\\\n <redacted>",
+        ),
+        (
+            "curl -H \"Authorization: Bearer\"\\\n tok",
+            "curl -H \"Authorization: <redacted>\"<redacted> <redacted>",
+        ),
+        (
+            "curl -H 'X-Auth-Token:Bearer'\\\n  xyz u",
+            "curl -H 'X-Auth-Token:<redacted>'<redacted>  <redacted> u",
+        ),
+        (
+            "curl -H \"X-Auth-Token:Bearer\"'' xyz u",
+            "curl -H \"X-Auth-Token:<redacted>\"<redacted> <redacted> u",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+#[test]
+fn an_assignment_never_hides_the_command_word_after_it() {
+    let cases = [
+        (
+            "x=\"Bearer\" dropdb production",
+            "x=\"Bearer\" dropdb production",
+        ),
+        (
+            "env x='Bearer' dropdb production",
+            "env x='Bearer' dropdb production",
+        ),
+        (
+            "cfg=auth:bearer dropdb production",
+            "cfg=auth:<redacted> dropdb production",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
