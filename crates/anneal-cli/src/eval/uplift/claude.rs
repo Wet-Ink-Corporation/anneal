@@ -24,12 +24,10 @@ use serde::Serialize;
 use super::case::{Grader, Tool};
 use super::drive::{Arm, Batch, Evaluator, Ran};
 use super::suites::Case;
-use crate::eval::routing::real::claude::{
-    Invocation, Invoked, Options, budget_arg, invoke, result_path,
-};
-use crate::eval::routing::real::result;
-use crate::eval::routing::real::workspace::{Limits, Workspace, copy_tree};
-use crate::eval::routing::real::{RouterError, Stop};
+use crate::eval::real::claude::{Invocation, Invoked, Options, budget_arg, invoke, result_path};
+use crate::eval::real::result;
+use crate::eval::real::workspace::{Limits, Workspace, copy_tree};
+use crate::eval::real::{RouterError, Stop};
 pub(crate) use trials::trials;
 
 /// The case schema version this writes (Claude Code reads up to 1.x).

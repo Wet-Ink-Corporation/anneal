@@ -8,7 +8,7 @@ use std::process::{Output, Stdio};
 
 use serde_json::Value;
 
-use crate::support::anneal_in;
+use crate::support::{anneal_in, anneal_with_home};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -325,7 +325,8 @@ fn lint_skills_rejects_an_index_over_budget_in_the_same_setup() -> TestResult {
 fn lint_index(index: &str) -> Result<(Option<i32>, bool), Box<dyn Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let skills = "crates/anneal-cli/tests/fixtures/lint-skills/rule-04-bootstrap-index/pass/skills";
-    let output = anneal_in(&root)
+    let home = tempfile::tempdir()?;
+    let output = anneal_with_home(&root, home.path())
         .args(["lint", "skills", skills, "--index", index])
         .output()?;
     let envelope: Value = serde_json::from_slice(&output.stdout)?;

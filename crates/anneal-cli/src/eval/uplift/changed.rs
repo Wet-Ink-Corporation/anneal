@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::eval::routing::real::ChangedError;
+use crate::eval::real::ChangedError;
 use crate::paths::{git_failure, run_git_capped};
 
 /// How long one git call may take.
@@ -120,7 +120,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{Changed, changed_skills};
-    use crate::eval::routing::real::ChangedError;
+    use crate::eval::real::ChangedError;
     use crate::test_repo::{ScratchRepo, Setup};
 
     fn names(list: &[&str]) -> BTreeSet<String> {

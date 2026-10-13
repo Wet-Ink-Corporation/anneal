@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::eval::routing::real::wilson::wilson;
+use crate::eval::real::wilson::wilson;
 
 /// Passing runs out of the runs that count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

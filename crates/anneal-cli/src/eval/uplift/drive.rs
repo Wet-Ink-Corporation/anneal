@@ -13,8 +13,8 @@ use super::Trial;
 use super::suites::Case;
 use super::tally::{Arms, RUNS};
 use crate::error_chain;
-use crate::eval::routing::real::result::{ResultError, over_asked};
-use crate::eval::routing::real::{RouterError, Stop};
+use crate::eval::real::result::{ResultError, over_asked};
+use crate::eval::real::{RouterError, Stop, spend_unknown};
 
 /// The least budget, in US dollars, worth launching a batch for.
 const MIN_BUDGET_USD: f64 = 0.01;
@@ -30,6 +30,53 @@ pub(crate) trait Evaluator {
     /// # Errors
     /// [`RouterError`] when the batch could not run or its result cannot be read.
     fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError>;
+}
+
+/// An [`Evaluator`] that keeps what the last batch it ran reported spending, when that is
+/// exact, so a first batch whose result [`drive`] refuses can still say what it spent.
+#[derive(Debug)]
+pub(crate) struct Metered<'a, E> {
+    inner: &'a mut E,
+    reported_usd: Option<f64>,
+}
+
+impl<'a, E> Metered<'a, E> {
+    /// `inner`, metered.
+    pub(crate) const fn new(inner: &'a mut E) -> Self {
+        Self {
+            inner,
+            reported_usd: None,
+        }
+    }
+
+    /// What the last batch reported spending, or `None` when it failed or its cost is a lower
+    /// bound.
+    pub(crate) const fn reported_usd(&self) -> Option<f64> {
+        self.reported_usd
+    }
+}
+
+impl<E: Evaluator> Evaluator for Metered<'_, E> {
+    fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
+        let ran = self.inner.run(batch);
+        self.reported_usd = match &ran {
+            Ok(ran) if !ran.cost_is_lower_bound => Some(ran.cost_usd),
+            Ok(_) | Err(_) => None,
+        };
+        ran
+    }
+}
+
+/// The run's error for `error`, which [`drive`] returned for the first batch. [`drive`] fails
+/// with [`RouterError::Result`] after the evaluator returned the batch only when it refused the
+/// batch's result, so with the cost that batch reported (`reported_usd`, from [`Metered`]) the
+/// spend is known ([`RouterError::Refused`]); any other failure may have spent unseen
+/// ([`spend_unknown`]).
+pub(crate) fn first_batch_error(error: RouterError, reported_usd: Option<f64>) -> RouterError {
+    match (error, reported_usd) {
+        (RouterError::Result(error), Some(cost_usd)) => RouterError::Refused { cost_usd, error },
+        (error, _) => spend_unknown(error),
+    }
 }
 
 /// The plugin a batch runs against.
@@ -213,8 +260,10 @@ pub(crate) fn drive<E: Evaluator>(
             if index == 1 {
                 return Err(error);
             }
-            // The batch reported its cost, so the spend stays exact; its runs are dropped.
+            // The batch's reported cost counts, and so does any mark that it is a lower bound,
+            // as in `take`; its runs are dropped.
             drove.spent_usd += ran.cost_usd;
+            drove.cost_is_lower_bound |= ran.cost_is_lower_bound;
             drove.batches = index;
             drove.stop = Some(Stop::Failed {
                 reason: error_chain::reason(&error),

@@ -5,9 +5,9 @@
 //! route of their GitHub proxy (`repos/{owner}/{repo}/pulls/{n}/ccr/review_threads`). When the
 //! GraphQL query fails, that route is read instead; when it fails too (as it does anywhere but
 //! behind that proxy), the error is [`WatchError::Threads`]: the GraphQL failure, with the
-//! route's as its source. At most [`MAX_THREADS`] threads are
-//! read; more fail the poll rather than judge part of them (H-13). The proxy's list carries no
-//! total, so a list of [`MAX_THREADS`] or more from it fails too: it may have been cut short.
+//! route's as its source. At most [`MAX_THREADS`] threads are read; more fail the poll rather
+//! than judge part of them (H-13). The proxy's list carries no total, so a list of
+//! [`MAX_THREADS`] or more from it fails too: it may have been cut short.
 
 use serde::Deserialize;
 

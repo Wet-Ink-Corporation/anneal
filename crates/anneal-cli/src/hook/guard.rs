@@ -40,25 +40,41 @@ pub(crate) use denylist::{Context, MergeScan, PrMerge, Target, find_pr_merge, re
 pub(crate) const MAX_INPUT_BYTES: u64 = 1024 * 1024;
 
 /// How long git may take to find the ledger (`anneal ledger` allows 10 s). With
-/// [`BUSY_TIMEOUT`] this keeps recording a denial well inside the hook's 5 s `timeout`, after
-/// which Claude Code blocks the call without the guard's reason; see `docs/guard.md`.
+/// [`RECORD_LOCK_RESERVE`] this keeps recording a denial well inside the hook's 5 s `timeout`,
+/// after which Claude Code blocks the call without the guard's reason; see `docs/guard.md`.
 /// The preconditions hook, under the same 5 s budget, shares it.
 pub(crate) const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// How long each ledger statement waits for another process's lock (the default is 10 s). A
-/// locked ledger fails the first statement that meets the lock, so it costs about this once.
-/// The preconditions hook shares it.
+/// How long each ledger statement of the other hooks waits for another process's lock (the
+/// default is 10 s). The guard's own record waits [`RECORD_BUSY_TIMEOUT`] per statement instead.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// What the guard plans to spend of the hook's 5 s `timeout`, measured from when it starts
 /// reading its input; the other 500 ms cover process start-up and writing the decision. Clef D1
 /// takes up to 2 s of it, so a deny after D1 can leave less than [`GIT_TIMEOUT`] plus
-/// [`BUSY_TIMEOUT`] for the ledger record, which then gets only what remains.
+/// [`RECORD_LOCK_RESERVE`] for the ledger record, which then gets only what remains.
 const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
 
 /// The least time worth giving git to find the ledger; with less, the record is skipped and the
 /// deny says so.
 const MIN_GIT_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// How long each statement of the guard's own ledger record waits for another process's lock.
+/// Shorter than [`BUSY_TIMEOUT`] so that [`RECORD_LOCK_WAITS`] of them fit in the budget; an
+/// append holds the lock for one small insert, so a writer that is not stuck still gets through.
+const RECORD_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// The most statements of one record that can each meet another process's lock, so wait up to
+/// [`RECORD_BUSY_TIMEOUT`]: SQLite's timeout is per statement, not per record. Opening an
+/// existing ledger runs nine (the schema version, the journal mode and the contents, setting the
+/// journal mode, `synchronous` and `foreign_keys`, the stamp, then happenstance's two identity
+/// reads) and the append two (`BEGIN IMMEDIATE` and `COMMIT`; the statements between them hold
+/// the lock); a new ledger adds four (`ATTACH`, `BEGIN IMMEDIATE`, `COMMIT`, `DETACH`). That is
+/// 15, rounded up to 16.
+const RECORD_LOCK_WAITS: u32 = 16;
+
+/// What [`git_budget`] holds back for the record's lock waits: every one of them, in full.
+const RECORD_LOCK_RESERVE: Duration = RECORD_BUSY_TIMEOUT.saturating_mul(RECORD_LOCK_WAITS);
 
 /// The `point` of the guard's `gate_blocked` events, before the rule's id.
 const POINT_PREFIX: &str = "guard.";
@@ -262,11 +278,12 @@ where
 }
 
 /// How long git may take to find the ledger when `remaining` of [`HOOK_BUDGET`] is left: what
-/// is left after one lock wait ([`BUSY_TIMEOUT`]), at most [`GIT_TIMEOUT`]; `None` when that is
-/// under [`MIN_GIT_TIMEOUT`], and the record is skipped so the deny still arrives in time.
+/// is left after every lock wait the record can meet ([`RECORD_LOCK_RESERVE`]), at most
+/// [`GIT_TIMEOUT`]; `None` when that is under [`MIN_GIT_TIMEOUT`], and the record is skipped so
+/// the deny still arrives in time.
 fn git_budget(remaining: Duration) -> Option<Duration> {
     remaining
-        .checked_sub(BUSY_TIMEOUT)
+        .checked_sub(RECORD_LOCK_RESERVE)
         .filter(|git| *git >= MIN_GIT_TIMEOUT)
         .map(|git| git.min(GIT_TIMEOUT))
 }
@@ -350,7 +367,7 @@ fn record(
     let mut envelope =
         EventEnvelope::new(event, "hook", Timestamp::now().map_err(RecordError::Clock)?);
     envelope.session_id = session_id;
-    Store::open_with_busy_timeout(&path, BUSY_TIMEOUT)
+    Store::open_with_busy_timeout(&path, RECORD_BUSY_TIMEOUT)
         .and_then(|ledger| ledger.append(&envelope))
         .map(drop)
         .map_err(RecordError::Append)

@@ -240,6 +240,63 @@ fn default_hooks_metadata_linked_from_outside_the_root_is_ignored() -> TestResul
     Ok(())
 }
 
+/// A root whose default `plugin/hooks/hooks.metadata.json` is a symlink to itself, which
+/// cannot be resolved.
+#[cfg(unix)]
+fn root_with_a_looping_default_hooks_metadata() -> std::io::Result<tempfile::TempDir> {
+    let root = tempfile::tempdir()?;
+    let hooks = root.path().join("plugin/hooks");
+    fs::create_dir_all(&hooks)?;
+    std::os::unix::fs::symlink(
+        hooks.join("hooks.metadata.json"),
+        hooks.join("hooks.metadata.json"),
+    )?;
+    Ok(root)
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unresolvable_default_hooks_metadata_is_not_read_when_no_rule_names_a_hook() -> TestResult {
+    let root = root_with_a_looping_default_hooks_metadata()?;
+    let document = root.path().join("rules.md");
+    fs::write(
+        &document,
+        "# R\n\n## Rules\n\n- Lint skills.\n  Enforcer: `anneal lint skills`\n",
+    )?;
+    let args = RulesArgs {
+        paths: vec![document],
+        root: root.path().to_path_buf(),
+        hooks: None,
+    };
+
+    let outcome = lint(&args)?;
+
+    assert_eq!(
+        (outcome.findings, outcome.documents),
+        (Vec::new(), 1),
+        "no rule names a hook, so the metadata is never read"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unresolvable_default_hooks_metadata_fails_when_a_rule_names_a_hook() -> TestResult {
+    let root = root_with_a_looping_default_hooks_metadata()?;
+
+    let failed = lint_hook_guard_rule(root.path());
+
+    let error = failed.expect_err("the metadata a hook rule needs cannot be resolved");
+    assert!(
+        matches!(
+            error.downcast_ref::<LintError>(),
+            Some(LintError::Io { .. })
+        ),
+        "{error:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn default_hooks_metadata_inside_the_root_is_read() -> TestResult {
     let root = tempfile::tempdir()?;

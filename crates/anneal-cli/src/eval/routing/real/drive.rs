@@ -1,10 +1,10 @@
 //! The sequential run: batches of prompts through the [`Router`] port until each settles.
 
-use super::result::over_asked;
 use super::schedule::{BATCH, MAX_RUNS, Next, next};
 use super::tally::Probe;
 use super::{Ran, RouterError, Stop};
 use crate::error_chain;
+use crate::eval::real::result::over_asked;
 
 /// The least budget, in US dollars, worth launching a batch for.
 const MIN_BUDGET_USD: f64 = 0.01;

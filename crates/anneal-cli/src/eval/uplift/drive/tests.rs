@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::{Arm, Baseline, Batch, Evaluator, Ran, drive};
-use crate::eval::routing::real::{ResultError, RouterError, Stop};
+use super::{Arm, Baseline, Batch, Evaluator, Metered, Ran, drive, first_batch_error};
+use crate::eval::real::{ResultError, RouterError, Stop};
 use crate::eval::uplift::Trial;
 use crate::eval::uplift::case::parse;
 use crate::eval::uplift::suites::{Case, SuiteKind};
@@ -43,6 +43,8 @@ enum Answer {
     Strays(f64),
     /// The result was refused after its cost was read: a run named grader `invented`.
     Refuses(f64),
+    /// Like `Pads`, with the cost a lower bound.
+    PadsBelowCost(f64),
 }
 
 /// An evaluator that answers batch `i` with `answers[i]` (the last answer repeats) and
@@ -61,13 +63,18 @@ impl Fake {
     }
 }
 
+/// How a recorded batch names its arm.
+fn arm_label(arm: Arm<'_>) -> String {
+    match arm {
+        Arm::With => "with".to_owned(),
+        Arm::Without(skill) => format!("without {skill}"),
+        Arm::Baseline => "baseline".to_owned(),
+    }
+}
+
 impl Evaluator for Fake {
     fn run(&mut self, batch: &Batch<'_>) -> Result<Ran, RouterError> {
-        let arm = match batch.arm {
-            Arm::With => "with".to_owned(),
-            Arm::Without(skill) => format!("without {skill}"),
-            Arm::Baseline => "baseline".to_owned(),
-        };
+        let arm = arm_label(batch.arm);
         let names: Vec<String> = batch.cases.iter().map(|case| case.name()).collect();
         let answer = self
             .answers
@@ -77,7 +84,7 @@ impl Evaluator for Fake {
         self.batches
             .push((arm, names.clone(), batch.runs, batch.budget_usd));
         let passed = matches!(batch.arm, Arm::With);
-        let graded = |cost: f64, extra: u32| Ran {
+        let graded = |cost: f64, extra: u32, cost_is_lower_bound: bool| Ran {
             runs: names
                 .iter()
                 .map(|name| {
@@ -87,15 +94,16 @@ impl Evaluator for Fake {
                 })
                 .collect(),
             cost_usd: cost,
-            cost_is_lower_bound: false,
+            cost_is_lower_bound,
             stop: None,
             refused: None,
         };
         match answer {
-            Answer::Costs(cost) => Ok(graded(*cost, 0)),
-            Answer::Pads(cost) => Ok(graded(*cost, 1)),
+            Answer::Costs(cost) => Ok(graded(*cost, 0, false)),
+            Answer::Pads(cost) => Ok(graded(*cost, 1, false)),
+            Answer::PadsBelowCost(cost) => Ok(graded(*cost, 1, true)),
             Answer::Strays(cost) => {
-                let mut ran = graded(*cost, 0);
+                let mut ran = graded(*cost, 0, false);
                 let run = Trial::Graded(vec![("a".to_owned(), passed)]);
                 ran.runs
                     .insert("spec--regression--c".to_owned(), vec![run; 3]);
@@ -346,6 +354,20 @@ fn a_later_batch_reporting_more_runs_than_asked_ends_the_run_keeping_its_cost_no
 }
 
 #[test]
+fn a_later_refused_batch_whose_cost_is_a_lower_bound_leaves_the_run_s_cost_a_lower_bound() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::Costs(1.0), Answer::PadsBelowCost(2.0)]);
+
+    let drove = drive(&mut fake, &cases, Baseline::SkillRemoved, 10.0).expect("runs");
+
+    assert_eq!(
+        (drove.batches, drove.spent_usd, drove.cost_is_lower_bound),
+        (2, 3.0, true),
+        "the refused batch's cost is kept, and so is its lower-bound mark"
+    );
+}
+
+#[test]
 fn no_cases_run_no_batch() {
     let mut fake = Fake::new(vec![Answer::Costs(1.0)]);
 
@@ -371,6 +393,50 @@ fn a_first_batch_whose_result_is_refused_is_an_error() {
             Err(RouterError::Result(ResultError::UnknownGrader { grader, .. }))
                 if grader == "invented"
         ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_first_batch_refused_after_its_cost_was_read_reports_what_it_spent() {
+    let cases = cases();
+    let mut refusing = Fake::new(vec![Answer::Refuses(1.5)]);
+    let mut failing = Fake::new(vec![Answer::Fails]);
+    let mut metered = Metered::new(&mut refusing);
+    let refused = drive(&mut metered, &cases, Baseline::SkillRemoved, 10.0)
+        .expect_err("the first batch is refused");
+    let refused = first_batch_error(refused, metered.reported_usd());
+    let mut metered = Metered::new(&mut failing);
+    let failed = drive(&mut metered, &cases, Baseline::SkillRemoved, 10.0)
+        .expect_err("the first batch fails");
+    let failed = first_batch_error(failed, metered.reported_usd());
+
+    assert!(
+        matches!(
+            &refused,
+            RouterError::Refused { cost_usd, error: ResultError::UnknownGrader { .. } }
+                if (cost_usd - 1.5).abs() < 1e-12
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        matches!(&failed, RouterError::SpendUnknown { .. }),
+        "no result, so the spend is unknown: {failed:?}"
+    );
+}
+
+#[test]
+fn a_first_batch_refused_with_its_cost_a_lower_bound_says_its_spend_is_unknown() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::PadsBelowCost(1.5)]);
+    let mut metered = Metered::new(&mut fake);
+
+    let refused = drive(&mut metered, &cases, Baseline::SkillRemoved, 10.0)
+        .expect_err("the first batch is refused");
+    let refused = first_batch_error(refused, metered.reported_usd());
+
+    assert!(
+        matches!(&refused, RouterError::SpendUnknown { .. }),
         "{refused:?}"
     );
 }

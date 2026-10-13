@@ -10,7 +10,7 @@ use std::process::{Output, Stdio};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use crate::support::{anneal_in, git};
+use crate::support::{anneal_home_in, anneal_in, git};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -138,9 +138,14 @@ fn context(decision: &Value) -> &str {
         .unwrap_or_default()
 }
 
-/// The ledger the counting `check:fast` appends to, outside the repository.
-fn counter(dir: &Path) -> PathBuf {
-    dir.join("runs.sqlite3")
+/// The log the counting `check:fast` appends one line to per run: `anneal decide label`'s,
+/// under the anneal home the hook (and so `check:fast`) gets in `repo`. A label is one small
+/// file append, so the count finishes at once, well inside `check:fast`'s 5 s limit; a ledger
+/// append, which creates a SQLite store, once took longer than that on a Windows runner.
+fn counter(repo: &Path) -> PathBuf {
+    anneal_home_in(repo)
+        .join("decisions")
+        .join("decisions.jsonl")
 }
 
 #[test]
@@ -148,16 +153,12 @@ fn counter(dir: &Path) -> PathBuf {
 fn ten_parallel_edits_in_one_batch_run_check_fast_exactly_once() -> TestResult {
     let repo = Repo::new()?;
     repo.enter_mode()?;
-    let runs = tempfile::tempdir()?;
-    let store = counter(runs.path());
-    let store = store.to_str().ok_or("a UTF-8 temp path")?;
     repo.check_fast(&[
         env!("CARGO_BIN_EXE_anneal"),
-        "ledger",
-        "append",
-        "--store",
-        store,
-        r#"{"type":"task_done","task":"fast-check-run"}"#,
+        "decide",
+        "label",
+        "d1-1-1",
+        "fast-check-run",
     ])?;
     let files: Vec<String> = (0..10).map(|n| format!("src/f{n}.rs")).collect();
     for file in &files {
@@ -168,17 +169,11 @@ fn ten_parallel_edits_in_one_batch_run_check_fast_exactly_once() -> TestResult {
     let output = repo.batch(&calls)?;
 
     assert_silent(&output);
-    let query = anneal_in(repo.path())
-        .args(["ledger", "query", "--store", store])
-        .output()?;
-    let events: Value = serde_json::from_slice(&query.stdout)?;
+    let runs = std::fs::read_to_string(counter(repo.path()))?;
     assert_eq!(
-        events
-            .pointer("/data/events")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(1),
-        "PostToolBatch fires once for the ten edits, and the hook runs check:fast once: {events}"
+        runs.lines().count(),
+        1,
+        "PostToolBatch fires once for the ten edits, and the hook runs check:fast once: {runs}"
     );
     Ok(())
 }

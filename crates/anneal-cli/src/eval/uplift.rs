@@ -27,15 +27,15 @@ pub(crate) use args::{Mode, Settings};
 pub use gated::GatedCases;
 pub(crate) use report::report;
 
-use crate::eval::routing::real::args::plugin_of;
-use crate::eval::routing::real::claude::plugin_name;
-use crate::eval::routing::real::{ChangedError, RouterError, spend_unknown};
+use crate::eval::real::args::plugin_of;
+use crate::eval::real::claude::plugin_name;
+use crate::eval::real::{ChangedError, RouterError};
 use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;
 use case::Grader;
 use claude::{BaselinePlugin, ClaudeEvaluator, Plugins};
-use drive::{Baseline, Drove, drive};
+use drive::{Baseline, Drove, Metered, drive, first_batch_error};
 use suites::Suites;
 
 /// What a Tier 3 run found.
@@ -232,7 +232,9 @@ fn run(
             baseline,
         },
     )?;
-    let drove = drive(&mut evaluator, &suites.cases, kind, settings.max_cost_usd);
+    let mut metered = Metered::new(&mut evaluator);
+    let drove = drive(&mut metered, &suites.cases, kind, settings.max_cost_usd);
+    let reported_usd = metered.reported_usd();
     let finished = evaluator.finish();
     match (drove, finished) {
         (Ok(drove), finished) => Ok((
@@ -241,9 +243,9 @@ fn run(
                 .err()
                 .map(|error| crate::error_chain::reason(&error)),
         )),
-        (Err(error), Ok(())) => Err(UpliftError::Router(spend_unknown(error))),
+        (Err(error), Ok(())) => Err(UpliftError::Router(first_batch_error(error, reported_usd))),
         (Err(error), Err(removing)) => {
-            let error = spend_unknown(error);
+            let error = first_batch_error(error, reported_usd);
             Err(UpliftError::Router(RouterError::Cleanup {
                 code: error.code(),
                 error: Box::new(error),

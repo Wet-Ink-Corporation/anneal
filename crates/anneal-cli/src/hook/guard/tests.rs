@@ -1,12 +1,16 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anneal_ledger::event::GateBlocked;
 use anneal_ledger::{EventKind, Filter, LedgerEvent, Store};
 use serde_json::{Value, json};
 
-use super::{Decision, Fallback, MAX_INPUT_BYTES, run};
+use super::{
+    Decision, Fallback, HOOK_BUDGET, MAX_INPUT_BYTES, RECORD_BUSY_TIMEOUT, RECORD_LOCK_WAITS,
+    git_budget, run,
+};
 use crate::hook::HookEnv;
 
 /// Runs the guard on `stdin` with the ledger at `store`, and returns its stdout.
@@ -234,4 +238,22 @@ fn a_failed_read_of_stdin_is_denied() {
         denied(&stdout).ends_with("reading stdin: pipe broke"),
         "an internal error denies: {stdout}"
     );
+}
+
+#[test]
+fn git_and_every_lock_wait_of_the_record_fit_in_what_is_left_of_the_budget() {
+    let worst_lock_waits = RECORD_BUSY_TIMEOUT * RECORD_LOCK_WAITS;
+    let steps = u32::try_from(HOOK_BUDGET.as_millis() / 10).expect("a few hundred steps");
+
+    let first_overrun = (0..=steps)
+        .map(|n| Duration::from_millis(10) * n)
+        .filter_map(|remaining| git_budget(remaining).map(|git| (remaining, git)))
+        .find(|(remaining, git)| *git + worst_lock_waits > *remaining);
+
+    assert_eq!(first_overrun, None, "(time left, git's timeout)");
+}
+
+#[test]
+fn with_no_time_spent_on_clef_git_gets_its_usual_timeout() {
+    assert_eq!(git_budget(HOOK_BUDGET), Some(super::GIT_TIMEOUT));
 }

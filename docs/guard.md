@@ -31,7 +31,7 @@ and wrappers do not get a command past it.
   event, the command is still denied, and the reason ends with
   `(the block was not recorded in the ledger: ...)`. Recording is bounded so the deny always
   arrives inside the hook's 5 s `timeout`: git gets 1 s to find the ledger and each ledger
-  statement waits at most 500 ms for another process's lock (`a_git_that_never_answers_still_gets_the_deny_out_within_the_hook_budget`).
+  statement waits at most 100 ms for another process's lock (`a_git_that_never_answers_still_gets_the_deny_out_within_the_hook_budget`).
 
 ### Failing closed
 
@@ -256,14 +256,16 @@ else the copy built in), modes, 50-decision shadow period and decision log (`doc
 it starts reading its input (the other 500 ms cover process start-up and writing the decision).
 Reading the input, lexing and the denylist take milliseconds; the Clef call takes at most 2 s
 (`decide`'s timeout), plus local reads and writes of the thresholds file, `counts.json` and the
-log. A deny then records `gate_blocked` with only what is left: one lock wait of 500 ms for the
-ledger, and git gets the rest up to its usual 1 s. With less than 200 ms left for git the record
-is skipped and the deny's reason ends with `(the block was not recorded in the ledger: no time
-left in the hook's budget)`; the deny itself always goes out. The fixed sum (2 s for Clef, 1 s
-for git, 500 ms of lock wait) is 3.5 s, but it leaves out the local reads and writes around the Clef call and the fact that
-the lock wait applies per ledger statement, which is why git's share is cut to what the clock
-says is left rather than assumed. A lock held past the first statement can still cost a further
-500 ms, inside the remaining margin.
+log. A deny then records `gate_blocked` with only what is left. SQLite's lock wait applies per
+statement, not per record, and opening the ledger and appending runs up to 16 statements that
+can each meet another process's lock, so the record waits at most 100 ms per statement and
+1.6 s is held back for all 16 waits; git gets the rest, up to its usual 1 s
+(`git_and_every_lock_wait_of_the_record_fit_in_what_is_left_of_the_budget`). With less than
+200 ms left for git the record is skipped and the deny's reason ends with `(the block was not
+recorded in the ledger: no time left in the hook's budget)`; the deny itself always goes out.
+The fixed sum (2 s for Clef, 1 s for git, 1.6 s of lock waits) is 4.6 s, over the 4.5 s
+budget, and it leaves out the local reads and writes around the Clef call, which is why git's
+share is cut to what the clock says is left rather than assumed.
 
 | D1 for the call | Guard's answer |
 |---|---|

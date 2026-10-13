@@ -18,7 +18,7 @@ use super::Trial;
 use super::case::{Behaviour, Pressure};
 use super::stats::{Count, Difference, newcombe};
 use super::suites::{Case, SuiteKind};
-use crate::eval::routing::real::wilson::wilson;
+use crate::eval::real::wilson::wilson;
 
 /// Runs per case in each arm.
 pub(crate) const RUNS: u32 = 3;

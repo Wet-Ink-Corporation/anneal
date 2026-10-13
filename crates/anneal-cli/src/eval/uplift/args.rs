@@ -8,10 +8,10 @@ use clap::builder::{BoolishValueParser, TypedValueParser as _};
 use clap::{ArgAction, Args};
 
 use crate::error::CliError;
-use crate::eval::routing::real::args::{
+use crate::eval::real::args::{
     DEFAULT_CONCURRENCY, DEFAULT_MAX_COST_USD, DEFAULT_TIMEOUT, cost_cap,
 };
-use crate::eval::routing::real::claude::Options;
+use crate::eval::real::claude::Options;
 
 /// Arguments of `anneal eval uplift`.
 #[derive(Debug, Clone, Args)]
