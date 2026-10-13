@@ -132,6 +132,20 @@ pub enum ResultError {
         /// The runs the batch asked for.
         asked: u32,
     },
+    /// A case is listed twice, so which runs belong to it cannot be told.
+    #[error("case {case} is listed twice in the result")]
+    DuplicateCase {
+        /// The case's name.
+        case: String,
+    },
+    /// A run names a grader its case does not have.
+    #[error("a run of case {case} names grader {grader}, which the case does not have")]
+    UnknownGrader {
+        /// The case's name.
+        case: String,
+        /// The grader named.
+        grader: String,
+    },
     /// The result reports a negative cost, so the spend cannot be tracked.
     #[error("the result reports a negative cost ({cost_usd} USD)")]
     NegativeCost {

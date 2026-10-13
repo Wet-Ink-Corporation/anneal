@@ -1,5 +1,6 @@
 //! The flags of `anneal eval uplift` and the mode they resolve to.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -34,8 +35,8 @@ pub struct UpliftArgs {
     /// `claude.cmd`, so pass its full path
     #[arg(long, value_name = "PATH")]
     pub claude: Option<PathBuf>,
-    /// The cost cap in US dollars: no batch starts once it is spent, though the runs already
-    /// in flight can overshoot it [default: 25]
+    /// The cost cap in US dollars: the with arm gets at most half of it, and no batch starts
+    /// once it is spent, though the runs already in flight can overshoot it [default: 25]
     #[arg(long, value_name = "USD", value_parser = cost_cap)]
     pub max_cost_usd: Option<f64>,
     /// The most the whole run may take, in seconds [default: 3600]
@@ -76,6 +77,9 @@ pub(crate) struct Settings<'a> {
     pub(crate) changed_since: Option<&'a str>,
     /// The baseline plugin, if not each skill removed.
     pub(crate) baseline: Option<&'a Path>,
+    /// The name of the plugin's skills directory (`--skills`' last component), from which a
+    /// skill-removed copy removes the skill.
+    pub(crate) skills_dir: &'a OsStr,
 }
 
 impl UpliftArgs {
@@ -99,7 +103,8 @@ impl UpliftArgs {
     ///
     /// # Errors
     /// [`CliError::Usage`] for a run flag with `--check`, a `--changed-since` that is not a
-    /// revision, or a `--baseline` that is not a directory.
+    /// revision, a `--baseline` that is not a directory, or, for a run, a `--skills` with no
+    /// last component (ending in `..`).
     pub(crate) fn mode(&self) -> Result<Mode<'_>, CliError> {
         if self.check {
             return match self.run_flag() {
@@ -123,7 +128,16 @@ impl UpliftArgs {
                 reason: format!("--baseline {} is not a directory", dir.display()),
             });
         }
+        let Some(skills_dir) = self.skills.file_name() else {
+            return Err(CliError::Usage {
+                reason: format!(
+                    "--skills {} names no directory to remove a skill from",
+                    self.skills.display()
+                ),
+            });
+        };
         Ok(Mode::Run(Settings {
+            skills_dir,
             options: Options {
                 program: self
                     .claude
@@ -197,6 +211,34 @@ mod tests {
         assert_eq!(
             reason(args.mode()),
             Some("--baseline no/such/plugin is not a directory".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_run_removes_skills_from_the_directory_skills_names() {
+        let args = UpliftArgs {
+            skills: PathBuf::from("x/my-skills"),
+            ..args()
+        };
+
+        let mode = args.mode();
+
+        assert!(
+            matches!(&mode, Ok(Mode::Run(settings)) if settings.skills_dir == "my-skills"),
+            "{mode:?}"
+        );
+    }
+
+    #[test]
+    fn a_skills_path_with_no_directory_name_is_a_usage_error_for_a_run() {
+        let args = UpliftArgs {
+            skills: PathBuf::from("plugin/skills/.."),
+            ..args()
+        };
+
+        assert_eq!(
+            reason(args.mode()),
+            Some("--skills plugin/skills/.. names no directory to remove a skill from".to_owned())
         );
     }
 

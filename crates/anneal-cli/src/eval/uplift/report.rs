@@ -99,10 +99,7 @@ fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) ->
         cases: outcome.suites.cases.len(),
         runs_per_arm: RUNS,
         runs: trials.len(),
-        errored: trials
-            .iter()
-            .filter(|trial| trial.passed().is_none())
-            .count(),
+        errored: trials.iter().filter(|trial| trial.errored()).count(),
         spend: Spend {
             cost_usd: drove.map_or(0.0, |drove| drove.spent_usd),
             cost_is_lower_bound: drove.is_some_and(|drove| drove.cost_is_lower_bound),

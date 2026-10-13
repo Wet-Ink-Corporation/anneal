@@ -52,14 +52,42 @@ fn arms(with: Vec<Trial>, base: Vec<Trial>) -> Arms {
 
 #[test]
 fn a_run_passes_only_when_every_grader_passed_and_an_errored_run_is_no_trial() {
+    let graders = &case("plan", SuiteKind::Regression, "o", Behaviour::Outcome)
+        .body
+        .graders;
+
     assert_eq!(
         [
-            pass().passed(),
-            run([true, false]).passed(),
-            Trial::Graded(Vec::new()).passed(),
-            Trial::Errored.passed()
+            pass().passed(graders),
+            run([true, false]).passed(graders),
+            Trial::Graded(Vec::new()).passed(graders),
+            Trial::Errored.passed(graders)
         ],
         [Some(true), Some(false), Some(false), None]
+    );
+}
+
+#[test]
+fn a_run_that_leaves_out_one_of_the_cases_graders_does_not_pass() {
+    let outcome = case("plan", SuiteKind::Regression, "o", Behaviour::Outcome);
+    let only_a = || Trial::Graded(vec![("a".to_owned(), true)]);
+    let runs = BTreeMap::from([(
+        outcome.name(),
+        arms(
+            vec![only_a(), only_a(), only_a()],
+            vec![fail(), fail(), fail()],
+        ),
+    )]);
+
+    let tallied = tally(std::slice::from_ref(&outcome), &runs);
+
+    assert_eq!(
+        tallied
+            .cases
+            .first()
+            .map(|result| (result.with.passed, result.with.trials)),
+        Some((0, 3)),
+        "grader b never reported, so no run passed"
     );
 }
 

@@ -3,13 +3,15 @@
 //!
 //! The plugin is copied once into a fresh `anneal-eval-uplift-*` workspace as `plugin/`. The
 //! baseline of a skill is a second copy, `without-<skill>/`, made from the first with only
-//! `skills/<skill>/` removed, so its hooks and sibling skills stay; a `--baseline` plugin is
-//! copied as `baseline/`. Each batch writes its cases below the copy it runs against and runs
-//! single-arm (`--ablation none`): the two arms are two runs, not `claude plugin eval`'s own
-//! with-without ablation, which would strip the whole plugin and its hooks.
+//! the skill's directory removed from the plugin's skills directory (named as `--skills`
+//! names it), so its hooks and sibling skills stay; a `--baseline` plugin is copied as
+//! `baseline/`. No copy keeps an `anneal-uplift-*` eval directory. Each batch writes its
+//! cases below the copy it runs against and runs single-arm (`--ablation none`): the two arms
+//! are two runs, not `claude plugin eval`'s own with-without ablation, which would strip the
+//! whole plugin and its hooks.
 
-use std::collections::BTreeSet;
-use std::ffi::OsString;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -21,8 +23,10 @@ use super::Trial;
 use super::case::{Grader, Tool};
 use super::drive::{Arm, Batch, Evaluator, Ran};
 use super::suites::Case;
-use crate::eval::routing::real::claude::{Invocation, Invoked, Options, budget_arg, invoke};
-use crate::eval::routing::real::result::{self, ResultDto, ResultError};
+use crate::eval::routing::real::claude::{
+    Invocation, Invoked, Options, budget_arg, invoke, result_path,
+};
+use crate::eval::routing::real::result::{self, ResultDto, ResultError, RunDto};
 use crate::eval::routing::real::workspace::{Limits, Workspace, copy_tree};
 use crate::eval::routing::real::{RouterError, Stop};
 
@@ -38,37 +42,43 @@ pub(crate) struct BaselinePlugin<'a> {
     pub(crate) name: &'a str,
 }
 
+/// The plugin under test, and the plugin to compare it with if one is given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Plugins<'a> {
+    /// The plugin's directory.
+    pub(crate) dir: &'a Path,
+    /// The name of its skills directory, from which a skill-removed copy removes the skill.
+    pub(crate) skills_dir: &'a OsStr,
+    /// Its manifest's name.
+    pub(crate) name: &'a str,
+    /// The `--baseline` plugin, if given.
+    pub(crate) baseline: Option<BaselinePlugin<'a>>,
+}
+
 /// The [`Evaluator`] that runs `claude plugin eval` in a temporary workspace.
 #[derive(Debug)]
 pub(crate) struct ClaudeEvaluator<'a> {
     options: Options<'a>,
     workspace: Workspace,
+    skills_dir: &'a OsStr,
     plugin: &'a str,
     baseline: Option<&'a str>,
     started: Instant,
 }
 
 impl<'a> ClaudeEvaluator<'a> {
-    /// An evaluator over a fresh copy of the plugin at `plugin_dir`, named `plugin`, and of
-    /// the baseline plugin if given. The time limit starts now, before the copies, so
-    /// `--timeout` bounds the whole run.
+    /// An evaluator over a fresh copy of `plugins`' plugin, and of its baseline plugin if
+    /// given, neither holding an eval directory. The time limit starts now, before the
+    /// copies, so `--timeout` bounds the whole run.
     ///
     /// # Errors
     /// [`RouterError::Workspace`] when the workspace cannot be made or a plugin copied (the
     /// workspace is removed again).
-    pub(crate) fn new(
-        options: Options<'a>,
-        plugin_dir: &Path,
-        plugin: &'a str,
-        baseline: Option<BaselinePlugin<'a>>,
-    ) -> Result<Self, RouterError> {
+    pub(crate) fn new(options: Options<'a>, plugins: Plugins<'a>) -> Result<Self, RouterError> {
         let started = Instant::now();
         let workspace =
-            Workspace::create_for("uplift", plugin_dir).map_err(RouterError::Workspace)?;
-        if let Some(base) = baseline
-            && let Err(error) =
-                copy_tree(base.dir, &workspace.root().join("baseline"), Limits::PLUGIN)
-        {
+            Workspace::create_for("uplift", plugins.dir).map_err(RouterError::Workspace)?;
+        if let Err(error) = prepare(&workspace, plugins.baseline.map(|base| base.dir)) {
             return Err(match workspace.finish() {
                 Ok(()) => RouterError::Workspace(error),
                 Err(removing) => RouterError::Cleanup {
@@ -81,8 +91,9 @@ impl<'a> ClaudeEvaluator<'a> {
         Ok(Self {
             options,
             workspace,
-            plugin,
-            baseline: baseline.map(|base| base.name),
+            skills_dir: plugins.skills_dir,
+            plugin: plugins.name,
+            baseline: plugins.baseline.map(|base| base.name),
             started,
         })
     }
@@ -125,7 +136,7 @@ impl<'a> ClaudeEvaluator<'a> {
                 let copy = self.workspace.root().join(format!("without-{skill}"));
                 if !copy.exists() {
                     copy_tree(&self.workspace.plugin(), &copy, Limits::PLUGIN)
-                        .and_then(|()| fs::remove_dir_all(copy.join("skills").join(skill)))
+                        .and_then(|()| fs::remove_dir_all(copy.join(self.skills_dir).join(skill)))
                         .and_then(|()| remove_eval_dirs(&copy))
                         .map_err(RouterError::Workspace)?;
                 }
@@ -165,7 +176,11 @@ impl Evaluator for ClaudeEvaluator<'_> {
         };
         match invoke(&invocation, left)? {
             Invoked::TimedOut => Ok(stopped(true)),
-            Invoked::Result(value) => Ok(trials(result::parse(value)?, self.plugin_of(batch.arm))?),
+            Invoked::Result(value) => Ok(trials(
+                result::parse(value)?,
+                self.plugin_of(batch.arm),
+                &batch.cases,
+            )?),
         }
     }
 }
@@ -174,7 +189,7 @@ impl Evaluator for ClaudeEvaluator<'_> {
 /// reported its cost.
 fn stopped(killed: bool) -> Ran {
     Ran {
-        runs: std::collections::BTreeMap::new(),
+        runs: BTreeMap::new(),
         cost_usd: 0.0,
         cost_is_lower_bound: killed,
         stop: Some(Stop::TimeLimit),
@@ -189,8 +204,22 @@ fn eval_dir(index: u32) -> String {
     format!("{EVAL_DIR_PREFIX}{index}")
 }
 
-/// Removes from the plugin copy at `copy` the eval directories earlier batches wrote into the
-/// copy it was made from, so a baseline copy holds the plugin and nothing else.
+/// Leaves the fresh `workspace`'s plugin copy, and a copy of the baseline plugin at
+/// `baseline` if given, holding the plugins and no eval directory, so no batch runs cases
+/// nobody selected.
+fn prepare(workspace: &Workspace, baseline: Option<&Path>) -> io::Result<()> {
+    remove_eval_dirs(&workspace.plugin())?;
+    if let Some(dir) = baseline {
+        let copy = workspace.root().join("baseline");
+        copy_tree(dir, &copy, Limits::PLUGIN)?;
+        remove_eval_dirs(&copy)?;
+    }
+    Ok(())
+}
+
+/// Removes from the plugin copy at `copy` any eval directory: one a source plugin already
+/// held, or one an earlier batch wrote into the copy it was made from, so the copy holds the
+/// plugin and nothing else.
 fn remove_eval_dirs(copy: &Path) -> io::Result<()> {
     for entry in fs::read_dir(copy)? {
         let entry = entry?;
@@ -232,7 +261,7 @@ pub(crate) fn arguments(
         "--eval-dir".into(),
         eval_dir(index).into(),
         "--json".into(),
-        root.join(format!("result-{index}.json")).into_os_string(),
+        result_path(root, &index.to_string()).into_os_string(),
         "--output-dir".into(),
         root.join(format!("out-{index}")).into_os_string(),
         "--report".into(),
@@ -309,38 +338,62 @@ pub(crate) fn case_file(case: &Case, runs: u32) -> CaseFile<'_> {
     }
 }
 
-/// The runs of `result` for the plugin named `plugin`. A run that finished or ran out of
-/// turns is graded (running out of turns is the agent's behaviour, not an accident); any
-/// other error is no trial.
+/// The runs of `result` for the plugin named `plugin`, for the batch's `cases`. A run that
+/// finished or ran out of turns is graded (running out of turns is the agent's behaviour,
+/// not an accident); any other error is no trial. A case the batch did not ask for says
+/// nothing about the suites and is dropped.
 ///
 /// # Errors
-/// [`ResultError`] when the header checks fail.
-pub(crate) fn trials(result: ResultDto, plugin: &str) -> Result<Ran, ResultError> {
+/// [`ResultError`] when the header checks fail, a case is listed twice
+/// ([`ResultError::DuplicateCase`]), or a run names a grader its case does not have
+/// ([`ResultError::UnknownGrader`]).
+pub(crate) fn trials(result: ResultDto, plugin: &str, cases: &[&Case]) -> Result<Ran, ResultError> {
     let checked = result::check(result, plugin)?;
-    let runs = checked
-        .cases
-        .into_iter()
-        .map(|(name, runs)| {
-            let trials = runs
-                .iter()
-                .map(|run| match run.error() {
-                    Some(error) if !result::ran_out_of_turns(error) => Trial::Errored,
-                    Some(_) | None => Trial::Graded(
-                        run.graders()
-                            .map(|(grader, passed)| (grader.to_owned(), passed))
-                            .collect(),
-                    ),
-                })
-                .collect();
-            (name, trials)
-        })
-        .collect();
+    let mut runs: BTreeMap<String, Vec<Trial>> = BTreeMap::new();
+    let mut dropped: BTreeSet<String> = BTreeSet::new();
+    for (name, case_runs) in checked.cases {
+        if runs.contains_key(&name) || dropped.contains(&name) {
+            return Err(ResultError::DuplicateCase { case: name });
+        }
+        let Some(case) = cases.iter().find(|case| case.name() == name) else {
+            dropped.insert(name);
+            continue;
+        };
+        let trials = case_runs
+            .iter()
+            .map(|run| trial(case, &name, run))
+            .collect::<Result<Vec<_>, _>>()?;
+        runs.insert(name, trials);
+    }
     Ok(Ran {
         runs,
         cost_usd: checked.cost_usd,
         cost_is_lower_bound: false,
         stop: checked.stop,
     })
+}
+
+/// `run` of the case `case`, named `name` in the result.
+fn trial(case: &Case, name: &str, run: &RunDto) -> Result<Trial, ResultError> {
+    if let Some(error) = run.error()
+        && !result::ran_out_of_turns(error)
+    {
+        return Ok(Trial::Errored);
+    }
+    run.graders()
+        .map(|(grader, passed)| {
+            if case.body.graders.iter().any(|known| known.name() == grader) {
+                Ok((grader.to_owned(), passed))
+            } else {
+                Err(ResultError::UnknownGrader {
+                    // The error outlives the result, so it owns both names.
+                    case: name.to_owned(),
+                    grader: grader.to_owned(),
+                })
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Trial::Graded)
 }
 
 #[cfg(test)]

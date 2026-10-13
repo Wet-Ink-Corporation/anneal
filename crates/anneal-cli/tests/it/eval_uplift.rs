@@ -191,7 +191,8 @@ fn with_nothing_changed_since_the_base_nothing_runs_and_it_exits_0() -> TestResu
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
 /// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_FAILS` set it writes no result
-/// and exits 1.
+/// and exits 1. A batch against the `baseline/` copy lists its plugin as `fixture-baseline`,
+/// the name in `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
 #[cfg(unix)]
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 set -eu
@@ -210,6 +211,7 @@ done
 name=$(basename "$target")
 echo "$name $evaldir $budget $runs $tools" >> "$FAKE_CLAUDE_LOG"
 if [ -n "${FAKE_FAILS:-}" ]; then echo 'Error: not logged in' >&2; exit 1; fi
+if [ "$name" = baseline ]; then listed=fixture-baseline; else listed=fixture; fi
 if [ "$name" = plugin ] || [ -n "${FAKE_BASE_PASSES:-}" ]; then passed=true; else passed=false; fi
 run="{\"error\":null,\"graders\":[{\"name\":\"outcome\",\"passed\":$passed},{\"name\":\"always\",\"passed\":true}]}"
 cases=''
@@ -218,7 +220,7 @@ for dir in "$target/$evaldir"/*/; do
   one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$run,$run,$run]}}"
   if [ -z "$cases" ]; then cases=$one; else cases="$cases,$one"; fi
 done
-printf '{"schemaVersion":1,"costUsd":0.25,"partial":false,"suite":{"plugins":[{"name":"fixture","path":"%s"}]},"cases":[%s]}' "$target" "$cases" > "$out"
+printf '{"schemaVersion":1,"costUsd":0.25,"partial":false,"suite":{"plugins":[{"name":"%s","path":"%s"}]},"cases":[%s]}' "$listed" "$target" "$cases" > "$out"
 "#;
 
 /// A run of `anneal eval uplift` against a fake `claude`, with its own `TMPDIR` so the test
@@ -236,6 +238,11 @@ struct FakeRun {
 impl FakeRun {
     /// Runs the fixture suites against the fake, with `env` set.
     fn new(env: &[(&str, &str)]) -> Result<Self, Box<dyn Error>> {
+        Self::with_args(env, &[])
+    }
+
+    /// Runs the fixture suites against the fake, with `env` set and `args` added.
+    fn with_args(env: &[(&str, &str)], args: &[&std::ffi::OsStr]) -> Result<Self, Box<dyn Error>> {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir()?;
@@ -250,6 +257,7 @@ impl FakeRun {
             .arg(fixtures().join("eval-uplift/suites"))
             .arg("--claude")
             .arg(&claude)
+            .args(args)
             .env("FAKE_CLAUDE_LOG", dir.path().join("claude.log"))
             .env("TMPDIR", tmp.path())
             .envs(env.iter().copied())
@@ -303,10 +311,10 @@ fn a_skill_that_beats_its_baseline_passes_and_the_non_discriminating_assertions_
     );
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 25.00 3 \n\
+        "plugin anneal-uplift-1 12.50 3 \n\
          without-plan anneal-uplift-2 24.75 3 \n\
          without-spec anneal-uplift-3 24.50 3 \n",
-        "the with arm, then each skill's baseline, each with what is left of the $25 cap"
+        "the with arm with half the $25 cap, then each skill's baseline with what is left"
     );
     assert_eq!(
         project(
@@ -387,6 +395,97 @@ fn a_first_batch_that_fails_after_claude_started_exits_4_saying_its_spend_is_unk
         run.left_in_tmp()?,
         Vec::<String>::new(),
         "workspace removed"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_baseline_plugin_runs_every_case_against_its_copy_checked_under_its_own_name() -> TestResult {
+    let baseline = fixtures().join("eval-uplift/baseline-plugin");
+    let run = FakeRun::with_args(&[], &["--baseline".as_ref(), baseline.as_os_str()])?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(
+        run.output.status.code(),
+        Some(0),
+        "a result checked under `fixture` would not list the baseline plugin: {envelope}"
+    );
+    assert_eq!(
+        run.log()?,
+        "plugin anneal-uplift-1 12.50 3 \n\
+         baseline anneal-uplift-2 24.75 3 \n",
+        "the with arm, then one batch of every case against the baseline copy"
+    );
+    assert_eq!(
+        (
+            &envelope["data"]["baseline"],
+            &envelope["data"]["complete"],
+            &envelope["data"]["runs"]
+        ),
+        (&json!("plugin"), &json!(true), &json!(18))
+    );
+    assert_eq!(
+        run.left_in_tmp()?,
+        Vec::<String>::new(),
+        "workspace removed"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_baseline_that_cannot_be_copied_exits_70_and_leaves_no_workspace() -> TestResult {
+    let baseline = tempfile::tempdir()?;
+    crate::support::copy_dir(
+        &fixtures().join("eval-uplift/baseline-plugin"),
+        baseline.path(),
+    )?;
+    // The copy refuses a symlink, so the baseline copy fails after the workspace was made.
+    std::os::unix::fs::symlink("/", baseline.path().join("link"))?;
+
+    let run = FakeRun::with_args(&[], &["--baseline".as_ref(), baseline.path().as_os_str()])?;
+
+    let stderr = std::str::from_utf8(&run.output.stderr)?;
+    assert_eq!(run.output.status.code(), Some(70), "{stderr}");
+    assert_eq!(
+        (
+            run.left_in_tmp()?,
+            std::fs::read_to_string(run.dir.path().join("claude.log")).ok()
+        ),
+        (Vec::<String>::new(), None),
+        "workspace removed and claude never started"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_baseline_without_a_plugin_manifest_is_a_usage_error() -> TestResult {
+    let work = tempfile::tempdir()?;
+    let missing = work.path().join("no-such-claude");
+    let baseline = work.path().join("not-a-plugin");
+    std::fs::create_dir(&baseline)?;
+
+    let output = eval_uplift(
+        &fixtures().join("eval-uplift/suites"),
+        &[
+            "--claude",
+            &missing.to_string_lossy(),
+            "--baseline",
+            &baseline.to_string_lossy(),
+        ],
+    )?;
+
+    let stderr = String::from_utf8(output.stderr)?;
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    assert!(
+        stderr.starts_with("ERROR eval: reading the --baseline plugin")
+            && stderr.lines().count() == 1,
+        "{stderr:?}"
     );
     Ok(())
 }

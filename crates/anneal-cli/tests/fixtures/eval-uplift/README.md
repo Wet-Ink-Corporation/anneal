@@ -5,3 +5,6 @@ and `skills/`). `suites/` is a valid Tier 3 suite set: `plan` has a regression a
 capability case, `spec` a guard case. Every case has the graders `outcome` and `always`, so
 the fake `claude` in `tests/it/eval_uplift.rs` can answer by name. `invalid/` has one case
 whose `llm` grader comes first.
+
+`baseline-plugin/` is a plugin with no skills whose manifest names it `fixture-baseline`, for
+`--baseline`: the fake answers a batch run against the `baseline/` copy under that name.

@@ -177,10 +177,16 @@ pub(crate) struct Invocation<'a> {
     pub(crate) tag: &'a str,
 }
 
+/// Where `--json` writes the result of the run tagged `tag` in the workspace at `root`: the
+/// one place both the argument and the reader take it from.
+pub(crate) fn result_path(root: &Path, tag: &str) -> std::path::PathBuf {
+    root.join(format!("result-{tag}.json"))
+}
+
 impl Invocation<'_> {
-    /// Where `--json` writes the result.
+    /// Where `--json` writes the result ([`result_path`]).
     pub(crate) fn result_path(&self) -> std::path::PathBuf {
-        self.root.join(format!("result-{}.json", self.tag))
+        result_path(self.root, self.tag)
     }
 
     fn stderr_path(&self) -> std::path::PathBuf {
@@ -280,7 +286,7 @@ pub(crate) fn arguments(options: &Options<'_>, root: &Path, batch: &Batch<'_>) -
         "--eval-dir".into(),
         eval_dir(round).into(),
         "--json".into(),
-        root.join(format!("result-{round}.json")).into_os_string(),
+        result_path(root, &round.to_string()).into_os_string(),
         "--output-dir".into(),
         root.join(format!("out-{round}")).into_os_string(),
         "--report".into(),

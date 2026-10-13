@@ -1,7 +1,7 @@
 //! Scoring a Tier 3 run: pure, no I/O.
 //!
-//! Each case's runs are counted in both arms (a run passes when every grader passed; an
-//! errored run is no trial). A skill is then held to three bars:
+//! Each case's runs are counted in both arms (a run passes when every grader of its case is
+//! listed as passed; an errored run is no trial). A skill is then held to three bars:
 //! - its uplift, pooled over all its cases' runs, has a Newcombe lower bound of 0 or more;
 //! - each of its guard cases held pass^3: all three runs with the skill passed;
 //! - no regression suite of it regressed: the 95% Wilson upper bound of its pass rate with
@@ -138,12 +138,12 @@ pub(crate) fn tally<'a>(cases: &'a [Case], runs: &BTreeMap<String, Arms>) -> Tal
 }
 
 fn case_result<'a>(case: &'a Case, arms: &Arms) -> CaseResult<'a> {
-    let with = count(&arms.with);
+    let with = count(case, &arms.with);
     let errored = arms
         .with
         .iter()
         .chain(&arms.base)
-        .filter(|trial| trial.passed().is_none())
+        .filter(|trial| trial.errored())
         .count();
     CaseResult {
         skill: &case.skill,
@@ -152,7 +152,7 @@ fn case_result<'a>(case: &'a Case, arms: &Arms) -> CaseResult<'a> {
         behaviour: case.body.behaviour,
         pressure: case.body.pressure,
         with,
-        base: count(&arms.base),
+        base: count(case, &arms.base),
         errored: saturating_u32(errored),
         guard_held: (case.body.behaviour == Behaviour::Guard)
             .then_some(with.trials >= RUNS && with.passed == with.trials),
@@ -239,11 +239,11 @@ fn flags<'a>(case: &'a Case, base: &[Trial]) -> Vec<NonDiscriminating<'a>> {
         .collect()
 }
 
-/// The passing runs and trials of `trials`.
-fn count(trials: &[Trial]) -> Count {
+/// The passing runs and trials of `trials`, each judged against `case`'s graders.
+fn count(case: &Case, trials: &[Trial]) -> Count {
     trials
         .iter()
-        .filter_map(Trial::passed)
+        .filter_map(|trial| trial.passed(&case.body.graders))
         .fold(Count::new(0, 0), |count, passed| {
             count.plus(Count::new(u32::from(passed), 1))
         })

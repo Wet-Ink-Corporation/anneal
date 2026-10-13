@@ -39,6 +39,8 @@ enum Answer {
     Fails,
     /// Like `Costs`, but every case reports one run more than the batch asked for.
     Pads(f64),
+    /// Like `Costs`, plus runs of `spec--regression--c` whether the batch asked for it or not.
+    Strays(f64),
 }
 
 /// An evaluator that answers batch `i` with `answers[i]` (the last answer repeats) and
@@ -89,6 +91,13 @@ impl Evaluator for Fake {
         match answer {
             Answer::Costs(cost) => Ok(graded(*cost, 0)),
             Answer::Pads(cost) => Ok(graded(*cost, 1)),
+            Answer::Strays(cost) => {
+                let mut ran = graded(*cost, 0);
+                let run = Trial::Graded(vec![("a".to_owned(), passed)]);
+                ran.runs
+                    .insert("spec--regression--c".to_owned(), vec![run; 3]);
+                Ok(ran)
+            }
             Answer::Stops(stop) => Ok(Ran {
                 runs: BTreeMap::new(),
                 cost_usd: 0.0,
@@ -125,7 +134,7 @@ fn the_with_arm_runs_first_then_one_baseline_batch_per_skill_with_the_budget_lef
                     "spec--regression--c"
                 ]),
                 3,
-                10.0
+                5.0
             ),
             (
                 "without plan".to_owned(),
@@ -143,17 +152,18 @@ fn the_with_arm_runs_first_then_one_baseline_batch_per_skill_with_the_budget_lef
     );
     assert_eq!((drove.spent_usd, drove.batches, drove.stop), (3.0, 3, None));
     let plan_a = drove.runs.get("plan--regression--a").expect("runs");
+    let graders = &cases.first().expect("a case").body.graders;
     assert_eq!(
         (
             plan_a
                 .with
                 .iter()
-                .filter_map(Trial::passed)
+                .filter_map(|trial| trial.passed(graders))
                 .collect::<Vec<_>>(),
             plan_a
                 .base
                 .iter()
-                .filter_map(Trial::passed)
+                .filter_map(|trial| trial.passed(graders))
                 .collect::<Vec<_>>()
         ),
         (vec![true; 3], vec![false; 3])
@@ -229,6 +239,38 @@ fn a_first_batch_failure_is_an_error_and_a_later_one_ends_the_run_as_failed() {
         failed_later.stop
     );
     assert_eq!(later.batches.len(), 2, "nothing after the failure");
+}
+
+#[test]
+fn the_with_arm_may_spend_at_most_half_the_cap_so_the_baseline_keeps_the_rest() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::Costs(1.0)]);
+
+    drive(&mut fake, &cases, Baseline::Plugin, 10.0).expect("runs");
+
+    let budgets: Vec<(&str, f64)> = fake
+        .batches
+        .iter()
+        .map(|(arm, _, _, budget)| (arm.as_str(), *budget))
+        .collect();
+    assert_eq!(budgets, [("with", 5.0), ("baseline", 9.0)]);
+}
+
+#[test]
+fn runs_of_a_case_the_batch_did_not_ask_for_are_dropped() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::Strays(1.0)]);
+
+    let drove = drive(&mut fake, &cases, Baseline::SkillRemoved, 10.0).expect("runs");
+
+    assert_eq!(
+        drove
+            .runs
+            .get("spec--regression--c")
+            .map(|arms| (arms.with.len(), arms.base.len())),
+        Some((3, 3)),
+        "the without-plan batch's stray spec runs are not spec's baseline"
+    );
 }
 
 #[test]

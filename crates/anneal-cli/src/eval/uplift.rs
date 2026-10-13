@@ -31,7 +31,8 @@ use crate::eval::routing::real::{ChangedError, RouterError, spend_unknown};
 use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;
-use claude::{BaselinePlugin, ClaudeEvaluator};
+use case::Grader;
+use claude::{BaselinePlugin, ClaudeEvaluator, Plugins};
 use drive::{Baseline, Drove, drive};
 use suites::Suites;
 
@@ -91,15 +92,16 @@ pub enum UpliftError {
 }
 
 impl UpliftError {
-    /// The documented exit code: an unknown `--skill` is a usage error, as is a missing or
+    /// The documented exit code: an unknown `--skill` is a usage error, as is a `--baseline`
+    /// whose manifest cannot be read (a bad argument, not a router failure) and a missing or
     /// wrong-kind path ([`LintError::code`]); the evaluator's failures are
     /// [`RouterError::code`]'s.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Skills(error) | Self::Suites(error) => error.code(),
-            Self::UnknownSkill { .. } => crate::exit_codes::USAGE,
-            Self::Baseline(error) | Self::Router(error) => error.code(),
+            Self::UnknownSkill { .. } | Self::Baseline(_) => crate::exit_codes::USAGE,
+            Self::Router(error) => error.code(),
             Self::Changed(error) => error.code(),
         }
     }
@@ -196,7 +198,15 @@ fn run(
     } else {
         Baseline::SkillRemoved
     };
-    let mut evaluator = ClaudeEvaluator::new(settings.options, plugin_dir, &plugin, baseline)?;
+    let mut evaluator = ClaudeEvaluator::new(
+        settings.options,
+        Plugins {
+            dir: plugin_dir,
+            skills_dir: settings.skills_dir,
+            name: &plugin,
+            baseline,
+        },
+    )?;
     let drove = drive(&mut evaluator, &suites.cases, kind, settings.max_cost_usd);
     let finished = evaluator.finish();
     match (drove, finished) {
@@ -230,15 +240,24 @@ pub(crate) enum Trial {
 }
 
 impl Trial {
-    /// Whether the run passed (every grader passed, and there was one), or `None` when it
-    /// errored.
-    pub(crate) fn passed(&self) -> Option<bool> {
+    /// Whether the run passed its case, whose graders are `graders`: every one of them is
+    /// listed as passed (a grader the run leaves out failed), and there is one. `None` when
+    /// the run errored.
+    pub(crate) fn passed(&self, graders: &[Grader]) -> Option<bool> {
         match self {
             Self::Errored => None,
-            Self::Graded(graders) => {
-                Some(!graders.is_empty() && graders.iter().all(|(_, passed)| *passed))
-            }
+            Self::Graded(_) => Some(
+                !graders.is_empty()
+                    && graders
+                        .iter()
+                        .all(|grader| self.grader(grader.name()) == Some(true)),
+            ),
         }
+    }
+
+    /// Whether the run errored, so is no trial.
+    pub(crate) const fn errored(&self) -> bool {
+        matches!(self, Self::Errored)
     }
 
     /// Whether the grader named `name` passed, or `None` when the run errored. A grader the

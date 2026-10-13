@@ -2,8 +2,9 @@
 //!
 //! The first batch runs every case with the full plugin. The baseline follows: by default one
 //! batch per skill against the plugin with that skill removed, or, given a baseline plugin
-//! (`--baseline`), one batch of every case against it. Each batch gets the cost cap minus what
-//! the earlier ones reported, none starts with less than a cent left, and a batch that stops
+//! (`--baseline`), one batch of every case against it. The with arm gets at most half the cost
+//! cap, so the baseline always has the rest; each later batch gets the cap minus what the
+//! earlier ones reported. None starts with less than a cent left, and a batch that stops
 //! short or fails after the first ends the run with the runs so far.
 
 use std::collections::BTreeMap;
@@ -17,6 +18,9 @@ use crate::eval::routing::real::{RouterError, Stop};
 
 /// The least budget, in US dollars, worth launching a batch for.
 const MIN_BUDGET_USD: f64 = 0.01;
+/// The most of the cost cap the with arm may spend, so the baseline is never left with
+/// nothing to compare against.
+const WITH_ARM_SHARE: f64 = 0.5;
 
 /// Runs a batch of cases under `claude plugin eval` and reports each run.
 pub(crate) trait Evaluator {
@@ -111,16 +115,20 @@ fn plan<'a>(cases: &'a [Case], baseline: Baseline) -> Vec<(Arm<'a>, Vec<&'a Case
     batches
 }
 
-/// Adds the checked batch `ran`, run against `arm`, to `drove`, returning why the batch
-/// stopped short, if it did.
-fn take(drove: &mut Drove, arm: Arm<'_>, ran: Ran) -> Option<Stop> {
+/// Adds the checked result `ran` of `batch` to `drove`, returning why the batch stopped
+/// short, if it did.
+fn take(drove: &mut Drove, batch: &Batch<'_>, ran: Ran) -> Option<Stop> {
     // `result::check` refuses a negative cost and JSON has no infinity or NaN.
     drove.spent_usd += ran.cost_usd;
     drove.cost_is_lower_bound |= ran.cost_is_lower_bound;
-    // A case the batch did not ask for says nothing about the suites, so it is left out.
+    // A case this batch did not ask for says nothing about the suites, not even when another
+    // batch asked for it, so it is left out.
     for (name, trials) in ran.runs {
+        if !batch.cases.iter().any(|case| case.name() == name) {
+            continue;
+        }
         if let Some(arms) = drove.runs.get_mut(&name) {
-            match arm {
+            match batch.arm {
                 Arm::With => arms.with.extend(trials),
                 Arm::Without(_) | Arm::Baseline => arms.base.extend(trials),
             }
@@ -155,7 +163,11 @@ pub(crate) fn drive<E: Evaluator>(
         cost_is_lower_bound: false,
     };
     for (index, (arm, batch_cases)) in (1_u32..).zip(plan(cases, baseline)) {
-        let budget_usd = cap_usd - drove.spent_usd;
+        let left_usd = cap_usd - drove.spent_usd;
+        let budget_usd = match arm {
+            Arm::With => left_usd.min(cap_usd * WITH_ARM_SHARE),
+            Arm::Without(_) | Arm::Baseline => left_usd,
+        };
         if budget_usd < MIN_BUDGET_USD {
             drove.stop = Some(Stop::CostCap);
             break;
@@ -193,7 +205,7 @@ pub(crate) fn drive<E: Evaluator>(
             break;
         }
         drove.batches = index;
-        let stop = take(&mut drove, arm, ran);
+        let stop = take(&mut drove, &batch, ran);
         if stop.is_some() {
             drove.stop = stop;
             break;
