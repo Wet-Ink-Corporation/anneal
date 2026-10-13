@@ -205,8 +205,10 @@ exits 0 (`data.written: false`). Mode steps are never applied: they are listed i
 `data.not_applied` for the human to add to `clef_mode`. `data.applied` lists each step written
 with its line, `before` and `after`. No `proposals.json` is a usage error (exit 2: run
 `anneal calibrate` first); one that is not ours, or a thresholds file that cannot be read, is
-not UTF-8 or cannot be written, exits 70. `--apply` without `--thresholds` is a usage error, so the built-in copy and
-the installed plugin's file are never written by default.
+not UTF-8 or cannot be written, exits 70. `--apply` without `--thresholds` is a usage error,
+so the built-in copy and the installed plugin's file are never written by default. The file
+is replaced atomically (written beside it, synced, renamed over it) and keeps its permission
+bits.
 
 ## Limits
 

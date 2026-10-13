@@ -7,13 +7,14 @@
 //! never applied (the mode is the user's plugin setting); they are listed in
 //! `data.not_applied`.
 
-use std::io::Write;
+use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::baseline;
+use crate::baseline::{self, BaselineError};
 use crate::calibrate::edit::{self, Change, Edit, EditError, Edited};
 use crate::calibrate::output::{PROPOSALS_KIND, PROPOSALS_VERSION};
 use crate::calibrate::{CalibrateArgs, CalibrateError, PROPOSALS_FILE};
@@ -177,8 +178,7 @@ pub(crate) fn run<O: Write>(
         Err(refusal) => return refuse(&refusal, &data, out),
     };
     if !edits.is_empty() {
-        baseline::write_text_atomically(&target, &edited.text)
-            .map_err(CalibrateError::WriteThresholds)?;
+        write_keeping_permissions(&target, &edited.text)?;
         data.written = true;
     }
     data.applied = steps
@@ -202,6 +202,26 @@ fn applied<'a>(step: &'a ThresholdStep, change: &'a Change) -> Applied<'a> {
         before: &change.before,
         after: &change.after,
     }
+}
+
+/// Writes `text` over `target` atomically (staged beside it, synced, renamed), giving the new
+/// file `target`'s permission bits so a deliberately restricted thresholds file stays so.
+fn write_keeping_permissions(target: &Path, text: &str) -> Result<(), CalibrateError> {
+    let write = || -> io::Result<()> {
+        let permissions = fs::metadata(target)?.permissions();
+        let staged = baseline::stage(target, text.as_bytes())?;
+        fs::set_permissions(&staged, permissions)
+            .and_then(|()| fs::rename(&staged, target))
+            .map_err(|error| baseline::discard(&staged, error))
+    };
+    write().map_err(|source| {
+        CalibrateError::WriteThresholds(BaselineError::Io {
+            op: "writing",
+            // The error owns the path it names.
+            path: target.to_path_buf(),
+            source,
+        })
+    })
 }
 
 /// The proposals file, which must exist and be one `calibrate` wrote in this format.

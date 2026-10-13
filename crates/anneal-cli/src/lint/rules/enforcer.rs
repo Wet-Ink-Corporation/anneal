@@ -101,6 +101,32 @@ impl Root {
             .map(Self)
             .map_err(|source| LintError::io(path, source))
     }
+
+    /// Where `relative` (already known to be a plain relative path) leads once resolved,
+    /// symlinks followed.
+    ///
+    /// # Errors
+    /// [`LintError::Io`] when it exists but cannot be resolved.
+    pub(crate) fn within(&self, relative: &Path) -> Result<Within, LintError> {
+        let path = self.0.join(relative);
+        match fs::canonicalize(&path) {
+            Ok(resolved) if resolved.starts_with(&self.0) => Ok(Within::Inside(resolved)),
+            Ok(_) => Ok(Within::Outside),
+            Err(error) if is_absent(&error) => Ok(Within::Absent),
+            Err(source) => Err(LintError::io(&path, source)),
+        }
+    }
+}
+
+/// Where a path under the root leads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Within {
+    /// To this resolved path inside the root.
+    Inside(PathBuf),
+    /// Out of the root, through a symlink.
+    Outside,
+    /// Nowhere: it does not exist.
+    Absent,
 }
 
 /// What enforcers resolve against.
@@ -200,15 +226,11 @@ fn test(root: &Root, file: &str, name: &str) -> Result<Result<(), Unresolved>, L
     if !under_root {
         return Ok(Err(Unresolved::OutsideRoot));
     }
-    let path = root.0.join(relative);
-    let resolved = match fs::canonicalize(&path) {
-        Ok(resolved) => resolved,
-        Err(error) if is_absent(&error) => return Ok(Err(Unresolved::NoTestFile)),
-        Err(source) => return Err(LintError::io(&path, source)),
+    let resolved = match root.within(relative)? {
+        Within::Inside(resolved) => resolved,
+        Within::Outside => return Ok(Err(Unresolved::OutsideRoot)),
+        Within::Absent => return Ok(Err(Unresolved::NoTestFile)),
     };
-    if !resolved.starts_with(&root.0) {
-        return Ok(Err(Unresolved::OutsideRoot));
-    }
     let bytes = match read_test_file(&resolved) {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(why)) => return Ok(Err(why)),

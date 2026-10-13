@@ -2,10 +2,10 @@
 //! rule 10, "Name the enforcer", applied to rules a retro writes; `docs/skill-rules.md`).
 //!
 //! A rule document is markdown with a `## Rules` section. Each list item in it is one rule, and
-//! names its enforcer after `Enforcer:` in backticks: `anneal <command> ...`, `hook <id>` or
-//! `test <file>::<fn>` (see the private `enforcer` module). A rule with none, or whose enforcer cannot be found,
-//! is an `enforcer` error. Findings use the lint finding model, so the envelope and exit codes
-//! are `lint skills`' own.
+//! names its enforcers after `Enforcer:` in backticks: `anneal <command> ...`, `hook <id>` or
+//! `test <file>::<fn>` (see the private `enforcer` module). A rule with none, or with one that
+//! cannot be found, is an `enforcer` error. Findings use the lint finding model, so the
+//! envelope and exit codes are `lint skills`' own.
 
 pub(crate) mod enforcer;
 
@@ -20,7 +20,7 @@ use crate::lint::read_whole;
 use crate::lint::skills::checker::Checker;
 use crate::lint::skills::{LintError, read_hook_ids};
 use crate::lint::spec::markdown::{Document, Item, items};
-use enforcer::{Repository, Root, Unresolved};
+use enforcer::{Repository, Root, Unresolved, Within};
 
 /// The section that holds the rules (level 2, any letter case).
 const RULES_SECTION: &str = "Rules";
@@ -70,7 +70,7 @@ pub struct Outcome {
 pub fn lint(args: &RulesArgs) -> Result<Outcome, LintError> {
     require_dir(&args.root)?;
     let root = Root::resolve(&args.root)?;
-    let (hook_ids, mut findings) = hook_ids(args)?;
+    let (hook_ids, mut findings) = hook_ids(args, &root)?;
     let commands = Cli::command();
     let repository = Repository {
         root: &root,
@@ -170,25 +170,46 @@ fn unknown(at: Location, span: &str, why: &Unresolved) -> LintFinding {
     .with_subject(span)
 }
 
-/// The backticked span after each `Enforcer:` label of `text`.
+/// The backticked spans after each `Enforcer:` label of `text`: the first, and each one after
+/// it that only a comma separates from the one before (`` `hook a`, `test b.rs::c` ``).
 fn named_enforcers(text: &str) -> impl Iterator<Item = &str> {
-    text.match_indices(LABEL).filter_map(|(at, _)| {
-        let after = text.get(at..)?.strip_prefix(LABEL)?.trim_start();
-        let (span, _) = after.strip_prefix('`')?.split_once('`')?;
-        Some(span)
+    text.match_indices(LABEL).flat_map(|(at, _)| {
+        text.get(at..)
+            .and_then(|from| from.strip_prefix(LABEL))
+            .map(run_of_spans)
+            .into_iter()
+            .flatten()
     })
 }
 
+/// The comma-separated run of backticked spans at the start of `after`.
+fn run_of_spans(after: &str) -> Vec<&str> {
+    let mut spans = Vec::new();
+    let mut rest = after.trim_start();
+    while let Some((span, tail)) = rest.strip_prefix('`').and_then(|open| open.split_once('`')) {
+        spans.push(span);
+        let Some(next) = tail.trim_start().strip_prefix(',') else {
+            break;
+        };
+        rest = next.trim_start();
+    }
+    spans
+}
+
 /// The hook ids that `hook <id>` may name, plus a finding when the metadata does not parse.
-fn hook_ids(args: &RulesArgs) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
+/// `--hooks` is read as given; the default is read only when it resolves to a regular file
+/// inside the resolved root (a symlink out of the root counts as no file).
+fn hook_ids(
+    args: &RulesArgs,
+    root: &Root,
+) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
     if let Some(path) = &args.hooks {
         return read_hook_ids(path);
     }
-    let default = args.root.join(DEFAULT_HOOKS.iter().collect::<PathBuf>());
-    if default.is_file() {
-        read_hook_ids(&default)
-    } else {
-        Ok((BTreeSet::new(), Vec::new()))
+    let default = DEFAULT_HOOKS.iter().collect::<PathBuf>();
+    match root.within(&default)? {
+        Within::Inside(resolved) if resolved.is_file() => read_hook_ids(&resolved),
+        Within::Inside(_) | Within::Outside | Within::Absent => Ok((BTreeSet::new(), Vec::new())),
     }
 }
 

@@ -2,15 +2,16 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::CommandFactory;
 
 use super::enforcer::{self, Enforcer, Repository, Root, Unresolved};
-use super::{check_document, named_enforcers};
+use super::{RulesArgs, check_document, lint, named_enforcers};
 use crate::cli::Cli;
 use crate::lint::finding::LintFinding;
 use crate::lint::skills::LintError;
+use crate::lint::skills::discover::MAX_READ_BYTES;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -50,6 +51,19 @@ fn the_span_after_each_enforcer_label_is_named() {
         named_enforcers("Do X. Enforcer: `hook guard` and Enforcer:`anneal lint skills`").collect();
 
     assert_eq!(named, ["hook guard", "anneal lint skills"]);
+}
+
+#[test]
+fn every_span_in_a_comma_separated_run_is_named() {
+    let named: Vec<&str> = named_enforcers(
+        "Do X. Enforcer: `hook guard`, `test gone.rs::x` ,`anneal lint skills`, and `not this`",
+    )
+    .collect();
+
+    assert_eq!(
+        named,
+        ["hook guard", "test gone.rs::x", "anneal lint skills"]
+    );
 }
 
 #[test]
@@ -183,6 +197,74 @@ fn a_test_file_symlinked_within_the_root_resolves() -> TestResult {
     std::os::unix::fs::symlink(root.path().join("tests/a.rs"), root.path().join("link.rs"))?;
 
     assert_eq!(resolve_in(root.path(), "test link.rs::a_case")?, Ok(()));
+    Ok(())
+}
+
+/// `lint` over one document holding a rule enforced by `hook guard`, with `--root` `root`.
+fn lint_hook_guard_rule(root: &Path) -> Result<Vec<LintFinding>, Box<dyn std::error::Error>> {
+    let document = root.join("rules.md");
+    fs::write(
+        &document,
+        "# R\n\n## Rules\n\n- Guard Bash.\n  Enforcer: `hook guard`\n",
+    )?;
+    let args = RulesArgs {
+        paths: vec![document],
+        root: root.to_path_buf(),
+        hooks: None,
+    };
+    Ok(lint(&args)?.findings)
+}
+
+/// The repository's own hooks directory, which holds a `guard` hook id.
+fn shipped_hooks_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/hooks")
+}
+
+#[cfg(unix)]
+#[test]
+fn default_hooks_metadata_linked_from_outside_the_root_is_ignored() -> TestResult {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("plugin"))?;
+    std::os::unix::fs::symlink(shipped_hooks_dir(), root.path().join("plugin/hooks"))?;
+
+    let findings = lint_hook_guard_rule(root.path())?;
+
+    assert_eq!(
+        findings
+            .iter()
+            .map(|finding| finding.subject.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("hook guard")],
+        "the outside metadata is not read, so `guard` is unknown: {findings:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn default_hooks_metadata_inside_the_root_is_read() -> TestResult {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("plugin/hooks"))?;
+    fs::copy(
+        shipped_hooks_dir().join("hooks.metadata.json"),
+        root.path().join("plugin/hooks/hooks.metadata.json"),
+    )?;
+
+    assert_eq!(lint_hook_guard_rule(root.path())?, []);
+    Ok(())
+}
+
+#[test]
+fn a_test_file_over_the_read_cap_is_too_large() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let cap = usize::try_from(MAX_READ_BYTES)?;
+    let mut text = b"fn a_case() {}\n".to_vec();
+    text.resize(cap.saturating_add(1), b' ');
+    fs::write(root.path().join("big.rs"), text)?;
+
+    assert_eq!(
+        resolve_in(root.path(), "test big.rs::a_case")?,
+        Err(Unresolved::TestFileTooLarge)
+    );
     Ok(())
 }
 

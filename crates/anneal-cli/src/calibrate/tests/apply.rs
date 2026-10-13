@@ -59,6 +59,40 @@ fn the_propose_run_shows_each_threshold_change_as_a_line_diff_and_writes_no_thre
 }
 
 #[test]
+fn a_proposal_the_scanner_cannot_place_leaves_the_diff_empty_with_its_reason() -> TestResult {
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+    // D1's key written with escapes: strict JSON reads it as `D1`, the scanner compares the
+    // key as written and cannot find the pointer.
+    let escaped = decide::thresholds::BUILT_IN.replacen("\"D1\":", "\"\\u0044\\u0031\":", 1);
+    assert_ne!(
+        escaped,
+        decide::thresholds::BUILT_IN,
+        "the D1 key was escaped"
+    );
+    let thresholds = home.path().join("clef-thresholds.json");
+    fs::write(&thresholds, &escaped)?;
+
+    let ran = calibrate(home.path(), &["--thresholds", "clef-thresholds.json"]);
+
+    assert_eq!(ran.code.as_ref().ok(), Some(&0), "{:?}", ran.code);
+    assert_eq!(ran.envelope["data"]["diff"], json!([]));
+    let reason = ran.envelope["data"]["diff_error"]
+        .as_str()
+        .expect("a diff error");
+    assert!(
+        reason.contains("/points/D1/rules/noul/bands/1/at_least"),
+        "{reason}"
+    );
+    assert_eq!(
+        fs::read_to_string(&thresholds)?,
+        escaped,
+        "proposing writes no thresholds"
+    );
+    Ok(())
+}
+
+#[test]
 fn apply_writes_the_proposed_numbers_and_nothing_else() -> TestResult {
     let home = tempfile::tempdir()?;
     hand_log(home.path())?;
@@ -83,6 +117,35 @@ fn apply_writes_the_proposed_numbers_and_nothing_else() -> TestResult {
             "pointer": "/points/D1/rules/noul/bands/1/at_least", "from": 0.4, "to": 0.3,
             "line": 16, "before": ASK_LINE, "after": ASK_LINE.replace("0.4", "0.3"),
         }])
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_keeps_the_thresholds_files_permissions() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+    let thresholds = thresholds_copy(home.path())?;
+    fs::set_permissions(&thresholds, fs::Permissions::from_mode(0o640))?;
+    calibrate(home.path(), &["--thresholds", "clef-thresholds.json"]);
+
+    let ran = calibrate(
+        home.path(),
+        &["--apply", "--thresholds", "clef-thresholds.json"],
+    );
+
+    assert_eq!(
+        ran.envelope["data"]["written"],
+        json!(true),
+        "{}",
+        ran.envelope
+    );
+    assert_eq!(
+        fs::metadata(&thresholds)?.permissions().mode() & 0o777,
+        0o640
     );
     Ok(())
 }

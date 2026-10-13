@@ -89,3 +89,31 @@ fn a_missing_rule_document_is_a_usage_error() -> TestResult {
     assert!(stderr.starts_with("ERROR "), "{stderr}");
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_missing_or_file_root_is_a_usage_error() -> TestResult {
+    let scratch = tempfile::tempdir()?;
+    let file = scratch.path().join("a-file");
+    std::fs::write(&file, "")?;
+
+    for root in [scratch.path().join("missing"), file] {
+        let output = anneal_in(&repository())
+            .args(["lint", "rules"])
+            .arg(fixture("pass.md"))
+            .arg("--root")
+            .arg(&root)
+            .output()?;
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{}: {output:?}",
+            root.display()
+        );
+        assert!(output.stdout.is_empty(), "nothing on stdout");
+        let stderr = std::str::from_utf8(&output.stderr)?;
+        assert!(stderr.starts_with("ERROR "), "{stderr}");
+    }
+    Ok(())
+}

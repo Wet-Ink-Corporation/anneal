@@ -173,12 +173,14 @@ found.
   `## Rules` heading (any letter case; there may be several) is one rule; indented lines that
   follow join it. Code fences and HTML comments are not read.
 - A rule names its enforcer after the label `Enforcer:`, in backticks, on any of its lines. It
-  may name several, each after its own label. The enforcer is one of:
+  may name several, each after its own label or in a comma-separated run after one
+  (`` Enforcer: `hook guard`, `test a.rs::b` ``); every span of the run is checked, and the run
+  ends at the first text between spans that is not a comma. The enforcer is one of:
 
 | Form | Found when |
 |---|---|
 | `` `anneal <command> [<subcommand>...] [args]` `` | the words walk this binary's command tree to a command that runs: one with no subcommands, or one that runs without one (`anneal decide --point D1`); `anneal lint` alone names no check |
-| `` `hook <id>` `` | `<id>` is a `hooks[].id` of `--hooks`, by default `plugin/hooks/hooks.metadata.json` under `--root` when it exists |
+| `` `hook <id>` `` | `<id>` is a `hooks[].id` of `--hooks` (read as given), by default `plugin/hooks/hooks.metadata.json` under `--root` when it resolves (symlinks followed) to a regular file inside the resolved root; one that leads out of the root counts as absent |
 | `` `test <file>::<fn>` `` | `<file>` is a relative path under `--root` (default `.`), with no `..`, that resolves (symlinks followed) inside the resolved root, to a regular file of at most 1 MiB that contains `fn <fn>(` |
 
 A lint the repository runs is named through the command or hook that runs it: `anneal lint ...`,
