@@ -3,9 +3,10 @@
 `anneal calibrate [--point <D1..D7>] [--thresholds <file>]` checks each Clef decision point
 against the outcomes labelled with `anneal decide label`. For each point it reports the Brier
 score, reliability bins, the ask rate, a proposed threshold and a promotion verdict. It writes
-the proposal to the anneal home and prints the manual steps that would apply it. It never
-applies anything itself: no point moves to `enforce` and no threshold changes until a human
-makes the edit.
+the proposal to the anneal home, shows each proposed threshold as a diff of the thresholds file,
+and prints the steps that would apply it. It applies nothing itself: no threshold changes until
+`anneal calibrate --apply --thresholds <file>` is run, after a human approved the diff, and no
+point moves to `enforce` until a human edits the mode.
 
 ## Input
 
@@ -144,13 +145,17 @@ stdout carries the envelope (`docs/exit-codes.md` conventions, exit 0). Its `dat
 - `costs` (`{false_accept: 5, needless: 1}`), `skipped_rows`, `unmatched_labels` and
   `unreported_rows`.
 - `points` and `apply`.
+- `diff`: each threshold step as the line it changes in the thresholds file read (the copy
+  built in when `thresholds` is `null`): `{pointer, line, before, after}`. `diff_error` is
+  present only when a step does not apply to that text, saying why.
 
-With `--point`, `points` and `apply` hold that point only.
+With `--point`, `points`, `apply` and `diff` hold that point only.
 
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
 proposed (or "kept (nothing cheaper)"), and the reasons. Then it gives the proposals file and
-each manual step. Errors are one `ERROR` line as for every command (exit 70 for a log,
+each manual step, then, when a threshold step is listed, the `--apply` command that would write
+it. Errors are one `ERROR` line as for every command (exit 70 for a log,
 thresholds or proposals file that cannot be read or written, or a log file over 16.5 MiB).
 
 The summary is best effort. It is written and flushed only after the envelope, which already
@@ -164,8 +169,7 @@ Every run overwrites `<anneal home>/decisions/proposals.json` atomically. The fi
 `{kind: "anneal-threshold-proposals", version: 1, thresholds, costs, points, apply}` with
 **every** point, whatever `--point` selected.
 
-There is no apply command. `apply` lists the manual steps (a follow-up may add an
-`anneal calibrate apply`):
+`apply` lists the steps that would apply the proposal:
 
 - `{"kind": "threshold", "point", "question", "file", "pointer", "from", "to"}`: set the JSON
   pointer's value in the thresholds file. When `file` is `null`, the copy built into the
@@ -178,6 +182,28 @@ There is no apply command. `apply` lists the manual steps (a follow-up may add a
 
 `decide` keeps its own guard: a point set to `enforce` still runs in shadow until it has 50
 answered decisions (`docs/decide.md`).
+
+### `--apply`
+
+`anneal calibrate --apply --thresholds <file> [--point <D1..D7>]` writes the threshold steps of
+the last run's `proposals.json` (every point's, or `--point`'s) into `<file>`, which must be
+given and must be a regular file. It reads no decision log. Each step replaces only the number
+at its pointer, so the file keeps its layout and `git diff` shows exactly the `data.diff` the
+proposing run showed. Nothing is written unless every selected step applies:
+
+- the number at each pointer is still the step's `from` (a file edited since, or another file,
+  is refused);
+- the edited text reads as a strict thresholds file (`docs/decide.md`);
+- each pointer reads back its `to`.
+
+A refusal exits 3 with one `calibrate/refused:<pointer>` finding and writes nothing; run
+`calibrate` again and review its diff. With no threshold step selected it writes nothing and
+exits 0 (`data.written: false`). Mode steps are never applied: they are listed in
+`data.not_applied` for the human to add to `clef_mode`. `data.applied` lists each step written
+with its line, `before` and `after`. No `proposals.json` is a usage error (exit 2: run
+`anneal calibrate` first); one that is not ours, or a thresholds file that cannot be read or
+written, exits 70. `--apply` without `--thresholds` is a usage error, so the built-in copy and
+the installed plugin's file are never written by default.
 
 ## Limits
 

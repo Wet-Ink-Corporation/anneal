@@ -83,7 +83,7 @@ pub enum Command {
     /// Record a red reproduction for diagnose mode, or list `[DEBUG-<id>]` leftovers
     #[command(after_help = command_help(CommandName::Repro))]
     Repro(ReproArgs),
-    /// Lint skills, specs, plans and briefs
+    /// Lint skills, specs, plans, briefs and rule documents
     #[command(after_help = command_help(CommandName::Lint))]
     Lint(LintArgs),
     /// Check the task graph and list its frontier

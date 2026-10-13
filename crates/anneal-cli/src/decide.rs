@@ -37,6 +37,7 @@ pub mod state;
 pub mod thresholds;
 pub mod transport;
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -251,11 +252,19 @@ pub(crate) fn thresholds_path(
 /// Reads the thresholds file at `path`, which must exist and be a regular file, or the copy
 /// built in for `None`.
 pub(crate) fn read_thresholds(path: Option<&Path>) -> Result<Thresholds, DecideError> {
+    read_thresholds_text(path).map(|(thresholds, _text)| thresholds)
+}
+
+/// As [`read_thresholds`], with the text that was read, for `calibrate`'s diff and `--apply`.
+pub(crate) fn read_thresholds_text(
+    path: Option<&Path>,
+) -> Result<(Thresholds, Cow<'static, str>), DecideError> {
     let Some(path) = path else {
-        return Thresholds::built_in().map_err(|source| DecideError::Thresholds {
+        let built_in = Thresholds::built_in().map_err(|source| DecideError::Thresholds {
             from: "built in".to_owned(),
             source,
-        });
+        })?;
+        return Ok((built_in, Cow::Borrowed(thresholds::BUILT_IN)));
     };
     let Some(bytes) = baseline::read_state_bytes(path).map_err(DecideError::ThresholdsFile)? else {
         return Err(DecideError::ThresholdsMissing {
@@ -263,10 +272,15 @@ pub(crate) fn read_thresholds(path: Option<&Path>) -> Result<Thresholds, DecideE
             path: path.to_path_buf(),
         });
     };
-    Thresholds::parse(&bytes).map_err(|source| DecideError::Thresholds {
+    let parsed = Thresholds::parse(&bytes).map_err(|source| DecideError::Thresholds {
         from: path.display().to_string(),
         source,
-    })
+    })?;
+    // JSON that parsed is UTF-8 (a byte outside ASCII is valid only inside a string, which
+    // serde_json checks), so the lossy branch never replaces anything; it only avoids a panic.
+    let text = String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+    Ok((parsed, Cow::Owned(text)))
 }
 
 /// A label row: `{"kind": "label", "id", "outcome", "ts_ms"}`.

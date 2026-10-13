@@ -152,3 +152,42 @@ The snapshot is a JSON object marked `"kind": "anneal-lint-skills"` with a forma
 One of ours from another format version is stale: it is ignored and rebuilt. Any other file at
 that path, such as `hooks.metadata.json`, a baseline snapshot, or one of ours that is corrupt,
 is refused with exit 70 rather than overwritten.
+
+## Rule documents: `anneal lint rules`
+
+Rule 10 ("name the enforcer") applies beyond skills: a rule a retro writes (`/anneal:correct`)
+is a wish unless something checks it. `anneal lint rules <PATH>... [--root DIR] [--hooks FILE]`
+reads rule documents and lists every rule that names no enforcer, or names one that cannot be
+found.
+
+```markdown
+## Rules
+
+- Never merge without a fresh review verdict. Enforcer: `hook merge-gate`
+- Every MUST in a skill names its enforcer. Enforcer: `anneal lint skills plugin/skills`
+- A rule with no enforcer is reported.
+  Enforcer: `test crates/anneal-cli/tests/it/lint_rules.rs::a_rule_with_no_enforcer_is_an_error`
+```
+
+- Each `PATH` is a markdown file. Every list item (`-`, `*`, `+` or `1.`) under a level-2
+  `## Rules` heading (any letter case; there may be several) is one rule; indented lines that
+  follow join it. Code fences and HTML comments are not read.
+- A rule names its enforcer after the label `Enforcer:`, in backticks, on any of its lines. It
+  may name several, each after its own label. The enforcer is one of:
+
+| Form | Found when |
+|---|---|
+| `` `anneal <command> [<subcommand>...] [args]` `` | the words walk this binary's command tree to a command that runs: one with no subcommands, or one that runs without one (`anneal decide --point D1`); `anneal lint` alone names no check |
+| `` `hook <id>` `` | `<id>` is a `hooks[].id` of `--hooks`, by default `plugin/hooks/hooks.metadata.json` under `--root` when it exists |
+| `` `test <file>::<fn>` `` | `<file>` is a relative path under `--root` (default `.`), with no `..`, to a file of at most 1 MiB that contains `fn <fn>(` |
+
+A lint the repository runs is named through the command or hook that runs it: `anneal lint ...`,
+or `hook fast-check` for `check_fast` in `.anneal/config.json`.
+
+Findings use this page's finding model, all with checker `enforcer` (rule 10) and severity
+`error`: a rule with no enforcer (at its first line), an enforcer that cannot be found (with the
+enforcer as the key's subject and the reason in the message), a document with no `## Rules`
+section (line 0) and a `## Rules` section with no rule (at its heading). The envelope is `lint
+skills`' (`data.checked` counts the documents), and so are the exit codes: 0 with no finding, 1
+with any, 2 for a missing path or `--root`, a directory given as a document, or a document over
+the read cap.

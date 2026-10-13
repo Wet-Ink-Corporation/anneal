@@ -35,6 +35,7 @@ mod hook_status;
 mod hooks_manifest;
 mod ledger;
 mod lint_plan;
+mod lint_rules;
 mod lint_skills;
 mod lint_skills_inputs;
 mod lint_spec;

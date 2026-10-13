@@ -286,7 +286,18 @@ fn hook_ids(args: &SkillsArgs) -> Result<(BTreeSet<String>, Vec<LintFinding>), L
         }
         (None, None) => return Ok((BTreeSet::new(), Vec::new())),
     };
-    let parsed = read_text(&path)?
+    read_hook_ids(&path)
+}
+
+/// The hook ids in the `hooks.metadata.json` at `path`, or no ids and one `enforcer` error
+/// finding when it does not parse. `lint skills` and `lint rules` share it.
+///
+/// # Errors
+/// [`LintError`] when `path` is missing, a directory or cannot be read.
+pub(crate) fn read_hook_ids(
+    path: &Path,
+) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
+    let parsed = read_text(path)?
         .map_err(|size| format!("the file is {size} bytes"))
         .and_then(|text| {
             serde_json::from_str::<HooksMetadata>(&text).map_err(|error| error.to_string())

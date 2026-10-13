@@ -9,15 +9,21 @@
 //! proposed, and a verdict (`stay-shadow` or `eligible-to-enforce`). It writes every point's
 //! report and the manual steps that would apply it to `<anneal home>/decisions/proposals.json`,
 //! writes the envelope (for `--point`'s point only, when given) on stdout and a short summary
-//! on stderr, and exits 0. It never edits the thresholds or the mode.
-//! See `docs/calibrate.md`.
+//! on stderr, and exits 0. Its `data.diff` shows each proposed threshold as the changed line of
+//! the thresholds file. It never edits the thresholds or the mode: only
+//! `calibrate --apply --thresholds <file>` writes a thresholds file, from the last run's
+//! proposals, and never the mode. See `docs/calibrate.md`.
 //!
 //! Private modules:
 //! - `read`: the log's files into rows.
 //! - `score`: Brier score, bins, expected cost and the proposed threshold.
 //! - `report`: the join, the per-question report and the verdict.
 //! - `output`: envelope, proposals file, manual steps and summary.
+//! - `edit`: a threshold step applied to the file's text, number by number (pure).
+//! - `apply`: `--apply`, the proposals file's threshold steps written into `--thresholds`.
 
+mod apply;
+mod edit;
 mod output;
 mod read;
 mod report;
@@ -50,6 +56,17 @@ pub struct CalibrateArgs {
     /// the copy built in]
     #[arg(long, value_name = "FILE")]
     thresholds: Option<PathBuf>,
+    /// Write the last run's proposed thresholds (proposals.json, its `data.diff`) into
+    /// --thresholds, which must be given; the only way calibrate writes a thresholds file
+    #[arg(long, requires = "thresholds")]
+    apply: bool,
+}
+
+impl CalibrateArgs {
+    /// Whether `point` is reported (and applied): every point without `--point`.
+    fn selects(&self, point: Point) -> bool {
+        self.point.is_none_or(|only| only == point)
+    }
 }
 
 /// What `anneal calibrate` reads from outside: the working directory and the environment.
@@ -81,16 +98,43 @@ pub enum CalibrateError {
     /// The proposals file could not be written.
     #[error("writing the proposals")]
     Proposals(#[source] BaselineError),
+    /// `--apply` found no proposals file: no run has proposed anything yet.
+    #[error("no proposals at {path}: run `anneal calibrate` first", path = path.display())]
+    NoProposals {
+        /// Where the proposals file should be.
+        path: PathBuf,
+    },
+    /// `--apply` could not read the proposals file.
+    #[error("reading the proposals")]
+    ProposalsUnreadable(#[source] BaselineError),
+    /// The proposals file is not one `calibrate` wrote in this format.
+    #[error("{path} is not an anneal threshold proposals file of version 1", path = path.display())]
+    NotProposals {
+        /// The file.
+        path: PathBuf,
+        /// Why it does not parse, when it does not.
+        #[source]
+        source: Option<serde_json::Error>,
+    },
+    /// `--apply` could not write the thresholds file.
+    #[error("writing the thresholds")]
+    WriteThresholds(#[source] BaselineError),
 }
 
 impl CalibrateError {
-    /// The exit code: 70 for each, as the log, thresholds and proposals are internal state.
+    /// The exit code: a missing proposals file is a usage error (run `calibrate` first); the
+    /// rest are 70, as the log, thresholds and proposals are internal state.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
-            Self::Read(_) | Self::TooLarge { .. } | Self::Thresholds(_) | Self::Proposals(_) => {
-                exit_codes::INTERNAL
-            }
+            Self::NoProposals { .. } => exit_codes::USAGE,
+            Self::Read(_)
+            | Self::TooLarge { .. }
+            | Self::Thresholds(_)
+            | Self::Proposals(_)
+            | Self::ProposalsUnreadable(_)
+            | Self::NotProposals { .. }
+            | Self::WriteThresholds(_) => exit_codes::INTERNAL,
         }
     }
 }
@@ -111,17 +155,28 @@ where
 {
     let home = paths::anneal_home_from(&env.lookup)?;
     let log = DecisionLog::in_home(&home);
+    let selected = |point: Point| args.selects(point);
+    if args.apply {
+        return apply::run(args, &log, env.cwd, out);
+    }
     let thresholds_file = decide::thresholds_path(args.thresholds.as_deref(), env.cwd, &env.lookup);
-    let thresholds =
-        decide::read_thresholds(thresholds_file.as_deref()).map_err(CalibrateError::Thresholds)?;
+    let (thresholds, text) = decide::read_thresholds_text(thresholds_file.as_deref())
+        .map_err(CalibrateError::Thresholds)?;
     let rows = read::read_log(&log)?;
     let report = report::report(&thresholds, &rows);
     let steps = output::steps(&report, thresholds_file.as_deref());
+    let edits: Vec<_> = steps
+        .iter()
+        .filter(|step| selected(step.point()))
+        .filter_map(output::Step::edit)
+        .collect();
+    let diff = edit::apply(&text, &edits).map(|edited| edited.changes);
     let live = log.path();
     let proposals = log.dir().join(PROPOSALS_FILE);
     let calibration = Calibration {
         report: &report,
         steps: &steps,
+        diff: &diff,
         log: &live,
         files: &rows.files,
         skipped_rows: rows.skipped_rows,
@@ -129,7 +184,6 @@ where
         thresholds: thresholds_file.as_deref(),
     };
     output::write_proposals(&calibration)?;
-    let selected = |point: Point| args.point.is_none_or(|only| only == point);
     let code = output::emit(&calibration, selected, out).map_err(CliError::Output)?;
     out.flush().map_err(CliError::Output)?;
     let summary =

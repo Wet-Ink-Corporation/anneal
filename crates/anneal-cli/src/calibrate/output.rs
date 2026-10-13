@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::baseline;
 use crate::calibrate::CalibrateError;
+use crate::calibrate::edit::{Change, Edit, EditError};
 use crate::calibrate::report::{PointReport, QuestionReport, Report, Verdict};
 use crate::calibrate::score::{FALSE_ACCEPT_COST, NEEDLESS_COST};
 use crate::command::CommandName;
@@ -16,10 +17,10 @@ use crate::envelope::Envelope;
 use crate::exit_codes::{self, Code};
 
 /// The proposals file's `kind`.
-const PROPOSALS_KIND: &str = "anneal-threshold-proposals";
+pub(crate) const PROPOSALS_KIND: &str = "anneal-threshold-proposals";
 
 /// The proposals file's format version.
-const PROPOSALS_VERSION: u32 = 1;
+pub(crate) const PROPOSALS_VERSION: u32 = 1;
 
 /// The `userConfig` key holding the Clef mode.
 const MODE_KEY: &str = "clef_mode";
@@ -51,9 +52,24 @@ pub(crate) enum Step<'a> {
 }
 
 impl Step<'_> {
-    const fn point(&self) -> Point {
+    /// The point the step belongs to.
+    pub(crate) const fn point(&self) -> Point {
         match self {
             Self::Threshold { point, .. } | Self::Mode { point, .. } => *point,
+        }
+    }
+
+    /// The text edit a threshold step makes; `None` for a mode step.
+    pub(crate) const fn edit(&self) -> Option<Edit<'_>> {
+        match self {
+            Self::Threshold {
+                pointer, from, to, ..
+            } => Some(Edit {
+                pointer,
+                from: *from,
+                to: *to,
+            }),
+            Self::Mode { .. } => None,
         }
     }
 }
@@ -77,6 +93,9 @@ pub(crate) struct Calibration<'a> {
     pub(crate) report: &'a Report<'a>,
     /// The manual steps for every point.
     pub(crate) steps: &'a [Step<'a>],
+    /// The selected threshold steps as changed lines of the thresholds text, or why they do
+    /// not apply to it.
+    pub(crate) diff: &'a Result<Vec<Change>, EditError>,
     /// The live log file.
     pub(crate) log: &'a Path,
     /// The log files read, oldest first.
@@ -162,6 +181,11 @@ struct Data<'a> {
     unreported_rows: u32,
     points: Vec<&'a PointReport<'a>>,
     apply: Vec<&'a Step<'a>>,
+    /// The selected threshold steps as a line diff of the thresholds file.
+    diff: &'a [Change],
+    /// Why the steps do not apply to the thresholds text, when they do not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diff_error: Option<String>,
 }
 
 /// Writes the envelope for the points `selected` lets through, and returns its code.
@@ -170,6 +194,10 @@ pub(crate) fn emit<O: Write>(
     selected: impl Fn(Point) -> bool,
     out: &mut O,
 ) -> io::Result<Code> {
+    let (diff, diff_error) = match calibration.diff {
+        Ok(changes) => (changes.as_slice(), None),
+        Err(error) => (&[][..], Some(error.to_string())),
+    };
     let data = Data {
         log: calibration.log,
         files: calibration.files,
@@ -190,6 +218,8 @@ pub(crate) fn emit<O: Write>(
             .iter()
             .filter(|step| selected(step.point()))
             .collect(),
+        diff,
+        diff_error,
     };
     Envelope::new(CommandName::Calibrate, None, exit_codes::OK, data).emit(out)
 }
@@ -221,6 +251,7 @@ pub(crate) fn write_summary<E: Write>(
         || "a copy of plugin/playbooks/clef-thresholds.json passed with --thresholds".to_owned(),
         |path| path.display().to_string(),
     );
+    let mut any_threshold_step = false;
     for step in calibration
         .steps
         .iter()
@@ -228,12 +259,22 @@ pub(crate) fn write_summary<E: Write>(
     {
         match step {
             Step::Threshold { pointer, to, .. } => {
+                any_threshold_step = true;
                 writeln!(err, "apply by hand: in {thresholds}, set {pointer} to {to}")?;
             }
             Step::Mode { value, .. } => {
                 writeln!(err, "apply by hand: add {value} to {MODE_KEY} ({MODE_VAR})")?;
             }
         }
+    }
+    if any_threshold_step {
+        let file = calibration
+            .thresholds
+            .map_or_else(|| "<file>".to_owned(), |path| path.display().to_string());
+        writeln!(
+            err,
+            "or, after reviewing data.diff: anneal calibrate --apply --thresholds {file}"
+        )?;
     }
     Ok(())
 }
