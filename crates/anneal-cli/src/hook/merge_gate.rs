@@ -9,9 +9,10 @@
 //! tripwire fires: a gh call with a first or second operand known only at run time, or a word
 //! holding `merge` (any case, after quote removal) beside a word naming gh that the read took
 //! no full call from in its simple command, a `gh api` call, a program known only at run time,
-//! or a definition (function, alias, `hash -p`). Every other command, and any other tool, is allowed silently. The canonical
-//! command is the only judged path; the tripwire is best effort against mistakes and casual
-//! workarounds, not complete against a determined adversary in a Turing-complete shell, and
+//! or a definition (function, alias, `hash -p`). Every other command, and any other tool,
+//! is allowed silently. The canonical command is the only judged path; the tripwire is best
+//! effort against mistakes and casual workarounds, not complete against a determined
+//! adversary in a Turing-complete shell, and
 //! misses what the text does not show (interpreters, make, scripts on disk, words built at run
 //! time without `merge` or `gh`; `docs/verdict.md`, Known gaps). Strong enforcement is a
 //! GitHub required check or branch protection.
