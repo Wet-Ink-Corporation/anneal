@@ -1,6 +1,6 @@
 //! The opt-in for gated tools: a run whose selected cases name `Write`, `Edit` or `Bash` is
 //! refused unless `--allow-gated-tools` is given, since the grant comes from the case files
-//! alone (decided by Ryan, 2026-10-13).
+//! alone.
 
 use std::fmt;
 
@@ -97,6 +97,27 @@ mod tests {
         assert_eq!(
             refused.as_ref().map(ToString::to_string),
             Some("1 selected case (plan/regression/b.json)".to_owned())
+        );
+    }
+
+    #[test]
+    fn exactly_three_gated_cases_are_all_named_with_nothing_more_counted() {
+        let cases = [
+            case("a", &["Skill", "Write"]),
+            case("b", &["Skill", "Read"]),
+            case("c", &["Skill", "Edit"]),
+            case("d", &["Skill", "Bash"]),
+        ];
+
+        let refused = refusal(&cases);
+
+        assert_eq!(
+            refused.as_ref().map(ToString::to_string),
+            Some(
+                "3 selected cases (plan/regression/a.json, plan/regression/c.json, \
+                 plan/regression/d.json)"
+                    .to_owned()
+            )
         );
     }
 
