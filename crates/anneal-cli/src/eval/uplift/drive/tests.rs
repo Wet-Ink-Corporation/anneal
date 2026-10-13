@@ -41,6 +41,8 @@ enum Answer {
     Pads(f64),
     /// Like `Costs`, plus runs of `spec--regression--c` whether the batch asked for it or not.
     Strays(f64),
+    /// The result was refused after its cost was read: a run named grader `invented`.
+    Refuses(f64),
 }
 
 /// An evaluator that answers batch `i` with `answers[i]` (the last answer repeats) and
@@ -87,6 +89,7 @@ impl Evaluator for Fake {
             cost_usd: cost,
             cost_is_lower_bound: false,
             stop: None,
+            refused: None,
         };
         match answer {
             Answer::Costs(cost) => Ok(graded(*cost, 0)),
@@ -103,6 +106,17 @@ impl Evaluator for Fake {
                 cost_usd: 0.0,
                 cost_is_lower_bound: *stop == Stop::TimeLimit,
                 stop: Some(stop.clone()),
+                refused: None,
+            }),
+            Answer::Refuses(cost) => Ok(Ran {
+                runs: BTreeMap::new(),
+                cost_usd: *cost,
+                cost_is_lower_bound: false,
+                stop: None,
+                refused: Some(ResultError::UnknownGrader {
+                    case: "plan--regression--a".to_owned(),
+                    grader: "invented".to_owned(),
+                }),
             }),
             Answer::Fails => Err(RouterError::Failed {
                 status: "exit status: 1".to_owned(),
@@ -326,6 +340,60 @@ fn a_later_batch_reporting_more_runs_than_asked_ends_the_run_keeping_its_cost_no
     );
     assert!(
         matches!(&drove.stop, Some(Stop::Failed { reason }) if reason.contains("asked for 3")),
+        "{:?}",
+        drove.stop
+    );
+}
+
+#[test]
+fn no_cases_run_no_batch() {
+    let mut fake = Fake::new(vec![Answer::Costs(1.0)]);
+
+    let drove = drive(&mut fake, &[], Baseline::Plugin, 10.0).expect("runs");
+
+    assert_eq!(
+        (fake.batches.len(), drove.batches, drove.spent_usd),
+        (0, 0, 0.0),
+        "claude is never started on an empty eval directory"
+    );
+}
+
+#[test]
+fn a_first_batch_whose_result_is_refused_is_an_error() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::Refuses(1.0)]);
+
+    let refused = drive(&mut fake, &cases, Baseline::SkillRemoved, 10.0);
+
+    assert!(
+        matches!(
+            &refused,
+            Err(RouterError::Result(ResultError::UnknownGrader { grader, .. }))
+                if grader == "invented"
+        ),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_later_batch_whose_result_is_refused_ends_the_run_keeping_its_cost() {
+    let cases = cases();
+    let mut fake = Fake::new(vec![Answer::Costs(1.0), Answer::Refuses(2.0)]);
+
+    let drove = drive(&mut fake, &cases, Baseline::SkillRemoved, 10.0).expect("runs");
+
+    assert_eq!(
+        (
+            fake.batches.len(),
+            drove.batches,
+            drove.spent_usd,
+            drove.cost_is_lower_bound,
+        ),
+        (2, 2, 3.0, false),
+        "the refused batch reported $2, so the spend stays exact"
+    );
+    assert!(
+        matches!(&drove.stop, Some(Stop::Failed { reason }) if reason.contains("invented")),
         "{:?}",
         drove.stop
     );

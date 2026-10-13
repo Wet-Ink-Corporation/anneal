@@ -187,6 +187,33 @@ fn with_nothing_changed_since_the_base_nothing_runs_and_it_exits_0() -> TestResu
     Ok(())
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
+    let work = tempfile::tempdir()?;
+    let missing = work.path().join("no-such-claude");
+    let suites = work.path().join("uplift");
+    std::fs::create_dir(&suites)?;
+
+    let output = eval_uplift(&suites, &["--claude", &missing.to_string_lossy()])?;
+
+    let envelope = envelope(&output)?;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a missing claude would have exited 4: {envelope}"
+    );
+    assert_eq!(
+        (
+            &envelope["data"]["skipped"],
+            &envelope["data"]["cases"],
+            &envelope["data"]["runs"]
+        ),
+        (&json!(true), &json!(0), &json!(0))
+    );
+    Ok(())
+}
+
 /// A `claude` that logs `<plugin copy> <eval dir> <budget> <runs> <allowed tools>` per batch to
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when

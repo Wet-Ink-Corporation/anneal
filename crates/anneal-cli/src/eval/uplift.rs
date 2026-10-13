@@ -164,10 +164,12 @@ pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutco
             .suites
             .cases
             .retain(|case| changed.contains(&case.skill));
-        if outcome.suites.cases.is_empty() {
-            outcome.skipped = true;
-            return Ok(outcome);
-        }
+    }
+    // Nothing selected (no change since the base, or no case at all): nothing to run, so
+    // `claude` is never started on an empty eval directory.
+    if outcome.suites.cases.is_empty() {
+        outcome.skipped = true;
+        return Ok(outcome);
     }
     let (drove, cleanup) = run(settings, &args.skills, &outcome.suites)?;
     outcome.drove = Some(drove);

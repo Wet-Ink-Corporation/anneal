@@ -5,9 +5,10 @@ use std::io::Write;
 
 use serde::Serialize;
 
+use super::case::Tool;
 use super::drive::Drove;
 use super::stats::Difference;
-use super::suites::{Coverage, SuiteKind};
+use super::suites::{Case, Coverage, SuiteKind};
 use super::tally::{CaseResult, NonDiscriminating, RUNS, SkillResult, Tally, tally};
 use super::{BaselineKind, Trial, UpliftOutcome};
 use crate::command::CommandName;
@@ -39,6 +40,68 @@ struct Data<'a> {
     results: &'a [CaseResult<'a>],
     non_discriminating: &'a [NonDiscriminating<'a>],
     graduates: Vec<&'a str>,
+    granted_tools: Vec<Granted<'a>>,
+}
+
+/// A case whose file names gated tools, which a run grants it with `--allow-tools`.
+#[derive(Debug, Serialize)]
+struct Granted<'a> {
+    /// The case file, relative to the suites directory.
+    case: &'a str,
+    /// The gated tools it names, in [`Tool`] order.
+    tools: Vec<Tool>,
+}
+
+/// Each case of `cases` that names gated tools, with them.
+fn granted(cases: &[Case]) -> Vec<Granted<'_>> {
+    cases
+        .iter()
+        .filter_map(|case| {
+            let tools: BTreeSet<Tool> = case
+                .body
+                .allowed_tools
+                .iter()
+                .copied()
+                .filter(|tool| tool.is_gated())
+                .collect();
+            (!tools.is_empty()).then(|| Granted {
+                case: &case.file,
+                tools: tools.into_iter().collect(),
+            })
+        })
+        .collect()
+}
+
+/// The finding naming the gated tools `granted` cases get from their files alone, if any.
+fn granted_finding(granted: &[Granted<'_>]) -> Option<Finding> {
+    if granted.is_empty() {
+        return None;
+    }
+    // In `Tool` order, as `--allow-tools` lists them.
+    let tools: Vec<&str> = granted
+        .iter()
+        .flat_map(|case| case.tools.iter().copied())
+        .collect::<BTreeSet<Tool>>()
+        .into_iter()
+        .map(Tool::name)
+        .collect();
+    let files: Vec<&str> = granted.iter().map(|case| case.case).collect();
+    let count = granted.len();
+    let noun = if count == 1 { "case" } else { "cases" };
+    let its = if count == 1 {
+        "its case file"
+    } else {
+        "their case files"
+    };
+    Some(Finding::new(
+        "eval/uplift/granted-tools",
+        format!(
+            "a run grants {} to {count} {noun} from {its} alone ({}); review those cases \
+             before running them",
+            tools.join(", "),
+            files.join(", ")
+        ),
+    ))
 }
 
 /// What the run spent, flattened into `data`.
@@ -121,6 +184,7 @@ fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) ->
             .filter(|skill| skill.suites.iter().any(|suite| suite.graduates))
             .map(|skill| skill.skill)
             .collect(),
+        granted_tools: granted(&outcome.suites.cases),
     }
 }
 
@@ -155,7 +219,8 @@ fn code(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Code {
 }
 
 /// Every finding: suite problems, each skill's missed bars, non-discriminating assertions,
-/// then why the run is incomplete and a workspace left behind.
+/// the gated tools case files grant, then why the run is incomplete and a workspace left
+/// behind.
 fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<Finding> {
     let mut findings: Vec<Finding> = outcome
         .suites
@@ -184,6 +249,7 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
             ),
         )
     }));
+    findings.extend(granted_finding(&granted(&outcome.suites.cases)));
     findings.extend(incomplete_finding(outcome, short));
     if let Some(reason) = &outcome.cleanup {
         findings.push(Finding::new(

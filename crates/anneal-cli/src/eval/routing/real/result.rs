@@ -146,6 +146,14 @@ pub enum ResultError {
         /// The grader named.
         grader: String,
     },
+    /// A run lists the same grader twice, so whether it passed cannot be told.
+    #[error("a run of case {case} lists grader {grader} twice")]
+    DuplicateGrader {
+        /// The case's name.
+        case: String,
+        /// The grader listed twice.
+        grader: String,
+    },
     /// The result reports a negative cost, so the spend cannot be tracked.
     #[error("the result reports a negative cost ({cost_usd} USD)")]
     NegativeCost {

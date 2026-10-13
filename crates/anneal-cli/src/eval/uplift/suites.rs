@@ -20,6 +20,9 @@ const MAX_CASES: usize = 512;
 const MAX_SLUG: usize = 64;
 /// The file extension of a case.
 const CASE_EXTENSION: &str = ".json";
+/// What separates a case name's skill, suite and slug ([`Case::name`]); a skill directory
+/// may not hold it, so names stay unique.
+const NAME_SEPARATOR: &str = "--";
 /// The reason given for a symlink anywhere in the suites.
 const SYMLINK: &str = "a symlink; suites and cases are read only as plain directories and files";
 
@@ -66,9 +69,11 @@ pub(crate) struct Case {
 
 impl Case {
     /// Its name in a `claude plugin eval` run, unique across skills and suites:
-    /// `<skill>--<suite>--<slug>`.
+    /// `<skill>--<suite>--<slug>`. A skill directory holding `--` is refused when read, so
+    /// the first `--` always ends the skill and the suite word follows.
     pub(crate) fn name(&self) -> String {
-        format!("{}--{}--{}", self.skill, self.suite.dir(), self.slug)
+        let sep = NAME_SEPARATOR;
+        format!("{}{sep}{}{sep}{}", self.skill, self.suite.dir(), self.slug)
     }
 }
 
@@ -134,6 +139,13 @@ pub(crate) fn read(dir: &Path, skills: &[String]) -> Result<Suites, LintError> {
         let shown = display(&name);
         match kind {
             EntryKind::Symlink => suites.problem(shown, SYMLINK),
+            EntryKind::Dir if shown.contains(NAME_SEPARATOR) => {
+                suites.problem(
+                    shown,
+                    "a skill directory with suites may not hold `--`, which separates the \
+                     parts of a case's name",
+                );
+            }
             EntryKind::Dir if skills.contains(&shown) => {
                 read_skill(dir, &shown, &mut suites)?;
             }
@@ -156,9 +168,12 @@ fn read_skill(dir: &Path, skill: &str, suites: &mut Suites) -> Result<(), LintEr
         regression: 0,
         capability: 0,
     };
+    let mut has_suite = false;
     for (name, kind) in list_dir(&dir.join(skill))? {
         let shown = format!("{skill}/{}", display(&name));
         let suite = name.to_str().and_then(SuiteKind::of);
+        // A symlinked suite is a problem of its own; it still names a suite.
+        has_suite |= suite.is_some() && matches!(kind, EntryKind::Dir | EntryKind::Symlink);
         match (kind, suite) {
             (EntryKind::Symlink, _) => suites.problem(shown, SYMLINK),
             (EntryKind::Dir, Some(suite)) => {
@@ -173,6 +188,9 @@ fn read_skill(dir: &Path, skill: &str, suites: &mut Suites) -> Result<(), LintEr
             }
             (EntryKind::File | EntryKind::Other, _) => {}
         }
+    }
+    if !has_suite {
+        suites.problem(skill.to_owned(), "no `regression` or `capability` suite");
     }
     suites.coverage.push(coverage);
     Ok(())

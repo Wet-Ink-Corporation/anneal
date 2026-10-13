@@ -153,3 +153,41 @@ fn a_regression_suite_far_below_90_percent_regressed() {
         )
     );
 }
+
+#[test]
+fn the_gated_tools_cases_grant_are_listed_per_case_and_named_in_a_finding() {
+    let text = json!({
+        "behaviour": "outcome",
+        "seed": "s",
+        "prompt": "p",
+        "allowed_tools": ["Skill", "Bash", "Read", "Write"],
+        "graders": [{"type": "regex", "name": "a", "pattern": "x"}]
+    })
+    .to_string();
+    let gated = Case {
+        body: parse(text.as_bytes()).expect("valid"),
+        ..case(SuiteKind::Regression, "b", "outcome")
+    };
+    let mut outcome = outcome(
+        vec![case(SuiteKind::Regression, "a", "outcome"), gated],
+        Vec::new(),
+    );
+    outcome.check = true;
+    outcome.drove = None;
+
+    let mut out = Vec::new();
+    report(&outcome, &mut out).expect("written");
+    let envelope: Value = serde_json::from_slice(&out).expect("json");
+
+    assert_eq!(
+        (&envelope["data"]["granted_tools"], &envelope["findings"]),
+        (
+            &json!([{"case": "plan/regression/b.json", "tools": ["Write", "Bash"]}]),
+            &json!([{
+                "key": "eval/uplift/granted-tools",
+                "message": "a run grants Write, Bash to 1 case from its case file alone \
+                            (plan/regression/b.json); review those cases before running them"
+            }])
+        )
+    );
+}

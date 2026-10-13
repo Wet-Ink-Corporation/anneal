@@ -7,13 +7,13 @@
 //! earlier ones reported. None starts with less than a cent left, and a batch that stops
 //! short or fails after the first ends the run with the runs so far.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::Trial;
 use super::suites::Case;
 use super::tally::{Arms, RUNS};
 use crate::error_chain;
-use crate::eval::routing::real::result::over_asked;
+use crate::eval::routing::real::result::{ResultError, over_asked};
 use crate::eval::routing::real::{RouterError, Stop};
 
 /// The least budget, in US dollars, worth launching a batch for.
@@ -68,7 +68,7 @@ pub(crate) struct Batch<'a> {
 }
 
 /// What one batch returned.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct Ran {
     /// Runs by case name.
     pub(crate) runs: BTreeMap<String, Vec<Trial>>,
@@ -78,6 +78,9 @@ pub(crate) struct Ran {
     pub(crate) cost_is_lower_bound: bool,
     /// Why it stopped short, if it did.
     pub(crate) stop: Option<Stop>,
+    /// Why its result was refused once its cost was read (a case or grader listed twice, or
+    /// a grader its case does not have), if it was: its runs are dropped, its cost counts.
+    pub(crate) refused: Option<ResultError>,
 }
 
 /// How the run went.
@@ -97,6 +100,10 @@ pub(crate) struct Drove {
 
 /// The batches' arms and cases, in order: the with arm first, then the baseline.
 fn plan<'a>(cases: &'a [Case], baseline: Baseline) -> Vec<(Arm<'a>, Vec<&'a Case>)> {
+    if cases.is_empty() {
+        // No batch at all: `claude` would run an empty eval directory.
+        return Vec::new();
+    }
     let mut batches = vec![(Arm::With, cases.iter().collect())];
     match baseline {
         Baseline::Plugin => batches.push((Arm::Baseline, cases.iter().collect())),
@@ -123,8 +130,9 @@ fn take(drove: &mut Drove, batch: &Batch<'_>, ran: Ran) -> Option<Stop> {
     drove.cost_is_lower_bound |= ran.cost_is_lower_bound;
     // A case this batch did not ask for says nothing about the suites, not even when another
     // batch asked for it, so it is left out.
+    let asked: BTreeSet<String> = batch.cases.iter().map(|case| case.name()).collect();
     for (name, trials) in ran.runs {
-        if !batch.cases.iter().any(|case| case.name() == name) {
+        if !asked.contains(&name) {
             continue;
         }
         if let Some(arms) = drove.runs.get_mut(&name) {
@@ -137,15 +145,24 @@ fn take(drove: &mut Drove, batch: &Batch<'_>, ran: Ran) -> Option<Stop> {
     ran.stop
 }
 
+/// What a batch against `arm` may spend of `cap_usd` once `spent_usd` is spent: the with arm
+/// at most [`WITH_ARM_SHARE`] of the cap, any other batch what is left.
+fn budget(arm: Arm<'_>, cap_usd: f64, spent_usd: f64) -> f64 {
+    let left_usd = cap_usd - spent_usd;
+    match arm {
+        Arm::With => left_usd.min(cap_usd * WITH_ARM_SHARE),
+        Arm::Without(_) | Arm::Baseline => left_usd,
+    }
+}
+
 /// Runs `cases` through `evaluator` in both arms, within `cap_usd`.
 ///
 /// # Errors
 /// The first batch's [`RouterError`]: nothing has run, so there is nothing to report. A later
 /// batch's failure ends the run with [`Stop::Failed`] instead, keeping the runs so far and
-/// marking the cost a lower bound. A batch reporting more runs of a case than it asked for is
-/// refused the same way ([`ResultError::TooManyRuns`]), its runs dropped and its cost kept.
-///
-/// [`ResultError::TooManyRuns`]: crate::eval::routing::real::ResultError::TooManyRuns
+/// marking the cost a lower bound. A batch reporting more runs of a case than it asked for
+/// ([`ResultError::TooManyRuns`]), or whose result the evaluator refused once its cost was
+/// read ([`Ran::refused`]), is refused the same way, its runs dropped and its cost kept.
 pub(crate) fn drive<E: Evaluator>(
     evaluator: &mut E,
     cases: &[Case],
@@ -163,11 +180,7 @@ pub(crate) fn drive<E: Evaluator>(
         cost_is_lower_bound: false,
     };
     for (index, (arm, batch_cases)) in (1_u32..).zip(plan(cases, baseline)) {
-        let left_usd = cap_usd - drove.spent_usd;
-        let budget_usd = match arm {
-            Arm::With => left_usd.min(cap_usd * WITH_ARM_SHARE),
-            Arm::Without(_) | Arm::Baseline => left_usd,
-        };
+        let budget_usd = budget(arm, cap_usd, drove.spent_usd);
         if budget_usd < MIN_BUDGET_USD {
             drove.stop = Some(Stop::CostCap);
             break;
@@ -179,7 +192,7 @@ pub(crate) fn drive<E: Evaluator>(
             runs: RUNS,
             budget_usd,
         };
-        let ran = match evaluator.run(&batch) {
+        let mut ran = match evaluator.run(&batch) {
             Ok(ran) => ran,
             Err(error) if index == 1 => return Err(error),
             Err(error) => {
@@ -191,8 +204,12 @@ pub(crate) fn drive<E: Evaluator>(
                 break;
             }
         };
-        if let Some(padded) = over_asked(&ran.runs, batch.runs) {
-            let error = RouterError::Result(padded);
+        if let Some(refused) = ran
+            .refused
+            .take()
+            .or_else(|| over_asked(&ran.runs, batch.runs))
+        {
+            let error = RouterError::Result(refused);
             if index == 1 {
                 return Err(error);
             }

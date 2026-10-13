@@ -219,15 +219,54 @@ fn a_result_run_naming_a_grader_the_case_does_not_have_is_refused() -> TestResul
         &["repro", "invented"],
     )]))?;
 
-    let refused = trials(result, "anneal", &[&flaky]);
+    let ran = trials(result, "anneal", &[&flaky])?;
 
+    assert_eq!(
+        (ran.runs.len(), ran.cost_usd),
+        (0, 0.3),
+        "no run kept, the cost counted"
+    );
+    let refused = ran.refused;
     assert!(
         matches!(
             &refused,
-            Err(ResultError::UnknownGrader { case, grader })
+            Some(ResultError::UnknownGrader { case, grader })
                 if case == "diagnose--regression--flaky" && grader == "invented"
         ),
         "{refused:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_result_run_listing_a_grader_twice_is_refused() -> TestResult {
+    let flaky = case(&json!(["Skill"]));
+    let result = parse(json!({
+        "schemaVersion": 1,
+        "costUsd": 0.3,
+        "partial": false,
+        "suite": {"plugins": [{"name": "anneal", "path": "/p"}]},
+        "cases": [{"name": "diagnose--regression--flaky", "arms": {"with": [{
+            "error": null,
+            "graders": [{"name": "repro", "passed": false}, {"name": "repro", "passed": true}]
+        }]}}]
+    }))?;
+
+    let ran = trials(result, "anneal", &[&flaky])?;
+
+    assert_eq!(
+        (ran.runs.len(), ran.cost_usd),
+        (0, 0.3),
+        "no run kept, the cost counted"
+    );
+    let refused = ran.refused;
+    assert!(
+        matches!(
+            &refused,
+            Some(ResultError::DuplicateGrader { case, grader })
+                if case == "diagnose--regression--flaky" && grader == "repro"
+        ),
+        "a failed and a passed `repro` would count as passed: {refused:?}"
     );
     Ok(())
 }
@@ -240,12 +279,18 @@ fn a_result_listing_a_case_twice_is_refused() -> TestResult {
         ("diagnose--regression--flaky", &["repro"]),
     ]))?;
 
-    let refused = trials(result, "anneal", &[&flaky]);
+    let ran = trials(result, "anneal", &[&flaky])?;
 
+    assert_eq!(
+        (ran.runs.len(), ran.cost_usd),
+        (0, 0.3),
+        "no run kept, the cost counted"
+    );
+    let refused = ran.refused;
     assert!(
         matches!(
             &refused,
-            Err(ResultError::DuplicateCase { case }) if case == "diagnose--regression--flaky"
+            Some(ResultError::DuplicateCase { case }) if case == "diagnose--regression--flaky"
         ),
         "{refused:?}"
     );
@@ -261,12 +306,18 @@ fn a_result_listing_a_case_the_batch_did_not_ask_for_twice_is_refused() -> TestR
         ("plan--regression--other", &["anything"]),
     ]))?;
 
-    let refused = trials(result, "anneal", &[&flaky]);
+    let ran = trials(result, "anneal", &[&flaky])?;
 
+    assert_eq!(
+        (ran.runs.len(), ran.cost_usd),
+        (0, 0.3),
+        "no run kept, the cost counted"
+    );
+    let refused = ran.refused;
     assert!(
         matches!(
             &refused,
-            Err(ResultError::DuplicateCase { case }) if case == "plan--regression--other"
+            Some(ResultError::DuplicateCase { case }) if case == "plan--regression--other"
         ),
         "{refused:?}"
     );

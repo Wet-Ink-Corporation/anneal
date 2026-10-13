@@ -107,6 +107,63 @@ fn a_bad_layout_or_case_is_a_problem_naming_its_file() -> TestResult {
 }
 
 #[test]
+fn a_skill_directory_with_no_suite_is_a_problem() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    write(dir.path(), "plan/README.md", "no suites yet")?;
+
+    let suites = read(dir.path(), &skills())?;
+
+    let problems: Vec<(&str, &str)> = suites
+        .problems
+        .iter()
+        .map(|p| (p.file.as_str(), p.reason.as_str()))
+        .collect();
+    assert_eq!(
+        problems,
+        [("plan", "no `regression` or `capability` suite")],
+        "a run would start claude with no case"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_skill_directory_whose_name_holds_a_double_dash_is_a_problem() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    write(
+        dir.path(),
+        "a--regression--b/capability/c.json",
+        &case_json(),
+    )?;
+    write(
+        dir.path(),
+        "a/regression/b--capability--c.json",
+        &case_json(),
+    )?;
+    let skills = ["a", "a--regression--b"].map(str::to_owned).to_vec();
+
+    let suites = read(dir.path(), &skills)?;
+
+    let problems: Vec<(&str, &str)> = suites
+        .problems
+        .iter()
+        .map(|p| (p.file.as_str(), p.reason.as_str()))
+        .collect();
+    assert_eq!(
+        (problems, suites.cases.len()),
+        (
+            vec![(
+                "a--regression--b",
+                "a skill directory with suites may not hold `--`, which separates the parts \
+                 of a case's name"
+            )],
+            1
+        ),
+        "both cases would be named a--regression--b--capability--c"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_case_fault_is_reported_through_its_message() -> TestResult {
     let dir = tempfile::tempdir()?;
     let text = case_json().replace("Plan the export feature.", " ");

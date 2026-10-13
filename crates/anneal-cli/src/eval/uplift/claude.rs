@@ -10,6 +10,8 @@
 //! are two runs, not `claude plugin eval`'s own with-without ablation, which would strip the
 //! whole plugin and its hooks.
 
+mod trials;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -19,16 +21,16 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::Trial;
 use super::case::{Grader, Tool};
 use super::drive::{Arm, Batch, Evaluator, Ran};
 use super::suites::Case;
 use crate::eval::routing::real::claude::{
     Invocation, Invoked, Options, budget_arg, invoke, result_path,
 };
-use crate::eval::routing::real::result::{self, ResultDto, ResultError, RunDto};
+use crate::eval::routing::real::result;
 use crate::eval::routing::real::workspace::{Limits, Workspace, copy_tree};
 use crate::eval::routing::real::{RouterError, Stop};
+pub(crate) use trials::trials;
 
 /// The case schema version this writes (Claude Code reads up to 1.x).
 const SCHEMA_VERSION: &str = "1.0";
@@ -193,6 +195,7 @@ fn stopped(killed: bool) -> Ran {
         cost_usd: 0.0,
         cost_is_lower_bound: killed,
         stop: Some(Stop::TimeLimit),
+        refused: None,
     }
 }
 
@@ -336,64 +339,6 @@ pub(crate) fn case_file(case: &Case, runs: u32) -> CaseFile<'_> {
         runs,
         graders: &case.body.graders,
     }
-}
-
-/// The runs of `result` for the plugin named `plugin`, for the batch's `cases`. A run that
-/// finished or ran out of turns is graded (running out of turns is the agent's behaviour,
-/// not an accident); any other error is no trial. A case the batch did not ask for says
-/// nothing about the suites and is dropped.
-///
-/// # Errors
-/// [`ResultError`] when the header checks fail, a case is listed twice
-/// ([`ResultError::DuplicateCase`]), or a run names a grader its case does not have
-/// ([`ResultError::UnknownGrader`]).
-pub(crate) fn trials(result: ResultDto, plugin: &str, cases: &[&Case]) -> Result<Ran, ResultError> {
-    let checked = result::check(result, plugin)?;
-    let mut runs: BTreeMap<String, Vec<Trial>> = BTreeMap::new();
-    let mut dropped: BTreeSet<String> = BTreeSet::new();
-    for (name, case_runs) in checked.cases {
-        if runs.contains_key(&name) || dropped.contains(&name) {
-            return Err(ResultError::DuplicateCase { case: name });
-        }
-        let Some(case) = cases.iter().find(|case| case.name() == name) else {
-            dropped.insert(name);
-            continue;
-        };
-        let trials = case_runs
-            .iter()
-            .map(|run| trial(case, &name, run))
-            .collect::<Result<Vec<_>, _>>()?;
-        runs.insert(name, trials);
-    }
-    Ok(Ran {
-        runs,
-        cost_usd: checked.cost_usd,
-        cost_is_lower_bound: false,
-        stop: checked.stop,
-    })
-}
-
-/// `run` of the case `case`, named `name` in the result.
-fn trial(case: &Case, name: &str, run: &RunDto) -> Result<Trial, ResultError> {
-    if let Some(error) = run.error()
-        && !result::ran_out_of_turns(error)
-    {
-        return Ok(Trial::Errored);
-    }
-    run.graders()
-        .map(|(grader, passed)| {
-            if case.body.graders.iter().any(|known| known.name() == grader) {
-                Ok((grader.to_owned(), passed))
-            } else {
-                Err(ResultError::UnknownGrader {
-                    // The error outlives the result, so it owns both names.
-                    case: name.to_owned(),
-                    grader: grader.to_owned(),
-                })
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Trial::Graded)
 }
 
 #[cfg(test)]
