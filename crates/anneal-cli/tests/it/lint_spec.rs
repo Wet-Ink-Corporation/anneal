@@ -9,7 +9,7 @@ use std::process::Output;
 
 use serde_json::{Value, json};
 
-use crate::support::anneal_in;
+use crate::support::anneal_with_home;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -18,7 +18,11 @@ fn fixtures() -> PathBuf {
 }
 
 fn lint_spec(cwd: &Path, args: &[&str]) -> Result<(Output, Value), Box<dyn Error>> {
-    let output = anneal_in(cwd).args(["lint", "spec"]).args(args).output()?;
+    let home = tempfile::tempdir()?;
+    let output = anneal_with_home(cwd, home.path())
+        .args(["lint", "spec"])
+        .args(args)
+        .output()?;
     let envelope = if output.stdout.is_empty() {
         Value::Null
     } else {

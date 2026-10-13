@@ -218,8 +218,9 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
 /// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_FAILS` set it writes no result
-/// and exits 1. A batch against the `baseline/` copy lists its plugin as `fixture-baseline`,
-/// the name in `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
+/// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. A batch against
+/// the `baseline/` copy lists its plugin as `fixture-baseline`, the name in
+/// `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
 #[cfg(unix)]
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 set -eu
@@ -247,6 +248,7 @@ for dir in "$target/$evaldir"/*/; do
   one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$run,$run,$run]}}"
   if [ -z "$cases" ]; then cases=$one; else cases="$cases,$one"; fi
 done
+if [ -n "${FAKE_DUPLICATES:-}" ]; then cases="$cases,$cases"; fi
 printf '{"schemaVersion":1,"costUsd":0.25,"partial":false,"suite":{"plugins":[{"name":"%s","path":"%s"}]},"cases":[%s]}' "$listed" "$target" "$cases" > "$out"
 "#;
 
@@ -437,6 +439,30 @@ fn a_first_batch_that_fails_after_claude_started_exits_4_saying_its_spend_is_unk
             && stderr.contains("Error: not logged in")
             && stderr.lines().count() == 1,
         "{stderr:?}"
+    );
+    assert_eq!(
+        run.left_in_tmp()?,
+        Vec::<String>::new(),
+        "workspace removed"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_first_batch_refused_after_its_cost_was_read_exits_4_reporting_the_spend() -> TestResult {
+    let run = FakeRun::new(&[("FAKE_DUPLICATES", "1")])?;
+
+    let stderr = std::str::from_utf8(&run.output.stderr)?;
+    assert_eq!(run.output.status.code(), Some(4), "{stderr}");
+    assert!(
+        stderr.starts_with("ERROR eval: ")
+            && stderr.contains("reported spending 0.25 USD")
+            && stderr.contains("is listed twice in the result")
+            && !stderr.contains("spend is unknown")
+            && stderr.lines().count() == 1,
+        "the result reported its cost, so the spend is known: {stderr:?}"
     );
     assert_eq!(
         run.left_in_tmp()?,

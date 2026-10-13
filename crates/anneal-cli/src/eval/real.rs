@@ -35,6 +35,7 @@ pub(crate) fn spend_unknown(error: RouterError) -> RouterError {
         RouterError::Spawn { .. }
         | RouterError::Workspace(_)
         | RouterError::Manifest(_)
+        | RouterError::Refused { .. }
         | RouterError::SpendUnknown { .. }
         | RouterError::Cleanup { .. } => error,
     }
@@ -75,6 +76,16 @@ pub enum RouterError {
     /// Its result says nothing about routing.
     #[error(transparent)]
     Result(#[from] ResultError),
+    /// The first batch's result was refused once its cost had been read, so what it spent is
+    /// known.
+    #[error("claude plugin eval reported spending {cost_usd} USD, then its result was refused")]
+    Refused {
+        /// What the result reported the batch cost, in US dollars.
+        cost_usd: f64,
+        /// Why it was refused.
+        #[source]
+        error: ResultError,
+    },
     /// The first batch failed after `claude` had started, so it may have spent money that no
     /// result reported.
     #[error("claude plugin eval ran, so its spend is unknown")]
@@ -111,7 +122,8 @@ impl RouterError {
             | Self::Manifest(_)
             | Self::Failed { .. }
             | Self::Unreadable(_)
-            | Self::Result(_) => exit_codes::EVAL_ROUTER_FAILED,
+            | Self::Result(_)
+            | Self::Refused { .. } => exit_codes::EVAL_ROUTER_FAILED,
         }
     }
 }

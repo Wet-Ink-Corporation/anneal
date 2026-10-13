@@ -7,7 +7,7 @@ use std::process::Output;
 
 use serde_json::{Value, json};
 
-use crate::support::anneal_in;
+use crate::support::anneal_with_home;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -19,7 +19,11 @@ fn fixtures() -> PathBuf {
 
 /// Runs `anneal dag <args>` in the fixtures directory.
 fn dag(args: &[&str]) -> Result<Output, Box<dyn Error>> {
-    Ok(anneal_in(&fixtures()).arg("dag").args(args).output()?)
+    let home = tempfile::tempdir()?;
+    Ok(anneal_with_home(&fixtures(), home.path())
+        .arg("dag")
+        .args(args)
+        .output()?)
 }
 
 fn envelope(output: &Output) -> Result<Value, Box<dyn Error>> {

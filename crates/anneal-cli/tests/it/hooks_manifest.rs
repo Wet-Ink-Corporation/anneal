@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::support::anneal_in;
+use crate::support::{anneal_in, anneal_with_home};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -632,8 +632,9 @@ fn every_metadata_id_is_an_anneal_hook_the_binary_runs() -> TestResult {
         .map(|hook| hook.as_str().to_owned())
         .collect();
     assert_eq!(ids, known, "one metadata row per `anneal hook` subcommand");
+    let home = tempfile::tempdir()?;
     for id in &ids {
-        let output = anneal_in(&hooks_dir())
+        let output = anneal_with_home(&hooks_dir(), home.path())
             .args(["hook", id, "--help"])
             .output()?;
         assert_eq!(output.status.code(), Some(0), "anneal hook {id} --help");

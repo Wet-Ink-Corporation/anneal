@@ -156,6 +156,10 @@ impl World {
     }
 
     /// Asks `request`, keeping `input` in the row.
+    ///
+    /// It drops `unrecorded` because every caller writes to a working log and then reads the row
+    /// back, so a record that failed already fails them as a missing row. The record-failure path
+    /// is pinned separately through `ask_keeping`, which hands the failure back.
     fn ask_recording(
         &self,
         request: &Ask<'_>,

@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -39,22 +39,46 @@ pub(crate) fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// `anneal` run in `cwd`, isolated from the caller's repository, ledger overrides, Clef
-/// configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*` Clef variables,
-/// `CLAUDE_PLUGIN_ROOT` (a hook running the tests may set it to another plugin) and
-/// `WEIGHIN_BIN` (CI sets it for the weigh-in bridge test) are removed, and `ANNEAL_HOME` is `.anneal-home` under `cwd` when `cwd` is a temporary
-/// directory (else under the system's temporary directory), so no test writes to `~/.anneal`.
-/// A test that needs either sets it again. `ANNEAL_CLEF_URL` is `http://127.0.0.1:0`, which
-/// every platform refuses at once, so a test that configures an account finds Clef unreachable
-/// and never reaches the network; [`with_fake_clef`] gives a URL that answers.
+/// `anneal` run in `cwd`, a test's own temporary directory, with [`anneal_with_home`]'s
+/// isolation and `ANNEAL_HOME` at [`anneal_home_in`] `cwd`, so it is removed with the test's
+/// directory. A test running elsewhere (a fixture directory, the repository) passes a home of
+/// its own to [`anneal_with_home`]; this panics, naming it, rather than share one.
 pub(crate) fn anneal_in(cwd: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
+    assert!(
+        is_temporary(cwd),
+        "anneal_in runs in a test's temporary directory; for {} pass a home from the test's own \
+         TempDir to anneal_with_home",
+        cwd.display()
+    );
+    anneal_with_home(cwd, &anneal_home_in(cwd))
+}
+
+/// The anneal home [`anneal_in`] gives a command run in the temporary directory `cwd`.
+pub(crate) fn anneal_home_in(cwd: &Path) -> PathBuf {
+    cwd.join(".anneal-home")
+}
+
+/// Whether `cwd` is under the system's temporary directory, as written or once resolved (on
+/// macOS a resolved temporary path starts `/private/var`, the system's `/var`).
+fn is_temporary(cwd: &Path) -> bool {
     let temp = std::env::temp_dir();
-    let home = if cwd.starts_with(&temp) {
-        cwd.join(".anneal-home")
-    } else {
-        temp.join(format!("anneal-it-home-{}", std::process::id()))
-    };
+    cwd.starts_with(&temp)
+        || matches!(
+            (std::fs::canonicalize(cwd), std::fs::canonicalize(&temp)),
+            (Ok(cwd), Ok(temp)) if cwd.starts_with(&temp)
+        )
+}
+
+/// `anneal` run in `cwd` with `ANNEAL_HOME` at `home`, isolated from the caller's repository,
+/// ledger overrides, Clef configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*`
+/// Clef variables, `CLAUDE_PLUGIN_ROOT` (a hook running the tests may set it to another plugin)
+/// and `WEIGHIN_BIN` (CI sets it for the weigh-in bridge test) are removed, so no test writes
+/// to `~/.anneal`. A test that needs either sets it again. `ANNEAL_CLEF_URL` is
+/// `http://127.0.0.1:0`, which every platform refuses at once, so a test that configures an
+/// account finds Clef unreachable and never reaches the network; [`with_fake_clef`] gives a URL
+/// that answers.
+pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
     command
         .current_dir(cwd)
         .env("ANNEAL_HOME", home)

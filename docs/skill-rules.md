@@ -186,6 +186,10 @@ found.
 A lint the repository runs is named through the command or hook that runs it: `anneal lint ...`,
 or `hook fast-check` for `check_fast` in `.anneal/config.json`.
 
+The default `plugin/hooks/hooks.metadata.json` is read only when a rule names a `hook <id>`
+enforcer, so a run with none never touches it: one that cannot be resolved (a symlink loop, say)
+fails the run (70) only when a hook rule needs it. `--hooks`, when given, is always read.
+
 Findings use this page's finding model, all with checker `enforcer` (rule 10) and severity
 `error`: a rule with no enforcer (at its first line), an enforcer that cannot be found (with the
 enforcer as the key's subject and the reason in the message), a document with no `## Rules`

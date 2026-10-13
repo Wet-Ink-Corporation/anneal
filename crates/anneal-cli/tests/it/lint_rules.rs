@@ -7,7 +7,7 @@ use std::process::Output;
 
 use serde_json::{Value, json};
 
-use crate::support::anneal_in;
+use crate::support::anneal_with_home;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -25,7 +25,8 @@ fn fixture(name: &str) -> PathBuf {
 
 /// `anneal lint rules <fixture>` from the repository root.
 fn lint_rules(name: &str) -> Result<Output, Box<dyn Error>> {
-    Ok(anneal_in(&repository())
+    let home = tempfile::tempdir()?;
+    Ok(anneal_with_home(&repository(), home.path())
         .args(["lint", "rules"])
         .arg(fixture(name))
         .output()?)
@@ -98,7 +99,7 @@ fn a_missing_or_file_root_is_a_usage_error() -> TestResult {
     std::fs::write(&file, "")?;
 
     for root in [scratch.path().join("missing"), file] {
-        let output = anneal_in(&repository())
+        let output = anneal_with_home(&repository(), &scratch.path().join("home"))
             .args(["lint", "rules"])
             .arg(fixture("pass.md"))
             .arg("--root")
