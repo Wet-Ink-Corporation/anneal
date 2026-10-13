@@ -386,7 +386,9 @@ Shared behaviour:
   a backtick, `\`, `(` or a `;` inside, or opening a quote it does not close, is no pair). A
   header-shaped name with its value attached (`Cookie:a=1;`, `X-Api-Key:k`, but also
   `fix-auth:main`) hides only that value, and the pairs after it only when it ends in `;`
-  (`set Cookie:a=x; sid=S now` keeps `now`, `push fix-auth:main --force` keeps `--force`); a
+  (`set Cookie:a=x; sid=S now` keeps `now`, `push fix-auth:main --force` keeps `--force`), or
+  the next word when the value is the scheme word `Bearer` or `Basic` and opens no quote
+  (`X-Auth-Token:Bearer xyz now` becomes `X-Auth-Token:<redacted> <redacted> now`); a
   quote
   opened before a name, in a value or by a hidden word is redacted through the word that
   closes it, or to the end of the prompt when none does (`DB_PASS='p w' then go` becomes

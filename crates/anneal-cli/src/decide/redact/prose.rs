@@ -169,11 +169,20 @@ impl Prose {
                     skip_quoted(open, words)
                 }
             }
+            // The scheme went with this word; its credential is the next one, unless the word
+            // opens a quote, which then holds the rest of the value as for any attached value.
+            Then::AttachedScheme(found) if open.is_none() => {
+                match found {
+                    Scheme::Bearer => self.pending = self.pending.max(1),
+                    Scheme::Basic => self.after_basic = true,
+                }
+                true
+            }
             Then::NextWord => {
                 self.pending = self.pending.max(1);
                 true
             }
-            Then::Nothing => skip_quoted(open, words),
+            Then::Nothing | Then::AttachedScheme(_) => skip_quoted(open, words),
         })
     }
 

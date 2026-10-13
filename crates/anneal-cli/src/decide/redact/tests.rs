@@ -330,6 +330,39 @@ fn an_attached_header_value_hides_only_its_own_word() {
             "send X-Api-Key:k to u now",
             "send X-Api-Key:<redacted> to u now",
         ),
+        (
+            "run curl -H X-Auth-Token:Bearer xyz now",
+            "run curl -H X-Auth-Token:<redacted> <redacted> now",
+        ),
+        (
+            "run curl -H \"X-Auth-Token:Bearer xyz\" now",
+            "run curl -H \"X-Auth-Token:<redacted> now",
+        ),
+    ];
+    for (prompt, expected) in cases {
+        assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");
+    }
+}
+
+#[test]
+fn an_attached_scheme_word_hides_the_credential_after_it() {
+    let cases = [
+        (
+            "send X-Auth-Token:bearer xyz now",
+            "send X-Auth-Token:<redacted> <redacted> now",
+        ),
+        (
+            "send Private-Token:BASIC dXNlcjpwYXNz now",
+            "send Private-Token:<redacted> <redacted> now",
+        ),
+        (
+            "send X-Auth-Token:Basic usage now",
+            "send X-Auth-Token:<redacted> usage now",
+        ),
+        (
+            "send X-Api-Key:'Bearer' xyz now",
+            "send X-Api-Key:<redacted> <redacted> now",
+        ),
     ];
     for (prompt, expected) in cases {
         assert_eq!(safe_prompt(prompt), expected, "{prompt:?}");

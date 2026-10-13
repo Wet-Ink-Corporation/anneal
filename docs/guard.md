@@ -295,7 +295,10 @@ than too little:
   attached (`Cookie`, or a name with a `-` inside that ends in a credential word:
   `Cookie:a=1`, `X-Api-Key:k`) hides only that value, since such a name may be no header at
   all: `docker run -v db-password:/p alpine rm -rf /p` keeps `alpine rm -rf /p`, and
-  `git push origin fix-auth:main --force` keeps `--force`. Every separator (`;`, `&`, `|`, a
+  `git push origin fix-auth:main --force` keeps `--force`. When that attached value is the
+  scheme word itself (`Bearer`, or `Basic`, in any letter case, quotes removed), the word after
+  it is hidden too, as after a readable scheme word: `-H "X-Auth-Token:Bearer xyz"` becomes
+  `-H "X-Auth-Token:<redacted> <redacted>"`. Every separator (`;`, `&`, `|`, a
   newline) ends a header's value, so it never hides the next command, in a `bash -c '…'`,
   `eval "…"`, `$( )` or backtick body too; only inside a quote or substitution, the
   `name=value` words right after a `;` that ends either form stay hidden

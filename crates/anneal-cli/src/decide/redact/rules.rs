@@ -10,7 +10,9 @@
 //!    `X-Api-Key:`, `"Authorization":`); a key with nothing after its `:`, or an
 //!    `Authorization` one, is a header whose value runs on ([`Then::Header`]); a header-shaped
 //!    one with text after its `:` (`Cookie:a=1;`, `X-Api-Key:k`) hides only that text, and
-//!    after a `;` that ends it the cookie pairs that follow ([`Then::AttachedHeader`]);
+//!    after a `;` that ends it the cookie pairs that follow ([`Then::AttachedHeader`]), or,
+//!    when that text is the scheme word `Bearer` or `Basic`, the scheme's credential in the
+//!    next word too (`X-Auth-Token:Bearer xyz`, [`Then::AttachedScheme`]);
 //! 3. a secret option of a known tool ([`super::tools`]);
 //! 4. an option, one dash or two, whose name names a credential (`--password x`,
 //!    `-storepass x`): the next word is its value, unless the name says the value is read
@@ -89,6 +91,10 @@ pub(crate) enum Then {
     /// word alone is the secret, unless a `;` ends it, after which the next `name=value` words
     /// are the header's other cookie pairs ([`is_pair`]).
     AttachedHeader,
+    /// A header-shaped key's attached value is the scheme word itself
+    /// (`X-Auth-Token:Bearer xyz`): that word is the secret, and the next word is the scheme's
+    /// credential, as after a readable `Bearer` or `Basic`.
+    AttachedScheme(Scheme),
 }
 
 /// A secret found in a word: write [`Secret::shown`], then the redaction mark when
@@ -164,7 +170,9 @@ fn credential_key(word: &str) -> Option<Secret<'_>> {
             if kept >= word.len() || lower.contains("authorization") {
                 Then::Header
             } else if is_header_name(&lower) {
-                Then::AttachedHeader
+                word.get(kept..)
+                    .and_then(|value| scheme(&dequote(value)))
+                    .map_or(Then::AttachedHeader, Then::AttachedScheme)
             } else {
                 Then::Nothing
             }

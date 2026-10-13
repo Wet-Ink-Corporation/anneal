@@ -17,11 +17,12 @@
 //! - **Headers.** After a credential-named header name (`Authorization:`, `X-Api-Key:`,
 //!   `Cookie:`), every word to the end of its simple command or quote. A header-shaped name
 //!   with its value attached (`Cookie:a=1`, `X-Api-Key:k`, but also `db-password:/p`) hides
-//!   only that value. Inside a quote or substitution, the `name=value` words after a `;` that
-//!   ends either are hidden too (`"Cookie: a=1; b=2"`, `"Cookie:a=1; sid=\"S\""`), but no
-//!   other word, nor a pair whose value holds a substitution, escape, blank, `;` or a quote it
-//!   does not close, so no header hides a command; the word after `Bearer`, and after `Basic`
-//!   unless
+//!   only that value, and when the value is the scheme word (`X-Auth-Token:Bearer xyz`) the
+//!   scheme's credential in the next word as well. Inside a quote or substitution, the
+//!   `name=value` words after a `;` that ends either are hidden too (`"Cookie: a=1; b=2"`,
+//!   `"Cookie:a=1; sid=\"S\""`), but no other word, nor a pair whose value holds a
+//!   substitution, escape, blank, `;` or a quote it does not close, so no header hides a
+//!   command; the word after `Bearer`, and after `Basic` unless
 //!   `decide::redact::basic_credential` says it cannot be one.
 //! - **Subcommand arguments.** The word after `vault login` (`decide::redact::tools`).
 //! - **URL userinfo and tokens.** `https://user:token@host` becomes `https://<redacted>@host`;
@@ -381,9 +382,12 @@ impl Scanner<'_, '_> {
         }
         match secret.then {
             Then::Nothing => {}
-            Then::NextWord => self.pending = Pending::Word,
+            // An attached `Bearer` (`X-Auth-Token:Bearer xyz`) went with its word; the next
+            // word is its credential, as for a credential option's value.
+            Then::NextWord | Then::AttachedScheme(Scheme::Bearer) => self.pending = Pending::Word,
             Then::Header => self.pending = Pending::Rest,
             Then::AttachedHeader => self.pending = Pending::AttachedValue,
+            Then::AttachedScheme(Scheme::Basic) => self.pending = Pending::BasicWord,
         }
     }
 

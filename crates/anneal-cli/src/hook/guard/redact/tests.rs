@@ -641,6 +641,9 @@ fn no_command_after_a_separator_is_hidden_by_an_earlier_header() {
         "curl -H Cookie:a=1",
         "curl -H Cookie: a=1; b=2",
         "curl -H X-Api-Key:k",
+        "curl -H X-Auth-Token:Bearer",
+        "curl -H X-Auth-Token:Bearer x",
+        "curl -H X-Auth-Token:basic",
         "docker run -v db-password:/p alpine",
         "git push origin fix-auth:main --force",
     ];
@@ -794,6 +797,10 @@ fn an_attached_header_value_hides_only_its_own_word() {
             "bash -c 'curl -H Cookie:a=1 b=2 rm -rf /p'",
             "bash -c 'curl -H Cookie:<redacted> b=2 rm -rf /p'",
         ),
+        (
+            "curl -H \"X-Auth-Token:Bearer xyz\"",
+            "curl -H \"X-Auth-Token:<redacted> <redacted>\"",
+        ),
     ];
     for (command, expected) in cases {
         assert_eq!(redact(command), expected, "{command:?}");
@@ -831,6 +838,37 @@ fn a_quoted_cookie_pair_value_is_hidden_and_a_command_after_the_header_is_not() 
         (
             "bash -c \"curl -H 'Cookie: a=1; sid=S';dropdb production\"",
             "bash -c \"curl -H 'Cookie: <redacted>; <redacted>;dropdb production\"",
+        ),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(redact(command), expected, "{command:?}");
+    }
+}
+
+// #89 follow-up: an attached value that is the scheme word itself.
+
+#[test]
+fn an_attached_scheme_word_hides_the_credential_after_it() {
+    let cases = [
+        (
+            "curl -H 'X-Auth-Token:bearer xyz' u",
+            "curl -H 'X-Auth-Token:<redacted> <redacted>' u",
+        ),
+        (
+            "curl -H \"Private-Token:BASIC dXNlcjpwYXNz\" u",
+            "curl -H \"Private-Token:<redacted> <redacted>\" u",
+        ),
+        (
+            "curl -H X-Api-Key:\"Bearer\" xyz u",
+            "curl -H X-Api-Key:<redacted> <redacted> u",
+        ),
+        (
+            "curl -H 'X-Auth-Token:Basic usage' u",
+            "curl -H 'X-Auth-Token:<redacted> usage' u",
+        ),
+        (
+            "bash -c 'curl -H X-Auth-Token:Bearer; dropdb production'",
+            "bash -c 'curl -H X-Auth-Token:<redacted>; dropdb production'",
         ),
     ];
     for (command, expected) in cases {
