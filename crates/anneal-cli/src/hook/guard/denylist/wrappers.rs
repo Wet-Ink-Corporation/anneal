@@ -195,6 +195,31 @@ pub(super) fn chdir(words: &[Word]) -> Option<&'static str> {
     }
 }
 
+/// Whether `words` define a function or an alias: `function NAME ...` or `alias ...`, under
+/// any wrapper [`unwrap`] removes (`builtin alias`), or a word that exports a function to a
+/// child bash (`BASH_FUNC_NAME%%=...`).
+pub(super) fn defines(words: &[Word]) -> bool {
+    if words.iter().any(|word| word.text.contains("BASH_FUNC_")) {
+        return true;
+    }
+    let mut words = skip_prefix(words);
+    loop {
+        let [first, rest @ ..] = words else {
+            return false;
+        };
+        let Program::Named(name) = program(first) else {
+            return false;
+        };
+        if matches!(name, "function" | "alias") {
+            return true;
+        }
+        words = match peel(name, rest) {
+            Peel::Inner(inner) | Peel::Appending(inner) => skip_prefix(inner),
+            Peel::Done(_) | Peel::Program => return false,
+        };
+    }
+}
+
 /// Removes the wrapper `name` from its arguments `rest`.
 fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
     match name {

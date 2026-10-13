@@ -403,6 +403,51 @@ fn a_merge_without_the_origin_repository_named_is_denied_naming_the_command() ->
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_in_a_command_defining_a_function_or_alias_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let merge = format!("gh pr merge 7 --match-head-commit {head} --repo {ORIGIN_REPO}");
+    let rest = format!("7 --match-head-commit {head} --repo github.com/other/repo");
+
+    for command in [
+        format!(r#"f(){{ gh pr merge "$@"; }}; f {rest}"#),
+        format!(r#"gh(){{ command gh "$@" --repo github.com/other/repo; }}; {merge}"#),
+        format!("alias f='gh pr merge'; f {rest}"),
+        format!("alias gh='gh --repo github.com/other/repo'; {merge}"),
+    ] {
+        let output = repo.merge_gate(&command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("merge-gate"), "{command}: {reason}");
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_with_a_brace_word_is_denied() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+    let head = repo.head()?;
+    let pin = format!("--match-head-commit {head} --repo {ORIGIN_REPO}");
+
+    for command in [
+        format!("gh pr merge 7 --body {{a..b}} {pin}"),
+        format!("gh pr merge 7 --body {{a,b}} {pin}"),
+        format!("gh pr merge 7 {{1..2}} {pin}"),
+        format!("gh pr merge 7 {{a,b}} {pin}"),
+    ] {
+        let output = repo.merge_gate(&command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(reason.contains("merge-gate"), "{command}: {reason}");
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn a_merge_in_a_repository_without_an_origin_is_denied() -> TestResult {
     let repo = PrRepo::new()?;
     repo.set_verdict("tests-verified", "local")?;

@@ -8,7 +8,7 @@
 //! the word, or the next word when it ends the cluster (`-R=o/x` drops the `=`).
 
 use super::wrappers::may_be_option;
-use crate::hook::guard::shell::{Shape, Substituted, Word};
+use crate::hook::guard::shell::{Expansion, Shape, Substituted, Word};
 
 /// Long options of `gh` and `gh pr merge` that take the next word as their value.
 const VALUE_LONGS: &[&str] = &[
@@ -62,7 +62,8 @@ pub(crate) struct PrMerge {
     /// Why gh may read another `--repo` or `--match-head-commit` than `repo` and `match_head`
     /// say: one of them is not written out in the command (a variable's value the guard put
     /// in, which control flow or `unset` may change), a word may vanish or split at run time
-    /// and shift which word an option takes, or there is more than one operand.
+    /// and shift which word an option takes, gh's first operand is known only at run time,
+    /// there is more than one operand, or the command defines a function or an alias.
     pub(crate) unsure: Option<&'static str>,
 }
 
@@ -84,8 +85,12 @@ impl Parsed<'_> {
 }
 
 /// Why a word may not be one word at run time.
-const SHIFTING: &str = "has a word that may vanish or split at run time (an unquoted \
-                        expansion or variable, or a glob)";
+const SHIFTING: &str = "has a word that may vanish or split at run time (one that is neither \
+                        written out nor a quoted expansion: a variable, a glob, a brace, `~`, \
+                        or a quoted list such as \"$@\")";
+
+/// Why gh's first operand cannot be trusted.
+const RUN_TIME_GROUP: &str = "has a first operand known only at run time";
 
 /// Why `--repo` cannot be trusted.
 const REPO_NOT_WRITTEN: &str = "takes --repo from a value the command does not write out";
@@ -97,12 +102,31 @@ const PIN_NOT_WRITTEN: &str =
 /// Why more than one operand cannot be trusted.
 const OPERANDS: &str = "has more than one operand after pr merge";
 
-/// Whether `word` is one word at run time whatever the command's variables hold: no unquoted
-/// expansion, no value put in unquoted, and no glob.
+/// Whether `word` is one word at run time whatever the command's variables hold. Only two
+/// kinds are: a literal word with no value put in unquoted, and a word whose expansions are
+/// all quoted and none of them a list. Every pattern word (a glob, a brace, `~`) is not.
 fn stays_one_word(word: &Word) -> bool {
-    word.substituted != Substituted::Unquoted
-        && word.expansions.iter().all(|expansion| expansion.quoted)
-        && !(word.shape == Shape::Pattern && word.text.contains(['*', '?', '[']))
+    let not_split = word.substituted != Substituted::Unquoted;
+    match word.shape {
+        Shape::Literal => not_split,
+        Shape::Pattern => false,
+        Shape::Dynamic => {
+            not_split
+                && word
+                    .expansions
+                    .iter()
+                    .all(|expansion| expansion.quoted && !may_be_list(word, expansion))
+        }
+    }
+}
+
+/// Whether `expansion` in `word` may expand to several words, or none, even in double quotes:
+/// it names `@` (`"$@"`, `"${a[@]}"`, `"${!p@}"`) or is indirect (`"${!name}"`, which may
+/// name `@`). Its text not found counts as a list.
+fn may_be_list(word: &Word, expansion: &Expansion) -> bool {
+    word.text
+        .get(expansion.range.start..expansion.range.end)
+        .is_none_or(|raw| raw.contains('@') || raw.starts_with("${!"))
 }
 
 /// Whether `word`'s text is what the command writes out: no expansion and no value the guard
@@ -131,6 +155,9 @@ pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
         return None;
     }
     let (target, url_repo) = target(&parsed.operands)?;
+    if parsed.operands.first().is_some_and(|first| !written(first)) {
+        parsed.doubt(RUN_TIME_GROUP);
+    }
     // `pr`, `merge` and the pull request.
     if parsed.operands.len() > 3 {
         parsed.doubt(OPERANDS);

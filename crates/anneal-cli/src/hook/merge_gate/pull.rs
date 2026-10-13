@@ -38,16 +38,6 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
             ),
         ));
     }
-    if let Some(why) = merge.unsure {
-        return Err(Denial::new(
-            Check::Repo,
-            &format!(
-                "gh pr merge {why}, so the repository or head gh reads may not be the one the \
-                 gate sees; write each word out: `gh pr merge <number> --match-head-commit \
-                 <full commit> --repo <host>/<owner>/<repo>`"
-            ),
-        ));
-    }
     if let Some(name) = &merge.env {
         return Err(Denial::new(
             Check::Env,
@@ -63,6 +53,17 @@ pub(super) fn pull(merge: &PrMerge) -> Result<Pull<'_>, Denial> {
             &format!(
                 "the command runs {how} before gh pr merge, so gh may read another repository; \
                  run gh pr merge from this worktree without changing directory first"
+            ),
+        ));
+    }
+    // After the named causes (a gh variable, a directory change), which say more.
+    if let Some(why) = merge.unsure {
+        return Err(Denial::new(
+            Check::Repo,
+            &format!(
+                "gh pr merge {why}, so the repository or head gh reads may not be the one the \
+                 gate sees; write each word out: `gh pr merge <number> --match-head-commit \
+                 <full commit> --repo <host>/<owner>/<repo>`"
             ),
         ));
     }

@@ -147,13 +147,18 @@ or `true`), which merges nothing; `--disable-auto=false` is a merge. For each me
    This is what the gate's invariant rests on: gh takes the repository from `--repo` before
    `GH_REPO` and before the working directory's git remotes, and takes the host in it before
    `GH_HOST` (a bare `owner/repo` would take `GH_HOST`'s, so it is denied). So with a literal
-   `--repo`, no `cd`, wrapper, environment variable or function body can point gh at a
-   repository other than the one whose verdicts were judged. The gate trusts only what the
-   command writes out, so these are denied too (`repo`): a `--repo` or `--match-head-commit`
-   whose value comes from a variable, even one the command sets (control flow and `unset`
-   decide its value at run time); any of gh's words that may vanish or split at run time (an
-   unquoted expansion or a glob), which could shift which word `--repo` takes; and more than
-   one operand after `pr merge`. A merge without `--repo`, with another repository, or in a
+   `--repo`, no `cd`, wrapper or environment variable can point gh at a repository other than
+   the one whose verdicts were judged. The gate trusts only what the command writes out, so
+   these are denied too (`repo`): a `--repo` or `--match-head-commit` whose value comes from a
+   variable, even one the command sets (control flow and `unset` decide its value at run time);
+   any gh word that is neither written out literally nor an expansion wholly in double quotes
+   that stays one word, since bash may split it or drop it and shift which word `--repo`
+   takes: an unquoted variable or substitution, any glob, brace (`{a,b}`, `{1..2}`) or leading
+   `~`, and a quoted list (`"$@"`, `"${a[@]}"`, `"${!name}"`); a first operand known only at
+   run time; more than one operand after `pr merge`; and any merge in a command that defines a
+   function or an alias (`f(){ ...; }`, `function f`, `alias`, `BASH_FUNC_*`), since a body is
+   read where it is defined and may forward other arguments to gh, or make the name `gh` run
+   something else. A merge without `--repo`, with another repository, or in a
    worktree whose `origin` does not read as `<host>/<owner>/<repo>` is denied (`repo`), and
    the denial names the exact command:
    `gh pr merge <n> --match-head-commit <HEAD> --repo <origin>`. `origin` and `--repo` are read

@@ -18,6 +18,10 @@ const GH_TARGET_VARIABLES: [&str; 2] = ["GH_REPO", "GH_HOST"];
 /// The prefix every gh variable name has.
 const GH_PREFIX: &str = "GH_";
 
+/// Why a merge in a command that defines a function or an alias cannot be trusted.
+const DEFINES: &str = "runs in a command that defines a function or an alias, which may pass \
+                       gh other arguments";
+
 /// The most `gh pr merge` calls one command may make before the probe refuses it (H-13).
 const MAX_MERGES: usize = 8;
 
@@ -55,14 +59,19 @@ fn sequence_may_name_gh_variable(word: &Word) -> bool {
 impl Checker<'_> {
     /// The `gh pr merge` calls found, in order, each once, each noting a [`GH_TARGET_VARIABLES`]
     /// the command sets anywhere and a `cd`, `pushd` or `popd` it runs anywhere: a function or
-    /// trap body is read where it is defined but may run after a later change.
+    /// trap body is read where it is defined but may run after a later change. Each is unsure
+    /// when the command defines a function or an alias anywhere: gh may then run with
+    /// arguments other than the ones read (`f(){ gh pr merge "$@"; }; f 5 --repo o/x`), or the
+    /// name `gh` may run something else.
     pub(in crate::hook::guard::denylist) fn into_merges(self) -> Vec<PrMerge> {
         let (env, moved) = (self.gh_env, self.moved);
+        let defined = self.defines.then_some(DEFINES);
         self.merges
             .into_iter()
             .map(|merge| PrMerge {
                 env: env.map(str::to_owned),
                 moved: merge.moved.or(moved),
+                unsure: merge.unsure.or(defined),
                 ..merge
             })
             .collect()
