@@ -100,6 +100,16 @@ pub(crate) fn pr_merge(args: &[Word]) -> Option<PrMerge> {
     })
 }
 
+/// Whether `gh <args>` has a word known only at run time among its first two operands
+/// (`gh "$@"`, `gh $(cat args) 7`): the call it makes, `pr merge` or another, cannot be read.
+pub(super) fn call_unseen(args: &[Word]) -> bool {
+    parse(args)
+        .operands
+        .iter()
+        .take(2)
+        .any(|word| !word.is_literal())
+}
+
 /// The target of `operands` when they run `pr merge`: they begin with `pr merge`, or with words
 /// known only at run time that may be or hide it.
 fn target(operands: &[&Word]) -> Option<(Target, Option<String>)> {

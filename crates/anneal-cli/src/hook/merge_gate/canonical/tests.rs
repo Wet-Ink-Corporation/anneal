@@ -137,9 +137,50 @@ fn other_shapes() -> Vec<String> {
     ]
 }
 
+/// Commands the reader refuses that no test pinned before the fifth review of #89: a
+/// double-quoted text with an escape or a history expansion, a trailing CR or NUL, quotes
+/// joined into one word, one word past the limit.
+fn fifth_review_shapes() -> Vec<String> {
+    let merge = format!("gh pr merge 7 --match-head-commit {HEAD} --repo github.com/o/r");
+    vec![
+        format!(r#"{merge} --body "a\"b""#),
+        format!(r#"{merge} --body "a!b""#),
+        format!("{merge}\r"),
+        format!("{merge}\0"),
+        format!("{merge} --body 'a''b'"),
+        format!("{merge}{}", " --squash".repeat(25)),
+    ]
+}
+
+#[test]
+fn a_command_of_exactly_the_word_limit_is_read() {
+    let merge = format!("gh pr merge 7 --match-head-commit {HEAD} --repo github.com/o/r");
+    let command = format!("{merge}{}", " --squash".repeat(24));
+
+    let read = read(&command);
+
+    assert_eq!(
+        (command.split(' ').count(), read.map(|merge| merge.target)),
+        (super::MAX_WORDS, Some(Target::Number(7))),
+        "{command}"
+    );
+}
+
+#[test]
+fn one_word_past_the_limit_is_not_read() {
+    let merge = format!("gh pr merge 7 --match-head-commit {HEAD} --repo github.com/o/r");
+    let command = format!("{merge}{}", " --squash".repeat(25));
+
+    assert_eq!(
+        (command.split(' ').count(), read(&command)),
+        (super::MAX_WORDS + 1, None),
+        "{command}"
+    );
+}
+
 #[test]
 fn any_other_command_holding_a_merge_is_not_read() {
-    for command in other_shapes() {
+    for command in other_shapes().into_iter().chain(fifth_review_shapes()) {
         assert_eq!(read(&command), None, "{command}");
     }
 }

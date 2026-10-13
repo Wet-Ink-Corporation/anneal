@@ -8,6 +8,7 @@ fn merges(command: &str) -> Vec<PrMerge> {
     match find_pr_merge(command, &context()) {
         MergeScan::Merges(merges) => merges,
         MergeScan::Unreadable(denial) => panic!("{command:?} read as unreadable: {denial:?}"),
+        MergeScan::Unseen(how) => panic!("{command:?} read as unseen: {how}"),
     }
 }
 
@@ -363,6 +364,59 @@ fn a_merge_run_where_the_command_started_is_not_moved() {
     for command in rows {
         assert_eq!(moved(command), [None], "{command}");
     }
+}
+
+#[test]
+fn a_call_the_probe_cannot_read_is_unseen_when_the_command_may_merge() {
+    let gh_call = "a gh call whose subcommand is known only at run time";
+    let program = "a program known only at run time";
+    let definition = "a function or alias definition";
+    let rows = [
+        // A gh call whose first or second operand is known only at run time, merge or not.
+        (r#"gh "$@""#, Some(gh_call)),
+        ("gh $x view 7", Some(gh_call)),
+        (r#"f() { :; }; gh "$sub""#, Some(gh_call)),
+        // A run-time program or a definition, when the text holds merge in any case.
+        ("$x pr merge 7", Some(program)),
+        ("g$x pr MERGE 7", Some(program)),
+        ("f() { :; }; echo merge", Some(definition)),
+        ("alias g=gh; g pr merge 7", Some(definition)),
+        (
+            "env 'BASH_FUNC_g%%=() { :; }' bash -c 'g merge'",
+            Some(definition),
+        ),
+        // Without merge in the text, or with every program and gh call written out.
+        ("$EDITOR x", None),
+        ("f() { :; }; f", None),
+        ("alias ll='ls -l'", None),
+        (r#"gh pr view "$x""#, None),
+        ("echo merge; git merge main", None),
+        // A parenthesis that opens no definition: an array, a subshell after a keyword, a
+        // case pattern.
+        ("a=(x y); echo merge", None),
+        ("if (true); then echo merge; fi", None),
+        ("case x in (x) echo merge;; esac", None),
+    ];
+
+    for (command, expected) in rows {
+        let scan = find_pr_merge(command, &context());
+        let found = match scan {
+            MergeScan::Unseen(how) => Some(how),
+            MergeScan::Merges(ref merges) if merges.is_empty() => None,
+            other => panic!("{command}: {other:?}"),
+        };
+        assert_eq!(found, expected, "{command}");
+    }
+}
+
+#[test]
+fn a_merge_the_probe_finds_is_read_even_beside_a_call_it_cannot_read() {
+    let found = merges(r#"gh "$@"; gh pr merge 7"#);
+
+    assert_eq!(
+        found.iter().map(|merge| &merge.target).collect::<Vec<_>>(),
+        [&Target::Number(7)]
+    );
 }
 
 #[test]

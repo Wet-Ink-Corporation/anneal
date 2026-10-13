@@ -21,6 +21,15 @@ const GH_PREFIX: &str = "GH_";
 /// The most `gh pr merge` calls one command may make before the probe refuses it (H-13).
 const MAX_MERGES: usize = 8;
 
+/// A gh call whose first operands are known only at run time (`gh "$@"`).
+pub(super) const RUN_TIME_GH_CALL: &str = "a gh call whose subcommand is known only at run time";
+
+/// A program known only at run time (`${GH:-gh}`, `g$x`).
+pub(super) const RUN_TIME_PROGRAM: &str = "a program known only at run time";
+
+/// A function or alias definition, or a `BASH_FUNC_` export.
+pub(super) const DEFINITION: &str = "a function or alias definition";
+
 /// The one of [`GH_TARGET_VARIABLES`] `text` sets or names: `NAME`, `NAME=...` or `NAME+=...`.
 fn gh_target(text: &str) -> Option<&'static str> {
     GH_TARGET_VARIABLES.into_iter().find(|name| {
@@ -98,9 +107,32 @@ impl Checker<'_> {
         None
     }
 
+    /// How the command may run a call the probe cannot read, if it may: [`RUN_TIME_GH_CALL`]
+    /// whenever it makes one, else the first of [`RUN_TIME_PROGRAM`] and [`DEFINITION`] when
+    /// `mentions_merge` (its text holds `merge`).
+    pub(in crate::hook::guard::denylist) fn unseen(
+        &self,
+        mentions_merge: bool,
+    ) -> Option<&'static str> {
+        if self.unseen_gh_call {
+            return Some(RUN_TIME_GH_CALL);
+        }
+        self.unseen.filter(|_| mentions_merge)
+    }
+
+    /// Notes `how` the command may run a call the probe cannot read ([`RUN_TIME_PROGRAM`],
+    /// [`DEFINITION`]), in the probe only; the first one is kept.
+    pub(super) fn note_unseen(&mut self, how: &'static str) {
+        if self.entries == Entries::PrMerge {
+            self.unseen.get_or_insert(how);
+        }
+    }
+
     /// Records the `gh pr merge` that `gh <args>` runs in `scope`, if any, with how the command
-    /// changed directory before it; past [`MAX_MERGES`] denies.
+    /// changed directory before it; past [`MAX_MERGES`] denies. A call whose first operands are
+    /// known only at run time is noted ([`RUN_TIME_GH_CALL`]).
     pub(super) fn gh(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        self.unseen_gh_call |= gh::call_unseen(args);
         let merge = PrMerge {
             moved: scope.moved.or(self.moved),
             ..gh::pr_merge(args)?

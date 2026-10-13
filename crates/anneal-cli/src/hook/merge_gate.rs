@@ -3,13 +3,18 @@
 //! It reads Claude Code's `PreToolUse` input on stdin. A Bash command that is the canonical
 //! merge command ([`canonical`]: `gh pr merge <n> --match-head-commit <commit> --repo
 //! <host>/<owner>/<repo>` and a few flags, every word written out, nothing around it) is
-//! judged. Any other command is read as the guard reads commands (`guard::find_pr_merge`:
-//! wrappers, `bash -c`, `eval`, scripts on stdin, variables): one that runs no `gh pr merge`,
-//! and any other tool, is allowed silently; one that runs a merge, or cannot be read, is denied,
-//! so no shell form needs to be enumerated. The canonical command must name its pull request by
-//! number (or an `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin
-//! its head with a full `--match-head-commit`, and name the repository the gate judges, the
-//! `origin` remote's, with `--repo <host>/<owner>/<repo>`: gh takes the repository from
+//! judged; any other merge is denied. Any other command is read as the guard reads commands
+//! (`guard::find_pr_merge`: wrappers, `bash -c`, `eval`, scripts on stdin, variables) and is
+//! denied when the read finds a `gh pr merge` in it or cannot read it, when it calls gh with a
+//! first or second operand known only at run time, or when its text holds `merge` (in any
+//! case) and it runs a program known only at run time or defines a function or alias. Every
+//! other command, and any other tool, is allowed silently. The read sees only the command's
+//! text: a merge run by an interpreter (`python -c`, `node -e`), make or a script on disk, or
+//! built at run time from text without `merge`, is not seen (`docs/verdict.md`, Known gaps).
+//! The canonical command must name its pull request by number (or an
+//! `http(s)://<host>/<owner>/<repo>/pull/7` URL of the `origin` repository), pin its head with
+//! a full `--match-head-commit`, and name the repository the gate judges, the `origin` remote's,
+//! with `--repo <host>/<owner>/<repo>`: gh takes the repository from
 //! `--repo` before `GH_REPO` or the working directory, and the host in it before `GH_HOST`, so
 //! what gh merges is what was judged. Each denial names the exact command, with the worktree's
 //! `HEAD`. Then it needs, for that head (`pull` holds the checks above):
@@ -69,6 +74,8 @@ pub(crate) enum Check {
     BadInput,
     /// The command could not be read.
     Unreadable,
+    /// The command is not the canonical merge command, and runs a merge or may run one.
+    Shape,
     /// The merge names no pull request by number.
     Target,
     /// The merge does not name `origin`'s repository with `-R`/`--repo <host>/<owner>/<repo>`,
@@ -100,6 +107,7 @@ impl Check {
         match self {
             Self::BadInput => "bad-input",
             Self::Unreadable => "unreadable",
+            Self::Shape => "shape",
             Self::Target => "target",
             Self::Repo => "repo",
             Self::Env => "env",
@@ -309,7 +317,8 @@ fn judge(
 /// What the gate does with a Bash command before it reads git or the ledger.
 #[derive(Debug, PartialEq, Eq)]
 enum Screen {
-    /// It runs no `gh pr merge`: allow.
+    /// The probe finds no `gh pr merge` in it and no unseen call ([`MergeScan::Unseen`]):
+    /// allow.
     NoMerge,
     /// It runs one, or may, in a shape the gate does not judge: deny.
     Deny(Denial),
@@ -318,9 +327,10 @@ enum Screen {
 }
 
 /// Screens `command`: the accepted merge command is judged; any other command in which the
-/// guard's probe finds a merge, or which it cannot read, is denied. A merge found elsewhere is
-/// denied with the probe's most specific reason (`GH_REPO` set, a directory change, no pull
-/// request number), else as not the accepted command (`repo`).
+/// guard's probe finds a merge, or which it cannot read, is denied, as is one that may run a
+/// merge the probe cannot read ([`MergeScan::Unseen`]). A merge
+/// found elsewhere is denied with the probe's most specific reason (`GH_REPO` set, a directory
+/// change, no pull request number), else as not the accepted command (`shape`).
 fn screen(command: &str, context: &Context) -> Screen {
     if let Some(merge) = canonical::read(command) {
         return Screen::Judge(merge);
@@ -333,6 +343,7 @@ fn screen(command: &str, context: &Context) -> Screen {
                 .find_map(|merge| pull::pull(merge).err())
                 .unwrap_or_else(not_canonical),
         ),
+        MergeScan::Unseen(how) => Screen::Deny(unseen(how)),
         MergeScan::Unreadable(denial) => Screen::Deny(Denial::new(
             Check::Unreadable,
             &format!(
@@ -343,17 +354,30 @@ fn screen(command: &str, context: &Context) -> Screen {
     }
 }
 
+/// The one shape in which a merge is judged, for a denial's reason.
+fn accepted_shape() -> String {
+    format!(
+        "gh pr merge is judged only as a Bash call of its own, every word written out: `{}`, \
+         optionally with --squash, --merge, --rebase, --delete-branch, --auto, --subject <text> \
+         or --body <text> (a text in single quotes, or in double quotes without $, `, \\ or !); \
+         nothing before or after it, no variable, glob, brace, redirection or second command",
+        canonical::FORM
+    )
+}
+
 /// The denial for a merge in any command but the accepted one.
 fn not_canonical() -> Denial {
+    Denial::new(Check::Shape, &accepted_shape())
+}
+
+/// The denial for a command that runs `how` (a call the probe cannot read), so it may run a
+/// merge the gate does not see.
+fn unseen(how: &str) -> Denial {
     Denial::new(
-        Check::Repo,
+        Check::Shape,
         &format!(
-            "gh pr merge is judged only as a Bash call of its own, every word written out: \
-             `{}`, optionally with --squash, --merge, --rebase, --delete-branch, --auto, \
-             --subject <text> or --body <text> (a text in single quotes, or in double quotes \
-             without $, `, \\ or !); nothing before or after it, no variable, glob, brace, \
-             redirection or second command",
-            canonical::FORM
+            "the command runs {how}, so a gh pr merge it may run cannot be seen; {}",
+            accepted_shape()
         ),
     )
 }

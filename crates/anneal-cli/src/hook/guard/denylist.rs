@@ -109,15 +109,31 @@ pub(crate) enum MergeScan {
     Merges(Vec<PrMerge>),
     /// The command cannot be read (the guard denies it too).
     Unreadable(Denial),
+    /// No `gh pr merge` was found, but the command may run one the probe cannot read: how, as
+    /// a phrase. It calls gh with a first or second operand known only at run time, or its
+    /// text holds `merge` and it runs a program known only at run time or defines a function
+    /// or alias.
+    Unseen(&'static str),
 }
+
+/// The word whose presence in a command's text, in any case, makes a program known only at
+/// run time or a definition count as a call the probe cannot read ([`MergeScan::Unseen`]).
+const MERGE_WORD: &str = "merge";
 
 /// Every `gh pr merge` the Bash command `command` runs, read as the guard reads commands
 /// (wrappers, `bash -c`, `eval`, scripts on stdin, variables), without the denylist's entries.
+/// When it finds none, a command that may run one the probe cannot read is
+/// [`MergeScan::Unseen`].
 pub(crate) fn find_pr_merge(command: &str, context: &Context) -> MergeScan {
     let mut checker = Checker::new(context, Entries::PrMerge);
-    match checker.text(command, top_level()) {
-        Some(denial) => MergeScan::Unreadable(denial),
-        None => MergeScan::Merges(checker.into_merges()),
+    if let Some(denial) = checker.text(command, top_level()) {
+        return MergeScan::Unreadable(denial);
+    }
+    let unseen = checker.unseen(command.to_lowercase().contains(MERGE_WORD));
+    let merges = checker.into_merges();
+    match unseen {
+        Some(how) if merges.is_empty() => MergeScan::Unseen(how),
+        _ => MergeScan::Merges(merges),
     }
 }
 

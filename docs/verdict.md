@@ -145,19 +145,22 @@ backtick, `\` or `!`, so it stays one word and runs nothing. There is nothing be
 the merge: no separator, pipe, redirection, assignment, wrapper, subshell, heredoc, comment,
 variable, glob, brace, `~` or second command.
 
-Any other command is read as the guard reads commands (wrappers, `bash -c`, `eval`, scripts on
-stdin, variables the command sets, gh's options as pflag reads them). If it runs a
-`gh pr merge`, or cannot be read (`unreadable`), it is denied: with `env` when it sets `GH_REPO`
-or `GH_HOST` (brace expansion included; a brace sequence that may build such a name,
-`GH_REP{O..O}`, is unreadable), `directory` when it changes directory anywhere (`cd`, `pushd`,
-`popd`, a function or trap body defined before a later `cd`, `env -C`/`--chdir`,
-`sudo -D`/`--chdir`, a login shell, `find -execdir`/`-okdir`), `target` when the merge names no
-pull request number, and otherwise `repo`, naming the canonical command. So a function, an
-alias, `PATH`, `hash`, `source`, `BASH_ENV`, `xargs`, a quoted word joined to a brace, or
-anything else a command could use to change what gh receives is never judged: the gate does not
-enumerate shell forms. A call that runs no merge is allowed silently; so is
-`gh pr merge --disable-auto` (bare, or set to a true value such as `1` or `true`), which merges
-nothing. For the canonical command:
+A merge is judged only as the canonical command; any other merge is denied. Any other command
+is read as the guard reads commands (wrappers, `bash -c`, `eval`, scripts on stdin, variables
+the command sets, gh's options as pflag reads them). If that read finds a `gh pr merge` in it,
+or cannot read it (`unreadable`), it is denied: with `env` when it sets `GH_REPO` or `GH_HOST`
+(brace expansion included; a brace sequence that may build such a name, `GH_REP{O..O}`, is
+unreadable), `directory` when it changes directory anywhere (`cd`, `pushd`, `popd`, a function or
+trap body defined before a later `cd`, `env -C`/`--chdir`, `sudo -D`/`--chdir`, a login shell,
+`find -execdir`/`-okdir`), `target` when the merge names no pull request number, and otherwise
+`shape`, naming the canonical command. The read can miss a merge whose words exist only at run
+time, so a command is also denied (`shape`) when it calls gh with a first or second operand
+known only at run time (`gh "$@"`, `gh $(cat args)`), or when its text holds `merge`, in any
+case, and it runs a program known only at run time (`${GH:-gh} pr merge 7`) or defines a
+function or alias (`f() { gh "$@"; }; f pr merge 7`, `alias g=gh`, `BASH_FUNC_`). Every other
+command is allowed silently, as is `gh pr merge --disable-auto` (bare, or set to a true value
+such as `1` or `true`), which merges nothing. That rule is all the gate checks outside the
+canonical command; what it cannot see is listed under Known gaps. For the canonical command:
 
 1. The pull request must be named by number (`7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`; an unquoted `#7` starts a
@@ -185,7 +188,7 @@ nothing. For the canonical command:
    --source human`.
 
 A denial is Claude Code's deny decision whose reason is one `ERROR merge-gate: ...` line, plus a
-`gate_blocked` event (`point` `merge-gate.<check>`, the checks being `target`, `repo`, `env`,
+`gate_blocked` event (`point` `merge-gate.<check>`, the checks being `shape`, `target`, `repo`, `env`,
 `directory`, `head`, `no-verdict`, `stale`, `changes-requested`, `tests`, `review`, `bad-input`, `unreadable`
 and `unjudged`) in the ledger when one exists; the gate never creates a ledger, and with none
 every pull request has no verdict. Unreadable input or commands, a merge naming no number, and a
@@ -204,6 +207,10 @@ The gate judges what it can see in a Bash command, for an honest agent:
   means in that shell;
 - merges outside `gh pr merge`: a gh alias (`gh alias set`), `gh api` calls to the merge
   endpoint, the web UI, or another tool;
+- interpreters and words built at run time: a merge run by `python -c`, `perl -e`, `node -e`,
+  make, or a script on disk, or built at run time from text that does not hold `merge`
+  (`m=$(printf 'm%serge' ''); $EDITOR pr $m 7` with `EDITOR=gh`, read from a file, decoded),
+  is outside what the command text shows. The gate reads the text, not what runs;
 - an `origin` that names an ssh host alias (`git@github-work:org/repo.git`, with
   `github-work` defined in `~/.ssh/config`) reads as `github-work/org/repo`, a host gh cannot
   reach, so every merge in that worktree is denied or fails. The gate stays offline and does

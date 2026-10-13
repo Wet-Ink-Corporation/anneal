@@ -484,7 +484,60 @@ fn every_bypass_from_the_fourth_review_of_89_is_denied() -> TestResult {
         );
     }
 
-    assert_eq!(blocked_points(&repo)?, vec!["merge-gate.repo"; rows.len()]);
+    assert_eq!(blocked_points(&repo)?, vec!["merge-gate.shape"; rows.len()]);
+    Ok(())
+}
+
+/// Commands that run a merge the probe cannot see, from the fifth review of #89, and a lone
+/// gh call whose subcommand is known only at run time (denied with or without `merge`).
+const UNSEEN_MERGES: [&str; 14] = [
+    r#"gh "$@""#,
+    r#"f() { gh "$@"; }; f pr merge 7"#,
+    "alias g=gh\ng pr merge 7",
+    "alias g='gh pr'\ng merge 7",
+    r#"set -- pr merge 7; gh "$@""#,
+    r#"arr=(pr merge 7); gh "${arr[@]}""#,
+    r#"read -r x <<< "pr merge 7"; gh $x"#,
+    "gh $(echo pr merge) 7",
+    "gh $(cat args)",
+    "gh `cat args`",
+    "${GH:-gh} pr merge 7",
+    "${GH-gh} pr merge 7",
+    "g$x pr merge 7",
+    "f() { gh \"$@\"; }; f pr MERGE 7",
+];
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_merge_the_probe_cannot_see_is_denied_by_its_shape() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.set_verdict("tests-verified", "local")?;
+
+    for command in UNSEEN_MERGES {
+        let output = repo.merge_gate(command)?;
+        let reason = deny_reason(&output).map_err(|error| format!("{command}: {error}"))?;
+        assert!(
+            reason.contains("gh pr merge <number>"),
+            "{command}: {reason}"
+        );
+    }
+
+    assert_eq!(
+        blocked_points(&repo)?,
+        vec!["merge-gate.shape"; UNSEEN_MERGES.len()]
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_run_time_program_or_a_function_without_merge_in_the_command_is_allowed() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    for command in ["$EDITOR x", "f(){ :; }; f", "alias ll='ls -l'"] {
+        assert_allowed(&repo.merge_gate(command)?);
+    }
     Ok(())
 }
 
@@ -552,36 +605,36 @@ fn bypass_rows(merge: &str) -> Vec<(String, &'static str)> {
         (format!("su --login -c '{merge}'"), "merge-gate.directory"),
         // env -S splits its string into env's own options, -C among them.
         (format!("env -S '-C /tmp {merge}'"), "merge-gate.directory"),
-        // Left to --repo: an env short cluster, a git pager, a dynamic name.
-        (format!("env -vu X -C /tmp {merge}"), "merge-gate.repo"),
+        // Not the canonical command: an env short cluster, a git pager, a dynamic name.
+        (format!("env -vu X -C /tmp {merge}"), "merge-gate.shape"),
         (
             format!("git -C /other -c core.pager='{merge}' log"),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         (
             format!("export $(printf GH_RE%sPO)=o/x; {merge}"),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         // Round 2: a --repo the command does not write out, or one a vanishing word shifts.
         (
             format!(r#"r={ORIGIN_REPO}; {merge} --repo "$r""#),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         (
             format!(r#"false && r={ORIGIN_REPO}; {merge} --repo "$r""#),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         (
             format!("r={ORIGIN_REPO}; unset r; {merge} --repo $r"),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         (
             format!("{merge} --body $x --repo {ORIGIN_REPO}"),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
         (
             format!("{merge} $x --repo {ORIGIN_REPO}"),
-            "merge-gate.repo",
+            "merge-gate.shape",
         ),
     ]
 }
