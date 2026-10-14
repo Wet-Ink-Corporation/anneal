@@ -88,15 +88,6 @@ pub(super) struct Checker<'c> {
 /// how deeply such reads nest.
 const MAX_ARGUMENT_COMMANDS: usize = 32;
 
-/// A program's arguments, as written and brace-expanded: the entries judge the expanded words,
-/// and the words read as a command are read from those as written ([`Checker::words`] expands
-/// them again in its second reading).
-#[derive(Debug, Clone, Copy)]
-struct Arguments<'a> {
-    written: &'a [Word],
-    expanded: &'a [Word],
-}
-
 /// A denial for a command the guard cannot read.
 fn unreadable(reason: String) -> Denial {
     Denial::new(Rule::Unparseable, reason)
@@ -175,18 +166,13 @@ impl<'c> Checker<'c> {
         denial
     }
 
-    /// Checks one simple command's words, as written and, when they hold a brace group, again
-    /// brace-expanded, as the shell expands them before any program, wrapper or shell reads
-    /// its options (`bash {-c,'rm -rf /'}` runs `bash -c 'rm -rf /'`). Either reading's denial
-    /// denies. The words as written are read too because brace expansion takes a quoted brace
-    /// as unquoted ([`braces`]): its words may not exist, and the script they would give a
-    /// shell may hide the one it runs (in `bash -c 'rm -rf {/tmp/x,/}'{,}` the first word is
-    /// `rm -rf /tmp/x`, and bash runs `rm -rf {/tmp/x,/}`).
-    ///
-    /// The second reading reads the same commands again, so the gh calls it counts are dropped,
-    /// as for [`Checker::program`]'s second reading; and it starts from the directory the first
-    /// started from, the command leaving the directory both readings reach, or anywhere when
-    /// they differ, so a `cd` read twice does not move twice.
+    /// Checks one simple command's words brace-expanded, as the shell expands them before any
+    /// program, wrapper or shell reads its options (`bash {-c,'rm -rf /'}` runs
+    /// `bash -c 'rm -rf /'`). Brace expansion reads quotes as bash does ([`braces`]), so the
+    /// expanded words are the ones that run and one reading is enough. A program word that
+    /// holds a group once the words as written are unwrapped (`{rm,-rf,/}`,
+    /// `sudo {sh,-c,'rm -rf /'}`) is denied as unreadable, as it was before the expanded
+    /// reading.
     fn words(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
         if let Some(denial) = self.note_gh_env(words) {
             return Some(denial);
@@ -197,24 +183,22 @@ impl<'c> Checker<'c> {
         if !words.iter().any(braces::has_group) {
             return self.unwrapped(words, scope);
         }
-        // The second reading starts where the first did: a copy of the directory, kept apart
-        // while the first reading moves it.
-        let start = self.cwd.clone();
-        if let Some(denial) = self.unwrapped(words, scope) {
-            return Some(denial);
+        if let Run::Command {
+            program: Program::Unknown(word),
+            ..
+        } = wrappers::unwrap(words)
+            && braces::has_group(word)
+        {
+            return Some(unreadable(format!(
+                "the program {} is built by brace expansion; write the command out",
+                word.text
+            )));
         }
         let expanded = match braces::expand(words) {
             Ok(expanded) => expanded,
             Err(denial) => return Some(denial),
         };
-        let first = std::mem::replace(&mut self.cwd, start);
-        let counted = self.gh_calls_here;
-        let denial = self.unwrapped(&expanded, scope);
-        self.gh_calls_here = counted;
-        if self.cwd != first {
-            self.cwd = Cwd::Unknown;
-        }
-        denial
+        self.unwrapped(&expanded, scope)
     }
 
     /// Checks one reading of a simple command's words: its wrappers removed, what it runs.
@@ -302,16 +286,11 @@ impl<'c> Checker<'c> {
         denial
     }
 
-    /// Applies the entries for `program` to one reading of its arguments, brace-expanded; the
-    /// arguments read as a command are passed on as written, since [`Checker::words`] reads
-    /// them brace-expanded too.
-    fn reading(
-        &mut self,
-        program: Program<'_>,
-        written: &[Word],
-        scope: Scope<'_>,
-    ) -> Option<Denial> {
-        let expanded = match braces::expand(written) {
+    /// Applies the entries for `program` to one reading of its arguments, brace-expanded: a
+    /// no-op for the words [`Checker::words`] expanded, kept so that no reading the entries
+    /// judge holds a group.
+    fn reading(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        let expanded = match braces::expand(args) {
             Ok(expanded) => expanded,
             Err(denial) => return Some(denial),
         };
@@ -336,16 +315,12 @@ impl<'c> Checker<'c> {
                 self.entry(|| config::check(name, args, &self.cwd))
                     .or_else(|| {
                         wrappers::may_run_arguments(name)
-                            .then(|| self.arguments(written, scope))
+                            .then(|| self.arguments(args, scope))
                             .flatten()
                     })
             }
             Program::Unknown(word) => {
                 self.note_unseen(probe::RUN_TIME_PROGRAM);
-                let args = Arguments {
-                    written,
-                    expanded: args,
-                };
                 self.unknown(word, args, scope)
             }
         }
@@ -372,10 +347,10 @@ impl<'c> Checker<'c> {
     /// The arguments of a program the guard does not know, read as a command from each word
     /// that names a program it checks or unwraps: an unlisted wrapper (`caffeinate`,
     /// `runuser -u root --`, `chroot /`) runs them. At most [`MAX_ARGUMENT_COMMANDS`] are read
-    /// in one check; past that it denies. The arguments come as written; in the brace-expanded
-    /// reading of the command ([`Checker::words`]) they come expanded, and a name brace
-    /// expansion built (`caffeinate {rm,-rf,/}`) reads as written, so `rm -rf /` is judged and
-    /// `brew install {git,jq}` is allowed as `brew install git jq` is.
+    /// in one check; past that it denies. The arguments come brace-expanded
+    /// ([`Checker::words`]), and a name brace expansion built (`caffeinate {rm,-rf,/}`) reads
+    /// as written, so `rm -rf /` is judged and `brew install {git,jq}` is allowed as
+    /// `brew install git jq` is.
     fn arguments(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         for (at, word) in args.iter().enumerate() {
             if !self.names_checked(word) {
@@ -401,26 +376,16 @@ impl<'c> Checker<'c> {
         None
     }
 
-    /// A program word that is not a literal name: denied when brace expansion builds it, read
-    /// as the words its literal parts split into (`rm${IFS}-rf`), its arguments checked
-    /// against every entry (brace-expanded) and read as a command ([`Checker::arguments`], as
-    /// written), and then denied when it is a command's output or a variable this command set
-    /// to a value known only at run time.
-    fn unknown(&mut self, word: &Word, args: Arguments<'_>, scope: Scope<'_>) -> Option<Denial> {
-        let Arguments {
-            written,
-            expanded: args,
-        } = args;
-        if braces::has_group(word) {
-            return Some(unreadable(format!(
-                "the program {} is built by brace expansion; write the command out",
-                word.text
-            )));
-        }
+    /// A program word that is not a literal name (never one that holds a brace group, which
+    /// [`Checker::words`] denies): read as the words its literal parts split into
+    /// (`rm${IFS}-rf`), its arguments checked against every entry and read as a command
+    /// ([`Checker::arguments`]), and then denied when it is a command's output or a variable
+    /// this command set to a value known only at run time.
+    fn unknown(&mut self, word: &Word, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let fields = variables::fields(word);
         if !fields.is_empty() {
             // The split words and the arguments form a new command line, which owns them.
-            let line: Vec<Word> = fields.into_iter().chain(written.iter().cloned()).collect();
+            let line: Vec<Word> = fields.into_iter().chain(args.iter().cloned()).collect();
             if let Some(denial) = self.words(&line, scope) {
                 return Some(denial);
             }
@@ -433,7 +398,7 @@ impl<'c> Checker<'c> {
         if by_entry.is_some() {
             return by_entry;
         }
-        if let Some(denial) = self.arguments(written, scope) {
+        if let Some(denial) = self.arguments(args, scope) {
             return Some(denial);
         }
         if let Some(source) = variables::runtime_source(word) {

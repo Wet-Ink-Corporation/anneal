@@ -97,6 +97,29 @@ fn every_wrapping_form_the_guard_reads_still_finds_the_merge() {
 }
 
 #[test]
+fn a_merge_behind_a_quoted_brace_character_or_an_empty_product_is_found() {
+    // #127 review round 3: a quoted `{`, `,` or `}` is no part of a group, and an empty
+    // unquoted product is no word, as in bash.
+    let forms = [
+        "bash {-c,'echo ,; gh pr merge 1'}",
+        "bash {-c,'echo {; gh pr merge 1'}",
+        "echo 'gh pr merge 1' | bash {,}",
+        "echo 'gh pr merge 1' | caffeinate bash {,}",
+        "bash {,} -c 'gh pr merge 1'",
+    ];
+
+    for command in forms {
+        assert_eq!(targets(command), [Target::Number(1)], "{command}");
+    }
+}
+
+#[test]
+fn a_gh_call_built_by_brace_expansion_is_read_as_its_words() {
+    // #127 review round 3: `caffeinate {gh,pr,view,1}` runs `gh pr view 1`, as main read it.
+    assert_eq!(unseen("caffeinate {gh,pr,view,1}"), None);
+}
+
+#[test]
 fn every_merge_in_a_command_is_found() {
     assert_eq!(
         targets("gh pr merge 1 && gh pr merge 2"),

@@ -295,6 +295,38 @@ fn a_case_after_time_function_or_coproc_keeps_a_substitution_open() {
 }
 
 #[test]
+fn brace_expansion_reads_quotes_and_empty_products_as_bash_does() {
+    // #127 review round 3.
+    assert_table(&[
+        // A quoted `{`, `,` or `}` is not part of a group: the script is the whole quoted word.
+        ("bash {-c,'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,\"echo ,; rm -rf /\"}", RM_RF),
+        ("bash {-c,'echo x,; rm -rf /'}", RM_RF),
+        ("caffeinate {bash,-c,'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo {; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo }; rm -rf /'}", RM_RF),
+        ("bash {-c,echo\\,\\;rm\\ -rf\\ /}", RM_RF),
+        ("bash {-c,$'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo ,'}", ALLOW),
+        // Nor is one in a variable's value or xargs input, which bash never brace-expands;
+        // a script's own groups still expand when the shell reads it.
+        ("x='{-rf,/}'; rm $x", ALLOW),
+        ("x='{-rf,/}'; rm {$x,}", ALLOW),
+        ("echo '{-rf,/}' | xargs rm", ALLOW),
+        ("x='rm -rf {/tmp/a,/}'; bash -c \"$x\"", RM_RF),
+        // An empty unquoted product is no word (`set -- {,}` sets none).
+        ("echo 'rm -rf /' | bash {,}", RM_RF),
+        ("echo 'rm -rf /' | caffeinate bash {,}", RM_RF),
+        ("bash {,} -c 'rm -rf /'", RM_RF),
+        ("echo hi | bash {,}", ALLOW),
+        // A quoted empty part makes a word: bash runs `-c ''` here and reads no stdin.
+        ("echo 'rm -rf /' | bash -c ''{,}", ALLOW),
+        // Each argument command is counted once.
+        ("x sudo x sudo x sudo x sudo echo {a,b}", ALLOW),
+    ]);
+}
+
+#[test]
 fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
     assert_table(&[
         ("caffeinate rm -rf /", RM_RF),
@@ -332,23 +364,21 @@ fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
         ("caffeinate {sudo,-u,root,rm,-rf,/}", RM_RF),
         ("bash {-c,'rm -rf /'}", RM_RF),
         ("caffeinate bash {-c,'rm -rf /'}", RM_RF),
-        // Read as written, a brace group where a wrapper's program goes is a program built by
-        // brace expansion, denied as `sudo {sh,-c,'rm -rf /'}` is.
+        // In the words as written, a brace group where a wrapper's program goes is a program
+        // built by brace expansion, denied as `sudo {sh,-c,'rm -rf /'}` is.
         ("sudo {-u,root} rm -rf /", UNREADABLE),
         ("env {-S,'rm -rf /'}", UNREADABLE),
         ("sudo {-u,root} ls /", UNREADABLE),
-        // The words as written are read too: brace expansion takes quoted braces as unquoted,
-        // and its first word, `rm -rf /tmp/x`, is not the script bash runs, which expands to
-        // `rm -rf /tmp/x /`.
+        // The quoted braces are no group, so bash's script is `rm -rf {/tmp/x,/}`, which
+        // expands to `rm -rf /tmp/x /`.
         ("bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
         ("caffeinate bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
         ("bash -c 'rm -rf /tmp/x'", ALLOW),
-        // Where the two readings leave the directory: where both go, else anywhere.
+        // A `cd` in a script brace expansion builds is followed as written out.
         ("bash {-c,'cd .claude'}; tee settings.json", CONFIG),
         ("bash -c 'cd .claude' {,}; tee settings.json", CONFIG),
         ("bash -c 'cd /tmp' {,}; tee settings.json", ALLOW),
-        // A cost: the readings disagree, so a relative write may be anywhere.
-        ("bash {-c,'cd /tmp'}; tee settings.json", CONFIG),
+        ("bash {-c,'cd /tmp'}; tee settings.json", ALLOW),
         ("caffeinate {bash,-c,'echo hi'}", ALLOW),
         ("bash {-c,'echo hi'}", ALLOW),
         ("caffeinate echo {a,b}", ALLOW),

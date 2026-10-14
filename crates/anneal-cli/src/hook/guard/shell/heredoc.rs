@@ -14,6 +14,7 @@ impl Lexer {
                 let mut lexer = Self::new(&body);
                 let mut word = Word::quoted(String::new());
                 lexer.quoted_body(&mut word, None, depth.saturating_add(1))?;
+                word.quotes = Word::all_quoted(&word.text);
                 self.adopt(lexer.into_commands());
                 word
             } else {

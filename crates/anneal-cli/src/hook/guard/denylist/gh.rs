@@ -7,6 +7,7 @@
 //! `-d -b 5`), and the first short option in a cluster that takes a value takes the rest of
 //! the word, or the next word when it ends the cluster (`-R=o/x` drops the `=`).
 
+use super::braces::reads_as_written;
 use super::wrappers::may_be_option;
 use crate::hook::guard::shell::Word;
 
@@ -107,7 +108,7 @@ pub(super) fn call_unseen(args: &[Word]) -> bool {
         .operands
         .iter()
         .take(2)
-        .any(|word| !word.is_literal())
+        .any(|word| !reads_as_written(word))
 }
 
 /// Whether `gh <args>` runs `gh api`, which may call the merge endpoint
@@ -116,14 +117,14 @@ pub(super) fn calls_api(args: &[Word]) -> bool {
     parse(args)
         .operands
         .first()
-        .is_some_and(|word| word.is_literal() && word.text == "api")
+        .is_some_and(|word| reads_as_written(word) && word.text == "api")
 }
 
 /// The target of `operands` when they run `pr merge`: they begin with `pr merge`, or with words
 /// known only at run time that may be or hide it.
 fn target(operands: &[&Word]) -> Option<(Target, Option<String>)> {
-    let is = |word: &Word, text: &str| word.is_literal() && word.text == text;
-    let may_be = |word: &Word, text: &str| !word.is_literal() || word.text == text;
+    let is = |word: &Word, text: &str| reads_as_written(word) && word.text == text;
+    let may_be = |word: &Word, text: &str| !reads_as_written(word) || word.text == text;
     match operands {
         [group, command, rest @ ..] if is(group, "pr") && is(command, "merge") => Some(
             rest.first()
@@ -132,7 +133,7 @@ fn target(operands: &[&Word]) -> Option<(Target, Option<String>)> {
         [group, command, ..] if may_be(group, "pr") && may_be(command, "merge") => {
             Some((Target::Unnumbered, None))
         }
-        [first, rest @ ..] if !first.is_literal() => {
+        [first, rest @ ..] if !reads_as_written(first) => {
             // A run-time word may expand to nothing or to options, so `pr merge` after it
             // still runs.
             let hidden = rest.windows(2).any(
@@ -212,7 +213,7 @@ fn read_option(text: &str) -> (&str, Taken<'_>) {
 
 /// The pull request `operand` names, and the repository of a URL naming it.
 fn target_of(operand: &Word) -> (Target, Option<String>) {
-    if !operand.is_literal() {
+    if !reads_as_written(operand) {
         return (Target::Unnumbered, None);
     }
     read_target(&operand.text)

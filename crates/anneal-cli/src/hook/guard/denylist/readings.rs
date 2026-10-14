@@ -45,12 +45,17 @@ fn emptied(word: &Word) -> Option<Word> {
         return None;
     }
     let parts = word.outside_expansions()?;
+    let emptied = word
+        .expansions
+        .iter()
+        .map(|expansion| (&expansion.range, 0));
     Some(Word {
         text: parts.concat(),
         shape: Shape::Pattern,
         quoted: word.quoted,
         globs: Globs::Unquoted,
         expansions: Vec::new(),
+        quotes: word.quotes_replacing(emptied),
         arithmetic: word.arithmetic,
     })
 }
