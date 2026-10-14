@@ -447,7 +447,10 @@ Without a size answer the size and depth are left out.
 `route-pending/<sha256 of the session id>.json` beside the decision log (the decision id, its
 top phase and the transcript's length; at most 64 files, the oldest dropped). Sessions never
 share a file, so parallel sessions lose nothing, and the next prompt claims the file by an
-atomic rename before labelling, so a decision is labelled at most once. At the session's next prompt the
+atomic rename before labelling, so a decision is labelled at most once. Claimed files are
+bounded apart from pending ones (at most 64, the oldest dropped: only a hook killed while
+labelling leaves one), so a full store never drops a claim another hook is still reading, and a
+claim found gone is nothing to label rather than an error. At the session's next prompt the
 hook reads what the transcript gained since then (at most 16 MiB) and labels the decision with
 `decide label`'s row: the top phase when its entry skill was invoked through the `Skill` tool
 (`build` or `anneal:build`), else the phase of the first entry skill invoked, else, with no

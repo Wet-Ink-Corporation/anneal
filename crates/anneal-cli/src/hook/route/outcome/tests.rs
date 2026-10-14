@@ -155,3 +155,81 @@ fn past_the_session_bound_the_oldest_files_are_dropped() -> TestResult {
     assert_eq!(kept, super::MAX_SESSIONS);
     Ok(())
 }
+
+/// The files in `dir` with the extension `ext`.
+fn with_extension(dir: &Path, ext: &str) -> TestResult<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == ext) {
+            found.push(path);
+        }
+    }
+    Ok(found)
+}
+
+/// Remembers a decision for each of `count` sessions named `<prefix>-<n>`.
+fn remember_many(clef: &Prepared, transcript: &Path, prefix: &str, count: usize) -> TestResult {
+    for n in 0..count {
+        let id = format!("{prefix}-{n}");
+        let session = Session {
+            id: &id,
+            transcript,
+        };
+        remember(clef, session, &DecisionId::generate(1), "build")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_claim_in_flight_survives_a_full_store() -> TestResult {
+    let world = World::configured()?;
+    let clef = prepared(&world)?;
+    let path = transcript(&world, 0)?;
+    remember_many(&clef, &path, "claimed", 1)?;
+    let dir = clef.log_dir().join(PENDING_DIR);
+    let [pending] = <[PathBuf; 1]>::try_from(with_extension(&dir, "json")?)
+        .map_err(|files| format!("one pending file: {files:?}"))?;
+    // Another hook has renamed it to claim it, and is still reading it.
+    let claimed = pending.with_extension("4242.claimed");
+    fs::rename(&pending, &claimed)?;
+
+    remember_many(&clef, &path, "other", super::MAX_SESSIONS + 1)?;
+
+    assert!(
+        claimed.is_file(),
+        "the oldest file, but claimed: not dropped"
+    );
+    assert_eq!(with_extension(&dir, "json")?.len(), super::MAX_SESSIONS);
+    Ok(())
+}
+
+#[test]
+fn a_claim_whose_file_vanished_is_nothing_to_label() -> TestResult {
+    let world = World::configured()?;
+    let gone = world.home().join("gone.4242.claimed");
+
+    let taken = super::take(&gone)?;
+
+    assert!(taken.is_none(), "{taken:?}");
+    Ok(())
+}
+
+#[test]
+fn leftover_claims_past_the_bound_are_dropped() -> TestResult {
+    let world = World::configured()?;
+    let clef = prepared(&world)?;
+    let path = transcript(&world, 0)?;
+    let dir = clef.log_dir().join(PENDING_DIR);
+    fs::create_dir_all(&dir)?;
+    // Claims left by hooks killed between claiming and removing.
+    for n in 0..super::MAX_SESSIONS + 3 {
+        fs::write(dir.join(format!("{n:064x}.{n}.claimed")), "{}")?;
+    }
+
+    remember_many(&clef, &path, "session", 1)?;
+
+    assert_eq!(with_extension(&dir, "claimed")?.len(), super::MAX_SESSIONS);
+    assert_eq!(with_extension(&dir, "json")?.len(), 1);
+    Ok(())
+}
