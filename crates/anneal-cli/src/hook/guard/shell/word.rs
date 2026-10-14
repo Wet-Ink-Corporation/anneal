@@ -13,6 +13,9 @@ pub(crate) struct Word {
     pub(crate) shape: Shape,
     /// Whether any part of the word was quoted or escaped.
     pub(crate) quoted: bool,
+    /// Whether the word holds an unquoted `*`, `?`, `[`, `{` or a leading `~`, whatever its
+    /// shape: `"$b"{-rf,/}` is [`Shape::Dynamic`] and still brace-expands.
+    pub(crate) globs: Globs,
     /// Each expansion's source text in `text` (`$x`, `${x}`, `$( )`, backticks, `<( )`).
     pub(crate) expansions: Vec<Expansion>,
     /// Whether it was read inside an arithmetic expression: in a command of one (see
@@ -42,12 +45,30 @@ pub(crate) enum Shape {
     Dynamic,
 }
 
+/// Whether a word holds an unquoted pattern character (`*`, `?`, `[`, `{` or a leading `~`),
+/// which [`Shape`] does not tell once a word is also dynamic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Globs {
+    /// None unquoted.
+    Absent,
+    /// At least one unquoted.
+    Unquoted,
+}
+
+impl Globs {
+    /// [`Globs::Unquoted`] when `found`.
+    pub(crate) const fn found(found: bool) -> Self {
+        if found { Self::Unquoted } else { Self::Absent }
+    }
+}
+
 impl Word {
     pub(super) const fn new() -> Self {
         Self {
             text: String::new(),
             shape: Shape::Literal,
             quoted: false,
+            globs: Globs::Absent,
             expansions: Vec::new(),
             arithmetic: false,
         }
@@ -59,6 +80,7 @@ impl Word {
             text,
             shape: Shape::Literal,
             quoted: true,
+            globs: Globs::Absent,
             expansions: Vec::new(),
             arithmetic: false,
         }
@@ -66,6 +88,31 @@ impl Word {
 
     fn mark(&mut self, shape: Shape) {
         self.shape = self.shape.max(shape);
+    }
+
+    /// Adds the unquoted pattern character `c`, which sets [`Word::globs`] whatever the shape.
+    fn push_pattern(&mut self, c: char) {
+        self.mark(Shape::Pattern);
+        self.globs = Globs::Unquoted;
+        self.text.push(c);
+    }
+
+    /// Whether the word holds an unquoted pattern character, whatever its shape.
+    pub(crate) fn has_pattern(&self) -> bool {
+        self.globs == Globs::Unquoted
+    }
+
+    /// The word's text outside its expansions' source text, in order; `None` when an
+    /// expansion's range is not in the text, which the lexer never makes.
+    pub(crate) fn outside_expansions(&self) -> Option<Vec<&str>> {
+        let mut parts = Vec::with_capacity(self.expansions.len().saturating_add(1));
+        let mut at = 0;
+        for expansion in &self.expansions {
+            parts.push(self.text.get(at..expansion.range.start)?);
+            at = expansion.range.end;
+        }
+        parts.push(self.text.get(at..)?);
+        Some(parts)
     }
 
     /// Whether the text is exactly what runs.
@@ -113,6 +160,7 @@ impl Lexer {
         // A lone `{`, `[` or `[[` is a keyword or the test command, not a pattern.
         if !word.quoted && matches!(word.text.as_str(), "{" | "[" | "[[") {
             word.shape = Shape::Literal;
+            word.globs = Globs::Absent;
         }
         Ok(word)
     }
@@ -140,17 +188,13 @@ impl Lexer {
                 if c == '[' && self.brackets > 0 {
                     self.brackets = self.brackets.saturating_add(1);
                 }
-                word.mark(Shape::Pattern);
-                word.text.push(c);
+                word.push_pattern(c);
             }
             ']' => {
                 self.brackets = self.brackets.saturating_sub(1);
                 word.text.push(c);
             }
-            '~' if word.text.is_empty() && !word.quoted => {
-                word.mark(Shape::Pattern);
-                word.text.push(c);
-            }
+            '~' if word.text.is_empty() && !word.quoted => word.push_pattern(c),
             _ => word.text.push(c),
         }
         Ok(())
@@ -230,6 +274,7 @@ impl Lexer {
                 self.brackets = self.brackets.saturating_add(1);
                 word.arithmetic = true;
                 word.mark(Shape::Pattern);
+                word.globs = Globs::Unquoted;
                 word.text.push_str("$[");
                 return Ok(());
             }

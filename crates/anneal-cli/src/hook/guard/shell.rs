@@ -6,7 +6,9 @@
 //! list, so a command cannot hide inside another. A `case` pattern's `)` does not close a
 //! substitution. Heredoc bodies are data, kept as the standard input of the command reading
 //! them. Expansions are not performed: a word that has one is marked [`Shape::Dynamic`], one
-//! with an unquoted glob, brace or leading `~` [`Shape::Pattern`].
+//! with an unquoted glob, brace or leading `~` [`Shape::Pattern`]. A word keeps only its
+//! highest shape, so whether it holds an unquoted pattern character is its own flag,
+//! [`Word::globs`], set whatever the shape (`"$b"{-rf,/}` is dynamic and a pattern).
 //!
 //! Commands are read here; words (quotes, escapes, `$`) in [`word`], redirections in
 //! [`redirect`], heredoc bodies in [`heredoc`].
@@ -18,7 +20,7 @@ mod word;
 use std::mem;
 
 use redirect::Heredoc;
-pub(crate) use word::{Expansion, Shape, Word};
+pub(crate) use word::{Expansion, Globs, Shape, Word};
 
 /// How deep `$( )`, backticks, `( )` and `${ }` may nest before a command is refused (H-13).
 pub(crate) const MAX_NESTING: usize = 32;

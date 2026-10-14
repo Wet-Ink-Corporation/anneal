@@ -103,6 +103,36 @@ fn unquoted_globs_braces_and_tilde_make_a_pattern_but_quoted_ones_do_not() {
 }
 
 #[test]
+fn an_unquoted_pattern_character_is_flagged_whatever_the_word_shape() {
+    let commands =
+        parse(r#"x "$b"{a,b} "$(:)"* $b'*' "${b}" '{a,b}' ~"$b" { a; }"#).expect("parses");
+    let flags: Vec<(String, Shape, bool)> = commands
+        .iter()
+        .flat_map(|command| &command.words)
+        .map(|w| (w.text.clone(), w.shape, w.has_pattern()))
+        .collect();
+    let row = |text: &str, shape, pattern| (text.to_owned(), shape, pattern);
+
+    assert_eq!(
+        flags,
+        [
+            row(":", Shape::Literal, false),
+            row("x", Shape::Literal, false),
+            row("$b{a,b}", Shape::Dynamic, true),
+            row("$(:)*", Shape::Dynamic, true),
+            row("$b*", Shape::Dynamic, false),
+            row("${b}", Shape::Dynamic, false),
+            row("{a,b}", Shape::Literal, false),
+            row("~$b", Shape::Dynamic, true),
+            row("{", Shape::Literal, false),
+            row("a", Shape::Literal, false),
+            row("}", Shape::Literal, false),
+        ],
+        "only an unquoted *, ?, [, {{ or leading ~ sets the flag"
+    );
+}
+
+#[test]
 fn ansi_c_quoting_is_decoded() {
     assert_eq!(
         words(r"$'\x72\155' $'a\tb'"),

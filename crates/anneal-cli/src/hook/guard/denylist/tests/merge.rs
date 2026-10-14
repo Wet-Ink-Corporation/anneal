@@ -352,6 +352,22 @@ fn a_gh_variable_built_by_a_brace_sequence_is_unreadable() {
 }
 
 #[test]
+fn a_gh_variable_built_by_a_brace_sequence_beside_an_expansion_is_unreadable() {
+    let rows = [
+        "export GH_REP{O..O}\"$x\"=o/x; gh pr merge 5",
+        "export G{H..H}_REPO$x=o/x; gh pr merge 5",
+    ];
+
+    for command in rows {
+        let scan = find_pr_merge(command, &context());
+        assert!(
+            matches!(scan, MergeScan::Unreadable(ref denial) if denial.rule == Rule::Unparseable),
+            "{command}: {scan:?}"
+        );
+    }
+}
+
+#[test]
 fn a_merge_run_where_the_command_started_is_not_moved() {
     let rows = [
         "gh pr merge 5",
@@ -436,6 +452,21 @@ fn a_word_naming_gh_beside_merge_trips_unless_the_probe_read_that_gh_call() {
         ("gh pr view 7 && git merge gh-pages", None),
         ("/usr/bin/gh pr checks 7; git merge main", None),
         ("echo gh", None),
+    ];
+
+    for (command, expected) in rows {
+        assert_eq!(unseen(command), expected, "{command}");
+    }
+}
+
+#[test]
+fn a_gh_call_read_again_with_its_expansions_empty_is_counted_once() {
+    // `"$b"*` gives the call a second reading with `$b` empty; counting the call there too
+    // would pair it with the second word naming gh.
+    let gh_word = "gh where the probe cannot read its arguments";
+    let rows = [
+        ("gh pr view 1 \"$b\"* gh merge", Some(gh_word)),
+        ("gh pr view 1 \"$b\"* merge", None),
     ];
 
     for (command, expected) in rows {

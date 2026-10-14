@@ -1,7 +1,9 @@
 //! `rm` with both recursive and force flags, outside the temporary and scratch directories.
 //!
-//! An argument that is wholly a variable or substitution (`$F`, `"$FLAGS"`) may hold the flags,
-//! so when another operand follows it, it is taken as `-rf`.
+//! An argument whose text outside its variables and substitutions is nothing (`$F`,
+//! `"$FLAGS"`) or an option cluster (`"$b"-rf`, `-$x`, or what `"$b"{-rf,/}` expands to) may
+//! hold the flags, so when another operand follows it, it is taken as `-rf`. An operand after
+//! `--` is never an option, so it never holds them.
 
 use std::path::Path;
 
@@ -19,6 +21,8 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     let (mut recursive, mut force) = (false, false);
     let mut targets = Vec::new();
     let mut options = true;
+    // How many operands came before `--`: after it none is an option, so none hides the flags.
+    let mut before_dashes = None;
     for word in args {
         let text = word.text.as_str();
         if !(options && may_be_option(word)) {
@@ -26,7 +30,10 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
             continue;
         }
         match text {
-            "--" => options = false,
+            "--" => {
+                options = false;
+                before_dashes = Some(targets.len());
+            }
             long if long.starts_with("--") => {
                 recursive |= is_long(long, "--recursive");
                 force |= is_long(long, "--force");
@@ -41,7 +48,8 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     if !(recursive && force) {
         let hidden = targets
             .iter()
-            .position(|target| is_whole_expansion(target))
+            .take(before_dashes.unwrap_or(targets.len()))
+            .position(|target| may_hide_flags(target))
             .filter(|_| targets.len() >= 2)?;
         flags = Some(targets.remove(hidden));
     }
@@ -63,9 +71,24 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     })
 }
 
-/// Whether `word` is one expansion and nothing else, so its value may be any argument.
-fn is_whole_expansion(word: &Word) -> bool {
-    matches!(word.expansions.as_slice(), [only] if only.range == (0..word.text.len()))
+/// Whether `word`'s value may be an option cluster holding the flags: its text outside its
+/// expansions is nothing (`$F`, `"$a$b"`) or an option cluster (`"$b"-rf`, `-$x`), which the
+/// expansions may leave as it is or fill in.
+fn may_hide_flags(word: &Word) -> bool {
+    if word.expansions.is_empty() {
+        return false;
+    }
+    // A range outside the text (which the lexer never makes) is taken as possibly the flags,
+    // which can only add denials.
+    let Some(outside) = word.outside_expansions() else {
+        return true;
+    };
+    let mut chars = outside.into_iter().flat_map(str::chars);
+    match chars.next() {
+        None => true,
+        Some('-') => chars.all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        Some(_) => false,
+    }
 }
 
 /// Why `target` may not be force-deleted, or `None` when it may.

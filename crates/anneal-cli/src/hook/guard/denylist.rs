@@ -7,11 +7,12 @@
 //! `find`'s actions, `function`, `coproc`, path prefixes) and the strings that shells, `eval`,
 //! `env -S`, `su -c`, `script -c`, `trap`, `watch`, `alias` and git's command settings run are
 //! lexed and checked in turn, as is a script a shell reads from a static heredoc, here-string
-//! or `echo` pipe ([`feed`]). Brace expansion is applied to arguments ([`braces`]), and the
-//! values of variables the command sets are put in ([`variables`]). Then the entries: [`git`]
-//! (force push to a protected branch, `git add -f`), [`rm`] (recursive force delete outside
-//! temp and scratch) and [`config`] (Bash writes to lint or hook config). What the guard
-//! cannot model it denies. See `docs/guard.md`.
+//! or `echo` pipe ([`feed`]). Brace expansion is applied to arguments ([`braces`]), the values
+//! of variables the command sets are put in ([`variables`]), and a word holding both an
+//! expansion and a pattern is also judged with the expansion empty ([`readings`]). Then the
+//! entries: [`git`] (force push to a protected branch, `git add -f`), [`rm`] (recursive force
+//! delete outside temp and scratch) and [`config`] (Bash writes to lint or hook config). What
+//! the guard cannot model it denies. See `docs/guard.md`.
 
 mod braces;
 mod checker;
@@ -19,6 +20,7 @@ mod config;
 mod feed;
 mod gh;
 mod git;
+mod readings;
 mod rm;
 mod variables;
 mod wrappers;

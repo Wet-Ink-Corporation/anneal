@@ -1,12 +1,16 @@
 //! Brace expansion (`{a,b}`), which the shell applies before anything else, so `rm {-rf,/}`
-//! is `rm -rf /`.
+//! is `rm -rf /`, and `rm "$b"{-rf,/}` is `rm "$b"-rf "$b"/`.
 //!
-//! Every `{`, `,` and `}` of a pattern word is taken as unquoted: a quoted one adds words that
-//! do not exist, which can only add denials. Sequences (`{1..3}`) are not expanded.
+//! A word is expanded when it holds an unquoted pattern character ([`Word::globs`]), whatever
+//! its shape. Every `{`, `,` and `}` of such a word outside its expansions' source text is taken
+//! as unquoted: a quoted one adds words that do not exist, which can only add denials. The
+//! braces of `${x}` and the text of `$( )` are never a group. Sequences (`{1..3}`) are not
+//! expanded.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
-use crate::hook::guard::shell::{Shape, Word};
+use crate::hook::guard::shell::{Expansion, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// The most words brace expansion may make of one command's arguments (H-13).
@@ -20,20 +24,28 @@ const MAX_GROUPS: usize = 8;
 #[derive(Debug)]
 struct TooMany;
 
-/// A brace group in a word: the text before it, its alternatives, and the text after it.
+/// A word's text and where its expansions are in it, as brace expansion rebuilds it.
 #[derive(Debug)]
-struct Group<'a> {
-    prefix: &'a str,
-    alternatives: Vec<&'a str>,
-    suffix: &'a str,
+struct Piece {
+    text: String,
+    expansions: Vec<Expansion>,
+}
+
+/// A brace group in a text: where its `{` and `}` are, and the range of each alternative.
+#[derive(Debug)]
+struct Group {
+    open: usize,
+    close: usize,
+    alternatives: Vec<Range<usize>>,
 }
 
 /// Whether `word` holds a brace group the shell would expand.
 pub(super) fn has_group(word: &Word) -> bool {
-    word.shape == Shape::Pattern && group(&word.text).is_some()
+    word.has_pattern() && group(&word.text, &word.expansions).is_some()
 }
 
-/// `args` with their brace groups expanded; each new word keeps its source word's shape.
+/// `args` with their brace groups expanded; each new word keeps its source word's shape and
+/// the expansions that are still in its text.
 ///
 /// # Errors
 /// An unparseable-command [`Denial`] when the expansion makes more than [`MAX_WORDS`] words.
@@ -55,13 +67,14 @@ pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
             expanded.push(arg.clone());
             continue;
         }
-        let mut texts = Vec::new();
-        expand_text(&arg.text, &mut texts, 0).map_err(too_many)?;
-        expanded.extend(texts.into_iter().map(|text| Word {
-            text,
+        let mut pieces = Vec::new();
+        expand_text(&arg.text, &arg.expansions, &mut pieces, 0).map_err(too_many)?;
+        expanded.extend(pieces.into_iter().map(|piece| Word {
+            text: piece.text,
             shape: arg.shape,
             quoted: arg.quoted,
-            expansions: Vec::new(),
+            globs: arg.globs,
+            expansions: piece.expansions,
             arithmetic: arg.arithmetic,
         }));
         if expanded.len() > MAX_WORDS {
@@ -71,23 +84,88 @@ pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
     Ok(Cow::Owned(expanded))
 }
 
-/// Pushes every word `text` expands to onto `out`; `groups` were expanded on the way here.
-fn expand_text(text: &str, out: &mut Vec<String>, groups: usize) -> Result<(), TooMany> {
-    let Some(group) = group(text) else {
+/// Pushes every word `text` (with `expansions`) expands to onto `out`; `groups` were expanded
+/// on the way here.
+fn expand_text(
+    text: &str,
+    expansions: &[Expansion],
+    out: &mut Vec<Piece>,
+    groups: usize,
+) -> Result<(), TooMany> {
+    let whole = || Piece {
+        text: text.to_owned(),
+        expansions: expansions.to_vec(),
+    };
+    let Some(group) = group(text, expansions) else {
         if out.len() >= MAX_WORDS {
             return Err(TooMany);
         }
-        out.push(text.to_owned());
+        out.push(whole());
         return Ok(());
     };
     if groups >= MAX_GROUPS {
         return Err(TooMany);
     }
     for alternative in &group.alternatives {
-        let text = format!("{}{alternative}{}", group.prefix, group.suffix);
-        expand_text(&text, out, groups.saturating_add(1))?;
+        match choose(text, expansions, &group, alternative) {
+            Some(piece) => {
+                expand_text(
+                    &piece.text,
+                    &piece.expansions,
+                    out,
+                    groups.saturating_add(1),
+                )?;
+            }
+            // Not reached: the group's ranges are within `text`. Keeping the word unexpanded
+            // never drops it.
+            None => out.push(whole()),
+        }
     }
     Ok(())
+}
+
+/// `text` with `group` replaced by its alternative `chosen`, keeping the expansions before the
+/// group, in `chosen` and after the group (each moved to its new place).
+fn choose(
+    text: &str,
+    expansions: &[Expansion],
+    group: &Group,
+    chosen: &Range<usize>,
+) -> Option<Piece> {
+    let prefix = text.get(..group.open)?;
+    let alternative = text.get(chosen.start..chosen.end)?;
+    let after = group.close.checked_add(1)?;
+    let suffix = text.get(after..)?;
+    let mut piece = Piece {
+        text: [prefix, alternative, suffix].concat(),
+        expansions: Vec::with_capacity(expansions.len()),
+    };
+    let suffix_at = group.open.checked_add(alternative.len())?;
+    for expansion in expansions {
+        let range = &expansion.range;
+        let moved = if range.end <= group.open {
+            range.start..range.end
+        } else if range.start >= chosen.start && range.end <= chosen.end {
+            shift(range, chosen.start, group.open)?
+        } else if range.start >= after {
+            shift(range, after, suffix_at)?
+        } else {
+            // In another alternative: not in this word.
+            continue;
+        };
+        piece.expansions.push(Expansion {
+            range: moved,
+            quoted: expansion.quoted,
+        });
+    }
+    Some(piece)
+}
+
+/// `range`, which starts at or after `from`, moved so that `from` is at `to`.
+fn shift(range: &Range<usize>, from: usize, to: usize) -> Option<Range<usize>> {
+    let start = range.start.checked_sub(from)?.checked_add(to)?;
+    let end = range.end.checked_sub(from)?.checked_add(to)?;
+    Some(start..end)
 }
 
 /// A `{` not yet closed: where it is, and the commas at its top level.
@@ -97,13 +175,25 @@ struct Open {
     commas: Vec<usize>,
 }
 
-/// The first brace group in `text` (by its `{`) that closes and has a comma at its top level.
+/// The first brace group in `text` (by its `{`) that closes and has a comma at its top level,
+/// reading no character inside `expansions` (in order, as the lexer and [`choose`] keep them).
 ///
 /// One pass with a stack of the open braces, so a word of many `{` stays linear (H-13).
-fn group(text: &str) -> Option<Group<'_>> {
+fn group(text: &str, expansions: &[Expansion]) -> Option<Group> {
     let mut open: Vec<Open> = Vec::new();
     let mut first: Option<(Open, usize)> = None;
+    let mut ahead = expansions.iter().peekable();
     for (at, c) in text.char_indices() {
+        while ahead
+            .next_if(|expansion| expansion.range.end <= at)
+            .is_some()
+        {}
+        if ahead
+            .peek()
+            .is_some_and(|expansion| expansion.range.start <= at)
+        {
+            continue;
+        }
         match c {
             '{' => open.push(Open {
                 at,
@@ -130,12 +220,12 @@ fn group(text: &str) -> Option<Group<'_>> {
     let mut alternatives = Vec::with_capacity(open.commas.len().saturating_add(1));
     let mut start = open.at.checked_add(1)?;
     for comma in open.commas.into_iter().chain([close]) {
-        alternatives.push(text.get(start..comma)?);
+        alternatives.push(start..comma);
         start = comma.checked_add(1)?;
     }
     Some(Group {
-        prefix: text.get(..open.at)?,
+        open: open.at,
+        close,
         alternatives,
-        suffix: text.get(close.checked_add(1)?..)?,
     })
 }

@@ -111,10 +111,14 @@ it (`/tmp/../etc`). `..` is resolved without looking at the file system. Operand
 or `find -exec` adds cannot be seen, so `rm -rf` under them is denied; what a static `echo` or
 `printf` pipes into `xargs` is appended and checked (`echo '-rf /' | xargs rm`).
 
-An operand that is wholly a variable or substitution (`$F`, `"$FLAGS"`) may hold the flags.
-When another operand follows it, it is taken as `-rf`, so `F=-rf; rm $F /` and
-`rm "$FLAGS" build` are denied while `rm -f "$tmp"` is allowed. A cost: `rm -f "$a" "$b"` is
-denied too, since `$a` may be `-r`.
+An operand whose text outside its variables and substitutions is nothing (`$F`, `"$FLAGS"`,
+`"$a$b"`) or an option cluster (`"$b"-rf`, `-$x`) may hold the flags. When another operand
+follows it, it is taken as `-rf`, so `F=-rf; rm $F /`, `rm "$FLAGS" build` and `rm "$b"-rf /`
+are denied while `rm -f "$tmp"` and `rm "$f".txt "$g".txt` are allowed. An operand after `--`
+is never an option, so it never holds the flags: `rm -f -- "$p"-old x` is allowed. A cost:
+`rm -f "$a" "$b"` is denied too, since `$a` may be `-r`, and so is `rm -f "$p"-old "$p"-new`,
+since `"$p"-old` is an option cluster when `p` is empty or `-r`; write `--` before such
+operands.
 
 Allowed: `rm -rf /tmp/build`, `rm -r src` (not forced), `rm -f file` (not recursive), and
 `rm`, `-rf` or `/` in a quoted string (`echo 'rm -rf /'`).
@@ -203,6 +207,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
 | Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied |
+| A brace or glob after a variable or substitution: `rm "$b"{-rf,/}`, `git push "$b"{-f,origin,main}`, `tee "$d".clau*/settings.json`, `echo x > "$d".clau*/settings.json` | a word with an unquoted `*`, `?`, `[`, `{` or leading `~` is brace-expanded whatever else it holds (the braces of `${x}` and the text of `$( )` are never a group), and such a word is judged in two readings: as written, and with its expansions empty, as they are when the variable is empty. A command's arguments are checked in both, and so is a redirection's target; either denial denies. A word with an expansion but no unquoted pattern character (`tee "$d".claude/settings.json`) is judged as written only |
 | Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied, as is a name reference or array (`declare -n`, `local -n`, `-a`, `-A`, alone or in a cluster such as `-gn`); after the command sets `IFS`, unquoted values are not put in |
 | A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks), the arguments of a function or script (`"$@"`, `$*`, `$1`) or an indirect expansion (`${!y}`), it is denied |
 

@@ -98,8 +98,8 @@ fn named_files(ticket: &Ticket) -> Vec<&str> {
 }
 
 /// Backticked spans that look like a path: one word with a letter, and either a `/` or one of
-/// [`KNOWN_EXTENSIONS`]; no option (`--x`), URL, glob (`*`, `?`, `[`) or command name (a
-/// leading `/`, as `/orchestrate`). A trailing `:<line>` is dropped.
+/// [`KNOWN_EXTENSIONS`]; no option (`--x`), URL, glob (`*`, `?`, `[`), command name or absolute
+/// path (a leading `/`, as `/orchestrate` or `/usr/lib/x.rs`). A trailing `:<line>` is dropped.
 fn body_paths(body: &str) -> impl Iterator<Item = &str> {
     body.split('`').skip(1).step_by(2).filter_map(|span| {
         let path = span

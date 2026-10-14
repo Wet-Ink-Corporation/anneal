@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use super::wrappers::{is_assignment, is_option, skip_keywords};
-use crate::hook::guard::shell::{Expansion, Shape, SimpleCommand, Word};
+use crate::hook::guard::shell::{Expansion, Globs, Shape, SimpleCommand, Word};
 
 /// The variables the command has set so far, in the order it runs.
 #[derive(Debug, Default)]
@@ -165,15 +165,18 @@ impl Variables {
         if splits {
             return Some(text.split_whitespace().map(literal).collect());
         }
-        let shape = if remaining.is_empty() {
-            literal(&text).shape
-        } else {
-            Shape::Dynamic
+        // A value's pattern characters are taken as unquoted, which can only add denials.
+        let pattern = word.has_pattern() || holds_pattern(&text);
+        let shape = match (remaining.is_empty(), pattern) {
+            (false, _) => Shape::Dynamic,
+            (true, true) => Shape::Pattern,
+            (true, false) => Shape::Literal,
         };
         Some(vec![Word {
             text,
             shape,
             quoted: word.quoted,
+            globs: Globs::found(pattern),
             expansions: remaining,
             arithmetic: word.arithmetic,
         }])
@@ -182,7 +185,7 @@ impl Variables {
 
 /// `text` as a word with no expansion; a pattern when it holds a glob or brace character.
 pub(super) fn literal(text: &str) -> Word {
-    let pattern = text.contains(['*', '?', '[', '{']) || text.starts_with('~');
+    let pattern = holds_pattern(text);
     Word {
         text: text.to_owned(),
         shape: if pattern {
@@ -191,9 +194,15 @@ pub(super) fn literal(text: &str) -> Word {
             Shape::Literal
         },
         quoted: false,
+        globs: Globs::found(pattern),
         expansions: Vec::new(),
         arithmetic: false,
     }
+}
+
+/// Whether `text`, read as unquoted, holds a glob or brace character or a leading `~`.
+fn holds_pattern(text: &str) -> bool {
+    text.contains(['*', '?', '[', '{']) || text.starts_with('~')
 }
 
 /// Whether a declaration's options make its names references or arrays (`-n`, `-a`, `-A`,
