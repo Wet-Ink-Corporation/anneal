@@ -276,14 +276,40 @@ A file the leftover scan could not read (over 1 MiB, past the 64 MiB budget, or 
 open) is a nudge naming how many were skipped and pointing at `anneal repro leftovers`.
 
 - **Success words** (`hook::completeness::claim::CLAIMS`): `all tests pass`, `tests pass`
-  (`test` or `tests`, and `pass`, `passes`, `passed` or `passing`), `works now`, `all green`,
-  `done`, `passes`, `passed`, `passing`, `green`, `fixed`, `complete`, `completed`, `finished`,
-  `succeeded` and `succeeds`, as whole words in one clause, in any letter case. Fenced code
-  blocks, code spans and HTML comments are quoted text, not claims, and a claim with `not`,
-  `never`, `no` or a word ending in `n't` one or two words before it in the same clause is not
-  one. Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so "No failures.
-  Done." claims. Some false positives ("done reading the logs") are accepted: the block cap
-  bounds them.
+  (a suite: `test`, `tests`, `check`, `checks`, `build`, `builds`, `lint` or `lints`, or a
+  hyphenated word ending in one such as `unit-tests`, any more joined by `and` or `or`,
+  then `pass`, `passes`, `passed` or `passing`), `works now`, `all green`, `done`, `passes`,
+  `passed`, `passing`, `green`, `fixed`, `complete`, `completed`, `finished`, `succeeded`,
+  `succeeds`, `ready to merge`, `ready for review`, `everything works` (`everything`, `it`,
+  `everything's` or `it's`, then `works` or `working`, or `everything is working`),
+  `implemented` and `resolved`, in one clause, in any letter case. Up to two filler words
+  (`still`, `now`, `all`, `also`, `finally`, `really`, `fully`, `again`, `just`, `actually`,
+  `indeed`, and `the` or `both` before the suite only) may stand between a claim's words ("The
+  tests now pass.", "Everything is still working.", "All the tests pass"; not "Test the pass
+  rate"), and a hyphenated word whose segments spell a whole claim of two or more
+  words is that claim (`all-green`, `ready-to-merge`). Fenced code blocks, code spans and HTML
+  comments are quoted text, not claims. Structural rules withdraw a claim within its clause: a
+  negation (`not`, `never`, `no` or a word ending in `n't`) one or two words before it; a
+  conditional's scope covering it ("I'll merge once the CI checks pass."). A conditional (`if`,
+  `once`, `when`, `whenever`, `unless`, `until`, and `after` or `before` when they do not open
+  the clause; not `once more`, `once again` or a clause-final `once`) opens a scope that runs to
+  the next `and`, `then` or `now`, to a second `is`, `are`, `was` or `were` ("The panic when
+  the file is empty is resolved." claims), through a gerund right after the conditional ("The
+  crash when saving is fixed." claims) or a past-tense verb not after a determiner ("Once the
+  fix landed all tests pass" claims), or to the clause end; for an `it` or
+  `everything` claim, `sure`, `ensure`, `verify`, `check`, `whether`, `get`, `keep`, `need` or
+  `to` one or two words before it ("make sure everything works"); and a `?` ending the clause
+  ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
+  and the words `so` and `but`, so "No failures. Done.", "Done (anything else?)" and "All tests
+  pass so should I merge?" claim, and so does "Did the tests pass, or should I re-run?". A
+  hyphen between two letters or digits is part of the word, so "half-done" is not `done`; a
+  spaced hyphen, `--`, an en dash and an em dash still end a clause. Some false positives
+  ("done reading the logs", "here is how it works", "it all works out", "Is it done so I can
+  merge?") and misses ("When I ran it all tests pass" with no comma) are accepted, as are the scope's
+  misreadings ("Merge when lint is clean and all tests pass" and "Ship it when morning checks
+  pass" claim): the block
+  cap bounds them. Clef D4 does not read these words: it judges the status block's sections on
+  its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in
