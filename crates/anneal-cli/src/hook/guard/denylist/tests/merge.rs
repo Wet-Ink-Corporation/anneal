@@ -114,6 +114,16 @@ fn a_merge_behind_a_quoted_brace_character_or_an_empty_product_is_found() {
 }
 
 #[test]
+fn a_brace_built_shell_option_beside_an_expansion_still_runs_its_script() {
+    // #127 review round 4 F1: `-c` keeps no run-time shape from the `$x` in the other
+    // product, so the script is read; its pull request is known only at run time.
+    assert_eq!(
+        targets("bash {-c,\"gh pr merge 1$x\"}"),
+        [Target::Unnumbered]
+    );
+}
+
+#[test]
 fn a_gh_call_built_by_brace_expansion_is_read_as_its_words() {
     // #127 review round 3: `caffeinate {gh,pr,view,1}` runs `gh pr view 1`, as main read it.
     assert_eq!(unseen("caffeinate {gh,pr,view,1}"), None);

@@ -295,6 +295,30 @@ fn a_case_after_time_function_or_coproc_keeps_a_substitution_open() {
 }
 
 #[test]
+fn a_brace_product_with_no_expansion_left_is_read_as_its_text() {
+    // #127 review round 4 F1: a product of a word with an expansion keeps no run-time shape
+    // once the expansion is in another product, so a brace-built option is read.
+    assert_table(&[
+        ("git push {-f,origin$x}", FORCE_PUSH),
+        ("git push {--force-with-lease,o$x}", FORCE_PUSH),
+        ("bash {-c,\"rm -rf /$x\"}", RM_RF),
+        ("bash {-c,\"${x}rm -rf /\"}", RM_RF),
+        ("bash {-c,$x\"rm -rf /\"}", RM_RF),
+        ("bash {\"-c\",\"${x}rm -rf /\"}", RM_RF),
+        ("sh {-c,\"rm -rf /$x\"}", RM_RF),
+        ("sudo bash {-c,\"rm -rf /$x\"}", RM_RF),
+        ("bash {-c,\"$(echo)rm -rf /\"}", RM_RF),
+        ("bash {-c,\"echo $x\"}", ALLOW),
+        // F3: the cap counts the words brace expansion makes, as main did.
+        ("echo {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}", ALLOW),
+        (
+            "echo {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b} {a,b}",
+            UNREADABLE,
+        ),
+    ]);
+}
+
+#[test]
 fn brace_expansion_reads_quotes_and_empty_products_as_bash_does() {
     // #127 review round 3.
     assert_table(&[

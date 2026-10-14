@@ -111,12 +111,12 @@ pub(super) fn reads_as_written(word: &Word) -> bool {
             && !word.text.contains(['*', '?', '[', '{']))
 }
 
-/// `args` with their brace groups expanded; each new word keeps its source word's shape and
-/// the expansions and quoted parts that are still in its text, and a product with no text that
-/// nothing quoted or expanded went into is dropped, as bash drops it.
+/// `args` with their brace groups expanded ([`product`] says what each new word is), a product
+/// with no text that nothing quoted or expanded went into dropped, as bash drops it.
 ///
 /// # Errors
-/// An unparseable-command [`Denial`] when the expansion makes more than [`MAX_WORDS`] words.
+/// An unparseable-command [`Denial`] when the expansion makes more than [`MAX_WORDS`] words
+/// (the words it makes; the others are not counted, as before the program was expanded too).
 pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
     if !args.iter().any(has_group) {
         return Ok(Cow::Borrowed(args));
@@ -128,6 +128,7 @@ pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
         )
     };
     let mut expanded = Vec::new();
+    let mut made: usize = 0;
     for arg in args {
         if !has_group(arg) {
             // The new argument list owns its words: the unexpanded ones are copied beside the
@@ -137,20 +138,45 @@ pub(super) fn expand(args: &[Word]) -> Result<Cow<'_, [Word]>, Denial> {
         }
         let mut pieces = Vec::new();
         expand_text(Source::from(arg), &mut pieces, 0).map_err(too_many)?;
-        expanded.extend(pieces.into_iter().filter(Piece::is_word).map(|piece| Word {
-            text: piece.text,
-            shape: arg.shape,
-            quoted: arg.quoted,
-            globs: arg.globs,
-            expansions: piece.expansions,
-            quotes: piece.quotes,
-            arithmetic: arg.arithmetic,
-        }));
-        if expanded.len() > MAX_WORDS {
+        let before = expanded.len();
+        expanded.extend(
+            pieces
+                .into_iter()
+                .filter(Piece::is_word)
+                .map(|piece| product(arg, piece)),
+        );
+        made = made.saturating_add(expanded.len().saturating_sub(before));
+        if made > MAX_WORDS {
             return Err(too_many(TooMany));
         }
     }
     Ok(Cow::Owned(expanded))
+}
+
+/// The word `piece` is, as a product of `arg`, read from what is left in it rather than from
+/// `arg` (#127 review round 4): its own expansions and quoted parts; a run-time shape only
+/// while an expansion is left in it, and otherwise a pattern, which programs, wrappers and
+/// shells read as written ([`reads_as_written`]) and the entries as a pattern; and quoted only
+/// when a quoted part is left. Two fields stay the source word's: where it was read
+/// (`arithmetic`), and its unquoted pattern character ([`Word::globs`]), which a product with
+/// an expansion left needs for its reading with the expansion empty (`"$b"-f` from
+/// `"$b"{-f,x}` is `-f` when `$b` is empty; [`super::readings`]); a product with none left
+/// has no such reading, and no group, so the flag changes nothing there.
+fn product(arg: &Word, piece: Piece) -> Word {
+    let shape = if piece.expansions.is_empty() {
+        arg.shape.min(Shape::Pattern)
+    } else {
+        arg.shape
+    };
+    Word {
+        text: piece.text,
+        shape,
+        quoted: arg.quoted && !piece.quotes.is_empty(),
+        globs: arg.globs,
+        expansions: piece.expansions,
+        quotes: piece.quotes,
+        arithmetic: arg.arithmetic,
+    }
 }
 
 /// Pushes every word `source` expands to onto `out`; `groups` were expanded on the way here.
