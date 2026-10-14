@@ -137,6 +137,14 @@ exist is taken lexically (`.` dropped, `..` the parent). With `tmp/link -> ../sr
 of `tmp/link/../app.py` is `src/app.py`, and with `tmp/new -> ../src/new.py`, a write of
 `tmp/new` is `src/new.py`: both are source.
 
+A tool may also take `..` lexically before it hands the path to the OS, and then writes
+elsewhere. So a path is judged in both readings, where the OS writes it and where its lexical
+normalisation (`.` dropped, `..` the parent of the name before it, then resolved as above)
+lands, and either reading's denial denies. With `src/link -> ../tmp/sub`, a write of
+`src/link/../x.py` is `tmp/x.py` to the OS (scratch) but `src/x.py` to such a tool (source), so
+in a mode it is denied wherever `src/x.py` is. When both readings land in the same place it is
+judged once.
+
 The worktree that judges an edit is the edited file's own: git is asked from the longest
 existing ancestor directory of where the file lands, not from the session's working directory.
 So a session running above the repository, or in a sibling linked worktree, cannot write into a
@@ -180,7 +188,7 @@ judge:
 | Failure | Result |
 |---|---|
 | stdin is not `PreToolUse` JSON, is larger than 1 MiB, has no `tool_input.file_path` (`tool_input.notebook_path` for NotebookEdit), or names more than 16 files | deny, `bad-input` |
-| the ledger exists but cannot be opened or read; git, asked from the file's longest existing ancestor directory, fails other than "not a repository"; the file has no existing ancestor directory, cannot be resolved (a component that cannot be read, more than 40 symlinks), or is not inside its own worktree once symlinks are resolved | deny, `unjudged` |
+| the ledger exists but cannot be opened or read; git, asked from the file's longest existing ancestor directory, fails other than "not a repository"; the file has no existing ancestor directory, cannot be resolved (a component that cannot be read, more than 40 symlinks), or is not inside its own worktree once symlinks are resolved; the 3.5 s budget runs out before every file is judged | deny, `unjudged` |
 | build mode recorded without a plan or tree (an event appended by hand) | deny, `mode` |
 | the plan or design tree cannot be read | deny, `plan` or `grill` |
 | the decision cannot be written | exit 2 with one `ERROR` line |
@@ -188,9 +196,14 @@ judge:
 Only these mean "no mode" and allow: a file in no git repository, no ledger file for its
 repository (the hook never creates one), and no `mode_set` (or `off`) for its worktree.
 
-It stays inside its 5 s budget as the guard does: git gets 1 s for each of its two calls (the
-ledger's location, the worktree root) and each ledger statement waits at most 500 ms for
-another process's lock.
+It stays inside its 5 s timeout: the whole call, every file and every reading of it, is judged
+within 3.5 s of the hook's start (the rest is for recording a denial and process start-up, as
+the brief hook does). Git gets at most 1 s for each call, and never more than is left; each
+worktree a call reaches is found once per directory (the worktree root) and read once (the
+ledger's location, its mode, and whether its preconditions hold, which are the same for every
+file in it); each ledger statement waits at most 500 ms for another process's lock, and never
+more than is left. Once the budget is spent the edit is denied as `unjudged` ("no time is left
+to judge the edit"), and the denial is not recorded when no time was left to open the ledger.
 
 ## Known gaps
 

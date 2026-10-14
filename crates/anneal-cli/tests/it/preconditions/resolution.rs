@@ -69,3 +69,22 @@ fn a_symlink_into_another_gated_repository_is_judged_by_that_repository() -> Tes
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_dotdot_after_a_symlink_is_judged_by_its_lexical_reading_too() -> TestResult {
+    let repo = Repo::diagnosing()?;
+    std::fs::create_dir_all(repo.path().join("tmp/sub"))?;
+    std::os::unix::fs::symlink("../tmp/sub", repo.path().join("src/link"))?;
+
+    // The OS reaches tmp/x.py (scratch); a tool that takes `..` lexically first writes
+    // src/x.py (source). Either reading's denial denies.
+    let reason = denial(&repo.write_to("src/link/../x.py")?)?;
+
+    assert!(
+        reason.starts_with("ERROR diagnose mode: "),
+        "src/link/.. read lexically is src/: {reason}"
+    );
+    Ok(())
+}

@@ -157,9 +157,11 @@ Matcher `Edit|Write|MultiEdit|NotebookEdit`, `timeout` 5 s, `onFailure: "block"`
 1 MiB; it uses `tool_name`, `tool_input.file_path`, `tool_input.notebook_path`, each
 `tool_input.edits[].file_path`, `session_id` and `cwd`) and the worktree's anneal mode (`anneal
 mode build|diagnose|off`, a `mode_set` event in the ledger). Each file is judged where the OS
-writes it (symlinks followed, dangling ones too, before `..` is taken), and the worktree is that
-file's own, found from the longest existing ancestor directory of where it lands, not the hook's
-cwd. For a file in no git repository, with no ledger, no mode or mode `off` it allows silently and never creates a ledger. In build mode it
+writes it (symlinks followed, dangling ones too, before `..` is taken) and where a tool that
+takes `..` lexically first writes it, either reading's denial denying; the worktree is that
+reading's own, found from the longest existing ancestor directory of where it lands, not the
+hook's cwd. Each worktree is found and read once per call, and the whole call is judged within
+3.5 s of the hook's start; past that the edit is denied. For a file in no git repository, with no ledger, no mode or mode `off` it allows silently and never creates a ledger. In build mode it
 denies source edits until the plan's spec passes `lint spec`, the design tree is confirmed at its
 current hash, the tree was clean at entry and the plan is approved and current; in diagnose mode
 until `anneal repro record` records a `repro_red` for the worktree after entry. Test files, the plan and tree, scratch
