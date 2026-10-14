@@ -116,11 +116,13 @@ fn is_too_many_links(error: &std::io::Error) -> bool {
 #[cfg(unix)]
 #[test]
 fn forty_dangling_symlinks_are_followed_and_a_forty_first_is_an_error() -> TestResult {
-    let (dir, real) = scratch()?;
-    chain(dir.path(), 41)?;
+    let (_dir, real) = scratch()?;
+    chain(&real, 41)?;
 
-    let forty = resolve(&dir.path().join("l1"))?;
-    let error = resolve(&dir.path().join("l0")).expect_err("41 links are too many");
+    // From the canonical directory: on macOS the temporary directory's own path holds a link
+    // (`/var` to `/private/var`), which would count against the 40.
+    let forty = resolve(&real.join("l1"))?;
+    let error = resolve(&real.join("l0")).expect_err("41 links are too many");
 
     assert_eq!(forty, real.join("missing"));
     assert!(is_too_many_links(&error), "{error:?}");
