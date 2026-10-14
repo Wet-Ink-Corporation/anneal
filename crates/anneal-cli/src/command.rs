@@ -67,7 +67,8 @@ pub struct Claim {
 /// `dag`'s claim, out of `CommandName::proves` to keep that function short.
 const DAG_PROVES: &str = "the task graph has no cycle and no dangling dependency; with check \
     --plan, every plan task has a ticket of its id with the same blockers among the plan's \
-    tasks, and every ticket is a task of the plan";
+    tasks, and every ticket is a task of the plan or an outside blocker of one (a ticket that \
+    blocks a task's ticket, directly or through other such tickets)";
 
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.

@@ -178,9 +178,11 @@ the graph check.
   tracker an outside blocker such as `REL-5` must exist as `tickets/REL-5.md`, or the graph
   dangles. A ticket that is no task of the plan but blocks a task's ticket, directly or
   through other such tickets (`REL-5` blocked by `REL-4`), is an outside blocker: it is
-  neither compared nor reported. Any other ticket in scope that is no task is
+  not reported, and its own blockers count only as the order it puts on the plan's tasks: a
+  task whose ticket is blocked by `R1`, itself blocked by task `T1`, waits for `T1`, so the
+  task's `Blocked by:` must name `T1`. Any other ticket in scope that is no task is
   `dag/plan/no-task`.
-- **With GitHub, pass `--issue`.** Without it every open issue of the repository is in
+- **With GitHub, pass `--issue`.** Without it every issue of the repository, open or closed, is in
   scope, so each unrelated issue is a `dag/plan/no-task` finding. With `--issue N` the scope
   is the plan's parent issue's sub-issues, and blockers outside it are fetched as external
   tickets, which are never in scope.
@@ -194,8 +196,8 @@ Findings, after the graph's, each in id order:
 |---|---|
 | `dag/plan/unread:<file>` | `lint plan` finds a problem that may hide a task or blocker from the comparison: a `tasks` or `task-fields` finding, a `blockers` finding naming a blocker that is no task of the plan, or findings it dropped past its cap of 1,000. Run `anneal lint plan`. |
 | `dag/plan/no-ticket:<id>` | A task of the plan has no ticket. |
-| `dag/plan/no-task:<id>` | A ticket in scope is no task of the plan. |
-| `dag/plan/blockers:<id>` | The task's ticket lists other blockers among the plan's tasks. The message names both lists. |
+| `dag/plan/no-task:<id>` | A ticket in scope is neither a task of the plan nor an outside blocker of one. |
+| `dag/plan/blockers:<id>` | The task's ticket waits for other plan tasks than the task's `Blocked by:` names: its blockers that are tasks, and the tasks it reaches through outside blockers (`T2` blocked by `R1`, itself blocked by `T1`, waits for `T1`). The message names both lists. |
 
 The exit code is the graph's when its check fails (2 or 1; the plan's findings are still
 listed), else 3 when there is any plan finding, else 0. `data` gains

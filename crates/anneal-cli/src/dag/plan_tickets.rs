@@ -7,8 +7,10 @@
 //! from outside the plan belongs in the tracker alone (`plugin/skills/plan/references/slice.md`),
 //! so it is never a disagreement: only blockers that are tasks of the plan are compared, on
 //! both sides; a ticket that is no task but blocks a task's ticket, directly or through other
-//! such tickets, is an outside blocker rather than a ticket with no task; and a plan that
-//! names an outside blocker itself is one `lint plan` reports, so it counts as unread.
+//! such tickets, is an outside blocker rather than a ticket with no task, and the plan tasks
+//! a ticket reaches through outside blockers count as its blockers (they order it after
+//! them); and a plan that names an outside blocker itself is one `lint plan` reports, so it
+//! counts as unread.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -29,7 +31,9 @@ pub(crate) struct PlanTasks {
     file: String,
     /// The tasks with well-formed headings, each id once.
     tasks: Vec<Task>,
-    /// `lint plan`'s `tasks` and `task-fields` findings: each may hide a task or a blocker.
+    /// `lint plan`'s findings that may hide a task or a blocker: `tasks` and `task-fields`
+    /// findings, `blockers` findings whose subject is no task of the plan, plus every finding
+    /// it dropped past its cap (`report.omitted`).
     unread: usize,
 }
 
@@ -161,7 +165,8 @@ pub(crate) struct Blockers<'a> {
     pub(crate) id: &'a str,
     /// The plan's `Blocked by:` ids that are tasks of the plan.
     pub(crate) plan: Vec<&'a str>,
-    /// The ticket's `blocked_by` ids that are tasks of the plan.
+    /// The plan's tasks the ticket waits for: its `blocked_by` ids that are tasks, and those
+    /// reached through its outside blockers.
     pub(crate) ticket: Vec<&'a str>,
 }
 
@@ -192,13 +197,7 @@ pub(crate) fn compare<'a>(
                 .map(String::as_str)
                 .filter(|id| planned.contains(id)),
         );
-        let listed = id_set(
-            ticket
-                .blocked_by
-                .iter()
-                .map(TicketId::as_str)
-                .filter(|id| planned.contains(id)),
-        );
+        let listed = id_set(tasks_reached(ticket, &tickets, &planned).into_iter());
         if plan != listed {
             blockers.push(Blockers {
                 id: task.id.as_str(),
@@ -250,6 +249,30 @@ fn outside_blockers<'a>(
         }
     }
     outside
+}
+
+/// The plan's tasks `ticket` waits for: its blockers that are tasks, and those reached through
+/// its blockers that are no task (an outside ticket blocked by a task still orders that task
+/// first). The walk stops at a task and visits each outside ticket once, so a cycle among them
+/// ends it and one walk is bounded by the tickets read.
+fn tasks_reached<'a>(
+    ticket: &'a Ticket,
+    tickets: &HashMap<&'a str, &'a Ticket>,
+    planned: &HashSet<&str>,
+) -> HashSet<&'a str> {
+    let mut reached = HashSet::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut next: Vec<&TicketId> = ticket.blocked_by.iter().collect();
+    while let Some(id) = next.pop() {
+        if planned.contains(id.as_str()) {
+            reached.insert(id.as_str());
+        } else if let Some(&outside) = tickets.get(id.as_str())
+            && seen.insert(outside.id.as_str())
+        {
+            next.extend(&outside.blocked_by);
+        }
+    }
+    reached
 }
 
 /// `ids` in id order, each once.

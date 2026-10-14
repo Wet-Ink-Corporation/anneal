@@ -208,6 +208,47 @@ fn a_ticket_blocking_a_task_through_outside_tickets_is_outside_not_no_task() {
 }
 
 #[test]
+fn a_task_blocked_through_an_outside_ticket_is_compared_by_the_tasks_reached() {
+    let tasks = [task("T1", &[]), task("T2", &[])];
+    let tickets = [
+        ticket("T1", &[]),
+        ticket("R1", &["T1"]),
+        ticket("T2", &["R1"]),
+    ];
+
+    let mismatches = compare(&tasks, &tickets);
+
+    assert_eq!(
+        mismatches.blockers,
+        [Blockers {
+            id: "T2",
+            plan: vec![],
+            ticket: vec!["T1"],
+        }],
+        "R1 orders T1 before T2, which the plan does not say"
+    );
+    assert!(mismatches.no_task.is_empty(), "R1 is an outside blocker");
+}
+
+#[test]
+fn a_cycle_among_outside_tickets_ends_the_walk() {
+    let tasks = [task("T1", &[]), task("T2", &["T1"])];
+    let tickets = [
+        ticket("T1", &[]),
+        ticket("R1", &["R2", "T1"]),
+        ticket("R2", &["R1"]),
+        ticket("T2", &["R1"]),
+    ];
+
+    let mismatches = compare(&tasks, &tickets);
+
+    assert!(
+        mismatches.is_empty(),
+        "T1 is reached through the cycle once: {mismatches:?}"
+    );
+}
+
+#[test]
 fn a_plan_blocker_outside_the_plan_is_not_compared() {
     let tasks = [task("T1", &[]), task("T2", &["T1", "REL-5"])];
     let tickets = [ticket("T1", &[]), ticket("T2", &["T1"])];
