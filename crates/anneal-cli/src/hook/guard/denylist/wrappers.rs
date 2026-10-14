@@ -404,8 +404,11 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
 
 /// `chrt` and `taskset`: the command after their options and the priority or CPU mask.
 /// With `-p` (`--pid`, a flag in util-linux's `+...p...` optstrings) they act on the process
-/// whose pid is the last word and run nothing, unless that pid is 0 (or not known until run
-/// time): then they act on themselves and run the words after the priority or mask.
+/// whose pid is the last word and run nothing. A pid of 0 makes them act on themselves and
+/// chrt reads -1 as "no pid", and both then run the words after the priority or mask, so a
+/// pid that reads as a number of 0 or less, or that is known only at run time, counts as
+/// running them. A positive pid, or a word that is no number (they exit with an error before
+/// running anything), runs nothing.
 fn pid_or_command<'a>(words: &'a [Word], with_value: &[&str]) -> Peel<'a> {
     // The walk of `skip_options`, looking at each option word but not at the values.
     let mut rest = words;
@@ -427,20 +430,26 @@ fn pid_or_command<'a>(words: &'a [Word], with_value: &[&str]) -> Peel<'a> {
         };
     }
     match rest.last() {
-        Some(last) if pid && last.is_literal() && !is_zero(&last.text) => Peel::Done(Run::Nothing),
+        Some(last) if pid && last.is_literal() && !at_most_zero(&last.text) => {
+            Peel::Done(Run::Nothing)
+        }
         _ if pid && rest.is_empty() => Peel::Done(Run::Nothing),
         _ => Peel::Inner(skip_one(rest)),
     }
 }
 
-/// Whether `text` reads as the integer 0 to `strtol`: optional leading blanks and sign, then
+/// Whether `text` reads to `strtol` as a decimal number of 0 or less: optional leading C
+/// blanks (` `, `\t`, `\n`, `\v`, `\f`, `\r`), then `-` and any digits, or an optional `+` and
 /// only zeros.
-fn is_zero(text: &str) -> bool {
-    let digits = text
-        .trim_start()
-        .strip_prefix(['+', '-'])
-        .unwrap_or_else(|| text.trim_start());
-    !digits.is_empty() && digits.bytes().all(|b| b == b'0')
+fn at_most_zero(text: &str) -> bool {
+    let trimmed = text.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    let (negative, digits) = match trimmed.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+    };
+    !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && (negative || digits.bytes().all(|b| b == b'0'))
 }
 
 /// The program `word` names: its last path component without `.exe`, or unknown when the

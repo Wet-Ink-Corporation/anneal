@@ -333,8 +333,9 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   value, or the next word when that letter is last: `sudo -iu postgres psql` is
   `sudo -<redacted> <redacted> psql`), and `chrt -p` or `taskset -p` (`--pid`), which act on
   the process whose pid is the last word and run no program (`chrt -p 10 4242` is
-  `chrt -p <redacted> <redacted>`) unless that pid is 0 or known only at run time, when they
-  run the words after the priority or mask (`chrt -p 10 psql x 0` shows `psql`), so
+  `chrt -p <redacted> <redacted>`) unless that pid reads as a number of 0 or less (chrt
+  reads -1 as no pid) or is known only at run time, when they run the words after the
+  priority or mask (`chrt -p 10 psql x 0` shows `psql`), so
   the program after any wrapper is shown as a bare one is, and a value or operand that names a wrapper is hidden like
   any other (`sudo -D /x/nice rm` is `sudo -D <redacted> rm`, `find /a/env -delete` is
   `find <redacted> -delete`).

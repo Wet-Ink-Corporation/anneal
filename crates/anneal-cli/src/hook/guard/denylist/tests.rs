@@ -371,6 +371,17 @@ fn a_wrapper_option_cluster_or_value_option_takes_its_value_as_getopt_does() {
         ("taskset -p 0x1 rm -rf / 0", RM_RF),
         ("taskset -cp 0 rm -rf / -0", RM_RF),
         ("chrt -p 10 rm -rf / $PID", RM_RF),
+        // chrt's -1 means "no pid given", so it runs the command too: a pid of 0 or less
+        // counts as running it.
+        ("chrt -o -p 0 rm -rf / -1", RM_RF),
+        ("chrt -p 10 rm -rf / -01", RM_RF),
+        ("chrt -p 10 rm -rf / ' -1'", RM_RF),
+        ("taskset -p 0x1 rm -rf / -1", RM_RF),
+        ("chrt -p 10 rm -rf / -5", RM_RF),
+        // A pid that is no number makes them exit with an error before running anything.
+        ("chrt -p 10 rm -rf / 0x10", ALLOW),
+        ("chrt -p 10 rm -rf / ' 4242'", ALLOW),
+        ("chrt -p 10 rm -rf / +4242", ALLOW),
     ]);
 }
 

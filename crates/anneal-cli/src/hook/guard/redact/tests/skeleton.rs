@@ -463,6 +463,10 @@ fn chrt_or_taskset_acting_on_a_pid_runs_no_program() {
             "chrt -p <redacted> psql <redacted> <redacted>",
         ),
         (
+            "chrt -p 10 psql x -1",
+            "chrt -p <redacted> psql <redacted> -1",
+        ),
+        (
             "taskset -p 0x1 psql x 0",
             "taskset -p <redacted> psql <redacted> <redacted>",
         ),
