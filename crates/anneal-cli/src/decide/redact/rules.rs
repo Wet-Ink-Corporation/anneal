@@ -1,6 +1,6 @@
-//! The word rules both redactions apply: the guard's command scanner (`hook::guard::redact`)
-//! and the prose redaction ([`super::safe_prompt`]). They are structural and conservative, so a
-//! new tool or header needs no new row: what names a credential ([`is_credential`]) is enough.
+//! The word rules the prose redaction ([`super::safe_prompt`]) applies. They are structural and
+//! conservative, so a new tool or header needs no new row: what names a credential
+//! ([`is_credential`]) is enough.
 //!
 //! [`find_secret`] reads one word, in this order:
 //! 1. an assignment at its start whose name, quotes stripped, is environment-style or names a
@@ -82,8 +82,7 @@ pub(crate) enum Then {
     Nothing,
     /// The next word is the secret (`--password x`, `curl -u x`).
     NextWord,
-    /// A header's value runs on: to the end of its quote or command in the guard, through its
-    /// quote or the next two words in prose.
+    /// A header's value runs on: through its quote or the next two words.
     Header,
     /// A header-shaped key's value is attached to its word (`Cookie:a=1`, `X-Api-Key:k`): that
     /// word alone is the secret, unless a `;` ends it, after which the next `name=value` words

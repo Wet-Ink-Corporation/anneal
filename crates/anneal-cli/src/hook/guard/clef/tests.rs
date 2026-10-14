@@ -446,7 +446,7 @@ fn the_row_and_the_state_hold_the_trimmed_command_without_secrets() {
 
     world.guard(command, &endpoint);
 
-    let redacted = "AWS_SECRET_ACCESS_KEY=<redacted> export GH_TOKEN=<redacted>; deploy --token=<redacted> --password <redacted>";
+    let redacted = "AWS_SECRET_ACCESS_KEY=<redacted> export <redacted>; deploy --token=<redacted> --password <redacted>";
     let rows = world.rows();
     let [row] = rows.as_slice() else {
         panic!("one row: {rows:?}");

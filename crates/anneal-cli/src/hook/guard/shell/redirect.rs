@@ -1,7 +1,9 @@
 //! Redirections: the files a command writes, where its standard input comes from, and the
 //! heredocs whose bodies follow the line.
 
-use super::{Close, Level, Lexer, ParseError, Quoting, SimpleCommand, Stdin, Word, Writer};
+use super::{
+    Close, Level, Lexer, ParseError, Quoting, Reading, SimpleCommand, Stdin, Word, Writer,
+};
 
 /// What a redirection operator does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +159,11 @@ impl Lexer {
         if self.chars.get(start) == Some(&'>') {
             self.pipe = Some(Writer(None));
         }
-        self.list(Close::Paren("<("), depth.saturating_add(1))?;
+        self.nested(
+            Close::Paren("<("),
+            depth.saturating_add(1),
+            Reading::Commands,
+        )?;
         self.pipe = outer;
         let mut word = Word::new();
         self.push_expansion(&mut word, start, Quoting::Bare);

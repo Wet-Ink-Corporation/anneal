@@ -340,3 +340,63 @@ fn an_expansion_in_double_quotes_is_marked_quoted() {
         "only $a is quoted"
     );
 }
+
+/// Each command of `text` as whether it is arithmetic, and its words as whether each is.
+fn arithmetic(text: &str) -> Vec<(bool, Vec<bool>)> {
+    parse(text)
+        .expect("parses")
+        .iter()
+        .map(|command| {
+            let words = command.words.iter().map(|word| word.arithmetic).collect();
+            (command.arithmetic, words)
+        })
+        .collect()
+}
+
+#[test]
+fn commands_read_inside_arithmetic_are_marked_and_listed_as_before() {
+    let text = "sleep $(( 3600 * $(date +%s) )); (( x = (1) )); ls";
+
+    assert_eq!(
+        words(text),
+        texts(&[
+            &["date", "+%s"],
+            &["3600", "*", "$(date +%s)"],
+            &["sleep", "$(( 3600 * $(date +%s) ))"],
+            &["x", "="],
+            &["1"],
+            &["ls"],
+        ]),
+        "the lexer lists the same commands"
+    );
+    assert_eq!(
+        arithmetic(text)
+            .iter()
+            .map(|(command, _)| *command)
+            .collect::<Vec<_>>(),
+        [false, true, false, true, true, false],
+        "only the commands inside `$(( ))` and `(( ))` are arithmetic"
+    );
+}
+
+#[test]
+fn words_between_an_unquoted_dollar_bracket_and_its_close_are_marked() {
+    let text = "x=$[ a[1] + `b` ] c '$[' d";
+
+    assert_eq!(
+        words(text),
+        texts(&[&["b"], &["x=$[", "a[1]", "+", "`b`", "]", "c", "$[", "d"]]),
+        "the lexer splits the words as before"
+    );
+    assert_eq!(
+        arithmetic(text),
+        [
+            (false, vec![false]),
+            (
+                false,
+                vec![true, true, true, true, true, false, false, false]
+            ),
+        ],
+        "from `$[` to its own `]`, and nothing inside the backticks"
+    );
+}

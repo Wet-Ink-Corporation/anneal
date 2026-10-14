@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, is_meta};
+use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, Reading, is_meta};
 
 /// A shell word after quote removal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +15,10 @@ pub(crate) struct Word {
     pub(crate) quoted: bool,
     /// Each expansion's source text in `text` (`$x`, `${x}`, `$( )`, backticks, `<( )`).
     pub(crate) expansions: Vec<Expansion>,
+    /// Whether it was read inside an arithmetic expression: in a command of one (see
+    /// [`super::SimpleCommand::arithmetic`]), or from an unquoted `$[` up to its `]`, which the
+    /// lexer splits into words as it always has.
+    pub(crate) arithmetic: bool,
 }
 
 /// Where an expansion's source text is in its word's text, and whether it was in double
@@ -45,6 +49,7 @@ impl Word {
             shape: Shape::Literal,
             quoted: false,
             expansions: Vec::new(),
+            arithmetic: false,
         }
     }
 
@@ -55,6 +60,7 @@ impl Word {
             shape: Shape::Literal,
             quoted: true,
             expansions: Vec::new(),
+            arithmetic: false,
         }
     }
 
@@ -96,6 +102,7 @@ impl Lexer {
     /// Reads one word, removing quotes and escapes.
     pub(super) fn word(&mut self, close: Close, depth: usize) -> Result<Word, ParseError> {
         let mut word = Word::new();
+        word.arithmetic = self.in_arithmetic();
         while let Some(c) = self.peek() {
             if is_meta(c) || (c == '`' && close == Close::Backtick) {
                 break;
@@ -129,7 +136,15 @@ impl Lexer {
             '$' => self.dollar(word, Quoting::Bare, depth)?,
             '`' => self.backticks(word, Quoting::Bare, depth)?,
             '*' | '?' | '[' | '{' => {
+                // A `[` inside `$[ ]` (an array subscript) is closed by a `]` of its own.
+                if c == '[' && self.brackets > 0 {
+                    self.brackets = self.brackets.saturating_add(1);
+                }
                 word.mark(Shape::Pattern);
+                word.text.push(c);
+            }
+            ']' => {
+                self.brackets = self.brackets.saturating_sub(1);
                 word.text.push(c);
             }
             '~' if word.text.is_empty() && !word.quoted => {
@@ -196,11 +211,27 @@ impl Lexer {
         match self.peek() {
             Some('(') => {
                 self.advance();
-                self.list(Close::Paren("$("), inner)?;
+                // `$((` is arithmetic; its commands are listed as those of `$( (` would be.
+                let reading = if self.peek() == Some('(') {
+                    Reading::Arithmetic
+                } else {
+                    Reading::Commands
+                };
+                self.nested(Close::Paren("$("), inner, reading)?;
             }
             Some('{') => {
                 self.advance();
                 self.braced(inner)?;
+            }
+            Some('[') if quoting == Quoting::Bare => {
+                // `$[ ]`, the old arithmetic form, still read as a `$` and a pattern's `[`,
+                // its words split as before: only marked, up to the `]` that closes it.
+                self.advance();
+                self.brackets = self.brackets.saturating_add(1);
+                word.arithmetic = true;
+                word.mark(Shape::Pattern);
+                word.text.push_str("$[");
+                return Ok(());
             }
             Some('\'') if quoting == Quoting::Bare => {
                 self.advance();
@@ -246,10 +277,15 @@ impl Lexer {
             return Err(ParseError::TooDeep);
         }
         let mut scratch = Word::new();
+        // A `$[` inside is closed by a `]` this loop does not count.
+        let brackets = self.brackets;
         loop {
             match self.bump() {
                 None => return Err(ParseError::Unclosed { what: "${" }),
-                Some('}') => return Ok(()),
+                Some('}') => {
+                    self.brackets = brackets;
+                    return Ok(());
+                }
                 Some('\\') => self.advance(),
                 Some('\'') => self.single_quoted(&mut scratch)?,
                 Some('"') => self.quoted_body(&mut scratch, Some('"'), depth)?,
@@ -267,7 +303,7 @@ impl Lexer {
         depth: usize,
     ) -> Result<(), ParseError> {
         let start = self.pos.saturating_sub(1);
-        self.list(Close::Backtick, depth.saturating_add(1))?;
+        self.nested(Close::Backtick, depth.saturating_add(1), Reading::Commands)?;
         self.push_expansion(word, start, quoting);
         Ok(())
     }
