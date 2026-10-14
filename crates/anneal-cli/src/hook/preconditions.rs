@@ -1,13 +1,18 @@
-//! `anneal hook preconditions`: the `PreToolUse` gate on Edit and Write. It fails closed.
+//! `anneal hook preconditions`: the `PreToolUse` gate on Edit, Write, `MultiEdit` and
+//! `NotebookEdit`. It fails closed.
 //!
-//! It reads Claude Code's `PreToolUse` input on stdin and finds the edited file's own
-//! worktree (from the file's longest existing ancestor directory, not the session's working
-//! directory) and that worktree's anneal mode in the ledger (`mode::active`). A file in no
-//! repository, no ledger, no mode or mode `off` is allowed silently, and it never creates a
-//! ledger; the one exception is `.anneal/config.json`, anneal's own settings, which it denies
-//! in every mode and none (`Check::Settings`). In a mode it allows test files, the build's
-//! plan and design tree, scratch directories and prose documents (the spec among them when it
-//! is one) (`mode::scope`), and judges every other file as source:
+//! It reads Claude Code's `PreToolUse` input on stdin and judges every file the call names
+//! (`input`: `file_path`, the `notebook_path` of `NotebookEdit`, the `file_path` of each edit
+//! of `MultiEdit`; the first denial is the answer). Each is judged where the OS writes it
+//! (`mode::resolve`: `..` after a symlink climbs from its target, a dangling symlink leads to
+//! its target), in its own worktree (from the longest existing ancestor directory of where it
+//! lands, not the session's working directory) and that worktree's anneal mode in the ledger
+//! (`mode::active`). A file in no repository, no ledger, no mode or mode `off` is allowed
+//! silently, and it never creates a ledger; the one exception is `.anneal/config.json`,
+//! anneal's own settings, which it denies in every mode and none (`Check::Settings`). In a
+//! mode it allows test files, the build's plan and design tree, scratch directories and prose
+//! documents (the spec among them when it is one) (`mode::scope`), and judges every other file
+//! as source:
 //!
 //! - build mode (`build`): the plan's spec passes `lint spec`, the design tree is confirmed at
 //!   its current hash, the tree was clean at entry and the plan is approved and current;
@@ -20,6 +25,7 @@
 //! is denied. See `docs/preconditions.md`.
 
 mod build;
+mod input;
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -31,7 +37,6 @@ use anneal_ledger::{
     EventEnvelope, EventKind, Filter, LedgerEvent, LedgerTag, Store, StoreError, TagKey, Timestamp,
     TimestampError,
 };
-use serde::Deserialize;
 
 use crate::error_chain::reason;
 use crate::existing_ledger::{self, LedgerError};
@@ -41,8 +46,7 @@ use crate::mode::scope::{self, PathKind};
 use crate::mode::{self, Active};
 use crate::paths::{self, PathError};
 
-/// The tools whose calls are judged; any other is allowed.
-const GATED_TOOLS: [&str; 2] = ["Edit", "Write"];
+use self::input::{Input, Tool};
 
 /// The `point` of the hook's `gate_blocked` events, before the check's id.
 const POINT_PREFIX: &str = "preconditions.";
@@ -123,27 +127,6 @@ pub(crate) fn unjudged(what: &str, error: &dyn Error) -> Denial {
             reason(error)
         ),
     )
-}
-
-/// The fields of Claude Code's `PreToolUse` input the hook uses; the rest are ignored.
-#[derive(Debug, Deserialize)]
-struct Input {
-    #[serde(default)]
-    session_id: Option<String>,
-    /// Where the ledger and the worktree are found, and relative paths resolved; the process's
-    /// working directory when absent.
-    #[serde(default)]
-    cwd: Option<PathBuf>,
-    tool_name: String,
-    #[serde(default, rename = "tool_input")]
-    tool: ToolInput,
-}
-
-/// The Edit and Write tools' input; other fields are ignored.
-#[derive(Debug, Default, Deserialize)]
-struct ToolInput {
-    #[serde(default)]
-    file_path: Option<PathBuf>,
 }
 
 /// Why the hook input could not be used.
@@ -267,9 +250,9 @@ fn judge(
     current_dir: impl FnOnce() -> io::Result<PathBuf>,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Verdict {
-    if !GATED_TOOLS.contains(&input.tool_name.as_str()) {
+    let Some(tool) = Tool::named(&input.tool_name) else {
         return Verdict::allow();
-    }
+    };
     let cwd = match input.cwd {
         Some(cwd) => cwd,
         None => match current_dir() {
@@ -280,21 +263,31 @@ fn judge(
             }
         },
     };
-    let Some(file_path) = input.tool.file_path else {
-        let denial = Denial::new(
-            Check::BadInput,
-            format!(
-                "preconditions: the hook input cannot be read: the {} input has no \
-                 tool_input.file_path",
-                input.tool_name
-            ),
-        );
-        return Verdict::deny(denial, open_existing(&cwd, lookup));
+    let paths = match input.tool.paths(tool, &input.tool_name) {
+        Ok(paths) => paths,
+        Err(denial) => return Verdict::deny(denial, open_existing(&cwd, lookup)),
     };
-    let target = cwd.join(file_path);
+    // Every file the call writes is judged; the first denial is the answer.
+    for path in paths {
+        let verdict = judge_path(&cwd.join(path), &lookup);
+        if verdict.denial.is_some() {
+            return verdict;
+        }
+    }
+    Verdict::allow()
+}
+
+/// Judges an edit of `target` (absolute): allow, or the first missing precondition of its
+/// worktree's mode.
+fn judge_path(target: &Path, lookup: impl Fn(&str) -> Option<OsString>) -> Verdict {
+    // Where the OS writes: `..` after a symlink, and a dangling symlink, lead elsewhere than
+    // the name says. A path that cannot be resolved is judged unjudged once a mode is found.
+    let resolved = mode::resolve::resolve(target);
+    let lexical = lexical(target);
     // The edited file's own worktree decides, wherever the session runs: a session in a
     // sibling worktree, or above the repository, writes into a gated worktree all the same.
-    let Some(anchor) = existing_ancestor(&target) else {
+    // It is found from where the file lands, or from its name when that cannot be resolved.
+    let Some(anchor) = existing_ancestor(resolved.as_deref().unwrap_or(&lexical)) else {
         let denial = Denial::new(
             Check::Unjudged,
             format!(
@@ -306,7 +299,7 @@ fn judge(
     };
     // Before any ledger or mode: the settings name the agents trusted to spawn and the merge
     // gate's rules, so an agent may never write them, in a mode or not.
-    if is_settings(&target, &anchor) {
+    if is_settings(&lexical, resolved.as_deref().ok()) {
         let denial = Denial::new(Check::Settings, SETTINGS_DENIED);
         return Verdict::deny(denial, open_existing(&anchor, lookup));
     }
@@ -321,36 +314,39 @@ fn judge(
         // No ledger: no mode was ever entered in the edited file's repository.
         return Verdict::allow();
     };
-    match judge_in_mode(&store, &anchor, &target) {
+    match judge_in_mode(&store, &anchor, target, resolved.as_deref()) {
         Some(denial) => Verdict::deny(denial, Ok(Some(store))),
         None => Verdict::allow(),
     }
 }
 
-/// The longest existing directory among `target` (absolute) and its ancestors, after `.` and
-/// `..` are taken lexically: where git is asked which worktree the edit is in.
-fn existing_ancestor(target: &Path) -> Option<PathBuf> {
-    let lexical = PathBuf::from(scope::normalise(&target.to_string_lossy()));
-    lexical
-        .ancestors()
+/// `target` (absolute) with `.` and `..` taken lexically.
+fn lexical(target: &Path) -> PathBuf {
+    PathBuf::from(scope::normalise(&target.to_string_lossy()))
+}
+
+/// The longest existing directory among `path` (absolute, without `.` or `..`) and its
+/// ancestors: where git is asked which worktree the edit is in.
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
         .find(|dir| dir.is_dir())
         .map(Path::to_path_buf)
 }
 
-/// Whether `target` (absolute), whose longest existing ancestor directory is `anchor`, is a
-/// `.anneal/config.json`: as written after `.` and `..`, as the file resolves when it exists,
-/// or as `anchor` resolves with the rest of the path after it (a symlinked directory). Any
+/// Whether the edited file, `lexical` as written after `.` and `..` and `resolved` where the
+/// OS writes it ([`mode::resolve::resolve`], when it resolves), is a `.anneal/config.json`: as
+/// written, as `resolved`, as the file resolves when it exists, or as its longest existing
+/// ancestor directory resolves with the rest of the path after it (a symlinked directory). Any
 /// directory's counts, not only the worktree root's, since this is judged before git is asked.
-/// A path that does not resolve is judged as written: the edit tool would meet the same
-/// failure.
-fn is_settings(target: &Path, anchor: &Path) -> bool {
-    let lexical = PathBuf::from(scope::normalise(&target.to_string_lossy()));
+fn is_settings(lexical: &Path, resolved: Option<&Path>) -> bool {
     let through_anchor = || {
-        let rest = lexical.strip_prefix(anchor).ok()?;
-        Some(std::fs::canonicalize(anchor).ok()?.join(rest))
+        let anchor = existing_ancestor(lexical)?;
+        let rest = lexical.strip_prefix(&anchor).ok()?;
+        Some(std::fs::canonicalize(&anchor).ok()?.join(rest))
     };
-    names_settings(&lexical)
-        || std::fs::canonicalize(&lexical).is_ok_and(|real| names_settings(&real))
+    names_settings(lexical)
+        || resolved.is_some_and(names_settings)
+        || std::fs::canonicalize(lexical).is_ok_and(|real| names_settings(&real))
         || through_anchor().is_some_and(|real| names_settings(&real))
 }
 
@@ -369,10 +365,16 @@ fn names_settings(path: &Path) -> bool {
     })
 }
 
-/// The denial for an edit of `target` (absolute), whose longest existing ancestor directory is
-/// `anchor`, given the ledger `store`: `None` when `target` is in no repository, with no mode
-/// for its worktree, for a path the mode allows, or when the mode's preconditions hold.
-fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> {
+/// The denial for an edit of `target` (absolute), which the OS writes at `resolved`, whose
+/// longest existing ancestor directory is `anchor`, given the ledger `store`: `None` when
+/// `target` is in no repository, with no mode for its worktree, for a path the mode allows, or
+/// when the mode's preconditions hold.
+fn judge_in_mode(
+    store: &Store,
+    anchor: &Path,
+    target: &Path,
+    resolved: Result<&Path, &io::Error>,
+) -> Option<Denial> {
     let root = match paths::worktree_root_within(anchor, GIT_TIMEOUT) {
         Ok(root) => root,
         Err(PathError::NotARepository { .. }) => return None,
@@ -382,25 +384,36 @@ fn judge_in_mode(store: &Store, anchor: &Path, target: &Path) -> Option<Denial> 
         Ok(entered) => entered?,
         Err(error) => return Some(unjudged("the ledger cannot be read", &error)),
     };
-    let relative = match mode::worktree_relative(Path::new(&root), target) {
-        Ok(Some(relative)) => relative,
-        Ok(None) => {
-            let denial = Denial::new(
-                Check::Unjudged,
-                format!(
-                    "preconditions: {} is not inside its own worktree {root} once resolved, so \
-                     the edit cannot be checked",
-                    target.display()
-                ),
-            );
-            return Some(denial);
-        }
-        Err(error) => return Some(unjudged("the edited path cannot be resolved", &error)),
+    let relative = match relative_in(&root, target, resolved) {
+        Ok(relative) => relative,
+        Err(denial) => return Some(denial),
     };
     match &entered.mode {
         Active::Build(build) => build::check(store, Path::new(&root), build, &relative),
         Active::IncompleteBuild => incomplete(&relative),
         Active::Diagnose => diagnose(store, &root, entered.position, &relative),
+    }
+}
+
+/// `resolved`, where the OS writes `target`, relative to the worktree whose top-level
+/// directory is `root`; the denial when it cannot be resolved or lies outside that worktree.
+fn relative_in(
+    root: &str,
+    target: &Path,
+    resolved: Result<&Path, &io::Error>,
+) -> Result<String, Denial> {
+    let real = resolved.map_err(|error| unjudged("the edited path cannot be resolved", error))?;
+    match mode::resolved_relative(Path::new(root), real) {
+        Ok(Some(relative)) => Ok(relative),
+        Ok(None) => Err(Denial::new(
+            Check::Unjudged,
+            format!(
+                "preconditions: {} is not inside its own worktree {root} once resolved, so the \
+                 edit cannot be checked",
+                target.display()
+            ),
+        )),
+        Err(error) => Err(unjudged("the worktree root cannot be resolved", &error)),
     }
 }
 

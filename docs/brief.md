@@ -104,10 +104,9 @@ unjudged, naming the problem (for a name, its index). A plugin's agent reports a
 list that form for one.
 
 An agent cannot add itself to the list: the guard denies Bash writes to `.anneal/config.json`
-(and removing `.anneal`), and the preconditions hook denies the Edit and Write tools on it in
-every mode and with none (`preconditions.settings`), so a human edits it. The hook's matcher is
-`Edit|Write`, so `MultiEdit` and `NotebookEdit` on it are left to Claude Code's permissions, as
-for every file the hook gates (`docs/preconditions.md`).
+(and removing `.anneal`), and the preconditions hook denies the Edit, Write, MultiEdit and
+NotebookEdit tools on it in every mode and with none (`preconditions.settings`), so a human edits
+it (`docs/preconditions.md`).
 
 ## Standing orders
 

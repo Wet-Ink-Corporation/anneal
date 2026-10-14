@@ -175,6 +175,13 @@ fn hook_in(cwd: &Path, stdin: &[u8]) -> Result<Output, Box<dyn Error>> {
 }
 
 impl Repo {
+    /// A repository in diagnose mode with no reproduction: every source edit is denied.
+    fn diagnosing() -> Result<Self, Box<dyn Error>> {
+        let repo = Self::new()?;
+        repo.anneal(&["mode", "diagnose"], 0)?;
+        Ok(repo)
+    }
+
     /// Records a red reproduction with `anneal repro record` in the repository.
     fn repro(&self) -> TestResult {
         repro_in(self.path(), &RED, 0)
@@ -855,3 +862,6 @@ fn a_mode_entered_through_one_letter_case_gates_edits_through_another() -> TestR
     assert!(reason.starts_with("ERROR build mode: "), "{reason}");
     Ok(())
 }
+
+mod resolution;
+mod tools;

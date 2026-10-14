@@ -11,12 +11,12 @@
 //! - [`envelope`]: the JSON envelope on stdout and its findings.
 //! - [`hook`]: `anneal hook <name>`, the commands `hooks.json` runs (the fail-open
 //!   `SessionStart` bootstrap, the fail-closed `PreToolUse` Bash guard and the fail-closed
-//!   `PreToolUse` preconditions hook on Edit and Write), and the one-`ERROR`-line output
+//!   `PreToolUse` preconditions hook on file edits), and the one-`ERROR`-line output
 //!   hooks share.
 //! - [`lint`]: `anneal lint skills|terms|spec|plan` and the lint finding model.
 //! - [`plan`]: `anneal plan approve|check`, a plan approval recorded in the ledger by hash.
 //! - [`mode`]: `anneal mode build|diagnose|off`, the worktree's anneal mode that the
-//!   `PreToolUse` preconditions hook (`hook preconditions`, on Edit and Write) enforces.
+//!   `PreToolUse` preconditions hook (`hook preconditions`, on file edits) enforces.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`, and with
 //!   `--router claude` Tier 2, the same prompts under Claude Code's router with Wilson
 //!   intervals; `anneal eval uplift`, Tier 3, each entry skill's behaviour suites with the

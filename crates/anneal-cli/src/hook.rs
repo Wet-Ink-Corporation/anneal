@@ -67,7 +67,8 @@ pub enum HookName {
     Bootstrap,
     /// `PreToolUse` (Bash): deny commands on the denylist; fails closed
     Guard,
-    /// `PreToolUse` (Edit|Write): in an anneal mode, deny source edits until its preconditions
+    /// `PreToolUse` (Edit|Write|MultiEdit|NotebookEdit): in an anneal mode, deny source edits
+    /// until its preconditions
     /// hold; fails closed
     Preconditions,
     /// `PostToolBatch`: in an anneal mode, run the fast checks once per batch of edits; fails
