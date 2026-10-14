@@ -276,14 +276,21 @@ A file the leftover scan could not read (over 1 MiB, past the 64 MiB budget, or 
 open) is a nudge naming how many were skipped and pointing at `anneal repro leftovers`.
 
 - **Success words** (`hook::completeness::claim::CLAIMS`): `all tests pass`, `tests pass`
-  (`test` or `tests`, and `pass`, `passes`, `passed` or `passing`), `works now`, `all green`,
-  `done`, `passes`, `passed`, `passing`, `green`, `fixed`, `complete`, `completed`, `finished`,
-  `succeeded` and `succeeds`, as whole words in one clause, in any letter case. Fenced code
-  blocks, code spans and HTML comments are quoted text, not claims, and a claim with `not`,
-  `never`, `no` or a word ending in `n't` one or two words before it in the same clause is not
-  one. Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so "No failures.
-  Done." claims. Some false positives ("done reading the logs") are accepted: the block cap
-  bounds them.
+  (`test`, `tests`, `check`, `checks`, `build` or `builds`, and `pass`, `passes`, `passed` or
+  `passing`), `works now`, `all green`, `done`, `passes`, `passed`, `passing`, `green`,
+  `fixed`, `complete`, `completed`, `finished`, `succeeded`, `succeeds`, `ready to merge`,
+  `ready for review`, `everything works` (`everything`, `it`, `everything's` or `it's`, then
+  `works` or `working`, or `everything is working`), `implemented` and `resolved`, as whole
+  words in one clause, in any letter case. Fenced code blocks, code spans and HTML comments
+  are quoted text, not claims. Three structural rules withdraw a claim within its clause: a
+  negation (`not`, `never`, `no` or a word ending in `n't`) one or two words before it, a
+  conditional (`if`, `once`, `when`, `whenever`, `unless`, `until`) anywhere before it ("Once
+  checks pass, I'll merge."), and a `?` ending the clause ("Does it work?"). Clauses end at
+  `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so "No failures. Done." claims. A hyphen
+  between two letters or digits is part of the word, so "half-done" is not `done`; a spaced
+  hyphen, `--`, an en dash and an em dash still end a clause. Some false positives ("done
+  reading the logs", "here is how it works") are accepted: the block cap bounds them. Clef D4
+  does not read these words: it judges the status block's sections on its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in
