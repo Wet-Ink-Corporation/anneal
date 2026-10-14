@@ -148,6 +148,21 @@ fn a_denied_command_gets_a_deny_decision_and_a_gate_blocked_event() -> TestResul
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_brace_after_a_quoted_expansion_is_expanded_and_denied() -> TestResult {
+    let scratch = Scratch::new()?;
+
+    let output = scratch.guard(&scratch.bash("rm \"$b\"{-rf,/}")?)?;
+
+    let reason = deny_reason(&output)?;
+    assert!(
+        reason.starts_with("ERROR guard rm-rf: rm $b-rf $b/: $b-rf may be -rf"),
+        "the brace is expanded and the expansion may be the flags: {reason}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_allowed_command_is_silent_and_records_nothing() -> TestResult {
     let scratch = Scratch::new()?;
 

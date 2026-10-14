@@ -16,6 +16,15 @@ fn a_command_the_lexer_cannot_read_is_one_fixed_marker() {
 }
 
 #[test]
+fn a_brace_or_glob_after_an_expansion_is_never_shown_as_a_program_or_a_target() {
+    assert_cases(&[
+        ("\"$b\"{rm,-rf,/}", "<redacted>"),
+        ("rm \"$b\"{-rf,/}", "rm <redacted>"),
+        ("rm -rf \"$b\"*", "rm -rf <redacted>"),
+    ]);
+}
+
+#[test]
 fn programs_and_separators_are_kept_and_arguments_hidden() {
     assert_cases(&[
         (

@@ -140,6 +140,41 @@ fn a_dynamic_rm_argument_may_be_the_recursive_force_flags() {
 }
 
 #[test]
+fn a_brace_or_glob_after_an_expansion_is_still_judged() {
+    assert_table(&[
+        ("rm \"$b\"{-rf,/}", RM_RF),
+        ("rm \"$(:)\"{-rf,/}", RM_RF),
+        ("rm ${b}{-rf,/}", RM_RF),
+        ("rm \"$(echo a,b)\"{-rf,/}", RM_RF),
+        ("git push \"$b\"{-f,origin,main}", FORCE_PUSH),
+        ("git push origin \"$b\"{+main,x}", FORCE_PUSH),
+        ("b=; rm \"$b\"{-rf,/}", RM_RF),
+        ("rm -rf \"$b\"*", RM_RF),
+        ("\"$b\"{rm,-rf,/}", UNREADABLE),
+        ("tee \"$d\"/.claude/{settings.json,x}", CONFIG),
+        ("tee \"$d\"{.claude/settings.json,x}", CONFIG),
+        ("tee \"$d\".clau*/settings.json", CONFIG),
+        ("rm -f \"$d\"/*.log", ALLOW),
+        ("rm \"$d\"/{a,b}", ALLOW),
+        ("cp \"$f\"{,.bak}", ALLOW),
+        ("echo \"$x\"{a,b}", ALLOW),
+        ("mkdir -p \"$d\"/{a,b}", ALLOW),
+        ("echo \"${x:-{a,b}}\"", ALLOW),
+    ]);
+}
+
+#[test]
+fn an_option_cluster_after_an_expansion_may_be_the_recursive_force_flags() {
+    assert_table(&[
+        ("rm \"$b\"-rf /", RM_RF),
+        ("rm -$x /", RM_RF),
+        ("rm \"$a$b\" /", RM_RF),
+        ("rm \"$f\".txt \"$g\".txt", ALLOW),
+        ("rm -$x /tmp/y", ALLOW),
+    ]);
+}
+
+#[test]
 fn near_misses_of_the_new_forms_are_allowed() {
     assert_table(&[
         ("echo \"$(case x in x) echo y;; esac)\"", ALLOW),

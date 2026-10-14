@@ -352,6 +352,22 @@ fn a_gh_variable_built_by_a_brace_sequence_is_unreadable() {
 }
 
 #[test]
+fn a_gh_variable_built_by_a_brace_sequence_beside_an_expansion_is_unreadable() {
+    let rows = [
+        "export GH_REP{O..O}\"$x\"=o/x; gh pr merge 5",
+        "export G{H..H}_REPO$x=o/x; gh pr merge 5",
+    ];
+
+    for command in rows {
+        let scan = find_pr_merge(command, &context());
+        assert!(
+            matches!(scan, MergeScan::Unreadable(ref denial) if denial.rule == Rule::Unparseable),
+            "{command}: {scan:?}"
+        );
+    }
+}
+
+#[test]
 fn a_merge_run_where_the_command_started_is_not_moved() {
     let rows = [
         "gh pr merge 5",

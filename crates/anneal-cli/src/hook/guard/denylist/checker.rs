@@ -237,8 +237,22 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// Applies the entries for `program` (all of them when the program is not known).
+    /// Applies the entries for `program` (all of them when the program is not known), to the
+    /// arguments as written and, when a word holds both an expansion and an unquoted pattern
+    /// character, again with those expansions empty (`"$b"{-rf,/}` is `{-rf,/}` when `b` is
+    /// empty), so such a word is judged at least as strictly as its pattern alone. `cd` is
+    /// followed once: the first reading already sends it anywhere.
     fn program(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        let denial = self.reading(program, args, scope);
+        if denial.is_some() || matches!(program, Program::Named("cd" | "pushd")) {
+            return denial;
+        }
+        let emptied = braces::empty_expansions(args)?;
+        self.reading(program, &emptied, scope)
+    }
+
+    /// Applies the entries for `program` to one reading of its arguments.
+    fn reading(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let args = match braces::expand(args) {
             Ok(args) => args,
             Err(denial) => return Some(denial),

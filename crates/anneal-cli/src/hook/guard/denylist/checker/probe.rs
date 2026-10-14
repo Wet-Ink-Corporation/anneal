@@ -9,7 +9,7 @@ use crate::hook::guard::Denial;
 use crate::hook::guard::denylist::braces;
 use crate::hook::guard::denylist::gh::{self, PrMerge};
 use crate::hook::guard::denylist::wrappers;
-use crate::hook::guard::shell::{Shape, SimpleCommand, Stdin, Word};
+use crate::hook::guard::shell::{SimpleCommand, Stdin, Word};
 
 /// The variables that point gh at another repository or host; the probe notes a command that
 /// sets or names one (`GH_REPO=o/x gh ...`, `env`, `export`), wherever it does.
@@ -90,7 +90,8 @@ fn gh_target(text: &str) -> Option<&'static str> {
 /// expand) that may build a gh variable's name: the text before its first `{` starts with
 /// `GH_`, or begins `GH_` (`G{H..H}_REPO`), or is empty in an assignment (`{G..G}H_REPO=`).
 fn sequence_may_name_gh_variable(word: &Word) -> bool {
-    if word.shape != Shape::Pattern {
+    // An unquoted brace whatever else the word holds (`GH_REP{O..O}"$x"=`).
+    if !word.has_pattern() {
         return false;
     }
     let text = word.text.as_str();
