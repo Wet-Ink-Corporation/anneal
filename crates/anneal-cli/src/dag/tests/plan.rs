@@ -124,6 +124,148 @@ fn a_plan_whose_tasks_cannot_all_be_read_is_a_finding() {
 }
 
 #[test]
+fn an_outside_blocker_ticket_file_does_not_fail_the_check() {
+    let dir = tickets(&[
+        ("T1.md", "---\nblocked_by: [REL-5]\n---\n"),
+        ("T2.md", "---\nblocked_by: [T1]\n---\n"),
+        ("REL-5.md", "---\nblocked_by: []\n---\n"),
+    ]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&[("T1", "none"), ("T2", "T1")]));
+
+    let (code, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(
+        code, 0,
+        "REL-5 is a blocker from outside the plan: {envelope}"
+    );
+    assert_eq!(envelope["findings"], json!([]), "no finding");
+}
+
+#[test]
+fn a_plan_blocker_outside_the_plan_is_unread() {
+    let dir = tickets(&[
+        ("T1.md", "---\nblocked_by: []\n---\n"),
+        ("T2.md", "---\nblocked_by: [T1]\n---\n"),
+    ]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&[("T1", "none"), ("T2", "T1, REL-5")]));
+
+    let (code, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(code, 3, "lint plan refuses an outside blocker in the plan");
+    assert_eq!(envelope["data"]["plan"]["unread"], json!(1), "one finding");
+    assert_eq!(
+        keys(&envelope),
+        ["dag/plan/unread:plan.md"],
+        "the blockers among the plan's tasks agree"
+    );
+}
+
+#[test]
+fn findings_lint_plan_dropped_count_as_unread() {
+    let tasks: Vec<String> = (1..=1_001).map(|n| format!("T{n}")).collect();
+    let pairs: Vec<(&str, &str)> = tasks.iter().map(|id| (id.as_str(), id.as_str())).collect();
+    let dir = tickets(&[]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&pairs));
+
+    let (_, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(
+        envelope["data"]["plan"]["unread"],
+        json!(1),
+        "1,001 self-blocked tasks: lint plan keeps 1,000 findings and drops one, which may hide \
+         anything"
+    );
+}
+
+#[test]
+fn a_cycle_and_a_plan_mismatch_exit_1_with_the_plan_findings_listed() {
+    let dir = tickets(&[
+        ("T1.md", "---\nblocked_by: [T2]\n---\n"),
+        ("T2.md", "---\nblocked_by: [T1]\n---\n"),
+    ]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&[("T1", "none"), ("T2", "T1"), ("T3", "none")]));
+
+    let (code, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(code, 1, "the cycle's code wins");
+    assert_eq!(
+        keys(&envelope),
+        [
+            "dag/cycle:T1->T2",
+            "dag/plan/no-ticket:T3",
+            "dag/plan/blockers:T1",
+        ],
+        "the graph's finding, then the plan's"
+    );
+}
+
+#[test]
+fn a_repeated_task_heading_is_unread() {
+    let dir = tickets(&[("T1.md", "---\nblocked_by: []\n---\n")]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&[("T1", "none"), ("T1", "none")]));
+
+    let (code, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(code, 3, "a repeated task may hide one: {envelope}");
+    assert_eq!(envelope["data"]["plan"]["unread"], json!(1), "one finding");
+    assert_eq!(
+        keys(&envelope),
+        ["dag/plan/unread:plan.md"],
+        "names the plan"
+    );
+}
+
+#[test]
+fn a_malformed_blocked_by_line_is_unread() {
+    let dir = tickets(&[
+        ("T1.md", "---\nblocked_by: []\n---\n"),
+        ("T2.md", "---\nblocked_by: []\n---\n"),
+    ]);
+    let (_plan_dir, plan) = read_plan(&plan_text(&[("T1", "none"), ("T2", "T1 and more")]));
+
+    let (code, envelope) = emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+    assert_eq!(code, 3, "a blocker may be missing: {envelope}");
+    assert_eq!(envelope["data"]["plan"]["unread"], json!(1), "one finding");
+    assert_eq!(
+        keys(&envelope),
+        ["dag/plan/unread:plan.md"],
+        "names the plan"
+    );
+}
+
+#[test]
+fn mismatches_are_capped_at_max_findings_and_the_rest_counted() {
+    for (count, omitted) in [(1_000, None), (1_001, Some(1))] {
+        let tasks: Vec<String> = (1..=count).map(|n| n.to_string()).collect();
+        let pairs: Vec<(&str, &str)> = tasks.iter().map(|id| (id.as_str(), "none")).collect();
+        let dir = tickets(&[]);
+        let (_plan_dir, plan) = read_plan(&plan_text(&pairs));
+
+        let (code, envelope) =
+            emitted(|out| check_with(&Markdown::new(dir.path()), Some(&plan), out));
+
+        assert_eq!(code, 3, "{count}: no task has a ticket");
+        let findings = envelope["findings"].as_array().expect("findings");
+        assert_eq!(findings.len(), 1_000, "{count}: capped");
+        assert_eq!(
+            findings.last().map(|f| &f["key"]),
+            Some(&json!("dag/plan/no-ticket:1000")),
+            "{count}: the first in id order, numbers by value"
+        );
+        let listed = envelope["data"]["plan"]["no_ticket"]
+            .as_array()
+            .map(Vec::len);
+        assert_eq!(listed, Some(1_000), "{count}: capped in data too");
+        assert_eq!(
+            envelope["data"]["plan"].get("omitted"),
+            omitted.map(|n: usize| json!(n)).as_ref(),
+            "{count}: the rest counted, only when some were left out"
+        );
+    }
+}
+
+#[test]
 fn a_missing_plan_is_a_usage_error() {
     let dir = tempfile::tempdir().expect("tempdir");
 

@@ -170,16 +170,29 @@ the graph check.
   [plan.md](plan.md)). The path is relative to the working directory. A missing plan, a
   directory or a file over the cap is a usage error (exit 2, one `ERROR plan:` line, nothing
   on stdout); a read failure exits 70.
-- **Blockers are compared as sets**: order and repeats do not matter. On the ticket's side
-  only the blockers that are tasks of the plan count. A blocker from outside the plan, such as
+- **Blockers are compared as sets**: order and repeats do not matter. Only the blockers that
+  are tasks of the plan count, on both sides. A blocker from outside the plan, such as
   another team's ticket or a release, belongs in the tracker alone (the `plan` skill's
   `references/slice.md`), so it is never a disagreement.
+- **An outside blocker's own ticket is not a ticket with no task.** With the markdown
+  tracker an outside blocker such as `REL-5` must exist as `tickets/REL-5.md`, or the graph
+  dangles. A ticket that is no task of the plan but blocks a task's ticket, directly or
+  through other such tickets (`REL-5` blocked by `REL-4`), is an outside blocker: it is
+  neither compared nor reported. Any other ticket in scope that is no task is
+  `dag/plan/no-task`.
+- **With GitHub, pass `--issue`.** Without it every open issue of the repository is in
+  scope, so each unrelated issue is a `dag/plan/no-task` finding. With `--issue N` the scope
+  is the plan's parent issue's sub-issues, and blockers outside it are fetched as external
+  tickets, which are never in scope.
+- **The plan's own outside blockers.** A plan task `Blocked by:` an id that is no task of the
+  plan is a `lint plan` `blockers` finding (outside blockers belong in the tracker), so it
+  counts in `unread` rather than being compared.
 
 Findings, after the graph's, each in id order:
 
 | Finding | Meaning |
 |---|---|
-| `dag/plan/unread:<file>` | `lint plan` finds a problem with the plan's tasks or task fields, so a task or blocker may be missing from the comparison. Run `anneal lint plan`. |
+| `dag/plan/unread:<file>` | `lint plan` finds a problem that may hide a task or blocker from the comparison: a `tasks` or `task-fields` finding, a `blockers` finding naming a blocker that is no task of the plan, or findings it dropped past its cap of 1,000. Run `anneal lint plan`. |
 | `dag/plan/no-ticket:<id>` | A task of the plan has no ticket. |
 | `dag/plan/no-task:<id>` | A ticket in scope is no task of the plan. |
 | `dag/plan/blockers:<id>` | The task's ticket lists other blockers among the plan's tasks. The message names both lists. |
@@ -187,9 +200,12 @@ Findings, after the graph's, each in id order:
 The exit code is the graph's when its check fails (2 or 1; the plan's findings are still
 listed), else 3 when there is any plan finding, else 0. `data` gains
 `plan: {file, tasks, no_ticket: [ids], no_task: [ids], blockers: [{id, plan, ticket}], unread}`,
-where `file` is the plan as given and `unread` counts `lint plan`'s task findings. Without
-`--plan`, `data` has no `plan` key and `dag check` is unchanged. `dag frontier` takes no
-`--plan`.
+where `file` is the plan as given and `unread` counts the `lint plan` findings above (and
+those it dropped). At most 1,000 disagreements are listed, in data and as findings, the
+first in finding order (tasks with no ticket, then tickets with no task, then blockers, each
+in id order); `plan.omitted`, present only when some were left out, counts the rest. The
+plan's spec is not looked for. Without `--plan`, `data` has no `plan` key and `dag check` is
+unchanged. `dag frontier` takes no `--plan`.
 
 ## `dag frontier`
 

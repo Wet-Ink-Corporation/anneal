@@ -128,10 +128,16 @@ fn plan_help_says_only_the_plans_bytes_are_compared() {
             "{args:?} names what is compared: {out}"
         );
         assert!(
-            !out.contains("inputs"),
+            !out.contains("inputs changed"),
             "{args:?} claims no other inputs are compared: {out}"
         );
     }
+    let (_, out, _) = anneal(&["plan", "--help"]);
+    assert!(
+        out.lines()
+            .any(|line| line == "  4   stale: the plan's bytes changed since approval"),
+        "the exit-4 row says what changed: {out}"
+    );
 }
 
 #[test]

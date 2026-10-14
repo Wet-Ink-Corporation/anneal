@@ -181,3 +181,41 @@ fn every_kind_is_listed_in_id_order_and_findings_follow_kind_then_id() {
         "kind, then id"
     );
 }
+
+#[test]
+fn a_ticket_blocking_a_task_through_outside_tickets_is_outside_not_no_task() {
+    let tasks = [task("T1", &[]), task("T2", &["T1"])];
+    let tickets = [
+        ticket("T1", &["REL-5"]),
+        ticket("T2", &["T1"]),
+        ticket("REL-5", &["REL-4"]),
+        ticket("REL-4", &[]),
+        ticket("T9", &["REL-4"]),
+    ];
+
+    let mismatches = compare(&tasks, &tickets);
+
+    assert_eq!(
+        mismatches.no_task,
+        [&TicketId::new("T9")],
+        "REL-5 blocks T1 and REL-4 blocks REL-5, so both are outside blockers; T9 blocks no task"
+    );
+    assert!(mismatches.no_ticket.is_empty(), "every task has a ticket");
+    assert!(
+        mismatches.blockers.is_empty(),
+        "outside blockers are not compared"
+    );
+}
+
+#[test]
+fn a_plan_blocker_outside_the_plan_is_not_compared() {
+    let tasks = [task("T1", &[]), task("T2", &["T1", "REL-5"])];
+    let tickets = [ticket("T1", &[]), ticket("T2", &["T1"])];
+
+    let mismatches = compare(&tasks, &tickets);
+
+    assert!(
+        mismatches.is_empty(),
+        "only the plan's tasks are compared, on both sides: {mismatches:?}"
+    );
+}

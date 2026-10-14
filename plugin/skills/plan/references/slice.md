@@ -30,7 +30,8 @@ Fewer edges mean more tasks a team (or `/anneal:orchestrate`) can run at once.
 - When the tasks become tickets, `anneal dag check` checks the same graph across the tracker
   (cycles, dangling blockers) and `anneal dag frontier` lists what can start now. Name each
   ticket by its task's id; `anneal dag check --plan <plan>` then fails when a task has no
-  ticket, a ticket has no task, or a ticket's blockers among the tasks differ from the plan's.
+  ticket, a ticket that blocks no task has no task, or a ticket's blockers among the tasks
+  differ from the plan's.
 
 ## Signs the slicing is wrong
 
