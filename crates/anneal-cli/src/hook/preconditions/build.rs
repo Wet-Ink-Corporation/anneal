@@ -21,18 +21,16 @@ use crate::plan::{self, Status};
 /// the ledger is shared by every worktree, and a confirmation older than this many is stale.
 const RECENT_CONFIRMATIONS: usize = 256;
 
-/// The denial for an edit of `relative` (relative to the worktree `root`) in build mode
-/// entered with `build`, or `None` when the path is not source or every precondition holds.
-pub(super) fn check(
-    store: &Store,
-    root: &Path,
-    build: &BuildMode,
-    relative: &str,
-) -> Option<Denial> {
+/// Whether an edit of `relative` (relative to the worktree root) in build mode entered with
+/// `build` is gated: it is source, not a test, the plan or tree, scratch or a document.
+pub(super) fn is_gated(build: &BuildMode, relative: &str) -> bool {
     let artifacts = [build.plan.as_str(), build.tree.as_str()];
-    if scope::classify(relative, &artifacts) != PathKind::Source {
-        return None;
-    }
+    scope::classify(relative, &artifacts) == PathKind::Source
+}
+
+/// The first build-mode precondition that does not hold in the worktree `root`, entered with
+/// `build`; `None` when every one holds. The same for every gated file of the worktree.
+pub(super) fn check(store: &Store, root: &Path, build: &BuildMode) -> Option<Denial> {
     let plan_path = root.join(&build.plan);
     let bytes = match read_whole_bytes(&plan_path) {
         Ok(bytes) => bytes,

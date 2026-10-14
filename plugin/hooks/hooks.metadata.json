@@ -35,8 +35,8 @@
     {
       "id": "preconditions",
       "event": "PreToolUse",
-      "matcher": "Edit|Write",
-      "fingerprint": "sha256:1b6804ca9721595c",
+      "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+      "fingerprint": "sha256:9df1ee0ab7205171",
       "on_failure": "block",
       "role": "guard",
       "model_generation": "claude-5",

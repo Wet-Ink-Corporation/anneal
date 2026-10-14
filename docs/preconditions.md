@@ -1,8 +1,14 @@
 # The preconditions hook and `anneal mode`
 
-`anneal hook preconditions` runs before every Edit and Write tool call. It is anneal's core build
-gate: while a worktree is in an anneal mode, the agent cannot edit source until the work that
-mode needs first exists. With no mode it does nothing, so plain usage is never blocked.
+`anneal hook preconditions` runs before every Edit, Write, MultiEdit and NotebookEdit tool call.
+It is anneal's core build gate: while a worktree is in an anneal mode, the agent cannot edit
+source until the work that mode needs first exists. With no mode it does nothing, so plain usage
+is never blocked.
+
+Every file a call names is judged: `tool_input.file_path` (Edit, Write, MultiEdit),
+`tool_input.notebook_path` (NotebookEdit) and the `file_path` of any MultiEdit edit that has one.
+The tool's own field is required; the first file denied denies the call. A call naming more than
+16 distinct files is denied as bad input.
 
 ## Modes
 
@@ -123,16 +129,32 @@ ASCII letter case, with trailing dots and spaces and an alternate data stream (`
 the names; a `.anneal/config.json` in any directory counts. The reason tells the user to edit it
 themselves.
 
-The worktree that judges an edit is the edited file's own: git is asked from the file's longest
-existing ancestor directory, not from the session's working directory. So a session running
-above the repository, or in a sibling linked worktree, cannot write into a gated worktree. A
-file in another repository is judged by that repository's ledger and that worktree's mode.
+A path is judged where the OS writes it, not by its name. It is resolved one component at a
+time: a symlink is followed to its target (at most 40 links, else the edit is denied as
+`unjudged`), so `..` after a symlink climbs from the link's target and a dangling symlink leads to
+the file it would create; an existing component is resolved in full; the part that does not
+exist is taken lexically (`.` dropped, `..` the parent). With `tmp/link -> ../src/deep`, a write
+of `tmp/link/../app.py` is `src/app.py`, and with `tmp/new -> ../src/new.py`, a write of
+`tmp/new` is `src/new.py`: both are source.
+
+A tool may also take `..` lexically before it hands the path to the OS, and then writes
+elsewhere. So a path is judged in both readings, where the OS writes it and where its lexical
+normalisation (`.` dropped, `..` the parent of the name before it, then resolved as above)
+lands, and either reading's denial denies. With `src/link -> ../tmp/sub`, a write of
+`src/link/../x.py` is `tmp/x.py` to the OS (scratch) but `src/x.py` to such a tool (source), so
+in a mode it is denied wherever `src/x.py` is. When both readings land in the same place it is
+judged once.
+
+The worktree that judges an edit is the edited file's own: git is asked from the longest
+existing ancestor directory of where the file lands, not from the session's working directory.
+So a session running above the repository, or in a sibling linked worktree, cannot write into a
+gated worktree, and neither can a symlink in another repository that leads into it. A file in
+another repository is judged by that repository's ledger and that worktree's mode.
 
 Paths are compared after they are made relative to the worktree root: `\` reads as `/` (Windows
-paths and drive letters work), `.` and `..` are taken lexically, symlinks in the existing part
-of the path and in the root are resolved, and ASCII letters match in any case, as the guard's
-protected paths do (APFS and NTFS are case-insensitive by default). So `tests/../src/main.rs` is
-source.
+paths and drive letters work), symlinks are resolved in the path as above and in the root, and
+ASCII letters match in any case, as the guard's protected paths do (APFS and NTFS are
+case-insensitive by default). So `tests/../src/main.rs` is source.
 
 ## Output
 
@@ -165,8 +187,8 @@ judge:
 
 | Failure | Result |
 |---|---|
-| stdin is not `PreToolUse` JSON, is larger than 1 MiB, or has no `tool_input.file_path` | deny, `bad-input` |
-| the ledger exists but cannot be opened or read; git, asked from the file's longest existing ancestor directory, fails other than "not a repository"; the file has no existing ancestor directory, or is not inside its own worktree once symlinks are resolved | deny, `unjudged` |
+| stdin is not `PreToolUse` JSON, is larger than 1 MiB, has no `tool_input.file_path` (`tool_input.notebook_path` for NotebookEdit), or names more than 16 files | deny, `bad-input` |
+| the ledger exists but cannot be opened or read; git, asked from the file's longest existing ancestor directory, fails other than "not a repository"; the file has no existing ancestor directory, cannot be resolved (a component that cannot be read, more than 40 symlinks), or is not inside its own worktree once symlinks are resolved; the 3.5 s budget runs out before every file is judged | deny, `unjudged` |
 | build mode recorded without a plan or tree (an event appended by hand) | deny, `mode` |
 | the plan or design tree cannot be read | deny, `plan` or `grill` |
 | the decision cannot be written | exit 2 with one `ERROR` line |
@@ -174,13 +196,18 @@ judge:
 Only these mean "no mode" and allow: a file in no git repository, no ledger file for its
 repository (the hook never creates one), and no `mode_set` (or `off`) for its worktree.
 
-It stays inside its 5 s budget as the guard does: git gets 1 s for each of its two calls (the
-ledger's location, the worktree root) and each ledger statement waits at most 500 ms for
-another process's lock.
+It stays inside its 5 s timeout: the whole call, every file and every reading of it, is judged
+within 3.5 s of the hook's start (the rest is for recording a denial and process start-up, as
+the brief hook does). Git gets at most 1 s for each call, and never more than is left; each
+worktree a call reaches is found once per directory (the worktree root) and read once (the
+ledger's location, its mode, and whether its preconditions hold, which are the same for every
+file in it); each ledger statement waits at most 500 ms for another process's lock, and never
+more than is left. Once the budget is spent the edit is denied as `unjudged` ("no time is left
+to judge the edit"), and the denial is not recorded when no time was left to open the ledger.
 
 ## Known gaps
 
-- The matcher is `Edit|Write`, as the story specifies. Claude Code's `MultiEdit` and
-  `NotebookEdit` tools, and Bash commands that write files, are not gated by this hook.
+- The matcher is `Edit|Write|MultiEdit|NotebookEdit` (#80). Bash commands that write files are
+  not gated by this hook.
 - Paths are judged lexically past the part that exists, so a symlink created later inside the
   worktree is not followed.

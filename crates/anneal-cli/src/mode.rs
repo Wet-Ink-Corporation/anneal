@@ -8,8 +8,10 @@
 //! dirty tree is still recorded, with a finding, and the hook then denies source edits until
 //! build mode is entered clean. See `docs/preconditions.md`.
 //!
+//! - `resolve`: where the OS will write a path that may not exist yet.
 //! - `scope`: which paths the hook guards.
 
+pub(crate) mod resolve;
 pub(crate) mod scope;
 
 use std::ffi::OsString;
@@ -271,39 +273,26 @@ fn is_clean(root: &Path) -> Result<bool, PathError> {
 }
 
 /// `path` (absolute) relative to the worktree `root`, `/`-separated, `None` outside it.
-/// Symlinks are resolved in `root` and in the longest existing prefix of `path` (git prints
-/// the root resolved, a tool may name the file through a symlinked directory such as macOS's
-/// `/var`); the rest of `path` is taken lexically. Letters compare in any ASCII case.
+/// Symlinks are resolved in `root` and in `path` as the OS reaches it ([`resolve::resolve`]:
+/// git prints the root resolved, a tool may name the file through a symlinked directory such
+/// as macOS's `/var`, and `..` after a symlink climbs from its target); the part of `path` that
+/// does not exist is taken lexically. Letters compare in any ASCII case.
 ///
 /// # Errors
-/// The I/O error when `root` or an existing prefix of `path` cannot be resolved.
+/// The I/O error when `root` or a component of `path` cannot be resolved.
 pub(crate) fn worktree_relative(root: &Path, path: &Path) -> io::Result<Option<String>> {
-    let root = scope::normalise(&fs::canonicalize(root)?.to_string_lossy());
-    let path = scope::normalise(&resolved(path)?.to_string_lossy());
-    Ok(scope::relative(&root, &path).map(str::to_owned))
+    resolved_relative(root, &resolve::resolve(path)?)
 }
 
-/// `path` with symlinks resolved in its longest existing prefix, the rest appended as is.
-fn resolved(path: &Path) -> io::Result<PathBuf> {
-    let lexical = PathBuf::from(scope::normalise(&path.to_string_lossy()));
-    let mut existing = lexical.as_path();
-    let mut missing = Vec::new();
-    loop {
-        match fs::canonicalize(existing) {
-            Ok(mut found) => {
-                found.extend(missing.iter().rev());
-                return Ok(found);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
-                    return Err(error);
-                };
-                missing.push(name);
-                existing = parent;
-            }
-            Err(error) => return Err(error),
-        }
-    }
+/// `resolved` (a path from [`resolve::resolve`]) relative to the worktree `root`, as
+/// [`worktree_relative`] gives it.
+///
+/// # Errors
+/// The I/O error when `root` cannot be resolved.
+pub(crate) fn resolved_relative(root: &Path, resolved: &Path) -> io::Result<Option<String>> {
+    let root = scope::normalise(&fs::canonicalize(root)?.to_string_lossy());
+    let path = scope::normalise(&resolved.to_string_lossy());
+    Ok(scope::relative(&root, &path).map(str::to_owned))
 }
 
 /// The mode a worktree is in, from its latest `mode_set`.

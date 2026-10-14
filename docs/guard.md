@@ -157,7 +157,7 @@ case-insensitive file system (APFS, NTFS) `.CLAUDE/Settings.json` is `.claude/se
 | `.cargo/config*` | `config`, `config.toml` directly in `.cargo` |
 | `.github/workflows/` | `workflows` directly in `.github` |
 | `.eslintrc*`, `.pre-commit-config.yaml`, `lefthook.yml` | anywhere |
-| `.anneal/config.json` | `config.json` directly in `.anneal`: the gates' own settings (the orchestrate leads the brief hook trusts, the merge gate's `review` and `ship` keys, `check_fast`); the preconditions hook denies the Edit and Write tools on it |
+| `.anneal/config.json` | `config.json` directly in `.anneal`: the gates' own settings (the orchestrate leads the brief hook trusts, the merge gate's `review` and `ship` keys, `check_fast`); the preconditions hook denies the Edit, Write, MultiEdit and NotebookEdit tools on it |
 
 The writes it checks:
 

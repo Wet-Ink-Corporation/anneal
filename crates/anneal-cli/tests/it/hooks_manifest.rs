@@ -395,7 +395,10 @@ fn the_preconditions_hook_runs_before_every_edit_and_write_and_fails_closed() ->
         return Err(format!("one preconditions entry, got {gates:?}").into());
     };
     assert_eq!(*event, HookEvent::PreToolUse, "before the tool runs");
-    assert_eq!(matcher, "Edit|Write", "on every Edit and Write");
+    assert_eq!(
+        matcher, "Edit|Write|MultiEdit|NotebookEdit",
+        "on every tool that edits a file (#80)"
+    );
     assert_eq!(
         hook.args,
         ["hook", "preconditions", "--fail-closed"],
