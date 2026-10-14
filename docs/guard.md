@@ -339,19 +339,41 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   differs from the wrapper's own reading, the word the walk places as the program may be an
   option's value. So a wrapper's words are trusted only when each reads with certainty by the
   redaction's own tables (`guard::redact::certain`): an exact flag, an exact value option
-  followed by its value (or with it attached: `-n1`, `--user=root`), `--`, then the wrapper's
-  fixed operands (`timeout`'s duration, `chrt`'s priority, `flock`'s file) and, for `sudo` and
-  `env` only, assignments, ending exactly where the walk puts the next wrapper, the program
-  or the body. From the first word that does not (a cluster longer than one letter, an
-  option the tables do not know, `chrt`/`taskset` with `-p` or `--pid`, an assignment after a
+  followed by its value (or with it attached: `-n1`, `--user=root`; a shell takes none
+  attached, so `bash -oerrexit` is uncertain), `--`, then the wrapper's fixed operands
+  (`timeout`'s duration, `chrt`'s priority, `flock`'s file) and, for `sudo` and `env` only,
+  assignments, ending exactly where the walk puts the next wrapper, the program or the body.
+  A word filling a value or operand slot counts only when it has that slot's strict shape:
+  `chrt`'s priority all digits (util-linux 2.42 takes it only then, and needs none under
+  `-o`, `-b`, `-i` and `-d`, so `chrt -i mysql -pX` runs `mysql`), `timeout`'s duration and
+  `-k` a number with an optional `s`, `m`, `h` or `d`, `-s` a signal, `taskset`'s mask hex
+  (a CPU list such as `0-3,5` after `-c`), `nice -n` an integer, `ionice -c` a class and `-n`
+  digits, `watch -n` and `flock -w` a number, the counts of `xargs`, `chrt`, `sudo -C`,
+  `flock -E` and `watch -q` digits, `stdbuf`'s sizes a size or `L`, and any other value a word
+  not starting with `-` (`sudo -u -E psql` is uncertain). A shell's short-option cluster
+  reads letter by letter: each letter one of its no-value flags, `c` only last, the body then
+  the next word, as the denylist's walk also reads it (`bash -lc 'rm -rf /'` is
+  `bash -<redacted> 'rm -rf /'`; `bash -cl …` and `bash -lsc …` are uncertain). `find`'s
+  actions count only when every word of `find` before them reads with certainty: leading
+  `-H`, `-L`, `-P`, `-D x`, `-O<n>`, paths, then exact operators, tests and actions, each
+  test's value of its shape (`-maxdepth` digits, `-mtime -7` a signed number, `-perm` a mode,
+  `-name` a word not starting with `-`), and each action ending in `;`, or in `+` right
+  after `{}`: `find . -name -exec x \;` holds no action (find reads `-exec` as the pattern)
+  and is rendered as arguments. From the first word that does not (a cluster longer than one
+  letter, an option the tables do not know, a value or operand without its slot's shape,
+  `chrt`/`taskset` with `-p` or `--pid`, an assignment after a
   wrapper that takes none, such as `nohup K=v run`), every word of that simple command is an
   argument of no known program, hidden unless a program-free table (the sensitive targets,
   one-letter options, long option names) names it, and no body is rendered:
   `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`,
   `xargs -eE psql hunter2` is `xargs -<redacted> <redacted> <redacted>`,
   `watch -dn psql x` is `watch -<redacted> <redacted> <redacted>`, and
-  `chrt -p 10 psql 4242` is `chrt -p <redacted> <redacted> <redacted>`. Clef loses the program
-  there; nothing leaks.
+  `chrt -p 10 psql 4242` is `chrt -p <redacted> <redacted> <redacted>`, and
+  `chrt -i mysql -phunter2` is `chrt -i <redacted> -<redacted>`. Clef loses the program
+  there; nothing leaks. Signal lost by design: a `timeout` duration in another `strtod` form (`1e3`, `0x10`), a `taskset` mask list
+  (`ff,ff`), `bash -eo pipefail -c …` (a cluster ending in a value letter), a `find`
+  primary outside the tables (`-fprintf`, `-newerXY`) or an unquoted glob as a `find` value
+  before an action (it may expand to several words).
 - **The program**: its name without a path or `.exe` (`/usr/bin/python3.12` is `python3.12`,
   `./deploy.sh` is `deploy.sh`), kept when the word is literal (no expansion, glob or brace)
   and the name 1 to 64 of `[A-Za-z0-9._+-]`; otherwise `<redacted>` (`"$CMD"`, `./my tool`).

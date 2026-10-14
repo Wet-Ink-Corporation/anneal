@@ -22,10 +22,13 @@
 //!   `find /a/env`) is hidden like any other.
 //! - **Uncertain wrappers**: the walk is the denylist's, unchanged by redaction, and reads
 //!   some wrapper options more loosely than the wrapper does, so a wrapper's words are trusted
-//!   only when they read with certainty by [`certain`]'s tables (exact flags, exact value
-//!   options and their values, `--`, fixed operands). From the first word that does not (a
-//!   cluster such as `-iu`, an option the tables do not know, chrt or taskset with `-p`, an
-//!   assignment after a wrapper that takes none), every word of the simple command is an
+//!   only when they read with certainty by [`certain`]'s tables (exact flags, a shell's
+//!   cluster of flags ending in `c`, exact value options and their values, `--`, fixed
+//!   operands, each value and operand of its slot's shape; `find`'s words before its
+//!   actions). From the first word that does not (a cluster such as `-iu`, an option the
+//!   tables do not know, a value or operand without its slot's shape such as
+//!   `chrt -i mysql`, chrt or taskset with `-p`, an assignment after a wrapper that takes
+//!   none), every word of the simple command is an
 //!   argument of no known program: `sudo -iu postgres psql` is
 //!   `sudo -<redacted> <redacted> <redacted>`.
 //! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
@@ -214,7 +217,8 @@ impl Skeleton {
         let end = match (&layout, &body) {
             (Layout::Program(at), _) => End::Program(*at),
             (_, Some(body)) => body.end(),
-            (Layout::Script(_) | Layout::Exec(_) | Layout::Other, None) => End::Unchecked,
+            (Layout::Exec(exec), None) => End::Actions(&exec.actions),
+            (Layout::Script(_) | Layout::Other, None) => End::Unchecked,
         };
         if let Some(cut) = certain::first_uncertain(words, &roles, end) {
             let (lead, rest) = all.split_at(cut);
@@ -332,7 +336,7 @@ impl<'b> Body<'b> {
     }
 
     /// Where the words of the wrapper running it end, for [`certain::first_uncertain`].
-    fn end(&self) -> End {
+    fn end(&self) -> End<'b> {
         self.source
             .as_ref()
             .map_or(End::Attached, |source| End::Body(source.start))

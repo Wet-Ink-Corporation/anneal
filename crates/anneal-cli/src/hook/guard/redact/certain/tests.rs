@@ -1,6 +1,6 @@
 //! The certainty tables themselves.
 
-use super::{READINGS, Reading};
+use super::readings::{READINGS, Reading};
 
 /// Every option word of `reading`, from all three lists.
 fn options(reading: &Reading) -> impl Iterator<Item = &'static str> {
@@ -28,6 +28,30 @@ fn every_table_entry_is_one_option_word_in_one_list() {
             assert!(
                 !all.iter().skip(at + 1).any(|other| other == option),
                 "{name}: {option:?} is listed twice"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_shaped_option_is_a_value_option_and_every_list_flag_a_flag() {
+    for (name, reading) in &READINGS {
+        for (option, _) in reading.shapes {
+            assert!(
+                reading
+                    .values
+                    .split_ascii_whitespace()
+                    .any(|value| value == *option),
+                "{name}: {option:?} has a shape but takes no value"
+            );
+        }
+        for flag in reading.lists.split_ascii_whitespace() {
+            assert!(
+                reading
+                    .flags
+                    .split_ascii_whitespace()
+                    .any(|item| item == flag),
+                "{name}: {flag:?} makes a CPU list but is no flag"
             );
         }
     }

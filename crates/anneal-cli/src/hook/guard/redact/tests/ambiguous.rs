@@ -84,7 +84,7 @@ fn a_wrapper_read_with_certainty_still_shows_what_it_runs() {
 }
 
 /// The whole words of `text`: its runs of ASCII letters, digits and `_`.
-fn whole_words(text: &str) -> impl Iterator<Item = &str> {
+pub(super) fn whole_words(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty())
 }

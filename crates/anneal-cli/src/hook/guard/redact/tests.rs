@@ -2,6 +2,7 @@ use super::{MAX_COMMAND_CHARS, UNPARSED, redact};
 
 mod ambiguous;
 mod probes;
+mod shapes;
 mod skeleton;
 
 /// Asserts each command's skeleton.

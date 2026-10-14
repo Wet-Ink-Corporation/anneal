@@ -639,9 +639,29 @@ const TEMPLATES: &[&str] = &[
     "command -v {}",
     "ionice -p 1 {}",
     "timeout --kill 5 {}",
-    "bash -lc {}",
+    "bash -lc 'echo {}'",
+    "bash -lsc {}",
     "su -ls x -c {}",
     "flock -nw 5 x {}",
+    // A value or operand without its slot's shape (PR 120 review round 6): chrt's priority
+    // is optional under these policies and taken only when all digits.
+    "chrt -o x {}",
+    "chrt -b x {}",
+    "chrt -i x {}",
+    "chrt -d x {}",
+    "chrt -f x {}",
+    "bash -oerrexit -c {}",
+    "bash -cl {}",
+    "watch -n x {}",
+    "watch -n -d {}",
+    "nice -n x {}",
+    "timeout x {}",
+    "taskset x {}",
+    "taskset -c ff {}",
+    "ionice -c x {}",
+    "xargs -n x {}",
+    "find . -name -exec {} \\;",
+    "find . -exec echo + -exec {} x \\;",
 ];
 
 #[test]
