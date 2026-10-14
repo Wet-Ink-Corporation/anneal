@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::hook::guard::shell::{Expansion, Word};
+use crate::hook::guard::shell::{Expansion, Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// The most words brace expansion may make of one command's arguments (H-13).
@@ -42,6 +42,22 @@ struct Group {
 /// Whether `word` holds a brace group the shell would expand.
 pub(super) fn has_group(word: &Word) -> bool {
     word.has_pattern() && group(&word.text, &word.expansions).is_some()
+}
+
+/// Whether `word`'s text is what the shell passes on: a literal word, or one brace expansion
+/// made that holds no other pattern character (`-c` and `rm -rf /` from
+/// `{bash,-c,'rm -rf /'}`): no expansion, glob, brace or leading `~`, and not read inside
+/// `$[ ]`. Only brace expansion makes such a pattern, since the lexer keeps every pattern
+/// character it reads in the text, so a word as the lexer read it is this only when literal.
+/// Programs, wrappers and shells read their names and options through this; the entries still
+/// see such a word as a pattern, so `rm -rf /tmp/{a,b}` stays denied.
+pub(super) fn reads_as_written(word: &Word) -> bool {
+    word.is_literal()
+        || (word.shape == Shape::Pattern
+            && word.expansions.is_empty()
+            && !word.arithmetic
+            && !word.text.starts_with('~')
+            && !word.text.contains(['*', '?', '[', '{']))
 }
 
 /// `args` with their brace groups expanded; each new word keeps its source word's shape and

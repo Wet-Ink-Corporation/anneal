@@ -7,7 +7,7 @@
 //! ([`arguments`]) and a redirection's target ([`of`]). Whether a word's values may be an option
 //! cluster, whatever its variables hold and its globs match, is [`may_start_option_cluster`]; it
 //! judges each word as one word, so word splitting of an unquoted expansion and `"$@"` (which
-//! may make a separate `-rf` word) is a known gap.
+//! may make a separate `-rf` word) is a known gap (#128).
 
 use std::borrow::Cow;
 
@@ -66,8 +66,8 @@ fn emptied(word: &Word) -> Option<Word> {
 ///
 /// Each expansion is taken as text inside this one word, as a quoted one is. An unquoted
 /// expansion, `"$@"` or `"${a[@]}"` may split into several words, one of them `-rf` (`x$b` with
-/// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a known gap. So are extended globs
-/// (`@(-rf)`, `!(x)`), whose `(` is read as a written character.
+/// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a known gap (#128). So are extended
+/// globs (`@(-rf)`, `!(x)`), whose `(` is read as a written character (#128).
 pub(super) fn may_start_option_cluster(word: &Word) -> bool {
     if word.is_literal() {
         return false;
@@ -153,7 +153,10 @@ impl Iterator for Parts<'_> {
 /// The bracket expression whose `[` ends at `from` in `text`: where it closes (just past its
 /// `]`) and its [`Part::Set`], or `None` when it does not close, so the `[` is a plain
 /// character. A leading `!` or `^` negates it, a `]` right after that is a member, and
-/// `[:class:]`, `[=c=]` and `[.c.]` are read whole. An expansion inside (`[$c]`,
+/// `[:class:]`, `[=c=]` and `[.c.]` are read whole. A `[:` or `[=` that never closes is read as
+/// bash reads it: its `[` is a member and the set closes at the first `]` after it, a set that
+/// may match `-` (`[[:-]` is `[`, `:` and `-`). A `[.` that never closes is read the same way,
+/// though bash 5 matches nothing there, which only adds denials. An expansion inside (`[$c]`,
 /// `[!$(echo ])]`) is jumped over: it may hold any member, `-` and a negating `!` included, and
 /// a `]` in its source text never closes the set. Each byte is read once, so a word of many `[`
 /// stays linear (H-13).
@@ -169,6 +172,9 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
     let mut ahead = expansions;
     // The kind (`:`, `=` or `.`) of the class being read, if any.
     let mut class = None;
+    // Just past the first `]` read inside the open class: where the set closes if the class
+    // never does.
+    let mut fallback = None;
     loop {
         while let [expansion, rest @ ..] = ahead
             && expansion.range.start < at
@@ -184,11 +190,19 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
             at = expansion.range.end.max(at.saturating_add(1));
             continue;
         }
-        let byte = *bytes.get(at)?;
+        let Some(&byte) = bytes.get(at) else {
+            // A class that never closes is no class: its `[` is a member and the set closes at
+            // the first `]` after it. What it holds is not read again, so it may be `-`.
+            return fallback.map(|close| (close, Part::Set { dash: true }));
+        };
         let next = at.saturating_add(1);
+        if class.is_some() && byte == b']' {
+            fallback.get_or_insert(next);
+        }
         at = match (class, byte, bytes.get(next)) {
             (Some(kind), _, Some(&b']')) if byte == kind => {
                 class = None;
+                fallback = None;
                 next.saturating_add(1)
             }
             // Inside a class, every other byte (`]` and `-` included) is part of its name.

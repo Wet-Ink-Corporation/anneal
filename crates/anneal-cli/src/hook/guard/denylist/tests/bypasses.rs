@@ -165,6 +165,15 @@ fn a_brace_or_glob_after_an_expansion_is_still_judged() {
         ("rm [!$(echo ])]rf /home", RM_RF),
         ("rm [!`echo ]`]rf /home", RM_RF),
         ("rm [$(echo '!]')]rf /home", RM_RF),
+        // A `[:` or `[=` that never closes is a member, and the set closes at the next `]`, as
+        // bash reads it (#127 review); a `[.` is read the same way, though bash 5 matches
+        // nothing there.
+        ("rm [[:-]rf /home", RM_RF),
+        ("rm [[=-]rf /home", RM_RF),
+        ("rm [[.-]rf /home", RM_RF),
+        // A cost: such a set is taken to match `-` whatever it names.
+        ("rm -f [[:a]x /home", RM_RF),
+        ("rm -f [[:a]x/y /home", ALLOW),
         ("rm -- ?rf /tmp/x", ALLOW),
         ("rm -f *.o *.a", ALLOW),
         // A cost: `*` may match a file named `-r`.
@@ -312,6 +321,36 @@ fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
         ("caffeinate {rm,x} -rf /", RM_RF),
         ("caffeinate \"$b\"{rm,x} -rf /", RM_RF),
         ("caffeinate {sudo,x} rm -rf /", RM_RF),
+        // Brace expansion runs before a shell or wrapper reads its options, so the options it
+        // builds are read as written (#127 review).
+        ("caffeinate {bash,-c,'rm -rf /'}", RM_RF),
+        ("caffeinate {sh,-c,\"rm -rf /\"}", RM_RF),
+        ("caffeinate {bash,-lc,'rm -rf /'}", RM_RF),
+        ("caffeinate {bash,-c,'git push -f origin main'}", FORCE_PUSH),
+        ("caffeinate {sudo,sh,-c,'rm -rf /'}", RM_RF),
+        ("caffeinate {env,-S,'rm -rf /'}", RM_RF),
+        ("caffeinate {sudo,-u,root,rm,-rf,/}", RM_RF),
+        ("bash {-c,'rm -rf /'}", RM_RF),
+        ("caffeinate bash {-c,'rm -rf /'}", RM_RF),
+        // Read as written, a brace group where a wrapper's program goes is a program built by
+        // brace expansion, denied as `sudo {sh,-c,'rm -rf /'}` is.
+        ("sudo {-u,root} rm -rf /", UNREADABLE),
+        ("env {-S,'rm -rf /'}", UNREADABLE),
+        ("sudo {-u,root} ls /", UNREADABLE),
+        // The words as written are read too: brace expansion takes quoted braces as unquoted,
+        // and its first word, `rm -rf /tmp/x`, is not the script bash runs, which expands to
+        // `rm -rf /tmp/x /`.
+        ("bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
+        ("caffeinate bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
+        ("bash -c 'rm -rf /tmp/x'", ALLOW),
+        // Where the two readings leave the directory: where both go, else anywhere.
+        ("bash {-c,'cd .claude'}; tee settings.json", CONFIG),
+        ("bash -c 'cd .claude' {,}; tee settings.json", CONFIG),
+        ("bash -c 'cd /tmp' {,}; tee settings.json", ALLOW),
+        // A cost: the readings disagree, so a relative write may be anywhere.
+        ("bash {-c,'cd /tmp'}; tee settings.json", CONFIG),
+        ("caffeinate {bash,-c,'echo hi'}", ALLOW),
+        ("bash {-c,'echo hi'}", ALLOW),
         ("caffeinate echo {a,b}", ALLOW),
         ("caffeinate cargo test -p {a,b}", ALLOW),
         ("mkdir -p tools/{git,hg}", ALLOW),
