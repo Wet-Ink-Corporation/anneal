@@ -458,6 +458,14 @@ fn chrt_or_taskset_acting_on_a_pid_runs_no_program() {
         ("taskset -p 0x3 4242", "taskset -p <redacted> <redacted>"),
         ("taskset --pid 4242", "taskset --pid <redacted>"),
         ("chrt -f 10 psql", "chrt -f <redacted> psql"),
+        (
+            "chrt -p 10 psql x 0",
+            "chrt -p <redacted> psql <redacted> <redacted>",
+        ),
+        (
+            "taskset -p 0x1 psql x 0",
+            "taskset -p <redacted> psql <redacted> <redacted>",
+        ),
     ]);
 }
 

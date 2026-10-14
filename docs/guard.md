@@ -308,7 +308,10 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   and its `]` is `<redacted>` whatever its role, an assignment still showing its name: their
   operands and operators only look like programs and arguments
   (`sleep $(( 3600 * 24 ))` is `<redacted>; sleep <redacted>`, `(( n = 1 ))` is
-  `<redacted>`, `x=$[ n ]` is `x=<redacted> <redacted> <redacted>`). A `$( )`
+  `<redacted>`, `x=$[ n ]` is `x=<redacted> <redacted> <redacted>`). A known gap: bash runs
+  `((cmd) )` and `$((cmd) )`, with a blank between the two `)`, as a subshell and a command
+  substitution, but the lexer reads them as arithmetic, so their program is hidden from Clef
+  too (signal lost, nothing leaked; the denylist still checks them). A `$( )`
   or backtick inside one is a command and is rendered as one
   (`echo $(( $(rm -rf /) + 1 ))` is `rm -rf /; <redacted>; echo <redacted>`). The lexer lists
   the same commands and words as before and only marks these, so the denylist reads them as
@@ -328,8 +331,10 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   wrapper list and each wrapper's option arity are the denylist's own, a short-option cluster
   read as getopt reads it (at its first letter that takes a value, the rest of the word is the
   value, or the next word when that letter is last: `sudo -iu postgres psql` is
-  `sudo -<redacted> <redacted> psql`), and `chrt -p` or `taskset -p` (`--pid`), which act on a
-  running process, run no program (`chrt -p 10 4242` is `chrt -p <redacted> <redacted>`), so
+  `sudo -<redacted> <redacted> psql`), and `chrt -p` or `taskset -p` (`--pid`), which act on
+  the process whose pid is the last word and run no program (`chrt -p 10 4242` is
+  `chrt -p <redacted> <redacted>`) unless that pid is 0 or known only at run time, when they
+  run the words after the priority or mask (`chrt -p 10 psql x 0` shows `psql`), so
   the program after any wrapper is shown as a bare one is, and a value or operand that names a wrapper is hidden like
   any other (`sudo -D /x/nice rm` is `sudo -D <redacted> rm`, `find /a/env -delete` is
   `find <redacted> -delete`).

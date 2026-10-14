@@ -360,9 +360,17 @@ fn a_wrapper_option_cluster_or_value_option_takes_its_value_as_getopt_does() {
         ("xargs -R 1 -I echo rm -rf", RM_RF),
         ("xargs -S echo rm -rf", RM_RF),
         ("chrt -f 10 rm -rf /", RM_RF),
-        // With `-p` chrt and taskset change a running process and run nothing.
+        // With `-p` chrt and taskset change the process whose pid is the last word and run
+        // nothing, unless that pid is 0: then they act on themselves and run the rest.
         ("chrt -p 10 4242", ALLOW),
         ("taskset -p 0x3 4242", ALLOW),
+        ("chrt -p 10 rm -rf / 4242", ALLOW),
+        ("chrt -o -p 0 rm -rf / 0", RM_RF),
+        ("chrt -p 10 rm -rf / 00", RM_RF),
+        ("chrt -p 10 rm -rf / +0", RM_RF),
+        ("taskset -p 0x1 rm -rf / 0", RM_RF),
+        ("taskset -cp 0 rm -rf / -0", RM_RF),
+        ("chrt -p 10 rm -rf / $PID", RM_RF),
     ]);
 }
 

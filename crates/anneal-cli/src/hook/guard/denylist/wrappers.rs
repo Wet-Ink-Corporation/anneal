@@ -402,12 +402,14 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
     }
 }
 
-/// `chrt` and `taskset`: the command after their options and the priority or CPU mask, or
-/// nothing when an option is `-p` (`--pid`), a flag (util-linux's `+...p...` optstrings) that
-/// makes them act on the running process whose pid ends the words and run no command.
+/// `chrt` and `taskset`: the command after their options and the priority or CPU mask.
+/// With `-p` (`--pid`, a flag in util-linux's `+...p...` optstrings) they act on the process
+/// whose pid is the last word and run nothing, unless that pid is 0 (or not known until run
+/// time): then they act on themselves and run the words after the priority or mask.
 fn pid_or_command<'a>(words: &'a [Word], with_value: &[&str]) -> Peel<'a> {
     // The walk of `skip_options`, looking at each option word but not at the values.
     let mut rest = words;
+    let mut pid = false;
     while let [first, tail @ ..] = rest {
         let text = first.text.as_str();
         if text == "--" {
@@ -417,16 +419,28 @@ fn pid_or_command<'a>(words: &'a [Word], with_value: &[&str]) -> Peel<'a> {
         if !is_option(first) {
             break;
         }
-        if is_long(text, "--pid") || cluster_holds(text, 'p', with_value) {
-            return Peel::Done(Run::Nothing);
-        }
+        pid |= is_long(text, "--pid") || cluster_holds(text, 'p', with_value);
         rest = if takes_value(text, with_value) {
             skip_one(tail)
         } else {
             tail
         };
     }
-    Peel::Inner(skip_one(rest))
+    match rest.last() {
+        Some(last) if pid && last.is_literal() && !is_zero(&last.text) => Peel::Done(Run::Nothing),
+        _ if pid && rest.is_empty() => Peel::Done(Run::Nothing),
+        _ => Peel::Inner(skip_one(rest)),
+    }
+}
+
+/// Whether `text` reads as the integer 0 to `strtol`: optional leading blanks and sign, then
+/// only zeros.
+fn is_zero(text: &str) -> bool {
+    let digits = text
+        .trim_start()
+        .strip_prefix(['+', '-'])
+        .unwrap_or_else(|| text.trim_start());
+    !digits.is_empty() && digits.bytes().all(|b| b == b'0')
 }
 
 /// The program `word` names: its last path component without `.exe`, or unknown when the
