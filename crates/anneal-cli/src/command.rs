@@ -64,6 +64,12 @@ pub struct Claim {
     pub does_not_prove: &'static str,
 }
 
+/// `dag`'s claim, out of `CommandName::proves` to keep that function short.
+const DAG_PROVES: &str = "the task graph has no cycle and no dangling dependency; with check \
+    --plan, every plan task has a ticket of its id with the same blockers among the plan's \
+    tasks, and every ticket is a task of the plan or an outside blocker of one (a ticket that \
+    blocks a task's ticket, directly or through other such tickets)";
+
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
     pub const ALL: [Self; 24] = [
@@ -141,7 +147,10 @@ impl CommandName {
                  quoted confirmation of the tree's hash was recorded"
             }
             Self::Task => "the task's tests ran green",
-            Self::Plan => "the plan is approved and current with its inputs",
+            Self::Plan => {
+                "the plan is approved and the plan's bytes are unchanged since its latest \
+                 approval (its spec and other files are not compared)"
+            }
             Self::Mode => {
                 "the mode was recorded for this worktree, with whether its tree was clean"
             }
@@ -150,7 +159,7 @@ impl CommandName {
                  (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers)"
             }
             Self::Lint => "the checked files have no error under anneal's lint rules",
-            Self::Dag => "the task graph has no cycle and no dangling dependency",
+            Self::Dag => DAG_PROVES,
             Self::FloorGuard => "no quality floor (coverage, lint level, test count) was lowered",
             Self::Verdict => "the review verdict is well-formed and backed by findings",
             Self::Watch => "the pull request, CI run or deploy reached green within the timeout",
@@ -199,7 +208,10 @@ impl CommandName {
                  quoted words came from the human"
             }
             Self::Task => "that the tests cover the task's acceptance criteria",
-            Self::Plan => "that the plan is correct or complete",
+            Self::Plan => {
+                "that the plan is correct or complete, or that its spec is unchanged since the \
+                 approval"
+            }
             Self::Mode => {
                 "that the mode's preconditions hold: the preconditions hook checks them at each \
                  edit"

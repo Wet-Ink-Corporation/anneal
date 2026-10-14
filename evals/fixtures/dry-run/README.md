@@ -52,11 +52,14 @@ become checks):
    checks that the two agree: a ticket could drop a blocker and `dag check` would still pass.
    Candidate check: `anneal dag check --plan plan.md` (or a `plan tickets` export) that fails
    when the tickets' ids and blockers differ from the plan's tasks.
+   #75 added `anneal dag check --plan`; this fixture's plan and tickets check clean.
 2. **`plan check` does not see a spec change.** `plan_approved` records only the plan's hash;
    after approval, adding a line to `spec.md` still checks `current`, while `--help` reads
    "4 stale: inputs changed since approval" and `proves` says "current with its inputs".
    `docs/plan.md` documents the gap. Candidate check: record the spec's hash in
    `plan_approved` and exit 4 when it changes, or reword the help and `proves` to say plan only.
+   #76 took the rewording: the help, `proves` and `docs/exit-codes.md` now say only the plan's
+   bytes are compared.
 3. **The spec does not name the design tree it came from.** The spec skill says to write only
    from what the grill confirmed, but no field links `spec.md` to `design-tree.json` or its
    `grill_confirmed` event, so `lint spec` cannot tell a confirmed spec from an invented one.

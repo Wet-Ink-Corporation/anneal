@@ -56,7 +56,8 @@ pub enum CliError {
     /// `anneal lint` could not check its inputs.
     #[error("lint")]
     Lint(#[from] LintError),
-    /// `anneal plan` could not read its plan or the spec it links.
+    /// `anneal plan` could not read its plan or the spec it links, or `anneal dag check
+    /// --plan` could not read its plan.
     #[error("plan")]
     Plan(#[source] LintError),
     /// The ledger could not be opened, written or read.

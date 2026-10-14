@@ -93,12 +93,13 @@ pub const TASK_GREEN: Code = Code::new(0, "tests green");
 pub const TASK_TEST_RED: Code = Code::new(1, "test red");
 /// `task done`: the test command could not be started; nothing is recorded.
 pub const TASK_NOT_STARTED: Code = Code::new(2, "the test command could not be started");
-/// `plan approve|check`: the plan is approved and current.
+/// `plan approve|check`: the plan is approved and its bytes are the ones approved.
 pub const PLAN_APPROVED: Code = Code::new(0, "approved and current");
 /// `plan approve|check`: the plan is not approved.
 pub const PLAN_NOT_APPROVED: Code = Code::new(3, "not approved");
-/// `plan approve|check`: the plan was approved but its inputs changed since.
-pub const PLAN_STALE: Code = Code::new(4, "stale: inputs changed since approval");
+/// `plan approve|check`: the plan was approved but its bytes changed since; only the plan's
+/// bytes are compared, never its spec.
+pub const PLAN_STALE: Code = Code::new(4, "stale: the plan's bytes changed since approval");
 /// `mode build|diagnose|off`: the mode was recorded (a dirty tree is recorded too, with a
 /// finding).
 pub const MODE_RECORDED: Code = Code::new(0, "mode recorded");
@@ -132,6 +133,8 @@ pub const LINT_FINDINGS: Code = Code::new(1, "error findings");
 pub const DAG_CYCLE: Code = Code::new(1, "cycle");
 /// `dag check|frontier`: a dependency names a task that does not exist.
 pub const DAG_DANGLING: Code = Code::new(2, "dangling dependency");
+/// `dag check --plan`: the graph is sound but the tickets disagree with the plan's tasks.
+pub const DAG_PLAN_MISMATCH: Code = Code::new(3, "check --plan: tickets disagree with the plan");
 /// `floor-guard`: no floor was lowered.
 pub const FLOOR_HELD: Code = Code::new(0, "no floor lowered");
 /// `floor-guard`: a floor was lowered.
@@ -292,7 +295,10 @@ impl CommandCodes {
                 ],
             ),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
-            CommandName::Dag => ("check|frontier", &[OK, DAG_CYCLE, DAG_DANGLING]),
+            CommandName::Dag => (
+                "check|frontier",
+                &[OK, DAG_CYCLE, DAG_DANGLING, DAG_PLAN_MISMATCH],
+            ),
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),
             CommandName::Verdict => (
                 "set|valid",

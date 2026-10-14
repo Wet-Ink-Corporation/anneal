@@ -28,23 +28,29 @@ impl TicketId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// The id's value when it is digits only and fits a `u64`.
-    fn number(&self) -> Option<u64> {
-        let digits = !self.0.is_empty() && self.0.bytes().all(|b| b.is_ascii_digit());
-        digits.then(|| self.0.parse().ok()).flatten()
+/// The order of two ids as written, the one [`TicketId`]'s `Ord` uses: digits-only ids that
+/// fit a `u64` first by value, then every other id by bytes; ties by bytes.
+pub(crate) fn id_order(left: &str, right: &str) -> Ordering {
+    let by_bytes = || left.as_bytes().cmp(right.as_bytes());
+    match (number(left), number(right)) {
+        (Some(left), Some(right)) => left.cmp(&right).then_with(by_bytes),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => by_bytes(),
     }
+}
+
+/// The id's value when it is digits only and fits a `u64`.
+fn number(id: &str) -> Option<u64> {
+    let digits = !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit());
+    digits.then(|| id.parse().ok()).flatten()
 }
 
 impl Ord for TicketId {
     fn cmp(&self, other: &Self) -> Ordering {
-        let by_bytes = || self.0.as_bytes().cmp(other.0.as_bytes());
-        match (self.number(), other.number()) {
-            (Some(left), Some(right)) => left.cmp(&right).then_with(by_bytes),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => by_bytes(),
-        }
+        id_order(&self.0, &other.0)
     }
 }
 

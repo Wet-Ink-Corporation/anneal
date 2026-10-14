@@ -119,6 +119,28 @@ fn command_help_shows_its_exit_codes_and_does_not_prove() {
 }
 
 #[test]
+fn plan_help_says_only_the_plans_bytes_are_compared() {
+    for args in [&["plan", "--help"][..], &["plan", "check", "--help"]] {
+        let (code, out, _) = anneal(args);
+        assert_eq!(code, 0, "{args:?} succeeds");
+        assert!(
+            out.contains("the plan's bytes"),
+            "{args:?} names what is compared: {out}"
+        );
+        assert!(
+            !out.contains("inputs changed"),
+            "{args:?} claims no other inputs are compared: {out}"
+        );
+    }
+    let (_, out, _) = anneal(&["plan", "--help"]);
+    assert!(
+        out.lines()
+            .any(|line| line == "  4   stale: the plan's bytes changed since approval"),
+        "the exit-4 row says what changed: {out}"
+    );
+}
+
+#[test]
 fn unknown_argument_exits_2_with_one_error_line() {
     let (code, out, err) = anneal(&["nope"]);
     assert_eq!(code, 2, "usage errors exit 2");

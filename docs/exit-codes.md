@@ -67,9 +67,9 @@ A green result proves the task's tests ran green. It does **not** prove that the
 |---|---|
 | 0 | approved and current |
 | 3 | not approved |
-| 4 | stale: inputs changed since approval |
+| 4 | stale: the plan's bytes changed since approval |
 
-A green result proves the plan is approved and current with its inputs. It does **not** prove that the plan is correct or complete.
+A green result proves the plan is approved and the plan's bytes are unchanged since its latest approval (its spec and other files are not compared). It does **not** prove that the plan is correct or complete, or that its spec is unchanged since the approval.
 
 ## `anneal mode`
 
@@ -107,8 +107,9 @@ A green result proves the checked files have no error under anneal's lint rules.
 | 0 | ok |
 | 1 | cycle |
 | 2 | dangling dependency |
+| 3 | check --plan: tickets disagree with the plan |
 
-A green result proves the task graph has no cycle and no dangling dependency. It does **not** prove that the dependencies are the right ones.
+A green result proves the task graph has no cycle and no dangling dependency; with check --plan, every plan task has a ticket of its id with the same blockers among the plan's tasks, and every ticket is a task of the plan or an outside blocker of one (a ticket that blocks a task's ticket, directly or through other such tickets). It does **not** prove that the dependencies are the right ones.
 
 ## `anneal floor-guard`
 

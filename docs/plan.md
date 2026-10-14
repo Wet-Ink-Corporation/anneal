@@ -3,8 +3,9 @@
 A plan splits a spec with no open questions into tasks a fresh session can build test-first.
 It is written from `plugin/playbooks/plan.template.md` (the `plan` skill says how), checked
 by `anneal lint plan`, and approved by the human with `anneal plan approve`, which records the
-plan's hash in the ledger. `anneal plan check` then tells whether the plan is still the one
-that was approved: any edit, even one byte, voids the approval.
+plan's hash in the ledger. `anneal plan check` then tells whether the plan's bytes are still
+the ones that were approved: any edit, even one byte, voids the approval. Only the plan's
+bytes are compared; its spec is not (see below).
 
 ```text
 anneal lint plan <FILE>
@@ -97,16 +98,21 @@ finding).
 
 ## `anneal plan check`
 
-Compares the hash of the plan's bytes with the latest `plan_approved` for its id:
+Compares the hash of the plan's bytes, and nothing else, with the latest `plan_approved` for
+its id:
 
 | Code | Meaning | `data.status` |
 |---|---|---|
 | 0 | approved and current | `current` |
 | 3 | not approved: no approval of this plan id | `not_approved` |
-| 4 | stale: the plan changed since its latest approval | `stale` |
+| 4 | stale: the plan's bytes changed since its latest approval | `stale` |
 
 `data` also holds `plan`, `hash`, `approved` (`{hash, position, ts}` of the latest approval,
 or `null`), `store` and `source`. `check` never creates a ledger: when the ledger path does
 not exist, the plan is not approved; any other ledger it cannot open (a directory, an
-unreadable file) fails with exit 70 rather than reading as not approved. It does not re-read the spec; a spec edited after approval is the reviewer's to
-catch.
+unreadable file) fails with exit 70 rather than reading as not approved.
+
+`check` compares only the plan's bytes. `plan_approved` records no hash of the spec, so a
+spec edited after approval still checks `current` (exit 0); such an edit is the reviewer's to
+catch. The `--help` text, the green-result claim and `docs/exit-codes.md` say the same (#76).
+Recording the spec's hash would need a ledger registry version bump, a decision left open.
