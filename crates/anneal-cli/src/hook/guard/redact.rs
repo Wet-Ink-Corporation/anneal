@@ -27,15 +27,18 @@
 //!   operands, each value and operand of its slot's shape; `find`'s words before its
 //!   actions). From the first word that does not (a cluster such as `-iu`, an option the
 //!   tables do not know, a value or operand without its slot's shape such as
-//!   `chrt -i mysql`, chrt or taskset with `-p`, an assignment after a wrapper that takes
+//!   `timeout x psql` or one the wrapper may refuse (`xargs -n 0`, `env -u a=b`, any `chrt`
+//!   priority), taskset with `-p`, xargs with `-I`, an assignment after a wrapper that takes
 //!   none, a non-literal one after a wrapper that takes some (`env K=$V x`, which bash
 //!   field-splits), a body followed by a word its wrapper does not let follow it (an option
 //!   word or one that may expand, `su -c 'x y' -c ls`, where the last `-c` wins; anything
-//!   after `flock -c`'s body; a second file for `script`; for `trap`, no signal or one that is
-//!   not literal, or an action of digits or `-`), a shell option the shell may refuse
-//!   (`dash -B`, `bash -l --norc`, `bash -o nosuch`, `bash -n`), `su -s`, an alias name bash
-//!   refuses), every word of the simple command is an argument of no known program:
-//!   `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`.
+//!   after `flock -c`'s body; a second file for `script`), a shell option the shell may
+//!   refuse or that changes what the body runs (`dash -B`, `bash -l --norc`,
+//!   `bash -o nosuch`, `bash -n`, `bash -r`, `bash -k`), `su -s`, an alias name bash refuses;
+//!   and always `trap`'s action, `alias`'s value, and the word after `builtin`, `busybox`,
+//!   `function NAME` and `coproc`, which may not run), every word of the simple command is an
+//!   argument of no known program: `sudo -iu postgres psql` is
+//!   `sudo -<redacted> <redacted> <redacted>`.
 //! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
 //!   `/usr/bin/rm` is `rm`), kept when the word is literal and the name 1 to 64 of
 //!   `[A-Za-z0-9._+-]` ([`allow::is_program`]); otherwise hidden. Wrappers are shown the same
@@ -53,11 +56,12 @@
 //! - **Redirections** at the end: `> <target>` for each file written (any write operator is
 //!   shown as `>`), `< <redacted>` for a file read, `<<< <redacted>` for a heredoc or
 //!   here-string; the target hidden unless it is a sensitive target. Comments are dropped.
-//! - **Bodies**: a `bash -c`, `eval`, `su -c`, `trap` or `watch` (without `-x`) body (the
-//!   denylist's [`denylist::Layout::Script`]) that is literal is lexed and rendered in turn,
-//!   in `'…'`, at most [`MAX_NESTING`] deep and within the denylist's lexing budget; any other
-//!   body is hidden. `find`'s actions are rendered as commands, and its own words by its
-//!   tables wherever the walk finds it (`sudo find`, `X=1 find`).
+//! - **Bodies**: a `bash -c`, `eval`, `su -c`, `script -c`, `flock -c` or `watch` (without
+//!   `-x`) body (the denylist's [`denylist::Layout::Script`]) that is literal is lexed and
+//!   rendered in turn, in `'…'`, at most [`MAX_NESTING`] deep and within the denylist's lexing
+//!   budget; any other body, `trap`'s action and `alias`'s value among them, is hidden.
+//!   `find`'s actions are rendered as commands, and its own words by its tables wherever the
+//!   walk finds it (`sudo find`, `X=1 find`).
 //!
 //! Commands are joined by `; `, or ` | ` when a command reads the pipe of the one just before
 //! it: the lexer keeps no other separator. A command the lexer cannot read is [`UNPARSED`],

@@ -4,7 +4,12 @@
 //! so `find . -name -exec x \;` holds no action (`-exec` is `-name`'s pattern). An action
 //! counts only when every word of `find` before it reads with certainty by the tables here:
 //! leading options, paths, then exact tests, operators and actions, each value of its slot's
-//! shape, and each action ending in `;`, or in `+` right after `{}`.
+//! shape, and each action ending in `;`, or in `+` right after `{}`. The tables leave out what
+//! keeps find from reaching an action whatever the files: `-o` (`-print -o -exec x`), `-true`,
+//! `-false` and `-quit`, and values find refuses before it runs anything (an invalid
+//! `-regex`, `-printf` format or `-regextype`, `-files0-from` beside paths, `-context` where
+//! the kernel has no `SELinux`, an empty path); `-ok` and `-okdir` ask before each run, so they
+//! are no certain action either.
 
 use std::ops::Range;
 
@@ -16,13 +21,13 @@ use crate::hook::guard::shell::{Shape as WordShape, Word};
 const LEADING: &str = "-H -L -P";
 
 /// Words of the expression that take no value: operators, tests and actions.
-const FLAGS: &str = "! ( ) , -not -a -and -o -or -empty -false -true -nouser -nogroup \
-                     -readable -writable -executable -depth -xdev -mount -noleaf -follow \
-                     -daystart -ignore_readdir_race -noignore_readdir_race -warn -nowarn \
-                     -delete -print -print0 -ls -prune -quit";
+const FLAGS: &str = "! ( ) , -not -a -and -empty -nouser -nogroup -readable -writable \
+                     -executable -depth -xdev -mount -noleaf -follow -daystart \
+                     -ignore_readdir_race -noignore_readdir_race -warn -nowarn -delete -print \
+                     -print0 -ls -prune";
 
 /// Words of the expression that take the next word as their value, and its syntax.
-const VALUES: [(&str, Shape); 41] = [
+const VALUES: [(&str, Shape); 35] = [
     ("-name", Shape::Any),
     ("-iname", Shape::Any),
     ("-path", Shape::Any),
@@ -31,9 +36,6 @@ const VALUES: [(&str, Shape); 41] = [
     ("-iwholename", Shape::Any),
     ("-lname", Shape::Any),
     ("-ilname", Shape::Any),
-    ("-regex", Shape::Any),
-    ("-iregex", Shape::Any),
-    ("-regextype", Shape::Any),
     ("-newer", Shape::Any),
     ("-anewer", Shape::Any),
     ("-cnewer", Shape::Any),
@@ -41,11 +43,9 @@ const VALUES: [(&str, Shape); 41] = [
     ("-user", Shape::Any),
     ("-group", Shape::Any),
     ("-fstype", Shape::Any),
-    ("-context", Shape::Any),
     ("-fprint", Shape::Any),
     ("-fprint0", Shape::Any),
     ("-fls", Shape::Any),
-    ("-printf", Shape::Any),
     ("-type", TYPES),
     ("-xtype", TYPES),
     ("-maxdepth", Shape::Digits),
@@ -63,14 +63,16 @@ const VALUES: [(&str, Shape); 41] = [
     ("-gid", Shape::Integer),
     ("-size", Shape::Blocks),
     ("-perm", Shape::Mode),
-    ("-files0-from", Shape::Any),
 ];
 
-/// `-type`'s letters.
-const TYPES: Shape = Shape::Words("b c d p f l s D");
+/// `-type`'s letters, without Solaris's `D`, which GNU find refuses elsewhere.
+const TYPES: Shape = Shape::Words("b c d p f l s");
 
 /// The words that run an action, up to its `;` or `+`.
 const ACTIONS: &str = "-exec -execdir -ok -okdir";
+
+/// The actions that run their command only once the user answers yes.
+const ASKING: &str = "-ok -okdir";
 
 /// The syntax of the value the expression word `text` takes, or `None` for one that takes
 /// none.
@@ -102,13 +104,16 @@ pub(super) fn first_uncertain(
     let mut at = start;
     while let Some(word) = words.get(at) {
         let text = word.text.as_str();
-        if !word.is_literal() {
+        // A word that may expand, or an empty one: find cannot read an empty path.
+        if !word.is_literal() || text.is_empty() {
             return Some(at);
         }
         let next = at.saturating_add(1);
         if holds(ACTIONS, text) {
-            // An action the walk did not read from here (`-exec ;`) is no certain one.
-            let Some(range) = actions.next().filter(|range| range.start == next) else {
+            // An action that asks first, or one the walk did not read from here (`-exec ;`),
+            // is no certain one.
+            let read = |range: &&Range<usize>| range.start == next && !holds(ASKING, text);
+            let Some(range) = actions.next().filter(read) else {
                 return Some(at);
             };
             if !ends_action(words, text, range) {

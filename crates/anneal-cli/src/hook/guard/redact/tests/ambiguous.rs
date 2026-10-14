@@ -39,6 +39,12 @@ const ROWS: &[(&str, &[&str], &str)] = &[
         &["zqSECRET"],
         "su -- <redacted> <redacted>",
     ),
+    // Review round 10: with `-I` xargs may run an input word put in place of `%`.
+    (
+        "xargs -n1 -I % rm -rf %",
+        &["rm"],
+        "xargs -<redacted> -I <redacted> <redacted> -<redacted> <redacted>",
+    ),
 ];
 
 #[test]
@@ -48,10 +54,6 @@ fn a_wrapper_read_with_certainty_still_shows_what_it_runs() {
         ("sudo --user=root -E psql", "sudo --user=<redacted> -E psql"),
         ("xargs -0 -n 1 rm -rf", "xargs -0 -n <redacted> rm -rf"),
         (
-            "xargs -n1 -I % rm -rf %",
-            "xargs -<redacted> -I <redacted> rm -rf <redacted>",
-        ),
-        (
             "env -i -u HOME A=1 rm -rf /",
             "env -i -u <redacted> A=<redacted> rm -rf /",
         ),
@@ -60,9 +62,8 @@ fn a_wrapper_read_with_certainty_still_shows_what_it_runs() {
             "timeout --signal=<redacted> <redacted> rm -rf /",
         ),
         (
-            "nice -n 5 ionice -c 3 chrt -f 10 taskset -c 0 rm -rf /",
-            "nice -n <redacted> ionice -c <redacted> chrt -f <redacted> taskset -c <redacted> \
-             rm -rf /",
+            "nice -n 5 ionice -c 3 taskset -c 0 rm -rf /",
+            "nice -n <redacted> ionice -c <redacted> taskset -c <redacted> rm -rf /",
         ),
         ("su - root -c 'rm -rf /'", "su - <redacted> -c 'rm -rf /'"),
         (

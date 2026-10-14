@@ -1,8 +1,9 @@
 //! Review round 6 of PR 120: a word filling a wrapper's value or operand slot counts as
-//! certain only when it has that slot's strict shape (chrt's priority all digits, timeout's
-//! duration, taskset's mask, watch's interval, ...), a value word starting with `-` is no
-//! certain value, a shell's `-o` takes no attached value, a shell flag cluster ends in `c`,
-//! and `find`'s actions count only when every word of `find` before them reads with certainty.
+//! certain only when it has that slot's strict shape (timeout's duration, taskset's mask,
+//! watch's interval, ...), a value word starting with `-` is no certain value, a shell's `-o`
+//! takes no attached value, a shell flag cluster ends in `c`, and `find`'s actions count only
+//! when every word of `find` before them reads with certainty. Later rounds add what follows
+//! a body (round 9) and what a wrapper may refuse or never run (round 10).
 
 use super::super::redact;
 use super::ambiguous::whole_words;
@@ -402,6 +403,288 @@ const ROWS: &[(&str, &[&str], &str)] = &[
     ),
     // bash defines no alias whose name it refuses.
     ("alias 'a b=hunter2 x'", &["hunter2"], "alias <redacted>"),
+    // Review round 10: trap refuses a signal it does not know (bash and dash differ) and then
+    // sets no action, so its action is never rendered; nor is an alias's value, run only when
+    // a later command uses the name.
+    (
+        "trap 'hunter2 x' EXIT",
+        &["hunter2"],
+        "trap <redacted> <redacted>",
+    ),
+    (
+        "trap 'hunter2' NOSUCH",
+        &["hunter2"],
+        "trap <redacted> <redacted>",
+    ),
+    (
+        "sh -c \"trap 'hunter2 x' INT\"",
+        &["hunter2"],
+        "sh -c 'trap <redacted> <redacted>'",
+    ),
+    (
+        "trap 'rm -rf /' EXIT",
+        &["rm"],
+        "trap <redacted> <redacted>",
+    ),
+    (
+        "trap -- 'rm -rf /' INT 15",
+        &["rm"],
+        "trap -- <redacted> <redacted> <redacted>",
+    ),
+    ("alias ll='rm -rf /'", &["rm"], "alias <redacted>"),
+    // xargs puts each input item in place of the replace string in every argument, a body
+    // included, so with `-I` (`-i`, `--replace`) the program it runs may be an input word.
+    (
+        "xargs -I hunter2 bash -c 'hunter2 x'",
+        &["hunter2"],
+        "xargs -I <redacted> <redacted> -c <redacted>",
+    ),
+    (
+        "xargs -I Z sh -c 'Z'",
+        &["Z"],
+        "xargs -I <redacted> <redacted> -c <redacted>",
+    ),
+    (
+        "xargs -Ihunter2 sh -c 'hunter2 x'",
+        &["hunter2"],
+        "xargs -<redacted> <redacted> -c <redacted>",
+    ),
+    (
+        "xargs -i sh -c 'hunter2 x'",
+        &["hunter2"],
+        "xargs -i <redacted> -c <redacted>",
+    ),
+    // Restricted bash refuses a command name holding `/`; with `-k` every assignment-shaped
+    // word is taken out of the arguments (`sudo -u X=1 psql` runs `sudo -u psql`).
+    (
+        "bash --restricted -c '/x/hunter2 y'",
+        &["hunter2"],
+        "bash --restricted -c <redacted>",
+    ),
+    (
+        "bash -r -c 'hunter2 y'",
+        &["hunter2"],
+        "bash -r -c <redacted>",
+    ),
+    (
+        "bash -k -c 'sudo -u X=1 hunter2'",
+        &["hunter2"],
+        "bash -k -c <redacted>",
+    ),
+    (
+        "bash -o keyword -c 'hunter2 x'",
+        &["hunter2"],
+        "bash -o <redacted> -c <redacted>",
+    ),
+    // The round-10 self-hunt: a wrapper that runs only a name of its own (a builtin, an
+    // applet), a word that may name no program (a function's or coprocess's name), and a value
+    // the wrapper refuses although it has its slot's syntax.
+    (
+        "builtin hunter2 x",
+        &["hunter2"],
+        "builtin <redacted> <redacted>",
+    ),
+    (
+        "busybox hunter2 x",
+        &["hunter2"],
+        "busybox <redacted> <redacted>",
+    ),
+    (
+        "function f hunter2 x",
+        &["hunter2"],
+        "function <redacted> <redacted> <redacted>",
+    ),
+    (
+        "coproc hunter2 ( dropdb x )",
+        &["hunter2"],
+        "coproc <redacted>; dropdb <redacted>",
+    ),
+    (
+        "doas -s hunter2 x",
+        &["hunter2"],
+        "doas -s <redacted> <redacted>",
+    ),
+    (
+        "timeout -s NOSUCH 5 hunter2",
+        &["hunter2"],
+        "timeout -s <redacted> <redacted> <redacted>",
+    ),
+    (
+        "timeout -s 65 5 hunter2",
+        &["hunter2"],
+        "timeout -s <redacted> <redacted> <redacted>",
+    ),
+    (
+        "xargs -n 0 hunter2",
+        &["hunter2"],
+        "xargs -n <redacted> <redacted>",
+    ),
+    (
+        "xargs -L 0 hunter2",
+        &["hunter2"],
+        "xargs -L <redacted> <redacted>",
+    ),
+    (
+        "xargs -s 1 hunter2",
+        &["hunter2"],
+        "xargs -s <redacted> <redacted>",
+    ),
+    (
+        "xargs -d ab hunter2",
+        &["hunter2"],
+        "xargs -d <redacted> <redacted>",
+    ),
+    (
+        "xargs --process-slot-var=a=b hunter2",
+        &["hunter2"],
+        "xargs --process-slot-var=<redacted> <redacted>",
+    ),
+    ("xargs -p hunter2", &["hunter2"], "xargs -p <redacted>"),
+    (
+        "xargs -P 99999999999 hunter2",
+        &["hunter2"],
+        "xargs -P <redacted> <redacted>",
+    ),
+    (
+        "env -u a=b hunter2",
+        &["hunter2"],
+        "env -u <redacted> <redacted>",
+    ),
+    (
+        "env -C '' hunter2",
+        &["hunter2"],
+        "env -C <redacted> <redacted>",
+    ),
+    ("env -0 hunter2", &["hunter2"], "env -0 <redacted>"),
+    (
+        "sudo -C 2 hunter2",
+        &["hunter2"],
+        "sudo -C <redacted> <redacted>",
+    ),
+    (
+        "flock -E 300 /l hunter2",
+        &["hunter2"],
+        "flock -E <redacted> <redacted> <redacted>",
+    ),
+    (
+        "chrt -o 5 hunter2",
+        &["hunter2"],
+        "chrt -o <redacted> <redacted>",
+    ),
+    (
+        "taskset 0 hunter2",
+        &["hunter2"],
+        "taskset <redacted> <redacted>",
+    ),
+    (
+        "stdbuf -i L hunter2",
+        &["hunter2"],
+        "stdbuf -i <redacted> <redacted>",
+    ),
+    (
+        "stdbuf -o 1Z hunter2",
+        &["hunter2"],
+        "stdbuf -o <redacted> <redacted>",
+    ),
+    (
+        "nice -n 99999999999999999999 hunter2",
+        &["hunter2"],
+        "nice -n <redacted> <redacted>",
+    ),
+    (
+        "script -o 99999999999999999999 -c 'hunter2 x' /dev/null",
+        &["hunter2"],
+        "script -o <redacted> -c <redacted> /dev/null",
+    ),
+    ("setsid -c hunter2", &["hunter2"], "setsid -c <redacted>"),
+    // Rows of round 6's certain table that the tables no longer read: chrt's priority, a
+    // signal of some systems only, `flock -E` and `sudo -C`.
+    (
+        "chrt -o 0 psql x",
+        &["psql"],
+        "chrt -o <redacted> <redacted> <redacted>",
+    ),
+    (
+        "chrt -i 0 mysql",
+        &["mysql"],
+        "chrt -i <redacted> <redacted>",
+    ),
+    (
+        "chrt -T 1000 -f 1 psql",
+        &["psql"],
+        "chrt -T <redacted> -f <redacted> <redacted>",
+    ),
+    (
+        "timeout --signal=SIGRTMIN+1 .5 psql",
+        &["psql"],
+        "timeout --signal=<redacted> <redacted> <redacted>",
+    ),
+    (
+        "flock -w 1.5 -E 3 f psql",
+        &["psql"],
+        "flock -w <redacted> -E <redacted> <redacted> <redacted>",
+    ),
+    (
+        "sudo -C 3 -u root psql",
+        &["psql"],
+        "sudo -C <redacted> -u <redacted> <redacted>",
+    ),
+    // find refuses these expressions before it runs anything, or never reaches the action.
+    (
+        "find . -quit -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -false -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -print -o -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -print -o -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -ok hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -regex '[' -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -perm +644 -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -type D -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -type <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -printf % -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find '' -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -maxdepth 99999999999 -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -maxdepth <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
+    (
+        "find . -files0-from f -exec hunter2 {} \\;",
+        &["hunter2"],
+        "find . -<redacted> <redacted> -<redacted> <redacted> {} <redacted>",
+    ),
 ];
 
 #[test]
@@ -426,19 +709,13 @@ fn a_value_or_operand_without_its_slot_s_shape_hides_the_rest_of_its_command() {
 #[test]
 fn a_value_or_operand_of_its_slot_s_shape_still_shows_what_it_runs() {
     assert_cases(&[
-        ("chrt -o 0 psql x", "chrt -o <redacted> psql <redacted>"),
-        ("chrt -i 0 mysql", "chrt -i <redacted> mysql"),
-        (
-            "chrt -T 1000 -f 1 psql",
-            "chrt -T <redacted> -f <redacted> psql",
-        ),
         ("timeout 1.5m psql x", "timeout <redacted> psql <redacted>"),
         (
             "timeout -k 5s -s TERM 10 psql",
             "timeout -k <redacted> -s <redacted> <redacted> psql",
         ),
         (
-            "timeout --signal=SIGRTMIN+1 .5 psql",
+            "timeout --signal=SIGKILL .5 psql",
             "timeout --signal=<redacted> <redacted> psql",
         ),
         ("taskset 0xff psql", "taskset <redacted> psql"),
@@ -463,13 +740,10 @@ fn a_value_or_operand_of_its_slot_s_shape_still_shows_what_it_runs() {
             "stdbuf -o <redacted> -e <redacted> -i <redacted> psql",
         ),
         ("xargs -n 2 -P 4 rm", "xargs -n <redacted> -P <redacted> rm"),
+        ("flock -w 1.5 f psql", "flock -w <redacted> <redacted> psql"),
         (
-            "flock -w 1.5 -E 3 f psql",
-            "flock -w <redacted> -E <redacted> <redacted> psql",
-        ),
-        (
-            "sudo -C 3 -u root psql",
-            "sudo -C <redacted> -u <redacted> psql",
+            "sudo -T 5m -u root psql",
+            "sudo -T <redacted> -u <redacted> psql",
         ),
         (
             "find . -mtime -7 -exec rm {} \\;",
@@ -514,11 +788,6 @@ fn a_body_followed_by_no_option_word_is_still_shown() {
             "script -c 'rm -rf /' /dev/null",
         ),
         // Review round 9: each wrapper's body with what may follow it.
-        ("trap 'rm -rf /' EXIT", "trap 'rm -rf /' <redacted>"),
-        (
-            "trap -- 'rm -rf /' INT 15",
-            "trap -- 'rm -rf /' <redacted> <redacted>",
-        ),
         ("flock /l -c 'rm -rf /'", "flock <redacted> -c 'rm -rf /'"),
         (
             "script /dev/null -c 'rm -rf /'",
@@ -529,6 +798,5 @@ fn a_body_followed_by_no_option_word_is_still_shown() {
             "bash --norc -l -o pipefail -c 'rm -rf /'",
             "bash --norc -l -o <redacted> -c 'rm -rf /'",
         ),
-        ("alias ll='rm -rf /'", "alias <redacted> 'rm -rf /'"),
     ]);
 }

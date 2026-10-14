@@ -1,38 +1,51 @@
 //! The strict syntax of a wrapper's value or operand slot: a word fills the slot with
-//! certainty only when it has this shape, since a word that does not (`chrt -i mysql`, whose
-//! priority util-linux 2.42 takes only when all digits) may be read by the wrapper as
-//! something else, which moves every word after it.
+//! certainty only when it has this shape, since a word that does not (`timeout x psql`, whose
+//! duration `x` is not one) may be read by the wrapper as something else, which moves every
+//! word after it, or be refused, so that the wrapper runs nothing. A shape therefore takes
+//! only values its wrappers accept whatever the environment: no number of more than
+//! [`MAX_DIGITS`] digits (`find -maxdepth 99999999999` is out of range), no count of 0 where
+//! one is needed (`xargs -n 0`), no empty word (`env -C ''`).
 
 use crate::hook::guard::shell::Word;
+
+/// Most digits in a number a shape takes: nine digits fit every wrapper's integer (an `int`
+/// at least), so none refuses one as out of range.
+const MAX_DIGITS: usize = 9;
 
 /// The syntax a value or operand must have to count as read with certainty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Shape {
-    /// Any word not starting with `-` (a user, a file, a pattern); attached to its option,
-    /// any text.
+    /// Any word not empty and not starting with `-` (a user, a file, a pattern); attached to
+    /// its option, any text but none.
     Any,
-    /// ASCII digits (`chrt`'s priority, `xargs -n`).
+    /// ASCII digits (`xargs -P`, `ionice -n`).
     Digits,
+    /// ASCII digits, not all `0` (`xargs -n`, `-L`: a count of 0 is refused).
+    Count,
     /// ASCII digits after an optional `+` or `-` (`nice -n -5`, `find -mtime -7`).
     Integer,
     /// Digits with an optional `.` fraction (`watch -n 0.5`, `flock -w 1.5`, `.5`).
     Number,
     /// A [`Shape::Number`] with an optional unit of `s`, `m`, `h` or `d` (`timeout 1.5m`).
     Duration,
-    /// A signal number, or a name of ASCII letters with an optional `+` or `-` and digits
-    /// (`KILL`, `SIGTERM`, `RTMIN+1`).
-    Signal,
-    /// A hexadecimal CPU mask with an optional `0x` (`taskset 0xff`).
+    /// A hexadecimal CPU mask with an optional `0x`, not all `0` (`taskset 0xff`: a mask of
+    /// no CPU is refused).
     Mask,
     /// A CPU list (`taskset -c 0-3,5,8-15:2`): a digit, then digits, `,`, `-` and `:`.
     CpuList,
-    /// A buffer size: `L`, or digits with an optional unit of one of `kKMGTPEZYRQ` and an
-    /// optional `B` or `iB` after it (`stdbuf -o 4KiB`).
+    /// A buffer size: digits with an optional unit of one of `kKMG` and an optional `B` or
+    /// `iB` after it (`script -o 4KiB`); a larger unit may overflow.
     Size,
+    /// An output buffering mode: `L` (by line) or a [`Shape::Size`] (`stdbuf -o L`; stdbuf
+    /// refuses `L` for its input).
+    Buffering,
+    /// An environment variable's name: a word not empty and holding no `=` (`env -u a=b` is
+    /// refused).
+    Variable,
     /// A find size: a [`Shape::Integer`] with an optional unit of one of `bcwkMG` (`+100M`).
     Blocks,
-    /// A file mode: an optional `-`, `/` or `+`, then octal digits or a symbolic mode of
-    /// `ugoa`, `+-=`, `rwxXst` and `,` (`-644`, `/u+w`, `u=rwx,g=rx`).
+    /// A file mode: an optional `-` or `/`, then octal digits or a symbolic mode of `ugoa`,
+    /// `+-=`, `rwxXst` and `,` (`-644`, `/u+w`, `u=rwx,g=rx`); find refuses `+644`.
     Mode,
     /// One of these space-separated words (`ionice -c idle`).
     Words(&'static str),
@@ -50,27 +63,29 @@ impl Shape {
     pub(super) fn fills(self, word: &Word) -> bool {
         word.is_literal()
             && match self {
-                Self::Any => !word.text.starts_with('-'),
+                Self::Any => !word.text.is_empty() && !word.text.starts_with('-'),
                 _ => self.accepts(&word.text),
             }
     }
 
     /// Whether `text`, a value attached to its option (`-n5`, `--signal=KILL`), has this
-    /// shape; any text for [`Shape::Any`], since nothing else can be read from it.
+    /// shape; any text but none for [`Shape::Any`], since nothing else can be read from it.
     pub(super) fn accepts(self, text: &str) -> bool {
         match self {
-            Self::Any => true,
+            Self::Any => !text.is_empty(),
             Self::Digits => digits(text),
+            Self::Count => digits(text) && text.bytes().any(|byte| byte != b'0'),
             Self::Integer => digits(text.strip_prefix(['+', '-']).unwrap_or(text)),
             Self::Number => number(text),
             Self::Duration => number(text.strip_suffix(['s', 'm', 'h', 'd']).unwrap_or(text)),
-            Self::Signal => signal(text),
             Self::Mask => {
                 let hex = text
                     .strip_prefix("0x")
                     .or_else(|| text.strip_prefix("0X"))
                     .unwrap_or(text);
-                !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                !hex.is_empty()
+                    && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && hex.bytes().any(|byte| byte != b'0')
             }
             Self::CpuList => {
                 text.starts_with(|c: char| c.is_ascii_digit())
@@ -78,7 +93,9 @@ impl Shape {
                         .bytes()
                         .all(|byte| byte.is_ascii_digit() || matches!(byte, b',' | b'-' | b':'))
             }
-            Self::Size => text == "L" || size(text),
+            Self::Size => size(text),
+            Self::Buffering => text == "L" || size(text),
+            Self::Variable => !text.is_empty() && !text.contains('='),
             Self::Blocks => {
                 let unsigned = text.strip_prefix(['+', '-']).unwrap_or(text);
                 digits(
@@ -101,30 +118,21 @@ impl Shape {
     }
 }
 
-/// Whether `text` is one or more ASCII digits.
+/// Whether `text` is one to [`MAX_DIGITS`] ASCII digits.
 fn digits(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+    !text.is_empty() && at_most_digits(text)
 }
 
-/// Whether `text` is digits with an optional `.` fraction, holding at least one digit.
+/// Whether `text` is at most [`MAX_DIGITS`] ASCII digits, none included.
+fn at_most_digits(text: &str) -> bool {
+    text.len() <= MAX_DIGITS && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether `text` is digits with an optional `.` fraction, holding at least one digit and at
+/// most [`MAX_DIGITS`] on either side.
 fn number(text: &str) -> bool {
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
-    let all_digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    (digits(whole) || digits(fraction)) && all_digits(whole) && all_digits(fraction)
-}
-
-/// Whether `text` is a signal number or name ([`Shape::Signal`]).
-fn signal(text: &str) -> bool {
-    if digits(text) {
-        return true;
-    }
-    let letters = text
-        .find(['+', '-'])
-        .map_or(text, |sign| text.get(..sign).unwrap_or(text));
-    let offset = text.get(letters.len()..).unwrap_or("");
-    !letters.is_empty()
-        && letters.bytes().all(|byte| byte.is_ascii_alphabetic())
-        && (offset.is_empty() || digits(offset.get(1..).unwrap_or("")))
+    (digits(whole) || digits(fraction)) && at_most_digits(whole) && at_most_digits(fraction)
 }
 
 /// Whether `text` is a buffer size of digits and an optional unit ([`Shape::Size`]).
@@ -136,7 +144,7 @@ fn size(text: &str) -> bool {
     let unit_ok = match unit.as_bytes() {
         [] => true,
         [prefix, rest @ ..] => {
-            b"kKMGTPEZYRQ".contains(prefix) && matches!(rest, [] | [b'B'] | [b'i', b'B'])
+            b"kKMG".contains(prefix) && matches!(rest, [] | [b'B'] | [b'i', b'B'])
         }
     };
     digits(number) && unit_ok
@@ -144,7 +152,7 @@ fn size(text: &str) -> bool {
 
 /// Whether `text` is a file mode ([`Shape::Mode`]).
 fn mode(text: &str) -> bool {
-    let bare = text.strip_prefix(['-', '/', '+']).unwrap_or(text);
+    let bare = text.strip_prefix(['-', '/']).unwrap_or(text);
     let octal = !bare.is_empty() && bare.bytes().all(|byte| matches!(byte, b'0'..=b'7'));
     let symbolic = bare.contains(['+', '-', '='])
         && bare.bytes().all(|byte| b"ugoa+-=rwxXst,".contains(&byte));

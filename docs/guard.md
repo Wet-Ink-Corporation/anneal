@@ -341,18 +341,26 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   redaction's own tables (`guard::redact::certain`): an exact flag, an exact value option
   followed by its value (or with it attached: `-n1`, `--user=root`; a shell takes none
   attached, so `bash -oerrexit` is uncertain), `--`, then the wrapper's fixed operands
-  (`timeout`'s duration, `chrt`'s priority, `flock`'s file) and, for `sudo` and `env` only,
+  (`timeout`'s duration, `taskset`'s mask, `flock`'s file) and, for `sudo` and `env` only,
   literal assignments, ending exactly where the walk puts the next wrapper, the program or the body.
-  A word filling a value or operand slot counts only when it has that slot's strict shape:
-  `chrt`'s priority all digits (util-linux 2.42 takes it only then, and needs none under
-  `-o`, `-b`, `-i` and `-d`, so `chrt -i mysql -pX` runs `mysql`), `timeout`'s duration and
-  `-k` a number with an optional `s`, `m`, `h` or `d`, `-s` a signal, `taskset`'s mask hex
-  (a CPU list such as `0-3,5` after `-c`), `nice -n` an integer, `ionice -c` a class and `-n`
-  digits, `watch -n` and `flock -w` a number, the counts of `xargs`, `chrt`, `sudo -C`,
-  `flock -E` and `watch -q` digits, `stdbuf`'s sizes a size or `L`, and any other value a word
-  not starting with `-` (`sudo -u -E psql` is uncertain); every value and operand must be
+  A word filling a value or operand slot counts only when it has that slot's strict shape, one
+  the wrapper takes whatever the environment (a value it refuses makes it run nothing):
+  `timeout`'s duration and `-k` a number with an optional `s`, `m`, `h` or `d`, `-s` one of
+  the POSIX signals (`KILL`, `SIGTERM`, `9`; `RTMIN+1` or `65` exist on some systems only),
+  `taskset`'s mask hex and not 0 (a CPU list such as `0-3,5` after `-c`), `nice -n` an
+  integer, `ionice -c` a class and `-n` digits, `watch -n` and `flock -w` a number, `xargs -n`
+  and `-L` a count of at least 1 (`xargs -n 0` exits 1), `xargs -P` and `watch -q` digits,
+  `stdbuf`'s sizes digits with a unit of at most `G` (and `L` for `-o` and `-e`, not `-i`),
+  `env -u` a name without `=`, every number at most nine digits (`find -maxdepth
+  99999999999` is out of range), and any other value a word not empty and not starting with
+  `-` (`sudo -u -E psql` and `env -C '' psql` are uncertain); every value and operand must be
   literal, since a glob, variable or substitution may become several words or none
-  (`sudo -u $U psql`, `flock /tmp/*.lock psql` and `su $U -c …` are uncertain). `env -S`
+  (`sudo -u $U psql`, `flock /tmp/*.lock psql` and `su $U -c …` are uncertain). Options whose
+  values the wrapper may refuse whatever their syntax, or under which it may run nothing, are
+  not in the tables: `chrt` (its priority's range depends on the policy: `chrt -o 5` is
+  refused), `flock -E` (0 to 255), `sudo -C` (at least 3), `xargs -d`, `-s` and
+  `--process-slot-var`, `xargs -p`, `env -0` (refused with a command), `doas -s` (refused
+  with one) and `setsid -c` (it needs a terminal). `env -S`
   (`--split-string`) and `watch -x` (`--exec`) are never trusted: both split their words
   and run them directly, with no shell, so their string is no shell text to render
   (`env -S 'echo a; hunter2'` is `env -S <redacted>`, `watch -x echo 'a; hunter2'` is
@@ -363,11 +371,18 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   actions count only when every word of `find` before them reads with certainty: leading
   `-H`, `-L`, `-P`, `-D x`, `-O<n>`, paths, then exact operators, tests and actions, each
   test's value of its shape (`-maxdepth` digits, `-mtime -7` a signed number, `-perm` a mode,
-  `-name` a word not starting with `-`), and each action ending in `;`, or in `+` right
-  after `{}`: `find . -name -exec x \;` holds no action (find reads `-exec` as the pattern)
-  and is rendered as arguments. From the first word that does not (a cluster longer than one
-  letter, an option the tables do not know, a value or operand without its slot's shape or
-  not literal, `env -S`, `watch -x`, `chrt`/`taskset` with `-p` or `--pid`, an assignment
+  not `+644`, which find refuses, `-name` a word not starting with `-`), and each action
+  ending in `;`, or in `+` right after `{}`: `find . -name -exec x \;` holds no action (find
+  reads `-exec` as the pattern) and is rendered as arguments. The tables leave out what keeps
+  find from reaching an action whatever the files (`-o`, as in `-print -o -exec x`, `-true`,
+  `-false`, `-quit`), what find refuses before it runs anything (`-regex`, `-iregex`,
+  `-regextype`, `-printf`, `-files0-from`, `-context`, `-type D`, an empty path), and `-ok`
+  and `-okdir`, which run only once the user answers yes. From the first word that does not
+  (a cluster longer than one letter, an option the tables do not know, a value or operand
+  without its slot's shape or not literal, `env -S`, `watch -x`, `taskset` with `-p` or
+  `--pid`, any `chrt`, `xargs` with `-I`, `-i` or `--replace` (it puts each input item in
+  place of the replace string in every argument, the program and a body included, so
+  `xargs -I Z sh -c 'Z'` runs an input word), an assignment
   after a wrapper that takes none, such as `nohup K=v run`, a non-literal assignment after
   `sudo` or `env`, such as `env K=$V x`, since bash field-splits a wrapper's arguments and
   `V="1 echo"` makes `echo` the program, a body followed by a word starting with `-` or not
@@ -375,29 +390,39 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   last `-c` wins (a shell's body is cut the same way, which hides more than needed for
   `bash -c 'x' -- -y`), and a body its wrapper would refuse to run for what follows it:
   anything after `flock … -c`'s body (flock exits 64), more than one file in all for
-  `script` (`script -c 'x' a b` exits 1) or any with `-B`, `-I` or `-O`, and a `trap` with no
-  signal after its action (`trap 'x y'` reads `x y` as a signal), a signal not literal or
-  starting with `-`, or an action of digits or `-` (`trap 2 'x'` resets both); likewise a
-  shell option the shell may refuse or that runs nothing: bash's flags, `-o` names and long
-  options (only before its short ones: `bash -l --norc` exits 2), no `-n` and no `-O`; for
+  `script` (`script -c 'x' a b` exits 1) or any with `-B`, `-I` or `-O`; likewise a
+  shell option the shell may refuse, that runs nothing or that changes what the body runs:
+  bash's flags, `-o` names and long options (only before its short ones: `bash -l --norc`
+  exits 2), no `-n`, no `-O`, no `-r` (`--restricted`: bash refuses a command name holding
+  `/`) and no `-k` (`-o keyword`: bash takes every assignment-shaped word out of the
+  arguments, so `sudo -u X=1 psql` runs `sudo -u psql`); for
   `sh`, `dash`, `zsh`, `ksh`, `mksh` and `ash` only POSIX's `-a -C -e -f -i -m -u -v -x` and
   `-o` names (`dash -B` and `sh -h` exit 2, zsh's `-b` ends its options, mksh's `-T` takes
   the next word); `su -s`, which runs the body with that program; `flock --command=x` and
   `flock -cx`, which flock runs as a program's name; and an alias name bash refuses
-  (`alias 'a b=x'`)), every word of that simple command is an
+  (`alias 'a b=x'`); and always, however their words read, `trap`'s action (trap sets none
+  when it refuses a signal, and which signals it takes differs between bash, dash and
+  systems: `trap 'x' NOSUCH`, `trap 'x' 99`, dash's `DEBUG`), `alias`'s value (it runs only
+  when a later command uses the name), and the word after `builtin` (it runs only a shell
+  builtin), `busybox` (only one of its applets), `function NAME` (`function f x` is a syntax
+  error) and `coproc` (in `coproc NAME ( x )` the word is the coprocess's name)), every word
+  of that simple command is an
   argument of no known program, hidden unless a program-free table (the sensitive targets,
   one-letter options, long option names) names it, and no body is rendered:
   `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`,
   `xargs -eE psql hunter2` is `xargs -<redacted> <redacted> <redacted>`,
   `watch -dn psql x` is `watch -<redacted> <redacted> <redacted>`, and
-  `chrt -p 10 psql 4242` is `chrt -p <redacted> <redacted> <redacted>`, and
-  `chrt -i mysql -phunter2` is `chrt -i <redacted> -<redacted>`. Clef loses the program
+  `chrt -p 10 psql 4242` is `chrt -p <redacted> <redacted> <redacted>`,
+  `chrt -i mysql -phunter2` is `chrt -i <redacted> -<redacted>`, and
+  `trap 'rm -rf /' EXIT` is `trap <redacted> <redacted>`. Clef loses the program
   there; nothing leaks. Signal lost by design: a `timeout` duration in another `strtod` form
   (`1e3`, `0x10`), a `taskset` mask list (`ff,ff`), `bash -eo pipefail -c …` (a cluster
   ending in a value letter), a `find` primary outside the tables (`-fprintf`, `-newerXY`), an
   unquoted glob or variable as a wrapper's or `find`'s value or assignment before what it
   runs (it may expand to several words), a body followed by an option word or an expansion
-  (`bash -c '…' -- -x`, `bash -c '…' "$0"`), and what `env -S` and `watch -x` run.
+  (`bash -c '…' -- -x`, `bash -c '…' "$0"`), what `env -S` and `watch -x` run, and (from
+  review round 10) whatever follows `chrt`, `builtin`, `busybox`, `coproc` or
+  `xargs -I`, and every `trap` action and `alias` value.
 - **The program**: its name without a path or `.exe` (`/usr/bin/python3.12` is `python3.12`,
   `./deploy.sh` is `deploy.sh`), kept when the word is literal (no expansion, glob or brace)
   and the name 1 to 64 of `[A-Za-z0-9._+-]`; otherwise `<redacted>` (`"$CMD"`, `./my tool`).
@@ -434,8 +459,9 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   or here-string; a target is kept only when it is a sensitive target (`> /dev/null`,
   `> /dev/sda`). Comments are dropped.
 - **Bodies**: the shell text a wrapper runs (`bash -c`, `sh -c`, `eval`, `su -c`,
-  `script -c`, `flock -c`, `trap`, `watch` without `-x`; the denylist's `Script`, less
-  `env -S`, which runs no shell), when the words it comes from are literal and the words after
+  `script -c`, `flock -c`, `watch` without `-x`; the denylist's `Script`, less `env -S`,
+  which runs no shell, and less `trap`'s action and `alias`'s value, which may never run and
+  are always hidden), when the words it comes from are literal and the words after
   them are what its wrapper lets follow (none starting with `-` or that may expand), is lexed
   and rendered the same way one level deeper, in
   `'…'`, in place of those words (`bash -c 'rm -rf /; git push -f origin main'`,

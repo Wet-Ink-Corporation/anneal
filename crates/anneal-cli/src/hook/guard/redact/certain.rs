@@ -15,20 +15,28 @@
 //! follow ([`after::After`]), each literal and not starting with `-` (`su` and `script`
 //! read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
 //! `flock`, none, its `-c` a word of its own; for `script`, at most one file in the whole run
-//! (and none of `-B`, `-I` or `-O`, after which it takes no file); for `trap`, at least one
-//! signal, after an action neither all digits nor `-`. Otherwise the wrapper may refuse the
-//! command and run nothing (`trap 'x y'` reads `x y` as a signal). A shell's options are its
-//! own (dash and zsh take fewer flags than bash, bash a long option only before the short
-//! ones, `-o` only an option name it knows, no `-n`), `su`'s exclude `-s` (the body runs
-//! under that program), and an alias's name is one bash takes.
+//! (and none of `-B`, `-I` or `-O`, after which it takes no file). Otherwise the wrapper may
+//! refuse the command and run nothing. A wrapper that may not run what the walk places after
+//! its words ([`readings::Runs::Maybe`]) is cut there, however its words read: `trap`, which
+//! sets no action when it refuses a signal (so its action is never rendered), `alias`, whose
+//! value runs only when a later command uses the name, `builtin` and `busybox`, which run
+//! only a name of their own, and `function NAME` and `coproc`, after which the word may be no
+//! program. A shell's options are its own (dash and zsh take fewer flags than bash, bash a
+//! long option only before the short ones, `-o` only an option name it knows, no `-n`, `-r`
+//! or `-k`), `su`'s exclude `-s` (the body runs under that program), an alias's name is one
+//! bash takes, and xargs's exclude `-I` (`-i`, `--replace`), under which it puts each input
+//! item in place of the replace string, so the program it runs may be an input word.
 //! A word filling a value or operand slot counts only when it is literal (no glob, variable
 //! or substitution, which may become several words or none) and has that slot's strict shape
-//! ([`shape::Shape`]: chrt's priority all digits, timeout's duration, a value not starting
-//! with `-`); `find`'s words before its actions are read by [`find`]'s tables. `env -S` and
-//! `watch -x` are not in the tables: both split their words and run them without a shell,
-//! so what follows is no shell text the skeleton can render. From the first word that does
-//! not read with certainty, the rest of the simple command is rendered as arguments: the
-//! skeleton may hide more than needed, never show a value as a program.
+//! ([`shape::Shape`]: timeout's duration, a count of at least 1, a value not empty and not
+//! starting with `-`), one the wrapper accepts whatever the environment; an option whose
+//! values the wrapper may refuse whatever their syntax (`chrt`'s priority, whose range
+//! depends on the policy, `flock -E`, `xargs -d`) is not in the tables. `find`'s words before
+//! its actions are read by [`find`]'s tables. `env -S` and `watch -x` are not in the tables
+//! either: both split their words and run them without a shell, so what follows is no shell
+//! text the skeleton can render. From the first word that does not read with certainty, the
+//! rest of the simple command is rendered as arguments: the skeleton may hide more than
+//! needed, never show a value as a program.
 //!
 //! The tables trust only what they hold: a wrapper or option not listed is uncertain, and a
 //! run of words is certain only where the tables and the walk read it the same way.
@@ -42,7 +50,7 @@ use std::ops::Range;
 
 use super::denylist::{self, Role};
 use super::shell::Word;
-use readings::{BodyWord, NONE, Reading, Style};
+use readings::{BodyWord, NONE, Reading, Runs, Style};
 use shape::Shape;
 
 /// Where the words of the last wrapper the walk read end, by the layout it gave the command.
@@ -93,11 +101,11 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
     for (nth, &at) in wrappers.iter().enumerate() {
         let start = at.saturating_add(1);
         let name = words.get(at).and_then(denylist::program_name);
-        // Where the run stops, how it must end, and the words of the body and after it, which
-        // the body's reading must also account for (none unless the run ends at a body word).
-        let (stop, mode, body, after) = match (wrappers.get(nth.saturating_add(1)), end) {
-            (Some(&next), _) => (next, Mode::Next, &[][..], &[][..]),
-            (None, End::Program(program)) => (program, Mode::Next, &[][..], &[][..]),
+        // Where the run stops, how it must end, and the words after the body, which the
+        // body's reading must also account for (none unless the run ends at a body word).
+        let (stop, mode, after) = match (wrappers.get(nth.saturating_add(1)), end) {
+            (Some(&next), _) => (next, Mode::Next, &[][..]),
+            (None, End::Program(program)) => (program, Mode::Next, &[][..]),
             (
                 None,
                 End::Body {
@@ -106,12 +114,12 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
                 },
             ) => {
                 // Bounds the walk did not give in order are no certain reading.
-                let (Some(body), Some(after)) = (words.get(from..to), words.get(to..)) else {
+                let Some(after) = words.get(from..to).and_then(|_| words.get(to..)) else {
                     return Some(start);
                 };
-                (from, Mode::Body, body, after)
+                (from, Mode::Body, after)
             }
-            (None, End::Attached) => (words.len(), Mode::Attached, &[][..], &[][..]),
+            (None, End::Attached) => (words.len(), Mode::Attached, &[][..]),
             (None, End::Actions(actions)) if name == Some("find") => {
                 return find::first_uncertain(words, start, actions);
             }
@@ -127,11 +135,15 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
         let run = Run {
             words: run_words,
             roles: run_roles,
-            body,
             after,
         };
         if let Some(offset) = run.first_uncertain(reading, mode) {
             return Some(start.saturating_add(offset));
+        }
+        // A wrapper that may not run what follows its words (`trap`'s action) ends the
+        // certain words there, even when every word of its own read with certainty.
+        if reading.runs == Runs::Maybe {
+            return Some(stop);
         }
     }
     None
@@ -246,9 +258,8 @@ impl Reading {
 struct Run<'w> {
     words: &'w [Word],
     roles: &'w [Role],
-    /// The word or words the body came from, when the run ends at them.
-    body: &'w [Word],
-    /// The words of the simple command after those, when the run ends at a body.
+    /// The words of the simple command after the word or words the body came from, when the
+    /// run ends at a body.
     after: &'w [Word],
 }
 
@@ -298,10 +309,11 @@ impl<'w> Run<'w> {
         let next = at.saturating_add(1);
         // A shell takes its long options only before its short ones (`bash -l --norc` fails).
         // Every word before `at` read as an option or a value, and no value starts with `-`.
-        let short = |word: &Word| word.text.starts_with('-') && !word.text.starts_with("--");
-        let after_short = self.words.iter().take(at).any(short);
-        if walk.reading.style == Style::Shell && text.starts_with("--") && after_short {
-            return Step::Settled(Some(at));
+        if walk.reading.style == Style::Shell && text.starts_with("--") {
+            let short = |word: &Word| word.text.starts_with('-') && !word.text.starts_with("--");
+            if self.words.iter().take(at).any(short) {
+                return Step::Settled(Some(at));
+            }
         }
         match walk.reading.option(text) {
             Opt::Flag => {
@@ -328,7 +340,7 @@ impl<'w> Run<'w> {
     fn body(self, walk: &Walk, at: usize) -> Option<usize> {
         let later = self.words.get(at.saturating_add(1)..).unwrap_or_default();
         let following = later.iter().chain(self.after);
-        let certain = walk.reading.after.admits(self.body, following, walk.loose);
+        let certain = walk.reading.after.admits(following, walk.loose);
         (!certain).then_some(at)
     }
 
@@ -353,7 +365,7 @@ impl<'w> Run<'w> {
         if at < self.words.len() || unended {
             return Some(at);
         }
-        // One with none (`trap`, `eval`, `watch`) runs the body after its options and operands.
+        // One with none (`eval`, `watch`) runs the body after its options and operands.
         match walk.mode {
             // `at` is the end of the run: no word of it follows.
             Mode::Body => self.body(walk, at),

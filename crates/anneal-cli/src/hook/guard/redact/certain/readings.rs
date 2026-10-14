@@ -35,6 +35,22 @@ pub(super) struct Reading {
     pub(super) assignments: bool,
     /// How option words other than the exact ones read.
     pub(super) style: Style,
+    /// Whether the wrapper surely runs what the walk places as its program or body.
+    pub(super) runs: Runs,
+}
+
+/// Whether a wrapper surely runs the program or body the walk places after its words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Runs {
+    /// It does, once its words read with certainty.
+    Surely,
+    /// Maybe not, or maybe something else: from that word on the command is arguments.
+    /// `trap` sets no action when it refuses a signal (which signals it takes differs between
+    /// shells and systems), `alias` runs its value only when a later command uses the name,
+    /// `builtin` runs only a shell builtin and `busybox` only an applet of its own, and the
+    /// word after `function NAME` or `coproc` may be no program (`function f x` is a syntax
+    /// error; in `coproc NAME ( x )` the word is the coprocess's name).
+    Maybe,
 }
 
 /// How a wrapper reads an option word that is none of its exact options.
@@ -75,16 +91,20 @@ pub(super) const NONE: Reading = Reading {
     operands_anywhere: false,
     assignments: false,
     style: Style::Getopt,
+    runs: Runs::Surely,
 };
 
 /// bash: its one-letter flags, read letter by letter in a cluster, `-o` with the name of one of
 /// its options as the next word, its long options (which bash takes only before the short
 /// ones, [`Style::Shell`]), and `-c`, whose body is the next word once the options end. A
 /// flag or `-o` name it does not know makes it refuse the command, `-n` reads the body
-/// without running it, and `-O`'s names are not listed, so none of those is here.
+/// without running it, and `-O`'s names are not listed, so none of those is here; nor are
+/// `-r` (`--restricted`), under which bash refuses a command name holding `/`, and `-k`
+/// (`-o keyword`), under which it takes every assignment-shaped word out of the arguments
+/// (`sudo -u X=1 psql` runs `sudo -u psql`).
 const BASH: Reading = Reading {
-    flags: "-a -b -B -C -e -E -f -h -H -i -k -l -m -p -P -r -t -T -u -v -x --login \
-            --noediting --noprofile --norc --posix --restricted --verbose",
+    flags: "-a -b -B -C -e -E -f -h -H -i -l -m -p -P -t -T -u -v -x --login \
+            --noediting --noprofile --norc --posix --verbose",
     values: "-o --rcfile --init-file",
     shapes: &[("-o", Shape::Words(BASH_OPTIONS))],
     body: "-c",
@@ -102,9 +122,9 @@ const POSIX_SHELL: Reading = Reading {
     ..BASH
 };
 
-/// The `-o` names bash 5 takes, `noexec` left out (it runs nothing).
+/// The `-o` names bash 5 takes, `noexec` (it runs nothing) and `keyword` (`-k`) left out.
 const BASH_OPTIONS: &str = "allexport braceexpand emacs errexit errtrace functrace hashall \
-                            histexpand history ignoreeof interactive-comments keyword monitor \
+                            histexpand history ignoreeof interactive-comments monitor \
                             noclobber noglob nolog notify nounset onecmd physical pipefail \
                             posix privileged verbose vi xtrace";
 
@@ -114,22 +134,24 @@ const POSIX_OPTIONS: &str =
 
 /// Each wrapper the denylist's walk reads, by name, and how the skeleton trusts its words.
 /// `source`, `.` and `find` are absent: nothing after the first two is a program or a body,
-/// and `find`'s words are read by [`super::find`]. Options that run nothing or act on
-/// something else (`sudo -e`, `-l`, `-h`; `command -v`; `chrt` and `taskset -p`; `ionice -p`)
-/// are left out, as are values a wrapper may take only attached (xargs's `-e`, `-i`, `-l`:
-/// alone they are flags).
-pub(super) const READINGS: [(&str, Reading); 34] = [
+/// and `find`'s words are read by [`super::find`]. So is `chrt`, whose priority's range
+/// depends on its policy (`chrt -o 5` is refused). Options that run nothing or act on
+/// something else (`sudo -e`, `-l`, `-h`; `command -v`; `taskset -p`; `ionice -p`), options
+/// that make the wrapper refuse a command (`env -0`, `doas -s`) or a value it may refuse
+/// whatever its syntax (`sudo -C 2`, `flock -E 300`, `xargs -d ab`), and options under which it
+/// may not run the command at all (`xargs -p` asks first, `setsid -c` needs a terminal) are
+/// left out, as are values a wrapper may take only attached (xargs's `-e`, `-l`: alone they
+/// are flags).
+pub(super) const READINGS: [(&str, Reading); 33] = [
     (
         "sudo",
         Reading {
             flags: "-A -b -B -E -H -i -k -n -N -P -S -s --askpass --background --bell \
                     --preserve-env --set-home --login --reset-timestamp --non-interactive \
                     --no-update --preserve-groups --stdin --shell",
-            values: "-C -D -g -p -r -t -T -u --close-from --chdir --group --prompt --role \
-                     --type --command-timeout --user",
+            values: "-D -g -p -r -t -T -u --chdir --group --prompt --role --type \
+                     --command-timeout --user",
             shapes: &[
-                ("-C", Shape::Digits),
-                ("--close-from", Shape::Digits),
                 ("-T", Shape::Duration),
                 ("--command-timeout", Shape::Duration),
             ],
@@ -140,7 +162,7 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "doas",
         Reading {
-            flags: "-n -s",
+            flags: "-n",
             values: "-u",
             ..NONE
         },
@@ -148,8 +170,9 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "env",
         Reading {
-            flags: "-i -0 -v --ignore-environment --null --debug",
+            flags: "-i -v --ignore-environment --debug",
             values: "-u -C --unset --chdir",
+            shapes: &[("-u", Shape::Variable), ("--unset", Shape::Variable)],
             assignments: true,
             ..NONE
         },
@@ -162,11 +185,17 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
         },
     ),
     ("nohup", NONE),
-    ("builtin", NONE),
+    (
+        "builtin",
+        Reading {
+            runs: Runs::Maybe,
+            ..NONE
+        },
+    ),
     (
         "setsid",
         Reading {
-            flags: "-c -f -w --ctty --fork --wait",
+            flags: "-f -w --fork --wait",
             ..NONE
         },
     ),
@@ -200,11 +229,11 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
             values: "-i -o -e --input --output --error",
             shapes: &[
                 ("-i", Shape::Size),
-                ("-o", Shape::Size),
-                ("-e", Shape::Size),
+                ("-o", Shape::Buffering),
+                ("-e", Shape::Buffering),
                 ("--input", Shape::Size),
-                ("--output", Shape::Size),
-                ("--error", Shape::Size),
+                ("--output", Shape::Buffering),
+                ("--error", Shape::Buffering),
             ],
             ..NONE
         },
@@ -229,34 +258,13 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
             flags: "-v --verbose --foreground --preserve-status",
             values: "-s -k --signal --kill-after",
             shapes: &[
-                ("-s", Shape::Signal),
-                ("--signal", Shape::Signal),
+                ("-s", SIGNALS),
+                ("--signal", SIGNALS),
                 ("-k", Shape::Duration),
                 ("--kill-after", Shape::Duration),
             ],
             operands: 1,
             operand: Shape::Duration,
-            ..NONE
-        },
-    ),
-    (
-        "chrt",
-        Reading {
-            flags: "-b -d -f -i -o -r -R -v --batch --deadline --fifo --idle --other --rr \
-                    --reset-on-fork --verbose",
-            values: "-T -P -D --sched-runtime --sched-period --sched-deadline",
-            shapes: &[
-                ("-T", Shape::Digits),
-                ("-P", Shape::Digits),
-                ("-D", Shape::Digits),
-                ("--sched-runtime", Shape::Digits),
-                ("--sched-period", Shape::Digits),
-                ("--sched-deadline", Shape::Digits),
-            ],
-            // util-linux 2.42 takes the priority only when it is all digits, and needs none
-            // under `-o`, `-b`, `-i` and `-d`.
-            operands: 1,
-            operand: Shape::Digits,
             ..NONE
         },
     ),
@@ -274,23 +282,31 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
         "function",
         Reading {
             operands: 1,
+            runs: Runs::Maybe,
             ..NONE
         },
     ),
-    ("busybox", NONE),
-    ("coproc", NONE),
+    (
+        "busybox",
+        Reading {
+            runs: Runs::Maybe,
+            ..NONE
+        },
+    ),
+    (
+        "coproc",
+        Reading {
+            runs: Runs::Maybe,
+            ..NONE
+        },
+    ),
     (
         "flock",
         Reading {
             flags: "-s -x -e -n -u -o -F --shared --exclusive --nonblock --unlock --close \
                     --no-fork --verbose",
-            values: "-w -E --timeout --conflict-exit-code",
-            shapes: &[
-                ("-w", Shape::Number),
-                ("--timeout", Shape::Number),
-                ("-E", Shape::Digits),
-                ("--conflict-exit-code", Shape::Digits),
-            ],
+            values: "-w --timeout",
+            shapes: &[("-w", Shape::Number), ("--timeout", Shape::Number)],
             body: "-c --command",
             after: After::Nothing,
             operands: 1,
@@ -300,18 +316,18 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "xargs",
         Reading {
-            flags: "-0 -e -i -l -o -p -r -t -x --null --no-run-if-empty --open-tty \
-                    --interactive --verbose --exit",
-            values: "-a -d -E -I -L -n -P -s --arg-file --delimiter --max-args --max-procs \
-                     --max-chars --process-slot-var",
+            // `-I`, `-i` and `--replace` are left out: xargs puts each input item in place of
+            // the replace string in every argument, the program and a body included, so it
+            // may run an input word (`xargs -I Z sh -c 'Z'`). So are `-s` (`--max-chars`),
+            // refused when one argument does not fit, `-d`, `--process-slot-var` and `-p`.
+            flags: "-0 -e -l -o -r -t -x --null --no-run-if-empty --open-tty --verbose --exit",
+            values: "-a -E -L -n -P --arg-file --max-args --max-procs",
             shapes: &[
-                ("-L", Shape::Digits),
-                ("-n", Shape::Digits),
+                ("-L", Shape::Count),
+                ("-n", Shape::Count),
                 ("-P", Shape::Digits),
-                ("-s", Shape::Digits),
-                ("--max-args", Shape::Digits),
+                ("--max-args", Shape::Count),
                 ("--max-procs", Shape::Digits),
-                ("--max-chars", Shape::Digits),
             ],
             ..NONE
         },
@@ -322,13 +338,14 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
         Reading {
             operand: Shape::Alias,
             operands_anywhere: true,
+            runs: Runs::Maybe,
             ..NONE
         },
     ),
     (
         "trap",
         Reading {
-            after: After::Signals,
+            runs: Runs::Maybe,
             ..NONE
         },
     ),
@@ -390,6 +407,14 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     ("mksh", POSIX_SHELL),
     ("ash", POSIX_SHELL),
 ];
+
+/// The signals `timeout -s` takes on every system: the POSIX names, bare or with `SIG`, and
+/// their fixed numbers. Others (`RTMIN+1`, `65`) depend on the system, and `timeout` refuses
+/// a signal it does not know and runs nothing.
+const SIGNALS: Shape = Shape::Words(
+    "HUP INT QUIT ABRT KILL ALRM TERM USR1 USR2 CONT STOP TSTP SIGHUP SIGINT SIGQUIT SIGABRT \
+     SIGKILL SIGALRM SIGTERM SIGUSR1 SIGUSR2 SIGCONT SIGSTOP SIGTSTP 0 1 2 3 6 9 14 15",
+);
 
 /// `ionice -c`'s classes, by number or name.
 const IO_CLASS: Shape = Shape::Words("0 1 2 3 none realtime best-effort idle");

@@ -1,8 +1,8 @@
 //! What may follow a wrapper's body for the wrapper to run it: a word the wrapper does not
-//! take there (a second file, a word it cannot read as a signal) makes it refuse the command
-//! and run nothing, so the body's words are no program.
+//! take there (a second file, an option word) makes it refuse the command and run nothing, so
+//! the body's words are no program. (`trap` and `alias`, which may never run their body, are
+//! not read here: their [`super::readings::Runs`] cuts at the body.)
 
-use super::shape::Shape;
 use crate::hook::guard::shell::Word;
 
 /// What may follow the word or words a wrapper's body comes from, for the wrapper to run that
@@ -18,22 +18,16 @@ pub(super) enum After {
     /// At most one operand in the whole run, before the body or after it, literal and not
     /// starting with `-`: `script`'s file (`script -c x a b` exits 1).
     AtMostOneOperand,
-    /// At least one signal, each literal and of [`Shape::Signal`], after an action neither
-    /// all digits nor `-`: bash's `trap` reads such a first word, or a lone one, as signals
-    /// to reset (`trap 'x y'` reads `x y` as a signal).
-    Signals,
 }
 
 impl After {
-    /// Whether a wrapper runs the body from the words `body`, with `following` after it and
-    /// `before` operands read among its options before it.
+    /// Whether a wrapper runs its body with `following` after it and `before` operands read
+    /// among its options before it.
     pub(super) fn admits<'w>(
         self,
-        body: &[Word],
-        following: impl Iterator<Item = &'w Word>,
+        mut following: impl Iterator<Item = &'w Word>,
         before: usize,
     ) -> bool {
-        let mut following = following;
         let operand = |word: &Word| word.is_literal() && !word.text.starts_with('-');
         match self {
             Self::Operands => following.all(operand),
@@ -43,14 +37,6 @@ impl After {
                     operand(word).then(|| operands.saturating_add(1))
                 })
                 .is_some_and(|operands| operands <= 1),
-            Self::Signals => {
-                let action = match body {
-                    [action] => action.text != "-" && !Shape::Digits.accepts(&action.text),
-                    _ => false,
-                };
-                let mut signals = following.peekable();
-                action && signals.peek().is_some() && signals.all(|word| Shape::Signal.fills(word))
-            }
         }
     }
 }

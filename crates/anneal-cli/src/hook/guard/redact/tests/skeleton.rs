@@ -166,7 +166,6 @@ const INLINE_WRAPPERS: &[&str] = &[
     "env -i",
     "command",
     "nohup",
-    "builtin",
     "setsid",
     "unbuffer",
     "exec",
@@ -179,16 +178,17 @@ const INLINE_WRAPPERS: &[&str] = &[
     "ionice -c 3",
     "timeout 5",
     "timeout -s KILL 5",
-    "chrt -f 10",
     "taskset 0x1",
-    "busybox",
-    "coproc",
     "flock /tmp/lock",
     "xargs",
     "xargs -n 1",
-    "function f",
     "nohup timeout 5 nice -n 1",
 ];
+
+/// The wrappers of the denylist's table that may not run the words after them as a program
+/// (PR 120 review round 10): `builtin` runs only a builtin, `busybox` only an applet, the word
+/// after `function NAME` or `coproc` may be a name, and chrt's priority may be out of range.
+const MAYBE_WRAPPERS: &[&str] = &["builtin", "busybox", "coproc", "function f", "chrt -f 10"];
 
 /// Every wrapper of the table that runs a string as shell text, before that string.
 const STRING_WRAPPERS: &[&str] = &[
@@ -222,15 +222,34 @@ fn every_denylist_wrapper_shows_the_program_it_runs_and_no_value() {
                 .iter()
                 .map(|wrapper| format!("{wrapper} {quoted}")),
         )
-        .chain([
-            format!("trap {quoted} EXIT"),
-            format!("find . -exec {command} \\;"),
-        ]);
+        .chain([format!("find . -exec {command} \\;")]);
     for command in commands {
         let redacted = redact(&command);
 
         assert!(
             redacted.contains("dropdb")
+                && !redacted.contains("Bearer")
+                && !redacted.contains("production"),
+            "{command:?} became {redacted:?}"
+        );
+    }
+}
+
+#[test]
+fn a_wrapper_that_may_not_run_what_follows_shows_neither_it_nor_its_values() {
+    let command = "env x='Bearer' dropdb production";
+    let commands = MAYBE_WRAPPERS
+        .iter()
+        .map(|wrapper| format!("{wrapper} {command}"))
+        .chain([
+            format!("trap \"{command}\" EXIT"),
+            format!("alias a=\"{command}\""),
+        ]);
+    for command in commands {
+        let redacted = redact(&command);
+
+        assert!(
+            !redacted.contains("dropdb")
                 && !redacted.contains("Bearer")
                 && !redacted.contains("production"),
             "{command:?} became {redacted:?}"
@@ -476,7 +495,8 @@ fn chrt_or_taskset_with_a_pid_option_hides_the_rest_of_its_command() {
         ("chrt -f -p 10 4242", "chrt -f -p <redacted> <redacted>"),
         ("taskset -p 0x3 4242", "taskset -p <redacted> <redacted>"),
         ("taskset --pid 4242", "taskset --pid <redacted>"),
-        ("chrt -f 10 psql", "chrt -f <redacted> psql"),
+        // Review round 10: chrt's words are never read with certainty, pid or none.
+        ("chrt -f 10 psql", "chrt -f <redacted> <redacted>"),
         (
             "chrt -p 10 psql x 0",
             "chrt -p <redacted> <redacted> <redacted> <redacted>",
@@ -715,6 +735,43 @@ const TEMPLATES: &[&str] = &[
     "bash -O x -c '{} x'",
     "su -s /bin/false -c '{} x'",
     "alias 'a b={} x'",
+    // A body or program the wrapper may never run, or may run with the replace string put in
+    // (PR 120 review round 10, and its self-hunt).
+    "trap '{} x' EXIT",
+    "trap '{}' NOSUCH",
+    "sh -c \"trap '{} x' INT\"",
+    "alias a='{} x'",
+    "xargs -I {} bash -c '{} x'",
+    "xargs -I {} sh -c '{}'",
+    "xargs -I{} sh -c '{} x'",
+    "xargs -i sh -c '{} x'",
+    "bash --restricted -c '/x/{} y'",
+    "bash -r -c '{} y'",
+    "bash -k -c 'sudo -u X=1 {}'",
+    "bash -o keyword -c '{} x'",
+    "builtin {} x",
+    "busybox {} x",
+    "function f {} x",
+    "coproc {} ( dropdb x )",
+    "doas -s {} x",
+    "timeout -s NOSUCH 5 {}",
+    "xargs -n 0 {}",
+    "xargs -d ab {}",
+    "xargs -p {}",
+    "env -u a=b {}",
+    "env -C '' {}",
+    "env -0 {}",
+    "sudo -C 2 {}",
+    "flock -E 300 /l {}",
+    "chrt -o 5 {}",
+    "taskset 0 {}",
+    "stdbuf -i L {}",
+    "setsid -c {}",
+    "find . -quit -exec {} x \\;",
+    "find . -print -o -exec {} x \\;",
+    "find . -ok {} x \\;",
+    "find . -regex '[' -exec {} x \\;",
+    "find '' -exec {} x \\;",
 ];
 
 #[test]
