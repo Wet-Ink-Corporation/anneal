@@ -176,7 +176,9 @@ tokens = ceil(body characters / 4) + the cost of each named file
   a known file extension, such as `` `src/a.rs` ``, `` `docs/dag.md` `` or
   `` `Cargo.toml:12` ``. A trailing `:line` is dropped. These are not paths: options (`--x`),
   URLs, phrases, globs (a word holding `*`, `?` or `[`, such as `` `tickets/*.md` ``), command
-  names (a word starting with `/`, such as `` `/orchestrate` ``), and dotted identifiers with
+  names and absolute paths (any word starting with `/`, such as `` `/orchestrate` `` or
+  `` `/usr/lib/x.rs` ``, so it is not sized and costs nothing; a `files:` entry is still counted
+  as written), and dotted identifiers with
   no `/` and no known extension (`` `grill.confirmed` ``, `` `data.needs_clarification` ``).
   The known extensions, in any letter case, are `bash bat c cc cfg cjs cmd conf cpp cs css csv
   go gql graphql h hpp html ini java js json jsonl jsx kt lock lua md mjs php proto ps1 py rb
@@ -186,11 +188,9 @@ tokens = ceil(body characters / 4) + the cost of each named file
   under the working directory (for every tracker, also markdown with `--dir`: a path in a
   ticket is read relative to where `anneal` runs, not to the tickets directory, so run it from
   the directory the tickets' paths are written against): a relative path with no `..`, not a
-  symlink, and with its
-  canonical path inside the canonical working directory, so a symlinked directory cannot lead
-  outside it. Any other named
-  file (missing, outside the root, or a directory) costs 2,000 tokens. Files are only sized,
-  never read.
+  symlink, and with its canonical path inside the canonical working directory, so a symlinked
+  directory cannot lead outside it. Any other named file (missing, outside the root, or a
+  directory) costs 2,000 tokens. Files are only sized, never read.
 - The sum saturates and does not overflow.
 
 `--budget` (default 100,000 tokens) is the single-context budget. A ticket whose estimate
