@@ -176,6 +176,14 @@ fn a_missing_required_argument_is_named_for_every_command() {
         found.len() >= 20,
         "the walk reaches the commands that require an argument: {found:?}"
     );
+    for expected in [["lint", "terms"], ["verdict", "set"], ["watch", "pr"]] {
+        assert!(
+            found
+                .iter()
+                .any(|(path, _)| path.iter().eq(expected.iter())),
+            "the walk reaches {expected:?}: {found:?}"
+        );
+    }
     for (path, required) in found {
         let args: Vec<&str> = path.iter().map(String::as_str).collect();
         let (code, out, err) = anneal(&args);
