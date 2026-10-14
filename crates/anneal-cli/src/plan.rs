@@ -46,7 +46,8 @@ pub enum PlanAction {
     /// Record the human's approval of a plan: refused while `lint plan` fails or its spec has
     /// a [NEEDS CLARIFICATION] marker
     Approve(ApproveArgs),
-    /// Check that the plan is approved and unchanged since
+    /// Check that the plan's bytes are unchanged since its latest approval (its spec is not
+    /// compared)
     Check(CheckArgs),
 }
 

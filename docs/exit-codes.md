@@ -67,9 +67,9 @@ A green result proves the task's tests ran green. It does **not** prove that the
 |---|---|
 | 0 | approved and current |
 | 3 | not approved |
-| 4 | stale: inputs changed since approval |
+| 4 | stale: the plan's bytes changed since approval |
 
-A green result proves the plan is approved and current with its inputs. It does **not** prove that the plan is correct or complete.
+A green result proves the plan is approved and the plan's bytes are unchanged since its latest approval (its spec and other files are not compared). It does **not** prove that the plan is correct or complete, or that its spec is unchanged since the approval.
 
 ## `anneal mode`
 

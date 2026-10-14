@@ -74,7 +74,7 @@ pub enum Command {
     /// Mark a task done once its tests are green
     #[command(after_help = command_help(CommandName::Task))]
     Task(TaskArgs),
-    /// Approve a plan, or check that it is approved and current
+    /// Approve a plan, or check that the plan's bytes are unchanged since approval
     #[command(after_help = command_help(CommandName::Plan))]
     Plan(PlanArgs),
     /// Enter build or diagnose mode, whose preconditions gate source edits, or leave it

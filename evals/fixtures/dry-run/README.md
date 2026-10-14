@@ -57,6 +57,8 @@ become checks):
    "4 stale: inputs changed since approval" and `proves` says "current with its inputs".
    `docs/plan.md` documents the gap. Candidate check: record the spec's hash in
    `plan_approved` and exit 4 when it changes, or reword the help and `proves` to say plan only.
+   #76 took the rewording: the help, `proves` and `docs/exit-codes.md` now say only the plan's
+   bytes are compared.
 3. **The spec does not name the design tree it came from.** The spec skill says to write only
    from what the grill confirmed, but no field links `spec.md` to `design-tree.json` or its
    `grill_confirmed` event, so `lint spec` cannot tell a confirmed spec from an invented one.

@@ -141,7 +141,10 @@ impl CommandName {
                  quoted confirmation of the tree's hash was recorded"
             }
             Self::Task => "the task's tests ran green",
-            Self::Plan => "the plan is approved and current with its inputs",
+            Self::Plan => {
+                "the plan is approved and the plan's bytes are unchanged since its latest \
+                 approval (its spec and other files are not compared)"
+            }
             Self::Mode => {
                 "the mode was recorded for this worktree, with whether its tree was clean"
             }
@@ -199,7 +202,10 @@ impl CommandName {
                  quoted words came from the human"
             }
             Self::Task => "that the tests cover the task's acceptance criteria",
-            Self::Plan => "that the plan is correct or complete",
+            Self::Plan => {
+                "that the plan is correct or complete, or that its spec is unchanged since the \
+                 approval"
+            }
             Self::Mode => {
                 "that the mode's preconditions hold: the preconditions hook checks them at each \
                  edit"
