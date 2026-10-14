@@ -3,22 +3,28 @@
 //! A claim is one of [`CLAIMS`], a short sequence of slots, each filled by one word in one of
 //! its listed forms (`pass`, `passes`, `passed`, `passing`), in one clause, in any letter case,
 //! outside fenced code blocks, code spans and HTML comments (quoted output is not a claim).
-//! Between two slots at most [`MAX_FILLERS`] filler words ([`FILLERS`]: "The tests now pass",
-//! "Everything is still working") may stand, and a suite slot takes up to [`MAX_CONJUNCTS`]
-//! more suites joined by `and` or `or` ("Tests and lint pass"), so each claim is matched in a
-//! bounded number of steps per word. A hyphenated suite word is a suite (`unit-tests`), and a
-//! hyphenated word whose segments spell a whole claim of two or more words is that claim
-//! (`all-green`, `ready-to-merge`); otherwise a hyphenated word is one word, so `half-done` is
-//! not `done`.
+//! Between two slots at most [`MAX_FILLERS`] filler words may stand: adverbs ([`FILLERS`]: "The
+//! tests now pass", "Everything is still working") anywhere, and `the` or `both` before a suite
+//! only ("All the tests pass", but not "Test the pass rate"). A suite slot takes every further
+//! suite joined by `and` or `or` ("Tests and lint and builds pass"); the chain is walked from its
+//! head only. A hyphenated suite word is a suite (`unit-tests`), and a hyphenated word whose
+//! segments spell a whole claim of two or more words is that claim (`all-green`,
+//! `ready-to-merge`); otherwise a hyphenated word is one word, so `half-done` is not `done`.
 //!
 //! A claim is withdrawn by structural rules within its clause: a negation (`not`, `never`,
-//! `no`, or a word ending in `n't`) one or two words before it; a conditional
-//! ([`CONDITIONALS`]) anywhere before it ("I'll merge once the CI checks pass"), unless the
-//! conditional is the adverb "once more" or "once again", heads a reduced clause (a gerund
-//! right after it: "The crash when saving is fixed"), or its own clause has ended (two copulas
-//! between it and the claim: "The panic when the file is empty is resolved"); for a claim led
-//! by its subject (`it`, `everything`), a purpose word ([`PURPOSES`]) one or two words before
-//! it ("make sure everything works"); and a question mark ending the clause ("Does it work?").
+//! `no`, or a word ending in `n't`) one or two words before it; a conditional's scope covering
+//! its first word ("I'll merge once the CI checks pass"); for a claim led by its subject (`it`,
+//! `everything`), a purpose word ([`PURPOSES`]) one or two words before it ("make sure
+//! everything works"); and a question mark ending the clause ("Does it work?"). A conditional
+//! ([`CONDITIONALS`]; not the adverb "once more", "once again" or a clause-final `once`, and
+//! `after` or `before` only when they do not open the clause) opens a scope that runs to the
+//! next `and`, `then` or `now`, to a second copula ("The panic when the file is empty is
+//! resolved"), through a gerund right after the conditional ("The crash when saving is fixed")
+//! or a past-tense verb not after a determiner ("Once the fix landed all tests pass"), or to the
+//! clause end. The scopes of a clause are found in one forward pass, so with the bounded
+//! fillers and head-only conjunct chains each claim is matched in time linear in the clause.
+//! The scope is a heuristic: "Merge when lint is clean and all tests pass" claims, and so does
+//! "Ship it when morning checks pass" (`morning` reads as a gerund).
 //! Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end and the words
 //! `so` and `but`, so in "No failures. Done." the "No" does not reach "Done", and in "Done
 //! (anything else?)" or "All tests pass so should I merge?" only the question is withdrawn. A
@@ -101,11 +107,15 @@ const CLAIMS: [&[Slot]; 17] = [
     &[Word(&["resolved"])],
 ];
 
-/// Words that may stand between two slots of a claim without changing what it says.
-const FILLERS: [&str; 13] = [
-    "still", "now", "all", "also", "finally", "really", "fully", "the", "both", "again", "just",
-    "actually", "indeed",
+/// Adverbs that may stand between two slots of a claim without changing what it says.
+const FILLERS: [&str; 11] = [
+    "still", "now", "all", "also", "finally", "really", "fully", "again", "just", "actually",
+    "indeed",
 ];
+
+/// Words that may stand before a suite slot only ("All the tests pass"), so "Test the pass
+/// rate" is no claim.
+const SUITE_FILLERS: [&str; 2] = ["the", "both"];
 
 /// The most filler words between two slots.
 const MAX_FILLERS: usize = 2;
@@ -113,13 +123,11 @@ const MAX_FILLERS: usize = 2;
 /// Words that join one suite to the next.
 const CONJUNCTIONS: [&str; 2] = ["and", "or"];
 
-/// The most suites joined to the first.
-const MAX_CONJUNCTS: usize = 2;
-
 /// Words that negate a claim that follows within two words.
 const NEGATIONS: [&str; 3] = ["not", "never", "no"];
 
-/// Words that make the rest of their clause a condition, not a claim.
+/// Words that open a condition's scope ("once" and "after"/"before" with the exceptions in
+/// [`opens_a_condition`]).
 const CONDITIONALS: [&str; 8] = [
     "if", "once", "when", "whenever", "unless", "until", "after", "before",
 ];
@@ -127,8 +135,18 @@ const CONDITIONALS: [&str; 8] = [
 /// Words after `once` that make it an adverb ("once more"), not a conditional.
 const ONCE_ADVERBIAL: [&str; 2] = ["more", "again"];
 
-/// Copulas: two of them after a conditional mean its clause ended and the main one began.
+/// Words that end a condition's scope: the main clause goes on after them.
+const SCOPE_ENDS: [&str; 3] = ["and", "then", "now"];
+
+/// Copulas: the second one after a conditional ends its scope and starts the main clause.
 const COPULAS: [&str; 4] = ["is", "are", "was", "were"];
+
+/// Words before an `-ed` word that make it an adjective ("the updated tests"), not the verb that
+/// finishes a condition ("the fix landed").
+const DETERMINERS: [&str; 14] = [
+    "the", "a", "an", "all", "any", "some", "every", "this", "that", "these", "those", "its",
+    "our", "their",
+];
 
 /// Words that make a "works" claim a goal, not a report, one or two words before its subject.
 const PURPOSES: [&str; 9] = [
@@ -143,21 +161,39 @@ const CLAUSE_ENDS: [char; 13] = [
 /// Words that end a clause and start another.
 const CLAUSE_WORDS: [&str; 2] = ["so", "but"];
 
+/// One clause: its words, and for each word whether a condition's scope covers it.
+struct Clause {
+    /// The lowercase words.
+    words: Vec<String>,
+    /// `governed[i]` is true when word `i` is inside a condition's scope.
+    governed: Vec<bool>,
+}
+
+impl Clause {
+    /// The clause of `words`, its scopes found in one pass.
+    fn new(words: Vec<String>) -> Self {
+        let governed = governed(&words);
+        Self { words, governed }
+    }
+}
+
 /// The first of [`CLAIMS`] that `reply` makes, as written there (lowercase), if any.
 pub(crate) fn success_claim(reply: &str) -> Option<String> {
     let document = Document::parse(reply);
-    let clauses: Vec<Vec<String>> = document
+    let clauses: Vec<Clause> = document
         .lines()
         .iter()
         .flat_map(|line| clauses(&without_code_spans(&line.text)))
+        .map(Clause::new)
         .collect();
     CLAIMS
         .into_iter()
-        .find_map(|claim| clauses.iter().find_map(|words| made(words, claim)))
+        .find_map(|claim| clauses.iter().find_map(|clause| made(clause, claim)))
 }
 
-/// The words of `claim` in `words`, joined, at the first place they are made and not withdrawn.
-fn made(words: &[String], claim: &[Slot]) -> Option<String> {
+/// The words of `claim` in `clause`, joined, at the first place they are made and not withdrawn.
+fn made(clause: &Clause, claim: &[Slot]) -> Option<String> {
+    let words = clause.words.as_slice();
     let led_by_suite = matches!(claim.first(), Some(Suite));
     (0..words.len()).find_map(|start| {
         // A suite joined to an earlier one is judged with it: "Not all tests and lint pass".
@@ -167,7 +203,7 @@ fn made(words: &[String], claim: &[Slot]) -> Option<String> {
         let end = spelled(words, start, claim).or_else(|| span(words, start, claim))?;
         let led_by_subject = matches!(claim.first(), Some(Subject(_)));
         let withdrawn = negated(words, start)
-            || conditional(words, start)
+            || clause.governed.get(start).is_some_and(|governed| *governed)
             || (led_by_subject && purposed(words, start));
         if withdrawn {
             None
@@ -208,12 +244,15 @@ fn span(words: &[String], start: usize, claim: &[Slot]) -> Option<usize> {
 }
 
 /// The position after at most [`MAX_FILLERS`] filler words from `at`, stopping at a word that
-/// fills `slot`.
+/// fills `slot`. [`SUITE_FILLERS`] are skipped only before a suite slot.
 fn past_fillers(words: &[String], mut at: usize, slot: Slot) -> usize {
+    let before_a_suite = matches!(slot, Suite);
     for _ in 0..MAX_FILLERS {
-        let skip = words
-            .get(at)
-            .is_some_and(|word| !slot.fills(word) && FILLERS.contains(&word.as_str()));
+        let skip = words.get(at).is_some_and(|word| {
+            let word = word.as_str();
+            !slot.fills(word)
+                && (FILLERS.contains(&word) || (before_a_suite && SUITE_FILLERS.contains(&word)))
+        });
         if !skip {
             break;
         }
@@ -222,51 +261,100 @@ fn past_fillers(words: &[String], mut at: usize, slot: Slot) -> usize {
     at
 }
 
-/// The position after at most [`MAX_CONJUNCTS`] `and <suite>` or `or <suite>` pairs from `at`.
+/// The position after every `and <suite>` or `or <suite>` pair from `at`. The chain is walked
+/// from its head only ([`joins_a_suite`] skips the other starts), so each word is passed once
+/// per claim.
 fn past_conjuncts(words: &[String], mut at: usize) -> usize {
-    for _ in 0..MAX_CONJUNCTS {
-        let joined = words
-            .get(at)
-            .is_some_and(|word| CONJUNCTIONS.contains(&word.as_str()))
-            && words.get(at + 1).is_some_and(|word| Suite.fills(word));
-        if !joined {
-            break;
-        }
+    while words
+        .get(at)
+        .is_some_and(|word| CONJUNCTIONS.contains(&word.as_str()))
+        && words.get(at + 1).is_some_and(|word| Suite.fills(word))
+    {
         at += 2;
     }
     at
 }
 
-/// True when a conditional before `start` governs the claim there.
-fn conditional(words: &[String], start: usize) -> bool {
-    words.get(..start).is_some_and(|before| {
-        before
-            .iter()
-            .enumerate()
-            .any(|(at, word)| CONDITIONALS.contains(&word.as_str()) && governs(words, at, start))
-    })
+/// A condition's scope while it is open.
+#[derive(Clone, Copy)]
+struct Scope {
+    /// True until the scope covers its first word.
+    fresh: bool,
+    /// True once the scope covers a copula.
+    copula: bool,
 }
 
-/// True when the conditional at `at` governs the claim at `start`: it is no adverbial `once`,
-/// heads no reduced clause before the claim, and its own clause has not ended (fewer than two
-/// copulas between them).
-fn governs(words: &[String], at: usize, start: usize) -> bool {
-    let next = words.get(at + 1).map(String::as_str);
-    let adverbial = words.get(at).is_some_and(|word| word == "once")
-        && next.is_some_and(|next| ONCE_ADVERBIAL.contains(&next));
-    let reduced = at + 1 < start && next.is_some_and(is_gerund);
-    let copulas = words.get(at + 1..start).map_or(0, |between| {
-        between
-            .iter()
-            .filter(|word| COPULAS.contains(&word.as_str()))
-            .count()
-    });
-    !adverbial && !reduced && copulas < 2
+impl Scope {
+    /// The scope a conditional opens.
+    const OPENED: Self = Self {
+        fresh: true,
+        copula: false,
+    };
+}
+
+/// For each of `words`, whether a condition's scope covers it, in one forward pass.
+///
+/// A conditional ([`opens_a_condition`]) opens a scope, which covers the words after it until
+/// one of [`SCOPE_ENDS`] or a second copula (the main clause's verb: "The panic when the file
+/// is empty is resolved"), and through a gerund right after the conditional (a reduced clause:
+/// "The crash when saving is fixed") or a past-tense verb (the condition's own verb: "Once the
+/// fix landed all tests pass"), or the clause end.
+fn governed(words: &[String]) -> Vec<bool> {
+    let mut scope = None;
+    let mut previous = None;
+    words
+        .iter()
+        .enumerate()
+        .map(|(at, word)| {
+            let word = word.as_str();
+            let next = words.get(at + 1).map(String::as_str);
+            let (covered, after) = if opens_a_condition(word, at, next) {
+                (false, Some(Scope::OPENED))
+            } else {
+                scope.map_or((false, None), |open| within(open, word, previous))
+            };
+            scope = after;
+            previous = Some(word);
+            covered
+        })
+        .collect()
+}
+
+/// Whether the open `scope` covers `word` (after `previous`), and the scope after it.
+fn within(scope: Scope, word: &str, previous: Option<&str>) -> (bool, Option<Scope>) {
+    let copula = COPULAS.contains(&word);
+    if SCOPE_ENDS.contains(&word) || (copula && scope.copula) {
+        return (false, None);
+    }
+    let reduced = scope.fresh && is_gerund(word);
+    let finished =
+        is_past(word) && !previous.is_some_and(|previous| DETERMINERS.contains(&previous));
+    let after = Scope {
+        fresh: false,
+        copula: scope.copula || copula,
+    };
+    (true, (!reduced && !finished).then_some(after))
+}
+
+/// True when `word`, at `at` in its clause and followed by `next`, opens a condition: one of
+/// [`CONDITIONALS`], except an adverbial `once` ("once more", "once again", or at the clause
+/// end) and a clause-opening `after` or `before` ("After the rebase all tests pass").
+fn opens_a_condition(word: &str, at: usize, next: Option<&str>) -> bool {
+    match word {
+        "once" => next.is_some_and(|next| !ONCE_ADVERBIAL.contains(&next)),
+        "after" | "before" => at > 0,
+        _ => CONDITIONALS.contains(&word),
+    }
 }
 
 /// True when `word` reads as a gerund (`saving`, `running`), not `everything` or `nothing`.
 fn is_gerund(word: &str) -> bool {
     word.len() > 4 && word.ends_with("ing") && !word.ends_with("thing")
+}
+
+/// True when `word` reads as a past tense (`landed`, `bumped`), not `need` or `speed`.
+fn is_past(word: &str) -> bool {
+    word.len() > 3 && word.ends_with("ed") && !word.ends_with("eed")
 }
 
 /// True when one of the two words before `start` is a negation.

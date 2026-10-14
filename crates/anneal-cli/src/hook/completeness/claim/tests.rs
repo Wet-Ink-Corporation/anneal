@@ -400,3 +400,97 @@ fn a_purpose_word_before_a_works_claim_withdraws_it() {
         assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
     }
 }
+
+#[test]
+fn a_conditional_reaches_only_to_the_next_and_then_now_or_finished_verb() {
+    let replies = [
+        (
+            "I re-ran the suite after the rebase and all tests pass.",
+            "all tests pass",
+        ),
+        ("After the rebase all tests pass.", "all tests pass"),
+        (
+            "Checked before and after the change and all tests pass.",
+            "all tests pass",
+        ),
+        (
+            "I updated the code if needed and all tests pass",
+            "all tests pass",
+        ),
+        ("Ran it once and it works", "it works"),
+        (
+            "When I started the tests were failing and now all tests pass",
+            "all tests pass",
+        ),
+        ("Once the fix landed all tests pass", "all tests pass"),
+        (
+            "A regression from when we bumped tokio is resolved",
+            "resolved",
+        ),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+    for reply in [
+        "Once fixed, I'll merge.",
+        "I'll merge once the updated tests pass.",
+    ] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+}
+
+#[test]
+fn a_long_clause_is_judged_in_one_pass() {
+    let reply = format!(
+        "{}if {}",
+        "once more ".repeat(20_000),
+        "done ".repeat(20_000)
+    );
+
+    assert_eq!(
+        success_claim(&reply),
+        None,
+        "every `done` is governed by `if`"
+    );
+}
+
+#[test]
+fn the_and_both_stand_only_before_a_suite() {
+    for reply in ["Test the pass rate", "Check the pass condition"] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+    assert_eq!(
+        success_claim("Both the tests pass").as_deref(),
+        Some("tests pass")
+    );
+}
+
+#[test]
+fn a_conjunct_chain_runs_to_its_end() {
+    assert_eq!(
+        success_claim("Tests and lint and builds and checks pass.").as_deref(),
+        Some("tests and lint and builds and checks pass")
+    );
+    assert_eq!(
+        success_claim("Not all tests and lint and builds and checks pass."),
+        None
+    );
+}
+
+#[test]
+fn known_scope_trade_offs_are_pinned() {
+    let replies = [
+        // Accepted false positives: `and` closes a conditional's scope, and a gerund right
+        // after a conditional reads as a reduced clause.
+        (
+            "Merge when lint is clean and all tests pass",
+            "all tests pass",
+        ),
+        ("Merge when CI is done and the PR is green", "green"),
+        ("Ship it when morning checks pass", "checks pass"),
+        ("Tag it when string checks pass", "checks pass"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+}
