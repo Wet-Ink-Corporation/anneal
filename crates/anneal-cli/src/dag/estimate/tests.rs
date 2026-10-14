@@ -152,3 +152,65 @@ fn at_most_max_files_are_counted() {
     let expected = UNKNOWN_FILE_TOKENS * u64::try_from(MAX_FILES).expect("fits");
     assert_eq!(estimate.tokens, expected, "each at the default");
 }
+
+#[test]
+fn backticked_words_that_are_not_files_are_not_named() {
+    let body = "Records `grill.confirmed` and `data.needs_clarification`, runs `/orchestrate` \
+                over `tickets/*.md`; touches `src/lib.rs`, `docs/dag.md` and `Cargo.toml`.";
+
+    let ticket = ticket(body, &[]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(
+        named,
+        ["src/lib.rs", "docs/dag.md", "Cargo.toml"],
+        "dotted identifiers, a command and a glob are skipped; real paths are kept"
+    );
+}
+
+#[test]
+fn globs_and_leading_slash_words_are_not_named_even_with_a_known_extension() {
+    let body = "`src/*.rs` `src/?.rs` `src/[ab].rs` `*.md` `/plan.md` `/usr/lib/x.rs` `src/a.rs`";
+
+    let ticket = ticket(body, &[]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(named, ["src/a.rs"], "only the plain path");
+}
+
+#[test]
+fn a_dotted_word_without_a_slash_needs_a_known_extension_in_any_case() {
+    let body = "`README.MD` `plan.md` `build.Rs` `v1.2.x` `serde.json_value` `notes.txt` \
+                `docs/v1.2.x`";
+
+    let ticket = ticket(body, &[]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(
+        named,
+        [
+            "README.MD",
+            "plan.md",
+            "build.Rs",
+            "notes.txt",
+            "docs/v1.2.x"
+        ],
+        "a known extension in any letter case, or a `/`"
+    );
+}
+
+#[test]
+fn listed_files_are_named_as_written_whatever_the_body_rules_say() {
+    let ticket = ticket("", &["tickets/*.md", "/orchestrate", "grill.confirmed"]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(
+        named,
+        ["tickets/*.md", "/orchestrate", "grill.confirmed"],
+        "`files:` entries are counted as written"
+    );
+}
