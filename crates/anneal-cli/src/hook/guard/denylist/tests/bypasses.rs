@@ -102,6 +102,10 @@ fn cd_earlier_in_the_command_moves_relative_config_writes() {
         ("cd .github/workflows && sed -i s/a/b/ ci.yml", CONFIG),
         ("cd .claude/rules && echo x > ../settings.json", CONFIG),
         ("cd \"$DIR\" && echo x > settings.json", CONFIG),
+        // `cd` is followed once: its emptied reading (`/x*`) would forget that `$d` may be
+        // anywhere (#127).
+        ("cd \"$d\"/x* && echo x > settings.json", CONFIG),
+        ("pushd \"$d\"/x* && echo x > settings.json", CONFIG),
         ("cd ~/proj/.claude && echo x > settings.json", CONFIG),
         ("cd - && echo x > settings.json", CONFIG),
         ("cd ~ && echo x > settings.json", ALLOW),
@@ -150,6 +154,19 @@ fn a_brace_or_glob_after_an_expansion_is_still_judged() {
         ("git push origin \"$b\"{+main,x}", FORCE_PUSH),
         ("b=; rm \"$b\"{-rf,/}", RM_RF),
         ("rm -rf \"$b\"*", RM_RF),
+        // A glob first may match a file named `-rf` (#127).
+        ("rm ?rf /", RM_RF),
+        ("rm \"$b\"[-]rf /", RM_RF),
+        ("rm *rf /", RM_RF),
+        ("rm [!a]rf /", RM_RF),
+        ("rm [[:punct:]]rf /", RM_RF),
+        ("rm [$c]rf /", RM_RF),
+        ("rm -- ?rf /tmp/x", ALLOW),
+        ("rm -f *.o *.a", ALLOW),
+        // A cost: `*` may match a file named `-r`.
+        ("rm -f * x", RM_RF),
+        ("rm -f [.]rf x", ALLOW),
+        ("rm -f x?rf /", ALLOW),
         ("\"$b\"{rm,-rf,/}", UNREADABLE),
         ("tee \"$d\"/.claude/{settings.json,x}", CONFIG),
         ("tee \"$d\"{.claude/settings.json,x}", CONFIG),
@@ -176,6 +193,16 @@ fn an_option_cluster_after_an_expansion_may_be_the_recursive_force_flags() {
         ("rm \"$a$b\" /", RM_RF),
         ("rm \"$f\".txt \"$g\".txt", ALLOW),
         ("rm -$x /tmp/y", ALLOW),
+        // An expansion first may supply the dash (`b=-`), then letters make the cluster (#127).
+        ("rm \"$b\"rf /home/x", RM_RF),
+        ("rm $b\"rf\" /home/x", RM_RF),
+        ("rm \"$b\"r\"$c\"f /home/x", RM_RF),
+        ("rm \"$a\"{r,f} /home", RM_RF),
+        // A cost: `"$p"old` is `-rold` when `p=-`.
+        ("rm \"$p\"old \"$p\"new", RM_RF),
+        ("rm -f \"$tmpdir\"/x", ALLOW),
+        ("rm -f \"$tmpdir\"/x \"$tmpdir\"/y", ALLOW),
+        ("rm -f \"$p\".bak x", ALLOW),
     ]);
 }
 
@@ -275,6 +302,16 @@ fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
         ("which rm git", ALLOW),
         ("caffeinate cargo test", ALLOW),
         ("runuser -u app -- rm -rf /tmp/build", ALLOW),
+        // A word brace expansion builds into a checked program's name is denied, as the
+        // program word `{rm,-rf,/}` is (#127).
+        ("caffeinate {rm,-rf,/}", UNREADABLE),
+        ("caffeinate \"$b\"{rm,x} -rf /", UNREADABLE),
+        ("caffeinate {sudo,x} ls", UNREADABLE),
+        ("caffeinate echo {a,b}", ALLOW),
+        ("caffeinate cargo test -p {a,b}", ALLOW),
+        // A cost: a brace-built path whose last component names one is denied too.
+        ("mkdir -p tools/{git,hg}", UNREADABLE),
+        ("mkdir -p tools/git", ALLOW),
     ]);
 }
 

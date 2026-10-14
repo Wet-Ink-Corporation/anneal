@@ -396,20 +396,41 @@ fn program(word: &Word) -> Program<'_> {
     if !word.is_literal() {
         return Program::Unknown(word);
     }
-    let text = word.text.as_str();
+    Program::Named(name_of(&word.text))
+}
+
+/// The program `text` names: its last path component, without `.exe`.
+fn name_of(text: &str) -> &str {
     let name = text.rsplit(['/', '\\']).next().unwrap_or(text);
-    Program::Named(name.strip_suffix(".exe").unwrap_or(name))
+    name.strip_suffix(".exe").unwrap_or(name)
 }
 
 /// Whether `word` names a program the guard checks, a shell or a wrapper it unwraps.
 pub(super) fn names_checked(word: &Word) -> bool {
     match program(word) {
-        // Every wrapper peels something off even with no arguments; other programs do not.
-        Program::Named(name) => {
-            CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
-        }
+        Program::Named(name) => is_checked(name),
         Program::Unknown(_) => false,
     }
+}
+
+/// Whether `name` is a program the guard checks, a shell or a wrapper it unwraps.
+fn is_checked(name: &str) -> bool {
+    // Every wrapper peels something off even with no arguments; other programs do not.
+    CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
+}
+
+/// The name of the program the guard checks, the shell or the wrapper that `word` names when
+/// brace expansion built it (`rm` from `{rm,-rf,/}`): a pattern whose text holds no glob and no
+/// leading `~`, which only brace expansion makes, read as if it were literal. `None` for any
+/// other word.
+pub(super) fn brace_built_checked(word: &Word) -> Option<&str> {
+    let text = word.text.as_str();
+    let built = word.shape == Shape::Pattern
+        && word.expansions.is_empty()
+        && !text.starts_with('~')
+        && !text.contains(['*', '?', '[']);
+    let name = name_of(text);
+    (built && is_checked(name)).then_some(name)
 }
 
 /// Whether `word` names the program `name` (by path or with `.exe` too).

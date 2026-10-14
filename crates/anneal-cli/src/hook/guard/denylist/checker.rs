@@ -241,7 +241,9 @@ impl<'c> Checker<'c> {
     /// Applies the entries for `program` (all of them when the program is not known), to the
     /// arguments as written and, when a word holds both an expansion and an unquoted pattern
     /// character, again in their emptied reading ([`readings::arguments`]). `cd` is followed
-    /// once: the first reading already sends it anywhere. The second reading reads the same
+    /// once: the first reading already sends it anywhere, and following the second too would
+    /// move it from anywhere to one directory (`cd "$d"/x*` to `/x*`), so relative writes after
+    /// it would no longer be judged as possibly protected. The second reading reads the same
     /// calls again, so the gh calls it counts are dropped: each is counted once.
     fn program(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let denial = self.reading(program, args, scope);
@@ -314,9 +316,16 @@ impl<'c> Checker<'c> {
     /// The arguments of a program the guard does not know, read as a command from each word
     /// that names a program it checks or unwraps: an unlisted wrapper (`caffeinate`,
     /// `runuser -u root --`, `chroot /`) runs them. At most [`MAX_ARGUMENT_COMMANDS`] are read
-    /// in one check; past that it denies.
+    /// in one check; past that it denies. A word brace expansion built into such a name
+    /// (`caffeinate {rm,-rf,/}`) is denied, as that program word is ([`Checker::unknown`]).
     fn arguments(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         for (at, word) in args.iter().enumerate() {
+            if let Some(name) = wrappers::brace_built_checked(word) {
+                return Some(unreadable(format!(
+                    "the argument {name} is built by brace expansion and may run as a program; \
+                     write the command out"
+                )));
+            }
             if !self.names_checked(word) {
                 continue;
             }
