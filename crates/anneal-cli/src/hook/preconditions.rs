@@ -9,7 +9,7 @@
 //! first writes it; either reading's denial denies. Each reading is judged in its own worktree
 //! (from the longest existing ancestor directory of where it lands, not the session's working
 //! directory) and that worktree's anneal mode in the ledger (`mode::active`), each worktree
-//! found and read once per call (`worktrees`), all within [`HOOK_BUDGET`], past which the edit
+//! found and read once per call (`worktrees`), all within [`JUDGE_BUDGET`], past which the edit
 //! is denied. A file in no repository, no ledger, no mode or mode `off` is allowed
 //! silently, and it never creates a ledger; the one exception is `.anneal/config.json`,
 //! anneal's own settings, which it denies in every mode and none (`Check::Settings`). In a
@@ -56,8 +56,9 @@ use self::worktrees::{Worktrees, open_within};
 
 /// What git and the ledger may take, from the hook's start: the 5 s hook `timeout` less the
 /// record's lock wait and process start-up, as the brief hook's. Every file of a call, and
-/// every reading of it, is judged within it; past it the edit is denied.
-const HOOK_BUDGET: Duration = Duration::from_millis(3_500);
+/// every reading of it, is judged within it; past it the edit is denied. Not the shared
+/// [`crate::hook::HOOK_BUDGET`]: this hook keeps its own.
+const JUDGE_BUDGET: Duration = Duration::from_millis(3_500);
 
 /// The `point` of the hook's `gate_blocked` events, before the check's id.
 const POINT_PREFIX: &str = "preconditions.";
@@ -204,7 +205,7 @@ where
     L: Fn(&str) -> Option<OsString>,
     W: Write,
 {
-    let budget = Budget::within(Instant::now(), HOOK_BUDGET, GIT_TIMEOUT);
+    let budget = Budget::within(Instant::now(), JUDGE_BUDGET, GIT_TIMEOUT);
     let HookEnv {
         stdin,
         current_dir,

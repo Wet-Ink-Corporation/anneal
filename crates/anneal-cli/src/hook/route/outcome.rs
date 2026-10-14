@@ -15,9 +15,10 @@
 //! decision is claimed before it is labelled, by renaming its file (atomic: only one claim can
 //! succeed), so it is never labelled twice. At most [`MAX_SESSIONS`] pending files are kept;
 //! past that the oldest are dropped. Claimed files are bounded apart, so dropping pending files
-//! never reaches a claim in flight; past [`MAX_SESSIONS`] claims (left by hooks killed while
-//! labelling) the oldest are dropped too, and a claim found gone is nothing to label, never an
-//! error. Not labelled: a session's last decision (no next prompt), one whose
+//! never reaches a claim in flight; past [`MAX_SESSIONS`] claims (mostly left by hooks killed
+//! while labelling) the oldest are dropped too, by when the decision was remembered (a rename
+//! keeps the file's time), so a claim in flight may be among them; a claim found gone is
+//! nothing to label, never an error. Not labelled: a session's last decision (no next prompt), one whose
 //! transcript was rewritten (it is shorter, or no longer ends a line at the remembered length)
 //! or grew by more than [`MAX_WINDOW_BYTES`] before the next prompt, and one dropped as the
 //! oldest.
@@ -250,8 +251,8 @@ fn claim(dir: &Path, session: &str) -> Result<Option<Pending>, OutcomeError> {
 }
 
 /// Reads and removes the claimed file `claimed`. A file that is gone, read or not, is not an
-/// error: only [`drop_oldest`] removes another hook's claim, and only past [`MAX_SESSIONS`]
-/// leftover claims, so the decision is then simply not labelled (or labelled from what was read:
+/// error: another hook removes a claim only in [`drop_oldest`], past [`MAX_SESSIONS`] claims (a
+/// reused process id may also replace a dead claim of the same name, harmlessly), so the decision is then simply not labelled (or labelled from what was read:
 /// the claim was this hook's alone either way).
 fn take(claimed: &Path) -> Result<Option<Pending>, OutcomeError> {
     let read = load(claimed);
@@ -288,13 +289,15 @@ fn load(path: &Path) -> Result<Option<Pending>, OutcomeError> {
 /// Removes the oldest pending files in `dir` past [`MAX_SESSIONS`], never `keep` (the file just
 /// written), and the oldest claimed files past [`MAX_SESSIONS`] of their own. The two are
 /// bounded apart so that a full store of pending files never reaches a claim another hook is
-/// still reading; the claims left past the second bound are those of hooks killed between
-/// claiming and removing, and [`take`] treats one removed under it as nothing to label.
+/// still reading. Past the second bound the oldest claims go, by when their decision was
+/// remembered (a rename keeps the file's time): mostly those of hooks killed between claiming
+/// and removing, but a claim in flight from a long-idle session may be among them, and [`take`]
+/// treats one removed under it as nothing to label.
 /// Another hook removing a file first is not an error.
 fn drop_oldest(dir: &Path, keep: &Path) -> Result<(), OutcomeError> {
     let Listed { pending, claimed } = list(dir)?;
-    remove_oldest(pending, keep)?;
-    remove_oldest(claimed, keep)
+    remove_oldest(pending, Some(keep))?;
+    remove_oldest(claimed, None)
 }
 
 /// The pending and claimed files of the pending directory, each with when it was modified.
@@ -339,13 +342,16 @@ fn list(dir: &Path) -> Result<Listed, OutcomeError> {
     Ok(listed)
 }
 
-/// Removes the oldest of `files` past [`MAX_SESSIONS`], never `keep`.
-fn remove_oldest(mut files: Vec<(SystemTime, PathBuf)>, keep: &Path) -> Result<(), OutcomeError> {
+/// Removes the oldest of `files` past [`MAX_SESSIONS`], never `keep` when there is one.
+fn remove_oldest(
+    mut files: Vec<(SystemTime, PathBuf)>,
+    keep: Option<&Path>,
+) -> Result<(), OutcomeError> {
     let excess = files.len().saturating_sub(MAX_SESSIONS);
     files.sort();
     for (_, path) in files
         .into_iter()
-        .filter(|(_, path)| path != keep)
+        .filter(|(_, path)| keep != Some(path.as_path()))
         .take(excess)
     {
         match fs::remove_file(&path) {

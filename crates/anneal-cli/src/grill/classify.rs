@@ -44,9 +44,9 @@ use crate::exit_codes::{self, Code};
 /// The subcommand's name in its envelope.
 const SUBCOMMAND: &str = "classify";
 
-/// D7's fallback when its thresholds cannot be read to name it: the shipped
-/// `clef-thresholds.json` gives `fail_open`, which is what this path does (it writes nothing),
-/// so it is a constant rather than read from the built-in file; a test keeps the two equal.
+/// D7's fallback when its thresholds cannot be read to name it: `fail_open`, which is what this
+/// path does (it writes nothing).
+// A constant, not read from the shipped `clef-thresholds.json`; a test keeps the two equal.
 const FALLBACK: &str = "fail_open";
 
 /// `anneal grill classify`.
