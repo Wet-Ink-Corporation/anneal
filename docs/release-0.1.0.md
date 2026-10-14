@@ -101,7 +101,7 @@ It does **not**:
 - [ ] The `v0.1.0` GitHub release exists with `anneal-plugin-0.1.0.zip`, the four binaries and
       `SHA256SUMS`, and `sha256sum -c SHA256SUMS` passes over the downloaded assets.
 - [ ] On a clean machine with no Rust toolchain and no `anneal` on PATH, installing from the
-      marketplace (`/plugin marketplace add Wet-Ink-Corporation/anneal`, then
+      marketplace (`/plugin marketplace add Wet-Ink-Corporation/anneal#marketplace`, then
       `/plugin install anneal@anneal`) works, the session start shows no "anneal is not
       installed" hint, and the hooks fire (for example the guard denies a destructive Bash
       command).
