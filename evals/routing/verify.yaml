@@ -1,0 +1,27 @@
+# evals/routing/verify.yaml: prompts for the `verify` skill.
+positives:
+  - verify the change before I call it done
+  - prove the fix works with a fresh test run
+  - run a doubt pass on the finished work
+  - before saying all tests are passing, verify it
+  - I think it is done, verify it with fresh evidence
+  - is the fix really done? prove it before we claim it
+  - the tests ran earlier, run them fresh before calling it fixed
+  - do a doubt pass before calling the task done
+  - prove the work is passing before I report it
+near_misses:
+  diagnose:
+    - the test fails unexpectedly after the merge, find the root cause
+    - something is broken and nobody knows why, reproduce it red
+    - the export crashes, reproduce the bug before fixing it
+  build:
+    - build the next approved task test-first
+    - write the failing test for the approved task, then make it green
+  plan:
+    - split the finished spec into tasks with their blockers
+    - get the plan approved before any task starts
+  grill:
+    - this request is vague, question me in rounds
+  ship:
+    - open the pull request and merge it once the review verdict is in
+    - roll out the verified change and decide go or no-go

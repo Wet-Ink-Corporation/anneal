@@ -1,0 +1,146 @@
+{
+  "$schema": "./hooks.metadata.schema.json",
+  "version": 1,
+  "hooks": [
+    {
+      "id": "bootstrap",
+      "event": "SessionStart",
+      "matcher": "startup|clear|compact|resume",
+      "fingerprint": "sha256:856794ce16dcf8fd",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (bootstrap), Feature catalog #1, skill rules 4, 15, 19 and 21; story #13"
+    },
+    {
+      "id": "guard",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "fingerprint": "sha256:df2690e5abee2911",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (guard), Gate escalation, skill rule 15; story #14"
+    },
+    {
+      "id": "merge-gate",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "fingerprint": "sha256:2ec04a288f2021d2",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (merge-gate), Feature catalog #24, #25 and #26, Boundaries (review plugin); story #33"
+    },
+    {
+      "id": "preconditions",
+      "event": "PreToolUse",
+      "matcher": "Edit|Write",
+      "fingerprint": "sha256:1b6804ca9721595c",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (preconditions), Feature catalog #4 and #20; story #23"
+    },
+    {
+      "id": "fast-check",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:066536530af1eeaa",
+      "on_failure": "continue",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (fast-check), check placement by cost; story #24"
+    },
+    {
+      "id": "completeness",
+      "event": "Stop",
+      "matcher": "",
+      "fingerprint": "sha256:a79f91b8222e3cd6",
+      "on_failure": "continue",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (completeness), Feature catalog #21 and #22, skill rule 16; story #26"
+    },
+    {
+      "id": "status",
+      "event": "SubagentStop",
+      "matcher": "",
+      "fingerprint": "sha256:d90a2774a4960bac",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (status), Feature catalog #23, platform conformance #7; story #26"
+    },
+    {
+      "id": "route",
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "fingerprint": "sha256:2b9db1a36d2934d8",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Clef decision points (D3 route); story #31"
+    },
+    {
+      "id": "ruled-before",
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "fingerprint": "sha256:eef2a74167c28b96",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Clef decision points (D6 ruled-before); story #31"
+    },
+    {
+      "id": "injection-scan",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:7b9a78954ee46111",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Story #39 (GSD pattern: flag instruction-shaped text in fetched content)"
+    },
+    {
+      "id": "context-monitor",
+      "event": "PostToolBatch",
+      "matcher": "",
+      "fingerprint": "sha256:c3acbc901216234f",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (context-monitor), context survival; story #38"
+    },
+    {
+      "id": "handoff",
+      "event": "PreCompact",
+      "matcher": "",
+      "fingerprint": "sha256:8a112bc19b313e45",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Hooks (handoff), context survival; story #38"
+    },
+    {
+      "id": "brief",
+      "event": "PreToolUse",
+      "matcher": "Agent",
+      "fingerprint": "sha256:7138cdbabc332ae7",
+      "on_failure": "block",
+      "role": "guard",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Orchestration (no brief, no spawn; no nested spawns); story #36"
+    },
+    {
+      "id": "standing-orders",
+      "event": "SubagentStart",
+      "matcher": "",
+      "fingerprint": "sha256:caa18fb3d04187c1",
+      "on_failure": "continue",
+      "role": "scaffolding",
+      "model_generation": "claude-5",
+      "source": "Blueprint: Orchestration (standing orders in every subagent); story #36"
+    }
+  ]
+}

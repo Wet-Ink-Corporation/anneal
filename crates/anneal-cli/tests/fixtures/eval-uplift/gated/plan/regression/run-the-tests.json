@@ -1,0 +1,10 @@
+{
+  "behaviour": "outcome",
+  "seed": "test fixture",
+  "prompt": "Break the export feature into tasks and run the tests.",
+  "allowed_tools": ["Skill", "Read", "Bash"],
+  "graders": [
+    {"type": "regex", "name": "outcome", "pattern": "task"},
+    {"type": "regex", "name": "always", "pattern": "\\S"}
+  ]
+}

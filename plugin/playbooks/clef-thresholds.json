@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "models": {
+    "clef-flash": "@cf/wet-ink/clef-flash",
+    "clef": "@cf/wet-ink/clef"
+  },
+  "points": {
+    "D1": {
+      "model": "clef-flash",
+      "fallback": "ask",
+      "rules": {
+        "noul": {
+          "subject": "destructive_or_irreversible",
+          "bands": [
+            { "at_least": 0.9, "action": "deny" },
+            { "at_least": 0.4, "action": "ask" }
+          ],
+          "otherwise": "defer"
+        }
+      }
+    },
+    "D2": {
+      "model": "clef-flash",
+      "fallback": "fail_open",
+      "rules": {
+        "noul": {
+          "subject": "one_way_door",
+          "bands": [{ "at_least": 0.5, "action": "park" }],
+          "otherwise": "rule"
+        }
+      }
+    },
+    "D3": {
+      "model": "clef-flash",
+      "fallback": "fail_open",
+      "rules": {
+        "choice": {
+          "subject": "phase",
+          "bands": [{ "at_least": 0.6, "action": "hint" }],
+          "otherwise": "none"
+        },
+        "score": {
+          "subject": "size",
+          "bands": [],
+          "otherwise": "record"
+        }
+      }
+    },
+    "D4": {
+      "model": "clef",
+      "fallback": "fail_open",
+      "rules": {
+        "noul": {
+          "subject": "present_and_grounded",
+          "bands": [{ "at_least": 0.5, "action": "pass" }],
+          "otherwise": "block"
+        }
+      }
+    },
+    "D5": {
+      "model": "clef-flash",
+      "fallback": "fail_open",
+      "rules": {
+        "score": {
+          "subject": "defect_risk",
+          "bands": [{ "at_least": 0.6666, "action": "doubt_review" }],
+          "otherwise": "skip"
+        }
+      }
+    },
+    "D6": {
+      "model": "clef-flash",
+      "fallback": "fail_open",
+      "rules": {
+        "choice": {
+          "subject": "ruled_before",
+          "bands": [{ "at_least": 0.7, "action": "surface" }],
+          "otherwise": "none"
+        }
+      }
+    },
+    "D7": {
+      "model": "clef-flash",
+      "fallback": "fail_open",
+      "rules": {
+        "noul": {
+          "subject": "is_decision",
+          "bands": [{ "at_least": 0.5, "action": "ask_human" }],
+          "otherwise": "find_fact"
+        }
+      }
+    }
+  }
+}

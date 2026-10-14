@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "goal": "Add a --json flag to the toy `notes list` command so scripts can read its output.",
+  "turns": [
+    { "confidence": 0.55 },
+    { "confidence": 0.85 }
+  ],
+  "nodes": [
+    {
+      "id": "goal",
+      "question": "What should --json let a user do that plain `notes list` output does not?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "Pipe the list of notes into jq or a script without parsing the human table.",
+      "is_decision": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "id": "users",
+      "question": "Who runs `notes list --json`?",
+      "depends_on": ["goal"],
+      "status": "answered",
+      "answer": "People scripting their notes in shell pipelines and CI jobs.",
+      "is_decision": 0.7,
+      "confidence": 0.8
+    },
+    {
+      "id": "scope",
+      "question": "Which commands get the flag in this change?",
+      "depends_on": ["goal"],
+      "status": "answered",
+      "answer": "Only `notes list`; `notes show` follows later if anyone asks.",
+      "is_decision": 0.9,
+      "confidence": 0.85
+    },
+    {
+      "id": "shape",
+      "question": "What does the JSON look like?",
+      "depends_on": ["scope"],
+      "status": "answered",
+      "answer": "One JSON array on stdout, one object per note with id, title and created (RFC 3339), sorted by id.",
+      "is_decision": 0.8,
+      "confidence": 0.8
+    },
+    {
+      "id": "empty",
+      "question": "What does `notes list --json` print when there are no notes?",
+      "depends_on": ["shape"],
+      "status": "answered",
+      "answer": "An empty array, `[]`, and exit 0.",
+      "is_decision": 0.6,
+      "confidence": 0.9
+    },
+    {
+      "id": "errors",
+      "question": "Where do errors go when --json is set?",
+      "depends_on": ["shape"],
+      "status": "answered",
+      "answer": "Unchanged: one line on stderr, nothing on stdout, exit 1.",
+      "is_decision": 0.7,
+      "confidence": 0.85
+    },
+    {
+      "id": "serializer",
+      "question": "Does the toy CLI already depend on a JSON serializer?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "Yes: serde_json is already in its Cargo.toml for the notes file.",
+      "is_decision": 0.1,
+      "confidence": 0.95
+    },
+    {
+      "id": "pretty",
+      "question": "Should there be a --pretty option for indented JSON?",
+      "depends_on": ["shape"],
+      "status": "deferred",
+      "answer": "Not now; compact JSON, and users pipe through `jq .` to indent it.",
+      "is_decision": 0.8,
+      "confidence": 0.7
+    }
+  ]
+}

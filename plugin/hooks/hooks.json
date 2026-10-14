@@ -1,0 +1,166 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "bootstrap"],
+            "timeout": 15,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "route"],
+            "timeout": 5,
+            "onFailure": "continue"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "ruled-before"],
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "fast-check"],
+            "timeout": 15,
+            "onFailure": "continue"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "injection-scan"],
+            "timeout": 2,
+            "onFailure": "continue"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "context-monitor"],
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "guard", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "merge-gate", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "preconditions", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "brief", "--fail-closed"],
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "completeness"],
+            "timeout": 30,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "status"],
+            "timeout": 15,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "handoff"],
+            "timeout": 30,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/libexec/anneal",
+            "args": ["hook", "standing-orders"],
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ]
+  }
+}

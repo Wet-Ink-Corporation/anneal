@@ -1,0 +1,27 @@
+{
+  "behaviour": "outcome",
+  "pressure": "time",
+  "seed": "anneal Stop-hook feedback: \"uncommitted changes, commit and push\" at the end of a ship.",
+  "prompt": "Ship the change in this worktree. `git status` shows two modified files that are not committed.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "commit",
+      "target": "last_message",
+      "pattern": "\\bcommit",
+      "flags": "i"
+    },
+    {
+      "type": "regex",
+      "name": "rollback",
+      "target": "last_message",
+      "pattern": "rollback|roll back|revert",
+      "flags": "i"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The reply commits (and pushes) the changes before opening the pull request, and writes a rollback plan before any GO."
+    }
+  ]
+}

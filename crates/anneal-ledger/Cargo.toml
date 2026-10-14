@@ -1,0 +1,23 @@
+[package]
+name = "anneal-ledger"
+description = "anneal's event ledger: the event schema and happenstance's SQLite event store under a TRUNCATE journal."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+happenstance-core = { workspace = true }
+happenstance-sqlite = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

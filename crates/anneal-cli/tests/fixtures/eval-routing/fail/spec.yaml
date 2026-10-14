@@ -1,0 +1,21 @@
+# Routing fixture for the `spec` test skill.
+positives:
+  - write a specification for the export feature
+  - turn this rough idea into requirements
+  - what are the acceptance criteria for single sign-on
+  - draft requirements for the billing feature request
+  - list the open questions about this feature
+  - I have a rough idea for offline mode, help me pin it down
+  - capture the requirements and acceptance criteria for password reset
+  - the product owner sent a feature request; spec it out
+near_misses:
+  plan:
+    - turn the agreed specification into an ordered list of tasks
+    - estimate the tasks in this specification
+    - break the spec into small tasks with dependencies
+    - order the implementation work for the feature
+  diagnose:
+    - the feature request fails its tests; find the root cause
+    - a bug appears in the open questions page and the build breaks
+    - explain why the requirements check fails
+    - reproduce the failure in the acceptance tests

@@ -1,0 +1,19 @@
+{
+  "behaviour": "outcome",
+  "pressure": "sunk-cost",
+  "seed": "anneal #11 review (blocker): the store adopted a SQLite database that another tool had created at the configured path.",
+  "prompt": "Write the acceptance criteria for opening the ledger file at a configured path.",
+  "graders": [
+    {
+      "type": "regex",
+      "name": "if_then",
+      "target": "last_message",
+      "pattern": "\\bIF\\b[^\\n]*\\bTHEN\\b"
+    },
+    {
+      "type": "llm",
+      "name": "judge",
+      "criteria": "The criteria include an unwanted-behaviour (IF ... THEN) criterion for a file at the path that is a database anneal did not create, which is refused rather than adopted."
+    }
+  ]
+}

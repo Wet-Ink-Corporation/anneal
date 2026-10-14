@@ -1,0 +1,21 @@
+# Routing fixture for the `plan` test skill.
+positives:
+  - make an implementation plan for the agreed specification
+  - split this work into small tasks with dependencies
+  - estimate each task and order them
+  - what order should the tasks go in
+  - plan the implementation of the search feature
+  - turn the specification into ordered tasks
+  - which tasks depend on others; list the dependencies
+  - we must plan small steps for the migration
+near_misses:
+  spec:
+    - write requirements and acceptance criteria before any plan
+    - is this feature request specified well enough to plan
+    - the open questions block the implementation
+    - turn my rough idea into something we can plan
+  diagnose:
+    - the build breaks after the last task
+    - tests fail in the implementation; find the root cause
+    - bisect which task introduced the bug
+    - explain the failure in the ordered rollout

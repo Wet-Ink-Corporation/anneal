@@ -1,0 +1,10 @@
+.temper/
+/target/
+
+# Plugin build outputs: binaries are built (scripts/build-plugin-bins.*), never committed
+/plugin/libexec/*/
+/plugin/libexec/anneal.exe
+/dist
+
+# The handoff hook's note (#38); the hook also lists it in .git/info/exclude of any repository
+/.continue-here

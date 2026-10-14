@@ -1,0 +1,49 @@
+[
+  {
+    "url": "https://api.github.com/repos/octo/tickets/issues/2",
+    "repository_url": "https://api.github.com/repos/octo/tickets",
+    "html_url": "https://github.com/octo/tickets/pull/2",
+    "id": 3001000002,
+    "node_id": "PR_kwDOAAAAAc4AAAAC",
+    "number": 2,
+    "title": "Add the CLI",
+    "user": {"login": "octo", "id": 1, "type": "User"},
+    "labels": [],
+    "state": "open",
+    "locked": false,
+    "comments": 0,
+    "created_at": "2026-10-02T09:00:00Z",
+    "updated_at": "2026-10-02T09:00:00Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "draft": false,
+    "pull_request": {
+      "url": "https://api.github.com/repos/octo/tickets/pulls/2",
+      "html_url": "https://github.com/octo/tickets/pull/2",
+      "diff_url": "https://github.com/octo/tickets/pull/2.diff",
+      "patch_url": "https://github.com/octo/tickets/pull/2.patch",
+      "merged_at": null
+    },
+    "body": "Closes #1. Blocked by #1"
+  },
+  {
+    "url": "https://api.github.com/repos/octo/tickets/issues/1",
+    "repository_url": "https://api.github.com/repos/octo/tickets",
+    "html_url": "https://github.com/octo/tickets/issues/1",
+    "id": 3001000001,
+    "node_id": "I_kwDOAAAAAc4AAAAB",
+    "number": 1,
+    "title": "Plan",
+    "user": {"login": "octo", "id": 1, "type": "User"},
+    "labels": [],
+    "state": "open",
+    "state_reason": null,
+    "locked": false,
+    "comments": 0,
+    "created_at": "2026-10-01T09:00:00Z",
+    "updated_at": "2026-10-01T09:00:00Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": ""
+  }
+]

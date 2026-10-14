@@ -1,0 +1,9 @@
+{
+  "behaviour": "outcome",
+  "seed": "test fixture",
+  "prompt": "Break the agreed export spec into ordered tasks.",
+  "graders": [
+    {"type": "regex", "name": "outcome", "pattern": "task", "flags": "i"},
+    {"type": "regex", "name": "always", "pattern": "\\S"}
+  ]
+}

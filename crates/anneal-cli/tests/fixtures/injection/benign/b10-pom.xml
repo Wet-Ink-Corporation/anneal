@@ -1,0 +1,7 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <ciManagement>
+    <system>GitHub Actions</system>
+    <url>https://github.com/example/app/actions</url>
+  </ciManagement>
+</project>

@@ -1,0 +1,27 @@
+# evals/routing/diagnose.yaml: prompts for the `diagnose` skill.
+# Near misses against `verify` live in verify.yaml: this file is at its 10 near misses.
+positives:
+  - the login test fails unexpectedly, find out why
+  - something is broken in the export command, reproduce it first
+  - this test started failing after the merge, diagnose it
+  - the parser crashes on empty input, find the root cause
+  - reproduce the bug red before anyone fixes it
+  - users report that sync is broken, find the cause
+  - the error makes no sense, diagnose what is broken
+  - a test fails on CI but not locally, find the root cause
+  - the report shows the wrong total, reproduce it and find the cause
+near_misses:
+  grill:
+    - a new request came in to retry failing uploads, question me on what it should do
+    - the ask about broken links is vague, question me in rounds
+    - question me until I confirm the requirements for the crash reporter
+  spec:
+    - write the spec for the broken export fix, with acceptance criteria
+    - the requirements for the error page are agreed, write the spec
+    - write EARS acceptance criteria for retrying failed uploads
+  plan:
+    - split the bug fix spec into tasks, each with its files and test command
+    - the spec for the crash fix is ready, plan the tasks and their blockers
+    - get the plan for the error handling spec approved
+  build:
+    - implement the next approved task test-first

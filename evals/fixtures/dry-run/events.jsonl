@@ -1,0 +1,2 @@
+{"position":1,"event":{"type":"grill_confirmed","plan":"design-tree.json","hash":"sha256:9e3181e82f7e8403d5f5e561074a5224e34eedc4ac497a0bf1ccec987528a359","quote":"Yes, that's it: only notes list, compact JSON, go ahead.","actor":"cli","session_id":"dry-run"}}
+{"position":2,"event":{"type":"plan_approved","plan":"plan.md","hash":"sha256:5c92f1689a60e02621e293760564bea0a6a488ad85b6a24c0dea68ff1ebb5e38","actor":"cli","session_id":"dry-run"}}

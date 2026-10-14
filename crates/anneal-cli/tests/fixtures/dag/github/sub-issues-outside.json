@@ -1,0 +1,95 @@
+[
+  {
+    "url": "https://api.github.com/repos/octo/tickets/issues/40",
+    "repository_url": "https://api.github.com/repos/octo/tickets",
+    "html_url": "https://github.com/octo/tickets/issues/40",
+    "id": 3001000040,
+    "node_id": "I_kwDOAAAAAc4AAA040",
+    "number": 40,
+    "title": "after a closed release",
+    "user": {
+      "login": "octo",
+      "id": 1,
+      "type": "User"
+    },
+    "labels": [],
+    "state": "open",
+    "state_reason": null,
+    "locked": false,
+    "assignees": [],
+    "milestone": null,
+    "comments": 0,
+    "created_at": "2026-10-01T09:00:00Z",
+    "updated_at": "2026-10-02T09:00:00Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": "**Blocked by:** #11",
+    "sub_issues_summary": {
+      "total": 0,
+      "completed": 0,
+      "percent_completed": 0
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/octo/tickets/issues/41",
+    "repository_url": "https://api.github.com/repos/octo/tickets",
+    "html_url": "https://github.com/octo/tickets/issues/41",
+    "id": 3001000041,
+    "node_id": "I_kwDOAAAAAc4AAA041",
+    "number": 41,
+    "title": "after an open release",
+    "user": {
+      "login": "octo",
+      "id": 1,
+      "type": "User"
+    },
+    "labels": [],
+    "state": "open",
+    "state_reason": null,
+    "locked": false,
+    "assignees": [],
+    "milestone": null,
+    "comments": 0,
+    "created_at": "2026-10-01T09:00:00Z",
+    "updated_at": "2026-10-02T09:00:00Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": "Blocked by #12",
+    "sub_issues_summary": {
+      "total": 0,
+      "completed": 0,
+      "percent_completed": 0
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/octo/tickets/issues/43",
+    "repository_url": "https://api.github.com/repos/octo/tickets",
+    "html_url": "https://github.com/octo/tickets/issues/43",
+    "id": 3001000043,
+    "node_id": "I_kwDOAAAAAc4AAA043",
+    "number": 43,
+    "title": "after a merged pull request",
+    "user": {
+      "login": "octo",
+      "id": 1,
+      "type": "User"
+    },
+    "labels": [],
+    "state": "open",
+    "state_reason": null,
+    "locked": false,
+    "assignees": [],
+    "milestone": null,
+    "comments": 0,
+    "created_at": "2026-10-01T09:00:00Z",
+    "updated_at": "2026-10-02T09:00:00Z",
+    "closed_at": null,
+    "author_association": "OWNER",
+    "body": "Blocked by #30",
+    "sub_issues_summary": {
+      "total": 0,
+      "completed": 0,
+      "percent_completed": 0
+    }
+  }
+]
