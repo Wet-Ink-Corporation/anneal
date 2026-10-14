@@ -111,14 +111,27 @@ it (`/tmp/../etc`). `..` is resolved without looking at the file system. Operand
 or `find -exec` adds cannot be seen, so `rm -rf` under them is denied; what a static `echo` or
 `printf` pipes into `xargs` is appended and checked (`echo '-rf /' | xargs rm`).
 
-An operand whose text outside its variables and substitutions is nothing (`$F`, `"$FLAGS"`,
-`"$a$b"`) or an option cluster (`"$b"-rf`, `-$x`) may hold the flags. When another operand
-follows it, it is taken as `-rf`, so `F=-rf; rm $F /`, `rm "$FLAGS" build` and `rm "$b"-rf /`
-are denied while `rm -f "$tmp"` and `rm "$f".txt "$g".txt` are allowed. An operand after `--`
-is never an option, so it never holds the flags: `rm -f -- "$p"-old x` is allowed. A cost:
-`rm -f "$a" "$b"` is denied too, since `$a` may be `-r`, and so is `rm -f "$p"-old "$p"-new`,
-since `"$p"-old` is an option cluster when `p` is empty or `-r`; write `--` before such
-operands.
+An operand that may expand to an option cluster may hold the flags: one whose first part may
+be a `-` (a variable or substitution, which may hold one; an unquoted `?`, `*` or bracket
+expression, which may match a file named `-rf`; or a written `-`) and whose other written
+characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-rf`, `-$x`,
+`"$b"rf` with `b=-`, `?rf`, `[-]rf`). A bracket expression may match `-` unless it is a plain
+set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
+expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never
+closes is read as bash reads it: its `[` is a member and the set closes at the next `]`, a set
+taken to match `-` (`rm [[:-]rf /home` is denied, and so, as a cost, is `rm -f [[:a]x /home`);
+a `[.` that never closes is read the same way, though bash 5 matches nothing there.
+Each operand is judged as one
+word, its expansions as quoted text: the words an unquoted expansion or `"$@"` may split into
+are not (see [Limits](#limits)). When another
+operand follows it, it is taken as `-rf`, so `F=-rf; rm $F /`, `rm "$FLAGS" build`,
+`rm "$b"-rf /`, `rm "$b"rf /home/x`, `rm "$a"{r,f} /home` and `rm ?rf /` are denied while
+`rm -f "$tmp"`, `rm "$f".txt "$g".txt`, `rm -f "$tmpdir"/x "$tmpdir"/y`, `rm -f *.o *.a` and
+`rm -f [.]rf x` are allowed. An operand after `--` is never an option, so it never holds the
+flags: `rm -f -- "$p"-old x` and `rm -- ?rf /tmp/x` are allowed. A cost: `rm -f "$a" "$b"` is
+denied too, since `$a` may be `-r`, and so are `rm -f "$p"-old "$p"-new` and
+`rm "$p"old "$p"new` (`"$p"old` is `-rold` when `p` is `-`) and `rm -f * x` (`*` may match a
+file named `-r`); write `--` before such operands.
 
 Allowed: `rm -rf /tmp/build`, `rm -r src` (not forced), `rm -f file` (not recursive), and
 `rm`, `-rf` or `/` in a quoted string (`echo 'rm -rf /'`).
@@ -179,7 +192,9 @@ A `cd` (or `pushd`) earlier in the command moves where relative paths start. Eac
 target is checked as written and also joined to the directory the `cd` named, so
 `cd .claude && echo x > settings.json` is denied (`cd` alone and `cd ~` go home). After a `cd`
 to a variable or to `-`, or a `popd`, relative paths may start anywhere, so they are matched as
-climbing above their start (`cd "$DIR" && echo x > settings.json` is denied).
+climbing above their start (`cd "$DIR" && echo x > settings.json` is denied). A `cd` is followed
+once, as written: its directory is not read again with its variables empty, which would place
+`cd "$d"/x*` at `/x*` rather than anywhere (`cd "$d"/x* && echo x > settings.json` is denied).
 
 ## Bypass handling
 
@@ -206,7 +221,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `link`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
 | Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
-| Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied |
+| Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | a command holding a brace group is read brace-expanded (up to 256 words), as the shell expands it before any program, wrapper or shell reads its options. As in bash, a quoted or escaped `{`, `,` or `}` is no part of a group (`bash {-c,'echo ,; rm -rf /'}` is `bash -c 'echo ,; rm -rf /'`), nor is a variable's value or xargs input, and an empty product nothing quoted went into is no word (`echo 'rm -rf /' \| bash {,}` runs `bash`, which reads the script from stdin; `''{,}` is two empty words). A word with no other pattern character and no variable or substitution left in it (whatever the other words of its group kept: `git push {-f,origin$x}` is a force push) reads as written where a program name, option or gh operand is read (`bash {-c,'rm -rf /'}` is `bash -c 'rm -rf /'`, `caffeinate {sudo,-u,root,rm,-rf,/}` is `sudo -u root rm -rf /`), and keeps its pattern shape for the entries (`rm -rf /tmp/{a,b}` is denied). A program word that holds a group in the command as written, its wrappers removed (`{rm,-rf,/}`, `sudo {sh,-c,'rm -rf /'}`, `sudo {-u,root} ls`), is denied. Among the arguments of a program the guard does not know, a checked program, shell or wrapper is read as a command: `caffeinate {rm,-rf,/}`, `caffeinate {bash,-c,'rm -rf /'}` and `caffeinate "$b"{rm,x} -rf /` are denied as `rm -rf /`, while `brew install {git,jq}` and `make {install,clean}` are allowed as their literal forms are |
 | A brace or glob after a variable or substitution: `rm "$b"{-rf,/}`, `git push "$b"{-f,origin,main}`, `tee "$d".clau*/settings.json`, `echo x > "$d".clau*/settings.json` | a word with an unquoted `*`, `?`, `[`, `{` or leading `~` is brace-expanded whatever else it holds (the braces of `${x}` and the text of `$( )` are never a group), and such a word is judged in two readings: as written, and with its expansions empty, as they are when the variable is empty. A command's arguments are checked in both, and so is a redirection's target; either denial denies. A word with an expansion but no unquoted pattern character (`tee "$d".claude/settings.json`) is judged as written only |
 | Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied, as is a name reference or array (`declare -n`, `local -n`, `-a`, `-A`, alone or in a cluster such as `-gn`); after the command sets `IFS`, unquoted values are not put in |
 | A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks), the arguments of a function or script (`"$@"`, `$*`, `$1`) or an indirect expansion (`${!y}`), it is denied |
@@ -218,6 +233,12 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 - values from the environment (`"$EDITOR" file`, `$GIT status` run, with their arguments
   checked; `cp x "$DEST"` is allowed and `git push -f origin "$B"` denied);
+- word splitting of an unquoted expansion, `"$@"` or `"${a[@]}"` into an `rm` operand that is
+  `-rf` on its own: `rm x$b /home/x` with `b=' -rf'`, `rm $F` with `F='-rf /home'` and
+  `set -- a -rf; rm x"$@" /home/x` are allowed, since judging them would also deny the ordinary
+  `rm -f $f` (#128);
+- extended globs (`shopt -s extglob`) in an `rm` operand: `rm @(-rf) /home` and `rm !(x) /home`
+  may match a file named `-rf`, and are allowed (#128);
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,

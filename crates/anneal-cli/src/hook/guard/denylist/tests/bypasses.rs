@@ -102,6 +102,10 @@ fn cd_earlier_in_the_command_moves_relative_config_writes() {
         ("cd .github/workflows && sed -i s/a/b/ ci.yml", CONFIG),
         ("cd .claude/rules && echo x > ../settings.json", CONFIG),
         ("cd \"$DIR\" && echo x > settings.json", CONFIG),
+        // `cd` is followed once: its emptied reading (`/x*`) would forget that `$d` may be
+        // anywhere (#127).
+        ("cd \"$d\"/x* && echo x > settings.json", CONFIG),
+        ("pushd \"$d\"/x* && echo x > settings.json", CONFIG),
         ("cd ~/proj/.claude && echo x > settings.json", CONFIG),
         ("cd - && echo x > settings.json", CONFIG),
         ("cd ~ && echo x > settings.json", ALLOW),
@@ -150,6 +154,32 @@ fn a_brace_or_glob_after_an_expansion_is_still_judged() {
         ("git push origin \"$b\"{+main,x}", FORCE_PUSH),
         ("b=; rm \"$b\"{-rf,/}", RM_RF),
         ("rm -rf \"$b\"*", RM_RF),
+        // A glob first may match a file named `-rf` (#127).
+        ("rm ?rf /", RM_RF),
+        ("rm \"$b\"[-]rf /", RM_RF),
+        ("rm *rf /", RM_RF),
+        ("rm [!a]rf /", RM_RF),
+        ("rm [[:punct:]]rf /", RM_RF),
+        ("rm [$c]rf /", RM_RF),
+        // A `]` inside an expansion in the set does not close it (#127 review).
+        ("rm [!$(echo ])]rf /home", RM_RF),
+        ("rm [!`echo ]`]rf /home", RM_RF),
+        ("rm [$(echo '!]')]rf /home", RM_RF),
+        // A `[:` or `[=` that never closes is a member, and the set closes at the next `]`, as
+        // bash reads it (#127 review); a `[.` is read the same way, though bash 5 matches
+        // nothing there.
+        ("rm [[:-]rf /home", RM_RF),
+        ("rm [[=-]rf /home", RM_RF),
+        ("rm [[.-]rf /home", RM_RF),
+        // A cost: such a set is taken to match `-` whatever it names.
+        ("rm -f [[:a]x /home", RM_RF),
+        ("rm -f [[:a]x/y /home", ALLOW),
+        ("rm -- ?rf /tmp/x", ALLOW),
+        ("rm -f *.o *.a", ALLOW),
+        // A cost: `*` may match a file named `-r`.
+        ("rm -f * x", RM_RF),
+        ("rm -f [.]rf x", ALLOW),
+        ("rm -f x?rf /", ALLOW),
         ("\"$b\"{rm,-rf,/}", UNREADABLE),
         ("tee \"$d\"/.claude/{settings.json,x}", CONFIG),
         ("tee \"$d\"{.claude/settings.json,x}", CONFIG),
@@ -176,6 +206,16 @@ fn an_option_cluster_after_an_expansion_may_be_the_recursive_force_flags() {
         ("rm \"$a$b\" /", RM_RF),
         ("rm \"$f\".txt \"$g\".txt", ALLOW),
         ("rm -$x /tmp/y", ALLOW),
+        // An expansion first may supply the dash (`b=-`), then letters make the cluster (#127).
+        ("rm \"$b\"rf /home/x", RM_RF),
+        ("rm $b\"rf\" /home/x", RM_RF),
+        ("rm \"$b\"r\"$c\"f /home/x", RM_RF),
+        ("rm \"$a\"{r,f} /home", RM_RF),
+        // A cost: `"$p"old` is `-rold` when `p=-`.
+        ("rm \"$p\"old \"$p\"new", RM_RF),
+        ("rm -f \"$tmpdir\"/x", ALLOW),
+        ("rm -f \"$tmpdir\"/x \"$tmpdir\"/y", ALLOW),
+        ("rm -f \"$p\".bak x", ALLOW),
     ]);
 }
 
@@ -255,6 +295,62 @@ fn a_case_after_time_function_or_coproc_keeps_a_substitution_open() {
 }
 
 #[test]
+fn a_brace_product_with_no_expansion_left_is_read_as_its_text() {
+    // #127 review round 4 F1: a product of a word with an expansion keeps no run-time shape
+    // once the expansion is in another product, so a brace-built option is read.
+    assert_table(&[
+        ("git push {-f,origin$x}", FORCE_PUSH),
+        ("git push {--force-with-lease,o$x}", FORCE_PUSH),
+        ("bash {-c,\"rm -rf /$x\"}", RM_RF),
+        ("bash {-c,\"${x}rm -rf /\"}", RM_RF),
+        ("bash {-c,$x\"rm -rf /\"}", RM_RF),
+        ("bash {\"-c\",\"${x}rm -rf /\"}", RM_RF),
+        ("sh {-c,\"rm -rf /$x\"}", RM_RF),
+        ("sudo bash {-c,\"rm -rf /$x\"}", RM_RF),
+        ("bash {-c,\"$(echo)rm -rf /\"}", RM_RF),
+        ("bash {-c,\"echo $x\"}", ALLOW),
+        // F3: the cap counts the words brace expansion makes, as main did.
+        ("echo {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}", ALLOW),
+        (
+            "echo {a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b} {a,b}",
+            UNREADABLE,
+        ),
+    ]);
+}
+
+#[test]
+fn brace_expansion_reads_quotes_and_empty_products_as_bash_does() {
+    // #127 review round 3.
+    assert_table(&[
+        // A quoted `{`, `,` or `}` is not part of a group: the script is the whole quoted word.
+        ("bash {-c,'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,\"echo ,; rm -rf /\"}", RM_RF),
+        ("bash {-c,'echo x,; rm -rf /'}", RM_RF),
+        ("caffeinate {bash,-c,'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo {; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo }; rm -rf /'}", RM_RF),
+        ("bash {-c,echo\\,\\;rm\\ -rf\\ /}", RM_RF),
+        ("bash {-c,$'echo ,; rm -rf /'}", RM_RF),
+        ("bash {-c,'echo ,'}", ALLOW),
+        // Nor is one in a variable's value or xargs input, which bash never brace-expands;
+        // a script's own groups still expand when the shell reads it.
+        ("x='{-rf,/}'; rm $x", ALLOW),
+        ("x='{-rf,/}'; rm {$x,}", ALLOW),
+        ("echo '{-rf,/}' | xargs rm", ALLOW),
+        ("x='rm -rf {/tmp/a,/}'; bash -c \"$x\"", RM_RF),
+        // An empty unquoted product is no word (`set -- {,}` sets none).
+        ("echo 'rm -rf /' | bash {,}", RM_RF),
+        ("echo 'rm -rf /' | caffeinate bash {,}", RM_RF),
+        ("bash {,} -c 'rm -rf /'", RM_RF),
+        ("echo hi | bash {,}", ALLOW),
+        // A quoted empty part makes a word: bash runs `-c ''` here and reads no stdin.
+        ("echo 'rm -rf /' | bash -c ''{,}", ALLOW),
+        // Each argument command is counted once.
+        ("x sudo x sudo x sudo x sudo echo {a,b}", ALLOW),
+    ]);
+}
+
+#[test]
 fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
     assert_table(&[
         ("caffeinate rm -rf /", RM_RF),
@@ -275,6 +371,58 @@ fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
         ("which rm git", ALLOW),
         ("caffeinate cargo test", ALLOW),
         ("runuser -u app -- rm -rf /tmp/build", ALLOW),
+        // A word brace expansion builds into a checked program's name is read as a command,
+        // as the literal word is (#127).
+        ("caffeinate {rm,-rf,/}", RM_RF),
+        ("caffeinate {rm,x} -rf /", RM_RF),
+        ("caffeinate \"$b\"{rm,x} -rf /", RM_RF),
+        ("caffeinate {sudo,x} rm -rf /", RM_RF),
+        // Brace expansion runs before a shell or wrapper reads its options, so the options it
+        // builds are read as written (#127 review).
+        ("caffeinate {bash,-c,'rm -rf /'}", RM_RF),
+        ("caffeinate {sh,-c,\"rm -rf /\"}", RM_RF),
+        ("caffeinate {bash,-lc,'rm -rf /'}", RM_RF),
+        ("caffeinate {bash,-c,'git push -f origin main'}", FORCE_PUSH),
+        ("caffeinate {sudo,sh,-c,'rm -rf /'}", RM_RF),
+        ("caffeinate {env,-S,'rm -rf /'}", RM_RF),
+        ("caffeinate {sudo,-u,root,rm,-rf,/}", RM_RF),
+        ("bash {-c,'rm -rf /'}", RM_RF),
+        ("caffeinate bash {-c,'rm -rf /'}", RM_RF),
+        // In the words as written, a brace group where a wrapper's program goes is a program
+        // built by brace expansion, denied as `sudo {sh,-c,'rm -rf /'}` is.
+        ("sudo {-u,root} rm -rf /", UNREADABLE),
+        ("env {-S,'rm -rf /'}", UNREADABLE),
+        ("sudo {-u,root} ls /", UNREADABLE),
+        // The quoted braces are no group, so bash's script is `rm -rf {/tmp/x,/}`, which
+        // expands to `rm -rf /tmp/x /`.
+        ("bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
+        ("caffeinate bash -c 'rm -rf {/tmp/x,/}'{,}", RM_RF),
+        ("bash -c 'rm -rf /tmp/x'", ALLOW),
+        // A `cd` in a script brace expansion builds is followed as written out.
+        ("bash {-c,'cd .claude'}; tee settings.json", CONFIG),
+        ("bash -c 'cd .claude' {,}; tee settings.json", CONFIG),
+        ("bash -c 'cd /tmp' {,}; tee settings.json", ALLOW),
+        ("bash {-c,'cd /tmp'}; tee settings.json", ALLOW),
+        ("caffeinate {bash,-c,'echo hi'}", ALLOW),
+        ("bash {-c,'echo hi'}", ALLOW),
+        ("caffeinate echo {a,b}", ALLOW),
+        ("caffeinate cargo test -p {a,b}", ALLOW),
+        ("mkdir -p tools/{git,hg}", ALLOW),
+        ("mkdir -p tools/git", ALLOW),
+        // Ordinary commands whose brace-built arguments name a checked program, each allowed
+        // as its literal form is.
+        ("brew install {git,jq}", ALLOW),
+        ("brew install git jq", ALLOW),
+        ("apt-get install -y {git,curl}", ALLOW),
+        ("apt-get install -y git curl", ALLOW),
+        ("ls -l /usr/bin/{git,rm}", ALLOW),
+        ("ls -l /usr/bin/git /usr/bin/rm", ALLOW),
+        ("make {install,clean}", ALLOW),
+        ("make install clean", ALLOW),
+        ("cat {a,b}/sh", ALLOW),
+        ("cat a/sh b/sh", ALLOW),
+        ("diff {old,new}/env", ALLOW),
+        ("diff old/env new/env", ALLOW),
     ]);
 }
 

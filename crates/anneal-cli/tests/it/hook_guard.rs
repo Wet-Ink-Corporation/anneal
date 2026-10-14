@@ -163,6 +163,26 @@ fn a_brace_after_a_quoted_expansion_is_expanded_and_denied() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_brace_built_option_beside_an_expansion_is_read_as_the_option() -> TestResult {
+    // #127 review round 4 F1: bash runs `git push -f origin$x` and `bash -c "rm -rf /$x"`.
+    let scratch = Scratch::new()?;
+
+    let push = deny_reason(&scratch.guard(&scratch.bash("git push {-f,origin$x}")?)?)?;
+    let script = deny_reason(&scratch.guard(&scratch.bash("bash {-c,\"rm -rf /$x\"}")?)?)?;
+
+    assert!(
+        push.starts_with("ERROR guard force-push:"),
+        "the brace-built -f is a force flag: {push}"
+    );
+    assert!(
+        script.starts_with("ERROR guard rm-rf:"),
+        "the brace-built -c runs its script: {script}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_allowed_command_is_silent_and_records_nothing() -> TestResult {
     let scratch = Scratch::new()?;
 

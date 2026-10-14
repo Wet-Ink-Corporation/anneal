@@ -1,14 +1,15 @@
 //! `rm` with both recursive and force flags, outside the temporary and scratch directories.
 //!
-//! An argument whose text outside its variables and substitutions is nothing (`$F`,
-//! `"$FLAGS"`) or an option cluster (`"$b"-rf`, `-$x`, or what `"$b"{-rf,/}` expands to) may
-//! hold the flags, so when another operand follows it, it is taken as `-rf`. An operand after
-//! `--` is never an option, so it never holds them.
+//! An argument one of whose values may be an option cluster may hold the flags
+//! ([`readings::may_start_option_cluster`]): a variable or substitution first (`$F`, `"$a$b"`,
+//! `"$b"rf` with `b=-`), a glob first that may match a file named `-rf` (`?rf`, `[-]rf`), or a
+//! written `-` (`-$x`), followed only by letters, digits and `-`. When another operand follows
+//! it, it is taken as `-rf`. An operand after `--` is never an option, so it never holds them.
 
 use std::path::Path;
 
 use super::wrappers::{is_long, may_be_option};
-use super::{Context, normalize};
+use super::{Context, normalize, readings};
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
@@ -49,7 +50,7 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
         let hidden = targets
             .iter()
             .take(before_dashes.unwrap_or(targets.len()))
-            .position(|target| may_hide_flags(target))
+            .position(|target| readings::may_start_option_cluster(target))
             .filter(|_| targets.len() >= 2)?;
         flags = Some(targets.remove(hidden));
     }
@@ -69,26 +70,6 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
             None => deny(format!("rm -rf {}: {why}; {ALLOWED}", target.text)),
         }
     })
-}
-
-/// Whether `word`'s value may be an option cluster holding the flags: its text outside its
-/// expansions is nothing (`$F`, `"$a$b"`) or an option cluster (`"$b"-rf`, `-$x`), which the
-/// expansions may leave as it is or fill in.
-fn may_hide_flags(word: &Word) -> bool {
-    if word.expansions.is_empty() {
-        return false;
-    }
-    // A range outside the text (which the lexer never makes) is taken as possibly the flags,
-    // which can only add denials.
-    let Some(outside) = word.outside_expansions() else {
-        return true;
-    };
-    let mut chars = outside.into_iter().flat_map(str::chars);
-    match chars.next() {
-        None => true,
-        Some('-') => chars.all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        Some(_) => false,
-    }
 }
 
 /// Why `target` may not be force-deleted, or `None` when it may.

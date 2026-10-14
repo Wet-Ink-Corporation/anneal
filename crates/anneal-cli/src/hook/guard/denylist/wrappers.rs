@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::ptr;
 
+use super::braces;
 use crate::hook::guard::shell::{Shape, Word};
 
 /// Words that may start a simple command before its program.
@@ -252,10 +253,7 @@ fn range_in(words: &[Word], part: &[Word]) -> Option<Range<usize>> {
 /// The program a literal `word` names, without a path or `.exe`; `None` for a word that is
 /// not literal.
 pub(in crate::hook::guard) fn program_name(word: &Word) -> Option<&str> {
-    match program(word) {
-        Program::Named(name) => Some(name),
-        Program::Unknown(_) => None,
-    }
+    word.is_literal().then(|| name_of(&word.text))
 }
 
 /// One wrapper removed.
@@ -391,25 +389,33 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
 }
 
 /// The program `word` names: its last path component without `.exe`, or unknown when the
-/// word is not literal.
+/// word is not read as written ([`braces::reads_as_written`]: literal, or a name brace
+/// expansion made, `rm` from `{rm,-rf,/}`).
 fn program(word: &Word) -> Program<'_> {
-    if !word.is_literal() {
+    if !braces::reads_as_written(word) {
         return Program::Unknown(word);
     }
-    let text = word.text.as_str();
+    Program::Named(name_of(&word.text))
+}
+
+/// The program `text` names: its last path component, without `.exe`.
+fn name_of(text: &str) -> &str {
     let name = text.rsplit(['/', '\\']).next().unwrap_or(text);
-    Program::Named(name.strip_suffix(".exe").unwrap_or(name))
+    name.strip_suffix(".exe").unwrap_or(name)
 }
 
 /// Whether `word` names a program the guard checks, a shell or a wrapper it unwraps.
 pub(super) fn names_checked(word: &Word) -> bool {
     match program(word) {
-        // Every wrapper peels something off even with no arguments; other programs do not.
-        Program::Named(name) => {
-            CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
-        }
+        Program::Named(name) => is_checked(name),
         Program::Unknown(_) => false,
     }
+}
+
+/// Whether `name` is a program the guard checks, a shell or a wrapper it unwraps.
+fn is_checked(name: &str) -> bool {
+    // Every wrapper peels something off even with no arguments; other programs do not.
+    CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
 }
 
 /// Whether `word` names the program `name` (by path or with `.exe` too).
@@ -454,9 +460,10 @@ pub(super) fn is_assignment(word: &Word) -> bool {
     })
 }
 
-/// Whether `word` is an option: literal, starting with `-`, and not `-` alone.
+/// Whether `word` is an option: read as written ([`braces::reads_as_written`]: literal, or
+/// `-u` from `{sudo,-u,root,..}`), starting with `-`, and not `-` alone.
 pub(super) fn is_option(word: &Word) -> bool {
-    word.is_literal() && may_be_option(word)
+    braces::reads_as_written(word) && may_be_option(word)
 }
 
 /// Whether `word` may be an option once expanded: it starts with `-` (not `-` alone) and

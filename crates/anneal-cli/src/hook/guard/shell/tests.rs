@@ -330,6 +330,34 @@ fn a_process_substitution_is_a_dynamic_word_and_may_be_a_redirection_target() {
 }
 
 #[test]
+fn quoted_and_escaped_parts_are_located_in_the_word_text() {
+    // #127 review round 3: brace expansion skips what was quoted, so the lexer records where.
+    let rows: [(&str, &[(usize, usize)]); 6] = [
+        ("{-c,'echo ,'}", &[(4, 10)]),
+        (r#"a"b,$x"c"#, &[(1, 5)]),
+        (r"{a\,b,c}", &[(2, 3)]),
+        ("$'{'a,b}", &[(0, 1)]),
+        ("''{,}", &[(0, 0)]),
+        ("{a,b}", &[]),
+    ];
+
+    for (text, expected) in rows {
+        let commands = parse(text).expect("parses");
+        let word = commands
+            .first()
+            .and_then(|command| command.words.first())
+            .expect("one word");
+        let quotes: Vec<(usize, usize)> = word
+            .quotes
+            .iter()
+            .map(|quote| (quote.start, quote.end))
+            .collect();
+
+        assert_eq!(quotes, expected, "{text}");
+    }
+}
+
+#[test]
 fn expansions_are_located_in_the_word_text() {
     let commands = parse("rm${IFS}-rf${IFS}/").expect("parses");
     let word = commands

@@ -132,7 +132,11 @@ impl Variables {
     fn substituted(&self, word: &Word) -> Option<Vec<Word>> {
         let mut text = String::with_capacity(word.text.len());
         let mut remaining = Vec::new();
-        let (mut replaced, mut splits) = (false, false);
+        // Each replaced source range with its value's length, and where each unquoted value
+        // is in the new text (a quoted one is inside its quote already).
+        let mut replaced = Vec::new();
+        let mut values = Vec::new();
+        let mut splits = false;
         let mut at = 0;
         for expansion in &word.expansions {
             text.push_str(word.text.get(at..expansion.range.start)?);
@@ -143,9 +147,13 @@ impl Variables {
                 .and_then(|name| self.set.get(name)?.as_deref())
                 .filter(|_| !splits_unknown);
             if let Some(value) = value {
-                replaced = true;
+                replaced.push((&expansion.range, value.len()));
                 splits |= !expansion.quoted && value.contains(char::is_whitespace);
+                let start = text.len();
                 text.push_str(value);
+                if !expansion.quoted && !value.is_empty() {
+                    values.push(start..text.len());
+                }
             } else {
                 let start = text.len();
                 text.push_str(raw);
@@ -159,31 +167,38 @@ impl Variables {
         text.push_str(word.text.get(at..)?);
         let whole =
             matches!(word.expansions.as_slice(), [only] if only.range == (0..word.text.len()));
-        if !replaced || (splits && !whole) {
+        if replaced.is_empty() || (splits && !whole) {
             return None;
         }
         if splits {
             return Some(text.split_whitespace().map(literal).collect());
         }
-        // A value's pattern characters are taken as unquoted, which can only add denials.
+        // A value's pattern characters are taken as unquoted, which can only add denials; a
+        // value is never brace-expanded, as the shell expands braces first.
         let pattern = word.has_pattern() || holds_pattern(&text);
         let shape = match (remaining.is_empty(), pattern) {
             (false, _) => Shape::Dynamic,
             (true, true) => Shape::Pattern,
             (true, false) => Shape::Literal,
         };
+        let mut quotes = word.quotes_replacing(replaced);
+        quotes.extend(values);
+        quotes.sort_by_key(|quote| quote.start);
         Some(vec![Word {
             text,
             shape,
             quoted: word.quoted,
             globs: Globs::found(pattern),
             expansions: remaining,
+            quotes,
             arithmetic: word.arithmetic,
         }])
     }
 }
 
-/// `text` as a word with no expansion; a pattern when it holds a glob or brace character.
+/// `text` as a word with no expansion; a pattern when it holds a glob or brace character. It
+/// is a value or input the shell does not brace-expand (a split value, xargs input, the text
+/// between a program word's expansions), so it is all in [`Word::quotes`].
 pub(super) fn literal(text: &str) -> Word {
     let pattern = holds_pattern(text);
     Word {
@@ -196,6 +211,7 @@ pub(super) fn literal(text: &str) -> Word {
         quoted: false,
         globs: Globs::found(pattern),
         expansions: Vec::new(),
+        quotes: Word::all_quoted(text),
         arithmetic: false,
     }
 }

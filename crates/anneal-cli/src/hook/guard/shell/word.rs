@@ -18,6 +18,10 @@ pub(crate) struct Word {
     pub(crate) globs: Globs,
     /// Each expansion's source text in `text` (`$x`, `${x}`, `$( )`, backticks, `<( )`).
     pub(crate) expansions: Vec<Expansion>,
+    /// The byte ranges of `text` that brace expansion does not read, in order: each quoted or
+    /// escaped part (empty for `''`), and a known variable value the denylist put in, which
+    /// the shell expands only after braces.
+    pub(crate) quotes: Vec<Range<usize>>,
     /// Whether it was read inside an arithmetic expression: in a command of one (see
     /// [`super::SimpleCommand::arithmetic`]), or from an unquoted `$[` up to its `]`, which the
     /// lexer splits into words as it always has.
@@ -70,13 +74,15 @@ impl Word {
             quoted: false,
             globs: Globs::Absent,
             expansions: Vec::new(),
+            quotes: Vec::new(),
             arithmetic: false,
         }
     }
 
     /// A quoted word whose text is exactly `text`.
-    pub(super) const fn quoted(text: String) -> Self {
+    pub(super) fn quoted(text: String) -> Self {
         Self {
+            quotes: Self::all_quoted(&text),
             text,
             shape: Shape::Literal,
             quoted: true,
@@ -84,6 +90,19 @@ impl Word {
             expansions: Vec::new(),
             arithmetic: false,
         }
+    }
+
+    /// [`Word::quotes`] for a word whose text is all quoted: one range over `text`.
+    pub(crate) fn all_quoted(text: &str) -> Vec<Range<usize>> {
+        std::iter::once(0..text.len()).collect()
+    }
+
+    /// Runs `read` on the word and records the text it adds as quoted.
+    fn quoting<T>(&mut self, read: impl FnOnce(&mut Self) -> T) -> T {
+        let start = self.text.len();
+        let read = read(self);
+        self.quotes.push(start..self.text.len());
+        read
     }
 
     fn mark(&mut self, shape: Shape) {
@@ -113,6 +132,32 @@ impl Word {
         }
         parts.push(self.text.get(at..)?);
         Some(parts)
+    }
+
+    /// [`Word::quotes`] moved to where they are once each expansion source range in `replaced`
+    /// (in order, each paired with the length of the text that takes its place) is replaced. A
+    /// quote that holds a replaced range grows or shrinks with it. One pass over both (H-13).
+    pub(crate) fn quotes_replacing<'r>(
+        &self,
+        replaced: impl IntoIterator<Item = (&'r Range<usize>, usize)>,
+    ) -> Vec<Range<usize>> {
+        let mut ahead = replaced.into_iter().peekable();
+        let (mut grown, mut shrunk) = (0_usize, 0_usize);
+        // Offsets come in ascending order, and none is strictly inside a replaced range.
+        let mut moved = |at: usize| {
+            while let Some((range, len)) = ahead.next_if(|(range, _)| range.end <= at) {
+                grown = grown.saturating_add(len);
+                shrunk = shrunk.saturating_add(range.len());
+            }
+            at.saturating_add(grown).saturating_sub(shrunk)
+        };
+        self.quotes
+            .iter()
+            .map(|quote| {
+                let start = moved(quote.start);
+                start..moved(quote.end)
+            })
+            .collect()
     }
 
     /// Whether the text is exactly what runs.
@@ -172,14 +217,14 @@ impl Lexer {
                 Some('\n') => {}
                 Some(escaped) => {
                     word.quoted = true;
-                    word.text.push(escaped);
+                    word.quoting(|word| word.text.push(escaped));
                 }
                 None => word.text.push('\\'),
             },
-            '\'' => self.single_quoted(word)?,
+            '\'' => word.quoting(|word| self.single_quoted(word))?,
             '"' => {
                 word.quoted = true;
-                self.quoted_body(word, Some('"'), depth)?;
+                word.quoting(|word| self.quoted_body(word, Some('"'), depth))?;
             }
             '$' => self.dollar(word, Quoting::Bare, depth)?,
             '`' => self.backticks(word, Quoting::Bare, depth)?,
@@ -280,12 +325,12 @@ impl Lexer {
             }
             Some('\'') if quoting == Quoting::Bare => {
                 self.advance();
-                return self.ansi_c(word);
+                return word.quoting(|word| self.ansi_c(word));
             }
             Some('"') if quoting == Quoting::Bare => {
                 self.advance();
                 word.quoted = true;
-                return self.quoted_body(word, Some('"'), depth);
+                return word.quoting(|word| self.quoted_body(word, Some('"'), depth));
             }
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {
                 while self

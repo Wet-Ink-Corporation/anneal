@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use super::{
     Long, Peel, Run, SUDO_VALUES, is_long, is_option, join, skip_one, skip_options, takes_value,
 };
+use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
 
 const ENV_VALUES: &[&str] = &["-u", "-C", "--unset", "--chdir"];
@@ -89,7 +90,7 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
                     .map(|attached| (Some(attached), tail))
             })
         };
-        if let Some((script, after)) = split.filter(|_| first.is_literal()) {
+        if let Some((script, after)) = split.filter(|_| reads_as_written(first)) {
             // `-S` as the last word splits nothing: an empty script.
             let script = script.unwrap_or("");
             return Peel::Done(Run::Script(if after.is_empty() {
@@ -258,7 +259,7 @@ pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
             rest = tail;
             break;
         }
-        let option = first.is_literal() && (text.starts_with('-') || text.starts_with('+'));
+        let option = reads_as_written(first) && (text.starts_with('-') || text.starts_with('+'));
         if !option {
             break;
         }
@@ -293,7 +294,7 @@ const STDIN_PATHS: [&str; 3] = ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"];
 fn script_file<'a>(shell: &'a str, script: &Word) -> Peel<'a> {
     let path = script.text.as_str();
     let descriptor = path.starts_with("/dev/fd/") || path.starts_with("/proc/");
-    if script.is_literal() && STDIN_PATHS.contains(&path) {
+    if reads_as_written(script) && STDIN_PATHS.contains(&path) {
         Peel::Done(Run::StdinScript(shell))
     } else if script.is_process_substitution() || descriptor {
         Peel::Done(Run::Unseen(shell))
