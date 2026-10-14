@@ -4,13 +4,17 @@
 //! `passed`, `passing`), as whole words in one clause, in any letter case, outside fenced code
 //! blocks, code spans and HTML comments (quoted output is not a claim). A claim is withdrawn
 //! by three structural rules, each within its clause: a negation (`not`, `never`, `no`, or a
-//! word ending in `n't`) one or two words before it, a conditional ([`CONDITIONALS`]:
-//! "once checks pass") anywhere before it, and a question mark ending the clause ("Does it
-//! work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so in
-//! "No failures. Done." the "No" does not reach "Done". A hyphen ends a clause only when it is
-//! not between two letters or digits: `half-done` is one word (not `done`), while
-//! `hard - fixed` and `hard--fixed` are two clauses. False positives ("done reading the
-//! file", "how it works") are expected; the hook's block cap bounds what they cost.
+//! word ending in `n't`) one or two words before it, a conditional ([`CONDITIONALS`]) one or
+//! two words before it ("I'll merge once checks pass") or opening its clause ("When the build
+//! passes"), and a question mark ending the clause ("Does it work?"). A conditional further
+//! back governs a phrase of its own, so "The crash when saving is fixed." claims. Clauses end
+//! at `.`, `!`, `?`, `;`, `:`, `,`, a dash and a line end, so in "No failures. Done." the "No"
+//! does not reach "Done", and in "Did the tests pass, or should I re-run?" only the second
+//! clause is a question. A hyphen ends a clause only when it is not between two letters or
+//! digits: `half-done` is one word (not `done`), while `hard - fixed` and `hard--fixed` are
+//! two clauses; a hyphenated word whose last segment is a suite word (`unit-tests`) is a suite.
+//! False positives ("done reading the file", "how it works") are expected; the hook's block
+//! cap bounds what they cost.
 
 use crate::lint::spec::markdown::{Document, without_code_spans};
 
@@ -26,9 +30,16 @@ const SUITES: Forms = &["tests", "test", "checks", "check", "builds", "build"];
 /// Who works in a "works" claim.
 const WORKER: Forms = &["everything", "it"];
 
+/// Who works in a "works" claim, contractions included.
+const WORKER_OR_CONTRACTION: Forms = &["everything", "it", "everything's", "it's"];
+
+/// `works` in the forms a "works" claim takes.
+const WORKS: Forms = &["works", "working"];
+
 /// The claims in report order: the first one a reply makes is reported. The phrases from #26
-/// come first, longest first, so their reports are unchanged; the #84 additions follow.
-const CLAIMS: [&[Forms]; 17] = [
+/// come first, longest first, and the #84 additions follow, so a reply making a #26 claim
+/// still reports that claim (unless a structural rule now withdraws it).
+const CLAIMS: [&[Forms]; 18] = [
     &[&["all"], SUITES, PASS],
     &[SUITES, PASS],
     &[&["works", "work"], &["now"]],
@@ -44,18 +55,18 @@ const CLAIMS: [&[Forms]; 17] = [
     &[&["ready"], &["to"], &["merge"]],
     &[&["ready"], &["for"], &["review"]],
     &[WORKER, &["is"], &["working"]],
-    &[
-        &["everything", "it", "everything's", "it's"],
-        &["works", "working"],
-    ],
+    &[WORKER_OR_CONTRACTION, WORKS],
     &[&["implemented"]],
     &[&["resolved"]],
+    // One adverb between subject and verb: "Everything still works.", "It all works."
+    &[WORKER_OR_CONTRACTION, &["still", "now", "all"], WORKS],
 ];
 
 /// Words that negate a claim that follows within two words.
 const NEGATIONS: [&str; 3] = ["not", "never", "no"];
 
-/// Words that make what follows them in their clause a condition, not a claim.
+/// Words that make a claim a condition when they open its clause or come one or two words
+/// before it.
 const CONDITIONALS: [&str; 6] = ["if", "once", "when", "whenever", "unless", "until"];
 
 /// Characters that end a clause.
@@ -74,7 +85,8 @@ pub(crate) fn success_claim(reply: &str) -> Option<String> {
         .find_map(|claim| clauses.iter().find_map(|words| made(words, claim)))
 }
 
-/// The words of `claim` in `words`, joined, when they are there and not negated.
+/// The words of `claim` in `words`, joined, when they are there, not negated and not a
+/// condition.
 fn made(words: &[String], claim: &[Forms]) -> Option<String> {
     words
         .windows(claim.len())
@@ -83,20 +95,39 @@ fn made(words: &[String], claim: &[Forms]) -> Option<String> {
             window
                 .iter()
                 .zip(claim)
-                .all(|(word, forms)| forms.contains(&word.as_str()))
+                .all(|(word, forms)| fills(word, forms))
                 && !negated(words, *start)
                 && !conditional(words, *start)
         })
         .map(|(_, window)| window.join(" "))
 }
 
-/// True when a conditional word comes anywhere before `start`.
+/// True when `word` is one of `forms`, or, for [`SUITES`], when the last segment of a
+/// hyphenated `word` is (`unit-tests`, `smoke-checks`). Only suites look inside a hyphenated
+/// word: `half-done` is not `done`.
+fn fills(word: &str, forms: Forms) -> bool {
+    forms.contains(&word)
+        || (forms == SUITES
+            && word
+                .rsplit_once('-')
+                .is_some_and(|(_, last)| forms.contains(&last)))
+}
+
+/// True when a conditional governs the claim at `start`: the clause opens with one ("When the
+/// build passes"), or one is among the two words before the claim ("I'll merge once checks
+/// pass"). A conditional further back belongs to a phrase of its own ("The crash when saving is
+/// fixed").
 fn conditional(words: &[String], start: usize) -> bool {
-    words.get(..start).is_some_and(|before| {
-        before
-            .iter()
-            .any(|word| CONDITIONALS.contains(&word.as_str()))
-    })
+    let from = start.saturating_sub(2);
+    words.first().is_some_and(|word| is_conditional(word))
+        || words
+            .get(from..start)
+            .is_some_and(|before| before.iter().any(|word| is_conditional(word)))
+}
+
+/// True when `word` is one of [`CONDITIONALS`].
+fn is_conditional(word: &str) -> bool {
+    CONDITIONALS.contains(&word)
 }
 
 /// True when one of the two words before `start` is a negation.
@@ -158,202 +189,4 @@ fn finished(mut word: String) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::success_claim;
-
-    #[test]
-    fn each_success_phrase_is_a_claim_in_any_letter_case() {
-        let replies = [
-            ("All Tests Pass now.", "all tests pass"),
-            ("The tests pass.", "tests pass"),
-            ("It works now!", "works now"),
-            ("Done.", "done"),
-            ("Everything is passing", "passing"),
-            ("CI is GREEN", "green"),
-            ("Fixed the parser.", "fixed"),
-        ];
-        for (reply, phrase) in replies {
-            assert_eq!(success_claim(reply).as_deref(), Some(phrase), "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn inflections_and_other_finishing_words_are_claims_as_written() {
-        let replies = [
-            ("All tests passed.", "all tests passed"),
-            ("the tests passed", "tests passed"),
-            ("Everything passes.", "passes"),
-            ("Tests: 40 passed, 0 failed.", "passed"),
-            ("The implementation is complete.", "complete"),
-            ("Migration completed", "completed"),
-            ("Finished: everything works.", "finished"),
-            ("The build succeeded.", "succeeded"),
-            ("It succeeds on every target.", "succeeds"),
-            ("All green.", "all green"),
-            ("The test passes now", "test passes"),
-        ];
-        for (reply, claim) in replies {
-            assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn only_whole_words_count() {
-        for reply in [
-            "I abandoned the branch",
-            "the greenfield rewrite",
-            "a prefixed name",
-            "undone work",
-            "an incomplete list",
-            "a password and a passport",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn a_negation_reaches_only_within_its_clause() {
-        for reply in [
-            "No failures. Done.",
-            "No warnings, no failures. Done.",
-            "Nothing is left to change; done",
-            "Not much changed: all tests pass",
-            "It was not hard - fixed",
-            "Never mind that\nDone",
-        ] {
-            assert!(success_claim(reply).is_some(), "{reply:?}");
-        }
-        for reply in ["not done", "It isn't fixed.", "The tests have not passed"] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn words_inside_fenced_code_blocks_and_code_spans_are_not_claims() {
-        let reply = "Here is the log:\n\n```\ntest result: ok. all tests pass\ndone\n```\n\n\
-                     Run `cargo test --color green` to see it.";
-
-        assert_eq!(success_claim(reply), None, "code is quoted, not claimed");
-    }
-
-    #[test]
-    fn a_negated_phrase_is_not_a_claim() {
-        for reply in [
-            "The tests are not passing yet.",
-            "This isn't done.",
-            "It is not yet fixed.",
-            "Not all tests pass.",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn each_n1_reply_is_a_claim() {
-        let replies = [
-            ("Everything works.", "everything works"),
-            ("The feature is implemented and working.", "implemented"),
-            ("Ready to merge.", "ready to merge"),
-            ("Resolved.", "resolved"),
-            ("All checks pass.", "all checks pass"),
-            ("The build passes", "build passes"),
-            ("It's working", "it's working"),
-            ("Everything is working now.", "everything is working"),
-            ("Ready for review", "ready for review"),
-        ];
-        for (reply, claim) in replies {
-            assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn the_new_words_do_not_fire_on_ordinary_non_claims() {
-        for reply in [
-            "Does it work?",
-            "Not implemented yet.",
-            "Once checks pass, I'll merge.",
-            "It isn't working.",
-            "Tests should pass after the fix.",
-            "Not everything works.",
-            "It is not ready to merge.",
-            "This isn't resolved",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn a_question_is_not_a_claim() {
-        for reply in [
-            "Is everything working?",
-            "Does it work now?",
-            "Did the tests pass?",
-            "Ready to merge?",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-        assert_eq!(
-            success_claim("All tests pass - want me to commit?").as_deref(),
-            Some("all tests pass"),
-            "only the clause the question mark ends is a question"
-        );
-    }
-
-    #[test]
-    fn a_conditional_before_a_claim_withdraws_it() {
-        for reply in [
-            "I'll merge once checks pass.",
-            "If it works, I'll tag it.",
-            "When the build passes, I'll tag it.",
-            "Keep going until all tests pass",
-            "Unless it's resolved upstream, we patch it.",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-        assert_eq!(
-            success_claim("If it helps, all tests pass.").as_deref(),
-            Some("all tests pass"),
-            "a conditional reaches only within its clause"
-        );
-        assert_eq!(
-            success_claim("All tests pass when run alone.").as_deref(),
-            Some("all tests pass"),
-            "a conditional after the claim does not withdraw it"
-        );
-    }
-
-    #[test]
-    fn an_in_word_hyphen_does_not_end_a_clause() {
-        for reply in [
-            "It's half-done, not finished.",
-            "The parser is well-tested.",
-            "A pre-fixed list",
-            "Not re-done",
-        ] {
-            assert_eq!(success_claim(reply), None, "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn a_spaced_hyphen_double_hyphen_and_dashes_still_end_a_clause() {
-        for reply in [
-            "It was not hard - fixed",
-            "It was not hard--fixed",
-            "It was not hard -fixed",
-            "It was not hard- fixed",
-            "It was not hard \u{2013} fixed",
-            "It was not hard\u{2014}fixed",
-        ] {
-            assert_eq!(success_claim(reply).as_deref(), Some("fixed"), "{reply:?}");
-        }
-    }
-
-    #[test]
-    fn the_longest_phrase_is_reported() {
-        assert_eq!(
-            success_claim("ok, all tests pass and it works now").as_deref(),
-            Some("all tests pass"),
-            "the first phrase in list order"
-        );
-    }
-}
+mod tests;
