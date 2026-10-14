@@ -4,6 +4,7 @@ All notable changes to anneal are recorded here. A release renames `## Unrelease
 
 ## Unreleased
 
+- A `clef_mode` (`CLAUDE_PLUGIN_OPTION_CLEF_MODE`) that does not parse is echoed in `decide`'s `data.reason` cut to 64 characters (with `…`), as the status hook cuts an unknown status word, rather than whole. `calibrate`'s threshold halfway above every labelled probability is rounded to 4 decimal places (`0.85`, not `0.8500000000000001`) in `proposals.json` and the apply steps when the rounded value still lies strictly between its neighbours.
 - A usage error for a missing required argument now names it, for every command: `anneal lint terms` with no file says `ERROR missing required argument: <FILE>...` instead of clap's `the following required arguments were not provided:`; several missing arguments are listed comma-separated. Still exit 2 with nothing on stdout.
 
 ## 0.0.5 — 2026-10-14

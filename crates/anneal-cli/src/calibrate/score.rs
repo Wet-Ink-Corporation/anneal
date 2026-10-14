@@ -195,8 +195,8 @@ pub(crate) fn expected_cost(samples: &[Sample], costs: Costs, threshold: f64) ->
 /// The candidates stay strictly below `ceiling` (the next band up), so the bands stay strictly
 /// descending: each distinct observed probability, and the midpoint between the highest
 /// observed probability under the ceiling and the ceiling (1.0 without one), which acts on
-/// none of them. Among candidates a tie goes to the higher threshold, which acts on fewer
-/// decisions.
+/// none of them (rounded to 4 decimal places when that stays strictly between the two). Among
+/// candidates a tie goes to the higher threshold, which acts on fewer decisions.
 pub(crate) fn propose(
     samples: &[Sample],
     costs: Costs,
@@ -237,11 +237,24 @@ fn above_all(samples: &[Sample], costs: Costs, ceiling: Option<f64>) -> Option<P
         .map(|sample| sample.probability)
         .filter(|probability| *probability < upper)
         .max_by(f64::total_cmp)?;
-    let threshold = f64::midpoint(highest, upper);
+    let threshold = tidy(f64::midpoint(highest, upper), highest, upper);
     (highest < threshold && threshold < upper).then(|| Proposal {
         threshold,
         total_cost: total_cost(samples, costs, threshold),
     })
+}
+
+/// `threshold` rounded to 4 decimal places when that still lies strictly between `lower` and
+/// `upper`, so `proposals.json` shows `0.85` rather than `0.8500000000000001`; otherwise
+/// `threshold` as it is.
+fn tidy(threshold: f64, lower: f64, upper: f64) -> f64 {
+    const PLACES: f64 = 10_000.0;
+    let rounded = (threshold * PLACES).round() / PLACES;
+    if lower < rounded && rounded < upper {
+        rounded
+    } else {
+        threshold
+    }
 }
 
 /// The observed probability under the ceiling with the least total cost, ties to the higher.

@@ -206,6 +206,8 @@ fn a_command_that_cannot_start_exits_2_and_records_nothing() -> TestResult {
 #[cfg_attr(miri, ignore = "runs git and the binary")]
 fn outside_a_git_worktree_record_is_a_usage_error_and_runs_nothing() -> TestResult {
     let dir = tempfile::tempdir()?;
+    // A `.git` file pointing nowhere stops git here, even if a repository encloses the temp dir.
+    std::fs::write(dir.path().join(".git"), "gitdir: does-not-exist\n")?;
 
     let output = record(dir.path(), &[], &GREEN)?;
 

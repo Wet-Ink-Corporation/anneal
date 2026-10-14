@@ -89,6 +89,7 @@ A malformed value (an account that is not letters and digits, a token that is no
 ASCII without spaces, a mode that does not parse, or a variable that is not UTF-8) does not
 stop the hook with an internal error: the point takes its fallback (exit 5) with
 `data.error: "misconfigured"` and `data.reason` naming the variable, never its token value.
+A mode that does not parse is shown in the reason cut to 64 characters, with `…` when longer.
 Nothing is asked and nothing is logged.
 
 ## Thresholds

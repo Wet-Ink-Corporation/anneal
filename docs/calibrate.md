@@ -109,6 +109,8 @@ The expected cost of t is its total cost divided by the labelled count. The cand
   strictly descending (for D1 that means below deny's 0.9);
 - one threshold above every labelled probability below the next band: halfway between the
   highest of them and the next band (or 1.0 for the top band), so it acts on none of them.
+  It is rounded to 4 decimal places (0.85, not `0.8500000000000001`) when the rounded value
+  still lies strictly between the two; otherwise the exact halfway value is kept.
 
 The cheapest of the new candidates is proposed only when its total cost is strictly less than
 the current threshold's. A tie between new candidates goes to the higher threshold, which acts
