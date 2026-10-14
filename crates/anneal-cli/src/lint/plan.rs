@@ -7,13 +7,12 @@
 //! task of the plan, with no cycle (`blockers`). [`check`] is the pure check of the text;
 //! [`lint`] the edge that reads the file and looks for the spec.
 //!
-//! The plan as read ([`Plan`]) is `data.plan` in the envelope, and
-//! `plugin/playbooks/schemas/plan.schema.json` describes it.
+//! The plan as read ([`Plan`]) is `data.plan` in the envelope, its tasks listed up to
+//! [`MAX_LISTED_TASKS`], and `plugin/playbooks/schemas/plan.schema.json` describes it.
 
 mod parse;
 mod rules;
 
-use std::borrow::Cow;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
@@ -29,6 +28,7 @@ use crate::lint::read_whole_bytes;
 use crate::lint::skills::LintError;
 use crate::lint::spec::Source;
 use crate::lint::spec::markdown::Document;
+use crate::path_text::slashed;
 
 /// Arguments of `anneal lint plan`.
 #[derive(Debug, Clone, Args)]
@@ -310,26 +310,49 @@ fn spec_path(plan: &str, target: &str, separator: char) -> String {
     }
 }
 
-/// `text` with each `separator` replaced by `/`, borrowed when there is none to replace.
-pub(crate) fn slashed(text: &str, separator: char) -> Cow<'_, str> {
-    if separator == '/' || !text.contains(separator) {
-        Cow::Borrowed(text)
-    } else {
-        Cow::Owned(text.replace(separator, "/"))
-    }
-}
+/// The most tasks the envelope lists in `data.plan.tasks`.
+///
+/// A plan within the read cap can hold about 10,000 unique tasks with their fields, about
+/// 6 MB of JSON; past this many the rest are counted in `data.omitted_tasks`, and `data.tasks`
+/// still counts every task read.
+pub const MAX_LISTED_TASKS: usize = 1_000;
 
 /// The envelope's `data` for `lint plan`.
 #[derive(Debug, Serialize)]
 struct Data<'a> {
     file: &'a str,
     spec: Option<&'a Path>,
+    /// Every task read, listed or not.
     tasks: usize,
-    plan: &'a Plan,
+    plan: Listed<'a>,
     findings: Vec<Detail<'a>>,
     /// How many findings were dropped at [`MAX_FINDINGS`]; present only when some were.
     #[serde(skip_serializing_if = "Option::is_none")]
     omitted: Option<usize>,
+    /// How many tasks were left out of `plan.tasks` at [`MAX_LISTED_TASKS`]; present only
+    /// when some were.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omitted_tasks: Option<usize>,
+}
+
+/// `data.plan`: a [`Plan`] with at most [`MAX_LISTED_TASKS`] tasks, the first in file order.
+/// Its fields are [`Plan`]'s, as `plan.schema.json` describes them.
+#[derive(Debug, Serialize)]
+struct Listed<'a> {
+    spec: Option<&'a str>,
+    tasks: &'a [Task],
+}
+
+impl<'a> Listed<'a> {
+    fn of(plan: &'a Plan) -> Self {
+        // The first chunk is the first `MAX_LISTED_TASKS` tasks, or all of fewer; a plan with
+        // no task has no chunk, and lists none.
+        let first = plan.tasks.chunks(MAX_LISTED_TASKS).next();
+        Self {
+            spec: plan.spec.as_deref(),
+            tasks: first.unwrap_or(&[]),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -354,7 +377,7 @@ pub(crate) fn report<O: Write>(outcome: &Outcome, out: &mut O) -> Result<Code, C
         file: &outcome.file,
         spec: outcome.spec.as_deref(),
         tasks: report.plan.tasks.len(),
-        plan: &report.plan,
+        plan: Listed::of(&report.plan),
         findings: report
             .findings
             .iter()
@@ -364,6 +387,8 @@ pub(crate) fn report<O: Write>(outcome: &Outcome, out: &mut O) -> Result<Code, C
             })
             .collect(),
         omitted: (report.omitted > 0).then_some(report.omitted),
+        omitted_tasks: Some(report.plan.tasks.len().saturating_sub(MAX_LISTED_TASKS))
+            .filter(|&left_out| left_out > 0),
     };
     let findings: Vec<Finding> = report
         .findings

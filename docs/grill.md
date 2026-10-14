@@ -169,7 +169,9 @@ file is created. The global codes are in
 `grill/dangling:<id>:<dependency>`, `grill/duplicate-dependency:<id>:<dependency>`,
 `grill/cycle:<a>-><b>->...-><a>` (one cycle, from its smallest id) and, for `confirm`,
 `grill/open:<id>`. A cycle is looked for only once the ids are unique and every dependency
-names a node.
+names a node. The cycle named is the one `anneal dag check` would name for the same edges (one
+shared detector): a depth-first search from nodes in id order, following dependencies in id
+order, without recursion ([dag.md](dag.md#dag-check)).
 
 The version is read before the rest of the file, so a tree from another version reports
 `grill/version` alone, even when its other fields are not version 1's. Past a bound (turns,

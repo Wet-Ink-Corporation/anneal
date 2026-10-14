@@ -28,6 +28,7 @@
 //! # Ok::<(), anneal_cli::dag::graph::GraphError>(())
 //! ```
 
+use crate::cycle;
 use crate::dag::ticket::{Status, Ticket, TicketId};
 use crate::exit_codes::{self, Code};
 
@@ -107,14 +108,6 @@ pub struct ExternalBlocker<'g> {
     pub ticket: &'g Ticket,
     /// The open in-scope tickets blocked by it, in id order.
     pub blocks: Vec<&'g TicketId>,
-}
-
-/// Where the depth-first search stands with a ticket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Visit {
-    New,
-    OnPath,
-    Finished,
 }
 
 impl Graph {
@@ -259,64 +252,11 @@ impl Graph {
     }
 
     /// The first cycle a depth-first search meets, starting from tickets and blockers in id
-    /// order, as indices rotated to start at the smallest. Iterative, with an explicit stack of
-    /// (ticket, next blocker to follow), so a long chain cannot overflow the call stack.
+    /// order, as indices rotated to start at the smallest (the smallest id, as tickets are
+    /// sorted); see [`cycle::find_cycle`].
     fn find_cycle(&self) -> Option<Vec<usize>> {
-        let mut visit = vec![Visit::New; self.tickets.len()];
-        let mut path: Vec<(usize, usize)> = Vec::new();
-        for start in 0..self.tickets.len() {
-            if !mark(&mut visit, start, Visit::New, Visit::OnPath) {
-                continue;
-            }
-            path.push((start, 0));
-            while let Some((node, next)) = path.last_mut() {
-                let node = *node;
-                let Some(&blocker) = self.blockers.get(node).and_then(|b| b.get(*next)) else {
-                    mark(&mut visit, node, Visit::OnPath, Visit::Finished);
-                    path.pop();
-                    continue;
-                };
-                *next = next.saturating_add(1);
-                match visit.get(blocker) {
-                    Some(Visit::New) => {
-                        mark(&mut visit, blocker, Visit::New, Visit::OnPath);
-                        path.push((blocker, 0));
-                    }
-                    Some(Visit::OnPath) => return Some(cycle_from(&path, blocker)),
-                    Some(Visit::Finished) | None => {}
-                }
-            }
-        }
-        None
+        cycle::find_cycle(&self.blockers)
     }
-}
-
-/// Moves `index` from state `from` to `to`; false when it was not in `from`.
-fn mark(visit: &mut [Visit], index: usize, from: Visit, to: Visit) -> bool {
-    match visit.get_mut(index) {
-        Some(state) if *state == from => {
-            *state = to;
-            true
-        }
-        _ => false,
-    }
-}
-
-/// The cycle closed by an edge back to `entry`: the path from `entry` to its end, rotated to
-/// start at its smallest index (the smallest id, as tickets are sorted).
-fn cycle_from(path: &[(usize, usize)], entry: usize) -> Vec<usize> {
-    let mut cycle: Vec<usize> = path
-        .iter()
-        .map(|&(node, _)| node)
-        .skip_while(|&node| node != entry)
-        .collect();
-    let smallest = cycle
-        .iter()
-        .enumerate()
-        .min_by_key(|&(_, node)| node)
-        .map_or(0, |(position, _)| position);
-    cycle.rotate_left(smallest);
-    cycle
 }
 
 #[cfg(test)]

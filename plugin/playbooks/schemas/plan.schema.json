@@ -12,7 +12,7 @@
       "type": ["string", "null"]
     },
     "tasks": {
-      "description": "The tasks under `## Tasks`, in file order, each id once.",
+      "description": "The tasks under `## Tasks`, in file order, each id once; at most the first 1,000 (`data.tasks` counts every task read, and `data.omitted_tasks` the ones left out).",
       "type": "array",
       "items": { "$ref": "#/$defs/task" }
     }

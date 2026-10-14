@@ -60,7 +60,9 @@ structure only, never the plan's merit.
 - A missing plan, a directory or a file over 1 MiB is a usage error (exit 2, one `ERROR`
   line, nothing on stdout). Text that is not UTF-8 is read lossily.
 - `data` holds `file`, `spec` (the resolved spec path, or `null`), `tasks` (how many were
-  read), `plan` and `findings`. Each finding has `key`
+  read), `plan` and `findings`. `data.plan.tasks` lists at most the first 1,000 tasks in file
+  order; `data.omitted_tasks` counts the rest and is present only when some were left out, so
+  a 1 MiB plan of unique tasks still gives a small envelope. Each finding has `key`
   (`lint/plan/<rule>:<file>:<line>[:<subject>]`, stable across runs), `rule`, `file`, `line`,
   `message`, `fix` and, where one line can hold several findings, `subject` (a section, a
   field or a blocker id).

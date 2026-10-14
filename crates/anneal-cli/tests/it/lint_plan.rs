@@ -133,6 +133,53 @@ fn a_plan_near_the_read_cap_full_of_repeats_reports_a_bounded_envelope() -> Test
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_plan_of_many_unique_tasks_lists_the_first_1000_and_counts_the_rest() -> TestResult {
+    let work = workspace(true)?;
+    let count = 1_500_usize;
+    let tasks: Vec<String> = (1..=count)
+        .map(|n| {
+            format!(
+                "### T{n}: step\n\n- Files: `src/{n}.rs`\n- Test: `cargo test t{n}`\n- Blocked by: \
+                 none\n\n"
+            )
+        })
+        .collect();
+    let plan = format!(
+        "# Plan\n\nSpec: `../specs/export.md`\n\n## Goal\n\nGo.\n\n## Tasks\n\n{}## Review \
+         focus\n\n- Order.\n",
+        tasks.concat()
+    );
+    fs::write(work.path().join("docs/plans/many.md"), plan)?;
+
+    let (output, envelope) = lint_plan(work.path(), "docs/plans/many.md")?;
+
+    assert_eq!(output.status.code(), Some(0), "clean: {envelope}");
+    let listed: Vec<&str> = envelope
+        .pointer("/data/plan/tasks")
+        .and_then(Value::as_array)
+        .map(|tasks| tasks.iter().filter_map(|t| t["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(listed.len(), 1_000, "capped");
+    assert_eq!(
+        (listed.first(), listed.last()),
+        (Some(&"T1"), Some(&"T1000")),
+        "the first in file order"
+    );
+    assert_eq!(
+        envelope.pointer("/data/tasks"),
+        Some(&json!(count)),
+        "every task read is counted"
+    );
+    assert_eq!(
+        envelope.pointer("/data/omitted_tasks"),
+        Some(&json!(count - 1_000)),
+        "the rest counted"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_plan_whose_spec_is_missing_exits_1_with_a_spec_finding() -> TestResult {
     let work = workspace(false)?;
 

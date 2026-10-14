@@ -28,8 +28,9 @@ use crate::content_hash::sha256;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
-use crate::lint::plan::{self as plan_lint, PlanFinding, slashed};
+use crate::lint::plan::{self as plan_lint, PlanFinding};
 use crate::lint::{read_whole, read_whole_bytes, spec};
+use crate::path_text::slashed;
 use crate::paths::{self, StoreSource};
 
 /// `anneal plan`.
