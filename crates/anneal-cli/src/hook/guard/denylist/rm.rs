@@ -2,7 +2,8 @@
 //!
 //! An argument whose text outside its variables and substitutions is nothing (`$F`,
 //! `"$FLAGS"`) or an option cluster (`"$b"-rf`, `-$x`, or what `"$b"{-rf,/}` expands to) may
-//! hold the flags, so when another operand follows it, it is taken as `-rf`.
+//! hold the flags, so when another operand follows it, it is taken as `-rf`. An operand after
+//! `--` is never an option, so it never holds them.
 
 use std::path::Path;
 
@@ -20,6 +21,8 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     let (mut recursive, mut force) = (false, false);
     let mut targets = Vec::new();
     let mut options = true;
+    // How many operands came before `--`: after it none is an option, so none hides the flags.
+    let mut before_dashes = None;
     for word in args {
         let text = word.text.as_str();
         if !(options && may_be_option(word)) {
@@ -27,7 +30,10 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
             continue;
         }
         match text {
-            "--" => options = false,
+            "--" => {
+                options = false;
+                before_dashes = Some(targets.len());
+            }
             long if long.starts_with("--") => {
                 recursive |= is_long(long, "--recursive");
                 force |= is_long(long, "--force");
@@ -42,6 +48,7 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     if !(recursive && force) {
         let hidden = targets
             .iter()
+            .take(before_dashes.unwrap_or(targets.len()))
             .position(|target| may_hide_flags(target))
             .filter(|_| targets.len() >= 2)?;
         flags = Some(targets.remove(hidden));

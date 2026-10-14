@@ -154,6 +154,11 @@ fn a_brace_or_glob_after_an_expansion_is_still_judged() {
         ("tee \"$d\"/.claude/{settings.json,x}", CONFIG),
         ("tee \"$d\"{.claude/settings.json,x}", CONFIG),
         ("tee \"$d\".clau*/settings.json", CONFIG),
+        ("echo x > \"$d\".clau*/settings.json", CONFIG),
+        ("echo x >> \"$d\".claude/settings*.json", CONFIG),
+        ("echo x 2> \"$d\".clau*/settings.json", CONFIG),
+        ("echo x &> \"$d\".claude/settings*.json", CONFIG),
+        ("echo x > \"$d\"/*.log", ALLOW),
         ("rm -f \"$d\"/*.log", ALLOW),
         ("rm \"$d\"/{a,b}", ALLOW),
         ("cp \"$f\"{,.bak}", ALLOW),
@@ -171,6 +176,18 @@ fn an_option_cluster_after_an_expansion_may_be_the_recursive_force_flags() {
         ("rm \"$a$b\" /", RM_RF),
         ("rm \"$f\".txt \"$g\".txt", ALLOW),
         ("rm -$x /tmp/y", ALLOW),
+    ]);
+}
+
+#[test]
+fn an_operand_after_double_dash_never_hides_the_flags() {
+    assert_table(&[
+        ("rm -f -- \"$p\"-old x", ALLOW),
+        ("rm -- \"$b\"-rf /", ALLOW),
+        ("rm -- \"$a\" /", ALLOW),
+        ("rm \"$a\" -- /", RM_RF),
+        ("rm \"$b\"-rf -- /", RM_RF),
+        ("rm -rf -- \"$b\"-x", RM_RF),
     ]);
 }
 

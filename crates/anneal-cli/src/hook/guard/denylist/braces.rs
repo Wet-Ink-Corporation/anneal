@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::hook::guard::shell::{Expansion, Globs, Shape, Word};
+use crate::hook::guard::shell::{Expansion, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// The most words brace expansion may make of one command's arguments (H-13).
@@ -37,36 +37,6 @@ struct Group {
     open: usize,
     close: usize,
     alternatives: Vec<Range<usize>>,
-}
-
-/// `args` with every expansion empty in each word that also holds an unquoted pattern
-/// character (one of its values; an empty value leaves the pattern alone), or `None` when no
-/// word holds both. A word whose ranges do not fit its text (which the lexer never makes) is
-/// kept as written.
-pub(super) fn empty_expansions(args: &[Word]) -> Option<Vec<Word>> {
-    let both = |word: &Word| word.has_pattern() && !word.expansions.is_empty();
-    if !args.iter().any(both) {
-        return None;
-    }
-    let emptied = args
-        .iter()
-        .map(|arg| {
-            let outside = arg.outside_expansions().filter(|_| both(arg));
-            match outside {
-                Some(parts) => Word {
-                    text: parts.concat(),
-                    shape: Shape::Pattern,
-                    quoted: arg.quoted,
-                    globs: Globs::Unquoted,
-                    expansions: Vec::new(),
-                    arithmetic: arg.arithmetic,
-                },
-                // The new reading owns its words: the others are copied beside the emptied.
-                None => arg.clone(),
-            }
-        })
-        .collect();
-    Some(emptied)
 }
 
 /// Whether `word` holds a brace group the shell would expand.

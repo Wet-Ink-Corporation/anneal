@@ -460,6 +460,21 @@ fn a_word_naming_gh_beside_merge_trips_unless_the_probe_read_that_gh_call() {
 }
 
 #[test]
+fn a_gh_call_read_again_with_its_expansions_empty_is_counted_once() {
+    // `"$b"*` gives the call a second reading with `$b` empty; counting the call there too
+    // would pair it with the second word naming gh.
+    let gh_word = "gh where the probe cannot read its arguments";
+    let rows = [
+        ("gh pr view 1 \"$b\"* gh merge", Some(gh_word)),
+        ("gh pr view 1 \"$b\"* merge", None),
+    ];
+
+    for (command, expected) in rows {
+        assert_eq!(unseen(command), expected, "{command}");
+    }
+}
+
+#[test]
 fn a_gh_api_call_trips_only_when_a_word_holds_merge() {
     let gh_api = "gh api, which may call the merge endpoint";
     let rows = [
