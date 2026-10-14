@@ -11,6 +11,7 @@
 
 pub mod estimate;
 pub mod graph;
+mod plan_tickets;
 pub mod ticket;
 pub mod tracker;
 
@@ -23,10 +24,11 @@ use serde::Serialize;
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
-use crate::exit_codes::Code;
 use crate::exit_codes::render::command_help;
+use crate::exit_codes::{self, Code};
 use estimate::{DEFAULT_BUDGET, Estimate};
 use graph::{Check, Dangling, ExternalBlocker, Graph, GraphError};
+use plan_tickets::{Agreement, PlanTasks};
 use ticket::{Status, TicketId};
 use tracker::github::{GhCli, GitHub, Repo};
 use tracker::markdown::Markdown;
@@ -57,6 +59,10 @@ pub struct CheckArgs {
     /// Where the tickets are.
     #[command(flatten)]
     pub source: Source,
+    /// Also check that the tickets agree with this plan: one ticket per task, with the same id
+    /// and the same blockers (exit 3 when they do not)
+    #[arg(long, value_name = "FILE")]
+    pub plan: Option<PathBuf>,
 }
 
 /// Arguments of `anneal dag frontier`.
@@ -119,11 +125,21 @@ pub enum DagError {
 /// Runs `anneal dag <action>` with relative paths taken from `cwd`, and writes its envelope.
 ///
 /// # Errors
-/// [`CliError::Usage`] for flags of the other tracker, [`CliError::Dag`] when the tickets cannot
-/// be read, [`CliError::Output`] when `out` cannot be written.
+/// [`CliError::Usage`] for flags of the other tracker, [`CliError::Plan`] when the `--plan` file
+/// cannot be read, [`CliError::Dag`] when the tickets cannot be read, [`CliError::Output`] when
+/// `out` cannot be written.
 pub fn run<O: Write>(args: &DagArgs, cwd: &Path, out: &mut O) -> Result<Code, CliError> {
     match &args.action {
-        DagAction::Check(check_args) => check(tracker(&check_args.source, cwd)?.as_ref(), out),
+        DagAction::Check(check_args) => {
+            let tracker = tracker(&check_args.source, cwd)?;
+            let plan = check_args
+                .plan
+                .as_deref()
+                .map(|file| PlanTasks::read(file, cwd))
+                .transpose()
+                .map_err(CliError::Plan)?;
+            check_with(tracker.as_ref(), plan.as_ref(), out)
+        }
         DagAction::Frontier(frontier_args) => {
             let tracker = tracker(&frontier_args.source, cwd)?;
             frontier(tracker.as_ref(), cwd, frontier_args.budget, out)
@@ -182,6 +198,9 @@ struct CheckData<'g> {
     edges: usize,
     dangling: Vec<DanglingRef<'g>>,
     cycle: &'g [&'g TicketId],
+    /// Only with `--plan`, so the envelope without it is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<Agreement<'g>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,10 +209,31 @@ struct DanglingRef<'g> {
     missing: &'g TicketId,
 }
 
-/// `dag check`: writes the envelope and returns its code.
+/// `dag check` without a plan, as the tests written before `--plan` call it.
+#[cfg(test)]
 fn check<O: Write>(tracker: &dyn Tracker, out: &mut O) -> Result<Code, CliError> {
+    check_with(tracker, None, out)
+}
+
+/// `dag check`, also against `plan` when given: writes the envelope and returns its code, the
+/// graph's when its check fails, else [`exit_codes::DAG_PLAN_MISMATCH`] when the tickets
+/// disagree with the plan.
+fn check_with<O: Write>(
+    tracker: &dyn Tracker,
+    plan: Option<&PlanTasks>,
+    out: &mut O,
+) -> Result<Code, CliError> {
     let graph = read_graph(tracker)?;
     let verdict = graph.check();
+    let agreement = plan.map(|plan| plan.against(graph.tickets()));
+    let code = match &agreement {
+        Some(agreement) if verdict.code().is_success() && !agreement.holds() => {
+            exit_codes::DAG_PLAN_MISMATCH
+        }
+        _ => verdict.code(),
+    };
+    let mut findings = check_findings(&verdict);
+    findings.extend(agreement.iter().flat_map(Agreement::findings));
     let data = CheckData {
         tracker: tracker.name(),
         tickets: graph.tickets().count(),
@@ -205,9 +245,9 @@ fn check<O: Write>(tracker: &dyn Tracker, out: &mut O) -> Result<Code, CliError>
             .map(|Dangling { ticket, missing }| DanglingRef { ticket, missing })
             .collect(),
         cycle: verdict.cycle.as_deref().unwrap_or(&[]),
+        plan: agreement,
     };
-    let findings = check_findings(&verdict);
-    Envelope::new(CommandName::Dag, Some("check"), verdict.code(), data)
+    Envelope::new(CommandName::Dag, Some("check"), code, data)
         .with_findings(&findings)
         .emit(out)
         .map_err(CliError::Output)

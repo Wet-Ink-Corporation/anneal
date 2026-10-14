@@ -64,6 +64,11 @@ pub struct Claim {
     pub does_not_prove: &'static str,
 }
 
+/// `dag`'s claim, out of `CommandName::proves` to keep that function short.
+const DAG_PROVES: &str = "the task graph has no cycle and no dangling dependency; with check \
+    --plan, every plan task has a ticket of its id with the same blockers among the plan's \
+    tasks, and every ticket is a task of the plan";
+
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
     pub const ALL: [Self; 24] = [
@@ -153,7 +158,7 @@ impl CommandName {
                  (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers)"
             }
             Self::Lint => "the checked files have no error under anneal's lint rules",
-            Self::Dag => "the task graph has no cycle and no dangling dependency",
+            Self::Dag => DAG_PROVES,
             Self::FloorGuard => "no quality floor (coverage, lint level, test count) was lowered",
             Self::Verdict => "the review verdict is well-formed and backed by findings",
             Self::Watch => "the pull request, CI run or deploy reached green within the timeout",

@@ -2,6 +2,7 @@
 //! `tests/fixtures/dag/` (acyclic, cycle, dangling, empty).
 
 use std::error::Error;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Output;
 
@@ -207,6 +208,158 @@ fn a_missing_tickets_directory_exits_70_with_one_error_line() -> TestResult {
         stderr.starts_with("ERROR dag: reading the markdown tickets: listing tickets in ")
             && stderr.lines().count() == 1,
         "{stderr:?}"
+    );
+    Ok(())
+}
+
+/// The recorded define chain's plan and tickets.
+fn dry_run() -> PathBuf {
+    [env!("CARGO_MANIFEST_DIR"), "../../evals/fixtures/dry-run"]
+        .iter()
+        .collect()
+}
+
+/// A working directory holding `plan.md` with tasks `(id, blockers)` and `tickets/<id>.md`
+/// for each ticket `(id, blocked_by)`.
+fn plan_and_tickets(
+    tasks: &[(&str, &str)],
+    tickets: &[(&str, &str)],
+) -> Result<tempfile::TempDir, Box<dyn Error>> {
+    let dir = tempfile::tempdir()?;
+    let mut plan = String::from("# Plan\n\n- Spec: `spec.md`\n\n## Goal\n\nA goal.\n\n## Tasks\n");
+    for (id, blocked_by) in tasks {
+        write!(
+            plan,
+            "\n### {id}: Task {id}\n\n- Files: `src/{id}.rs`\n- Test: `cargo test {id}`\n\
+             - Blocked by: {blocked_by}\n"
+        )?;
+    }
+    plan.push_str("\n## Review focus\n\n- Everything.\n");
+    std::fs::write(dir.path().join("plan.md"), plan)?;
+    std::fs::create_dir(dir.path().join("tickets"))?;
+    for (id, blocked_by) in tickets {
+        std::fs::write(
+            dir.path().join("tickets").join(format!("{id}.md")),
+            format!("---\nblocked_by: [{blocked_by}]\n---\n"),
+        )?;
+    }
+    Ok(dir)
+}
+
+/// Runs `anneal dag check --plan plan.md` in `dir`, whose tickets are in `tickets/`.
+fn check_plan_in(dir: &std::path::Path) -> Result<Output, Box<dyn Error>> {
+    let home = tempfile::tempdir()?;
+    Ok(anneal_with_home(dir, home.path())
+        .args(["dag", "check", "--plan", "plan.md"])
+        .output()?)
+}
+
+fn finding_keys(envelope: &Value) -> Vec<&str> {
+    envelope["findings"]
+        .as_array()
+        .map(|findings| findings.iter().filter_map(|f| f["key"].as_str()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_with_the_dry_run_plan_is_clean() -> TestResult {
+    let fixture = dry_run();
+    let tickets = fixture.join("tickets");
+    let plan = fixture.join("plan.md");
+    let tickets = tickets.to_str().ok_or("fixture path is UTF-8")?;
+    let plan = plan.to_str().ok_or("fixture path is UTF-8")?;
+
+    let output = dag(&["check", "--dir", tickets, "--plan", plan])?;
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let envelope = envelope(&output)?;
+    assert_eq!(
+        envelope["data"]["plan"],
+        json!({"file": plan, "tasks": 4, "no_ticket": [], "no_task": [], "blockers": [],
+               "unread": 0}),
+        "every task has its ticket, with the same blockers"
+    );
+    assert_eq!(envelope["findings"], json!([]), "no finding");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_with_a_plan_reports_a_task_with_no_ticket() -> TestResult {
+    let dir = plan_and_tickets(&[("T1", "none"), ("T2", "T1")], &[("T1", "")])?;
+
+    let output = check_plan_in(dir.path())?;
+
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let envelope = envelope(&output)?;
+    assert_eq!(
+        finding_keys(&envelope),
+        ["dag/plan/no-ticket:T2"],
+        "T2 has no ticket"
+    );
+    assert_eq!(envelope["ok"], json!(false), "not ok");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_with_a_plan_reports_a_ticket_with_no_task() -> TestResult {
+    let dir = plan_and_tickets(&[("T1", "none")], &[("T1", ""), ("T5", "T1")])?;
+
+    let output = check_plan_in(dir.path())?;
+
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert_eq!(
+        finding_keys(&envelope(&output)?),
+        ["dag/plan/no-task:T5"],
+        "T5 is no task of the plan"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_with_a_plan_reports_differing_blockers() -> TestResult {
+    let dir = plan_and_tickets(&[("T1", "none"), ("T2", "T1")], &[("T1", ""), ("T2", "")])?;
+
+    let output = check_plan_in(dir.path())?;
+
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let envelope = envelope(&output)?;
+    assert_eq!(
+        finding_messages(&envelope),
+        ["ticket T2 is blocked by [], but the plan's task is blocked by [T1]"],
+        "the ticket dropped its blocker"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_with_a_missing_plan_is_a_usage_error() -> TestResult {
+    let output = dag(&["check", "--dir", "acyclic", "--plan", "absent.md"])?;
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.starts_with("ERROR plan: no such path: ") && stderr.lines().count() == 1,
+        "{stderr:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn check_without_a_plan_has_no_plan_in_its_data() -> TestResult {
+    let output = dag(&["check", "--dir", "acyclic"])?;
+
+    let envelope = envelope(&output)?;
+    assert_eq!(
+        envelope["data"].get("plan"),
+        None,
+        "the envelope is as before"
     );
     Ok(())
 }

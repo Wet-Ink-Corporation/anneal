@@ -107,8 +107,9 @@ A green result proves the checked files have no error under anneal's lint rules.
 | 0 | ok |
 | 1 | cycle |
 | 2 | dangling dependency |
+| 3 | check --plan: tickets disagree with the plan |
 
-A green result proves the task graph has no cycle and no dangling dependency. It does **not** prove that the dependencies are the right ones.
+A green result proves the task graph has no cycle and no dangling dependency; with check --plan, every plan task has a ticket of its id with the same blockers among the plan's tasks, and every ticket is a task of the plan. It does **not** prove that the dependencies are the right ones.
 
 ## `anneal floor-guard`
 

@@ -9,6 +9,7 @@ for one context.
 
 ```text
 anneal dag check    [--tracker markdown|github] [--dir PATH] [--repo OWNER/NAME] [--issue N]
+                    [--plan FILE]
 anneal dag frontier [same tracker flags] [--budget TOKENS]
 ```
 
@@ -135,6 +136,7 @@ Two runs over the same tickets print byte-identical output.
 | 0 | Every reference resolves and there is no cycle. |
 | 1 | There is a cycle. One cycle is named, in order. |
 | 2 | A reference dangles: some ticket is blocked by an id that is not a ticket. Every pair is named. |
+| 3 | Only with `--plan`: the graph passes, but the tickets disagree with the plan (below). |
 | 70 | The tickets could not be read. |
 
 **Dangling comes first.** When both problems occur, the exit code is 2, and the envelope still
@@ -151,6 +153,43 @@ blocked by itself is a cycle of one.
 tickets. The
 findings are `dag/dangling:<ticket>-><missing>` for each dangling reference and
 `dag/cycle:<a>-><b>...` for the cycle.
+
+## `dag check --plan`
+
+Nothing turns a plan's tasks into tickets: the `Blocked by:` lines of `plan.md` are copied
+into the tickets by hand, so a plan approved with one dependency graph could be built from
+tickets with another. `--plan <FILE>` also compares the plan's tasks with the tickets, after
+the graph check.
+
+- **The mapping is by id.** A ticket answers the task whose id is the ticket's id, exactly
+  and in the same letter case. For markdown tickets the id is the file stem, so
+  `tickets/T1.md` answers `### T1: ...`, as the recorded dry run
+  (`evals/fixtures/dry-run/`) does. For GitHub the id is the issue number, so the plan's task
+  ids must be the issue numbers. Titles are not compared.
+- **The plan is read as `anneal lint plan` reads it** (same reader and 1 MiB cap; see
+  [plan.md](plan.md)). The path is relative to the working directory. A missing plan, a
+  directory or a file over the cap is a usage error (exit 2, one `ERROR plan:` line, nothing
+  on stdout); a read failure exits 70.
+- **Blockers are compared as sets**: order and repeats do not matter. On the ticket's side
+  only the blockers that are tasks of the plan count. A blocker from outside the plan, such as
+  another team's ticket or a release, belongs in the tracker alone (the `plan` skill's
+  `references/slice.md`), so it is never a disagreement.
+
+Findings, after the graph's, each in id order:
+
+| Finding | Meaning |
+|---|---|
+| `dag/plan/unread:<file>` | `lint plan` finds a problem with the plan's tasks or task fields, so a task or blocker may be missing from the comparison. Run `anneal lint plan`. |
+| `dag/plan/no-ticket:<id>` | A task of the plan has no ticket. |
+| `dag/plan/no-task:<id>` | A ticket in scope is no task of the plan. |
+| `dag/plan/blockers:<id>` | The task's ticket lists other blockers among the plan's tasks. The message names both lists. |
+
+The exit code is the graph's when its check fails (2 or 1; the plan's findings are still
+listed), else 3 when there is any plan finding, else 0. `data` gains
+`plan: {file, tasks, no_ticket: [ids], no_task: [ids], blockers: [{id, plan, ticket}], unread}`,
+where `file` is the plan as given and `unread` counts `lint plan`'s task findings. Without
+`--plan`, `data` has no `plan` key and `dag check` is unchanged. `dag frontier` takes no
+`--plan`.
 
 ## `dag frontier`
 

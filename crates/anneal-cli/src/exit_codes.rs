@@ -133,6 +133,8 @@ pub const LINT_FINDINGS: Code = Code::new(1, "error findings");
 pub const DAG_CYCLE: Code = Code::new(1, "cycle");
 /// `dag check|frontier`: a dependency names a task that does not exist.
 pub const DAG_DANGLING: Code = Code::new(2, "dangling dependency");
+/// `dag check --plan`: the graph is sound but the tickets disagree with the plan's tasks.
+pub const DAG_PLAN_MISMATCH: Code = Code::new(3, "check --plan: tickets disagree with the plan");
 /// `floor-guard`: no floor was lowered.
 pub const FLOOR_HELD: Code = Code::new(0, "no floor lowered");
 /// `floor-guard`: a floor was lowered.
@@ -293,7 +295,10 @@ impl CommandCodes {
                 ],
             ),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
-            CommandName::Dag => ("check|frontier", &[OK, DAG_CYCLE, DAG_DANGLING]),
+            CommandName::Dag => (
+                "check|frontier",
+                &[OK, DAG_CYCLE, DAG_DANGLING, DAG_PLAN_MISMATCH],
+            ),
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),
             CommandName::Verdict => (
                 "set|valid",

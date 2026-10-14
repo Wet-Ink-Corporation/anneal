@@ -1,3 +1,5 @@
+mod plan;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

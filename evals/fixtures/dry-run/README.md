@@ -52,6 +52,7 @@ become checks):
    checks that the two agree: a ticket could drop a blocker and `dag check` would still pass.
    Candidate check: `anneal dag check --plan plan.md` (or a `plan tickets` export) that fails
    when the tickets' ids and blockers differ from the plan's tasks.
+   #75 added `anneal dag check --plan`; this fixture's plan and tickets check clean.
 2. **`plan check` does not see a spec change.** `plan_approved` records only the plan's hash;
    after approval, adding a line to `spec.md` still checks `current`, while `--help` reads
    "4 stale: inputs changed since approval" and `proves` says "current with its inputs".
