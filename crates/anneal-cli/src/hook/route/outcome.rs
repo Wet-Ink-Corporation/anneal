@@ -13,8 +13,12 @@
 //! bounded, safe on every file system, and holds no id), with the decision's id, its top phase
 //! and the offset. Sessions never write the same file, so parallel sessions lose nothing. A
 //! decision is claimed before it is labelled, by renaming its file (atomic: only one claim can
-//! succeed), so it is never labelled twice. At most [`MAX_SESSIONS`] files are kept; past that
-//! the oldest are dropped. Not labelled: a session's last decision (no next prompt), one whose
+//! succeed), so it is never labelled twice. At most [`MAX_SESSIONS`] pending files are kept;
+//! past that the oldest are dropped. Claimed files are bounded apart, so dropping pending files
+//! never reaches a claim in flight; past [`MAX_SESSIONS`] claims (mostly left by hooks killed
+//! while labelling) the oldest are dropped too, by when the decision was remembered (a rename
+//! keeps the file's time), so a claim in flight may be among them; a claim found gone is
+//! nothing to label, never an error. Not labelled: a session's last decision (no next prompt), one whose
 //! transcript was rewritten (it is shorter, or no longer ends a line at the remembered length)
 //! or grew by more than [`MAX_WINDOW_BYTES`] before the next prompt, and one dropped as the
 //! oldest.
@@ -243,63 +247,111 @@ fn claim(dir: &Path, session: &str) -> Result<Option<Pending>, OutcomeError> {
             });
         }
     }
-    let read = load(&claimed);
-    fs::remove_file(&claimed).map_err(|source| OutcomeError::Dir {
-        op: "removing",
-        path: claimed,
-        source,
-    })?;
-    read.map(Some)
+    take(&claimed)
 }
 
-/// The pending decision in `path`.
-fn load(path: &Path) -> Result<Pending, OutcomeError> {
+/// Reads and removes the claimed file `claimed`. A file that is gone, read or not, is not an
+/// error: another hook removes a claim only in [`drop_oldest`], past [`MAX_SESSIONS`] claims (a
+/// reused process id may also replace a dead claim of the same name, harmlessly), so the decision is then simply not labelled (or labelled from what was read:
+/// the claim was this hook's alone either way).
+fn take(claimed: &Path) -> Result<Option<Pending>, OutcomeError> {
+    let read = load(claimed);
+    match fs::remove_file(claimed) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(OutcomeError::Dir {
+                op: "removing",
+                path: claimed.to_path_buf(),
+                source,
+            });
+        }
+    }
+    read
+}
+
+/// The pending decision in `path`, or `None` when the file is gone.
+fn load(path: &Path) -> Result<Option<Pending>, OutcomeError> {
     let foreign = |source| OutcomeError::Foreign {
         path: path.to_path_buf(),
         source,
     };
-    let bytes = baseline::read_state_bytes(path)?.ok_or_else(|| foreign(None))?;
+    let Some(bytes) = baseline::read_state_bytes(path)? else {
+        return Ok(None);
+    };
     let pending: Pending = serde_json::from_slice(&bytes).map_err(|e| foreign(Some(e)))?;
     if pending.kind != KIND || pending.version != FORMAT_VERSION {
         return Err(foreign(None));
     }
-    Ok(pending)
+    Ok(Some(pending))
 }
 
-/// Removes the oldest pending and claimed files in `dir` past [`MAX_SESSIONS`], never `keep`
-/// (the file just written). Another hook removing one first is not an error.
+/// Removes the oldest pending files in `dir` past [`MAX_SESSIONS`], never `keep` (the file just
+/// written), and the oldest claimed files past [`MAX_SESSIONS`] of their own. The two are
+/// bounded apart so that a full store of pending files never reaches a claim another hook is
+/// still reading. Past the second bound the oldest claims go, by when their decision was
+/// remembered (a rename keeps the file's time): mostly those of hooks killed between claiming
+/// and removing, but a claim in flight from a long-idle session may be among them, and [`take`]
+/// treats one removed under it as nothing to label.
+/// Another hook removing a file first is not an error.
 fn drop_oldest(dir: &Path, keep: &Path) -> Result<(), OutcomeError> {
+    let Listed { pending, claimed } = list(dir)?;
+    remove_oldest(pending, Some(keep))?;
+    remove_oldest(claimed, None)
+}
+
+/// The pending and claimed files of the pending directory, each with when it was modified.
+struct Listed {
+    pending: Vec<(SystemTime, PathBuf)>,
+    claimed: Vec<(SystemTime, PathBuf)>,
+}
+
+/// Lists at most [`MAX_LISTED`] entries of `dir` into [`Listed`].
+fn list(dir: &Path) -> Result<Listed, OutcomeError> {
     let dir_error = |op, source| OutcomeError::Dir {
         op,
         path: dir.to_path_buf(),
         source,
     };
-    let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
+    let mut listed = Listed {
+        pending: Vec::new(),
+        claimed: Vec::new(),
+    };
     for entry in fs::read_dir(dir)
         .map_err(|e| dir_error("listing", e))?
         .take(MAX_LISTED)
     {
         let entry = entry.map_err(|e| dir_error("listing", e))?;
         let path = entry.path();
-        let ours = path
-            .extension()
-            .is_some_and(|ext| ext == PENDING_EXTENSION || ext == CLAIMED_EXTENSION);
+        let files = match path.extension() {
+            Some(ext) if ext == PENDING_EXTENSION => &mut listed.pending,
+            Some(ext) if ext == CLAIMED_EXTENSION => &mut listed.claimed,
+            Some(_) | None => continue,
+        };
         let metadata = match entry.metadata() {
             Ok(metadata) => metadata,
             // Claimed or dropped by another hook since it was listed.
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(dir_error("reading", error)),
         };
-        if ours && metadata.is_file() {
+        if metadata.is_file() {
             let modified = metadata.modified().map_err(|e| dir_error("reading", e))?;
             files.push((modified, path));
         }
     }
+    Ok(listed)
+}
+
+/// Removes the oldest of `files` past [`MAX_SESSIONS`], never `keep` when there is one.
+fn remove_oldest(
+    mut files: Vec<(SystemTime, PathBuf)>,
+    keep: Option<&Path>,
+) -> Result<(), OutcomeError> {
     let excess = files.len().saturating_sub(MAX_SESSIONS);
     files.sort();
     for (_, path) in files
         .into_iter()
-        .filter(|(_, path)| path != keep)
+        .filter(|(_, path)| keep != Some(path.as_path()))
         .take(excess)
     {
         match fs::remove_file(&path) {

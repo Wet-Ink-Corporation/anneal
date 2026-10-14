@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anneal_ledger::Store;
 
 use super::{
-    BUSY_TIMEOUT, Check, Denial, HOOK_BUDGET, Ledger, RecordError, Verdict, build, mode_denial,
+    BUSY_TIMEOUT, Check, Denial, JUDGE_BUDGET, Ledger, RecordError, Verdict, build, mode_denial,
     relative_in, unjudged,
 };
 use crate::existing_ledger;
@@ -260,7 +260,7 @@ fn no_time_left() -> Denial {
         Check::Unjudged,
         format!(
             "preconditions: no time is left to judge the edit within the hook's \
-             {HOOK_BUDGET:?} budget, so the edit cannot be checked; try again, with fewer files \
+             {JUDGE_BUDGET:?} budget, so the edit cannot be checked; try again, with fewer files \
              in one call"
         ),
     )

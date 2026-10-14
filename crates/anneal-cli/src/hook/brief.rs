@@ -9,7 +9,7 @@
 //! A denial is Claude Code's deny decision whose reason is one `ERROR brief:` line, plus a
 //! `gate_blocked` event (`brief.<check>`) in an existing ledger; the hook never creates one.
 //! Input it cannot read, a worktree, setting or brief it cannot read, deny. git and the ledger
-//! get [`HOOK_BUDGET`] from the hook's start, each git call at most [`GIT_TIMEOUT`]. See
+//! get [`JUDGE_BUDGET`] from the hook's start, each git call at most [`GIT_TIMEOUT`]. See
 //! `docs/hooks.md` and `docs/brief.md`.
 
 mod reference;
@@ -44,8 +44,9 @@ const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_BRIEF_BYTES: u64 = 256 * 1024;
 
 /// What git and the ledger reads may start within, from the hook's start: the 5 s hook
-/// `timeout` less the record's lock wait and process start-up.
-const HOOK_BUDGET: Duration = Duration::from_millis(3_500);
+/// `timeout` less the record's lock wait and process start-up. Not the shared
+/// [`crate::hook::HOOK_BUDGET`]: this hook keeps its own.
+const JUDGE_BUDGET: Duration = Duration::from_millis(3_500);
 
 /// The tool the hook judges.
 const AGENT_TOOL: &str = "Agent";
@@ -161,7 +162,7 @@ where
     L: Fn(&str) -> Option<OsString>,
     W: Write,
 {
-    let budget = Budget::within(Instant::now(), HOOK_BUDGET, GIT_TIMEOUT);
+    let budget = Budget::within(Instant::now(), JUDGE_BUDGET, GIT_TIMEOUT);
     let HookEnv {
         stdin,
         current_dir,

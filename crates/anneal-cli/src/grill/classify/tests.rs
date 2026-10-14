@@ -11,6 +11,7 @@ use tempfile::TempDir;
 use crate::cli::{Cli, Command};
 use crate::decide::DecideEnv;
 use crate::decide::point::Point;
+use crate::decide::thresholds::Thresholds;
 use crate::decide::transport::{ClefRequest, Transport, TransportError};
 use crate::error::CliError;
 use crate::grill::{GrillAction, run};
@@ -419,6 +420,19 @@ fn thresholds_that_cannot_be_read_fall_back_instead_of_failing() -> TestResult {
     assert!(why.contains("thresholds"), "{why}");
     assert!(endpoint.bodies().is_empty(), "Clef is not asked");
     assert_eq!(tree_bytes(dir.path())?, before);
+    Ok(())
+}
+
+#[test]
+fn the_fallback_reported_without_thresholds_is_d7_s_shipped_fallback() -> TestResult {
+    let shipped = Thresholds::built_in()?;
+
+    assert_eq!(
+        super::FALLBACK,
+        shipped.point(Point::D7).fallback(),
+        "classify fails open on its own when the thresholds cannot be read; if D7's shipped \
+         fallback changes, that path must change with it"
+    );
     Ok(())
 }
 

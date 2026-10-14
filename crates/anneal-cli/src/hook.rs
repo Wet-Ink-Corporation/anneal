@@ -33,12 +33,19 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
 use crate::decide::clock::SystemClock;
 use crate::decide::transport::http::UreqTransport;
+
+/// How long the hooks that ask Clef within a 5 s `hooks.json` timeout (the guard, route and
+/// ruled-before) plan to take, measured from their start on the monotonic clock; the other
+/// 500 ms cover starting the process and writing the output. Clef is asked only while its whole
+/// timeout still fits in what is left.
+pub(crate) const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
 
 /// Arguments of `anneal hook`.
 #[derive(Debug, Args)]
