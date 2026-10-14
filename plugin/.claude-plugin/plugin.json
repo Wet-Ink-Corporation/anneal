@@ -1,6 +1,6 @@
 {
   "name": "anneal",
-  "version": "0.0.1",
+  "version": "0.0.5",
   "description": "Enforced SDLC gates for Claude Code: skills for each phase, a deterministic CLI behind hooks, and calibrated judgement calls that run in shadow until they earn enforcement.",
   "author": { "name": "Ryan Britton", "email": "ryan.britton@wet-ink.net" },
   "homepage": "https://github.com/Wet-Ink-Corporation/anneal",
