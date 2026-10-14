@@ -161,6 +161,10 @@ fn a_brace_or_glob_after_an_expansion_is_still_judged() {
         ("rm [!a]rf /", RM_RF),
         ("rm [[:punct:]]rf /", RM_RF),
         ("rm [$c]rf /", RM_RF),
+        // A `]` inside an expansion in the set does not close it (#127 review).
+        ("rm [!$(echo ])]rf /home", RM_RF),
+        ("rm [!`echo ]`]rf /home", RM_RF),
+        ("rm [$(echo '!]')]rf /home", RM_RF),
         ("rm -- ?rf /tmp/x", ALLOW),
         ("rm -f *.o *.a", ALLOW),
         // A cost: `*` may match a file named `-r`.
@@ -302,16 +306,30 @@ fn unlisted_wrappers_have_their_arguments_checked_as_a_command() {
         ("which rm git", ALLOW),
         ("caffeinate cargo test", ALLOW),
         ("runuser -u app -- rm -rf /tmp/build", ALLOW),
-        // A word brace expansion builds into a checked program's name is denied, as the
-        // program word `{rm,-rf,/}` is (#127).
-        ("caffeinate {rm,-rf,/}", UNREADABLE),
-        ("caffeinate \"$b\"{rm,x} -rf /", UNREADABLE),
-        ("caffeinate {sudo,x} ls", UNREADABLE),
+        // A word brace expansion builds into a checked program's name is read as a command,
+        // as the literal word is (#127).
+        ("caffeinate {rm,-rf,/}", RM_RF),
+        ("caffeinate {rm,x} -rf /", RM_RF),
+        ("caffeinate \"$b\"{rm,x} -rf /", RM_RF),
+        ("caffeinate {sudo,x} rm -rf /", RM_RF),
         ("caffeinate echo {a,b}", ALLOW),
         ("caffeinate cargo test -p {a,b}", ALLOW),
-        // A cost: a brace-built path whose last component names one is denied too.
-        ("mkdir -p tools/{git,hg}", UNREADABLE),
+        ("mkdir -p tools/{git,hg}", ALLOW),
         ("mkdir -p tools/git", ALLOW),
+        // Ordinary commands whose brace-built arguments name a checked program, each allowed
+        // as its literal form is.
+        ("brew install {git,jq}", ALLOW),
+        ("brew install git jq", ALLOW),
+        ("apt-get install -y {git,curl}", ALLOW),
+        ("apt-get install -y git curl", ALLOW),
+        ("ls -l /usr/bin/{git,rm}", ALLOW),
+        ("ls -l /usr/bin/git /usr/bin/rm", ALLOW),
+        ("make {install,clean}", ALLOW),
+        ("make install clean", ALLOW),
+        ("cat {a,b}/sh", ALLOW),
+        ("cat a/sh b/sh", ALLOW),
+        ("diff {old,new}/env", ALLOW),
+        ("diff old/env new/env", ALLOW),
     ]);
 }
 

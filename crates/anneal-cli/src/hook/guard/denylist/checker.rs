@@ -4,13 +4,15 @@
 
 mod probe;
 
+use std::borrow::Cow;
+
 use super::config::{self, Cwd};
 use super::feed::{Feed, own_feed};
 use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
 use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, readings, rm};
-use crate::hook::guard::shell::{self, SimpleCommand, Word};
+use crate::hook::guard::shell::{self, Globs, Shape, SimpleCommand, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// Where a command is checked: what its standard input gets (when it does not redirect it),
@@ -317,16 +319,12 @@ impl<'c> Checker<'c> {
     /// that names a program it checks or unwraps: an unlisted wrapper (`caffeinate`,
     /// `runuser -u root --`, `chroot /`) runs them. At most [`MAX_ARGUMENT_COMMANDS`] are read
     /// in one check; past that it denies. A word brace expansion built into such a name
-    /// (`caffeinate {rm,-rf,/}`) is denied, as that program word is ([`Checker::unknown`]).
+    /// (`caffeinate {rm,-rf,/}`) is read as the literal name it is, so `rm -rf /` is judged and
+    /// `brew install {git,jq}` is allowed as `brew install git jq` is.
     fn arguments(&mut self, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         for (at, word) in args.iter().enumerate() {
-            if let Some(name) = wrappers::brace_built_checked(word) {
-                return Some(unreadable(format!(
-                    "the argument {name} is built by brace expansion and may run as a program; \
-                     write the command out"
-                )));
-            }
-            if !self.names_checked(word) {
+            let brace_built = wrappers::brace_built_checked(word);
+            if !(brace_built || self.names_checked(word)) {
                 continue;
             }
             self.argument_commands = self.argument_commands.saturating_add(1);
@@ -339,8 +337,23 @@ impl<'c> Checker<'c> {
             let Some(command) = args.get(at..) else {
                 continue;
             };
+            let command = if brace_built {
+                // The new command line owns its words: the name as a literal word, then the
+                // rest copied beside it.
+                Cow::Owned(
+                    std::iter::once(Word {
+                        shape: Shape::Literal,
+                        globs: Globs::Absent,
+                        ..word.clone()
+                    })
+                    .chain(command.iter().skip(1).cloned())
+                    .collect(),
+                )
+            } else {
+                Cow::Borrowed(command)
+            };
             self.argument_depth = self.argument_depth.saturating_add(1);
-            let denial = self.words(command, scope);
+            let denial = self.words(&command, scope);
             self.argument_depth = self.argument_depth.saturating_sub(1);
             if denial.is_some() {
                 return denial;

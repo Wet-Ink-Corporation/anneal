@@ -5,7 +5,9 @@
 //!
 //! Every place that judges a word reads it through here: a command's arguments
 //! ([`arguments`]) and a redirection's target ([`of`]). Whether a word's values may be an option
-//! cluster, whatever its variables hold and its globs match, is [`may_start_option_cluster`].
+//! cluster, whatever its variables hold and its globs match, is [`may_start_option_cluster`]; it
+//! judges each word as one word, so word splitting of an unquoted expansion and `"$@"` (which
+//! may make a separate `-rf` word) is a known gap.
 
 use std::borrow::Cow;
 
@@ -61,6 +63,11 @@ fn emptied(word: &Word) -> Option<Word> {
 /// expression may match `-` unless it is a plain set that names none (`[.]`): a negated one
 /// (`[!a]`) or one with a class (`[[:punct:]]`) may, without naming it. A literal word is exactly
 /// its text, which `wrappers::may_be_option` judges, so it is never one here.
+///
+/// Each expansion is taken as text inside this one word, as a quoted one is. An unquoted
+/// expansion, `"$@"` or `"${a[@]}"` may split into several words, one of them `-rf` (`x$b` with
+/// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a known gap. So are extended globs
+/// (`@(-rf)`, `!(x)`), whose `(` is read as a written character.
 pub(super) fn may_start_option_cluster(word: &Word) -> bool {
     if word.is_literal() {
         return false;
@@ -134,53 +141,64 @@ impl Iterator for Parts<'_> {
         let after = self.at.saturating_add(c.len_utf8());
         let glob = match c {
             '?' | '*' if self.globs => Some((after, Part::Any)),
-            '[' if self.globs => bracket(self.text, after),
+            '[' if self.globs => bracket(self.text, after, self.expansions),
             _ => None,
         };
         let (end, part) = glob.unwrap_or((after, Part::Written(c)));
         self.at = end;
-        // A set holding an expansion (`[$c]`) may hold a `-`.
-        let holds_expansion = || {
-            self.expansions
-                .first()
-                .is_some_and(|expansion| expansion.range.start < end)
-        };
-        match part {
-            Part::Set { dash: false } if holds_expansion() => Some(Part::Set { dash: true }),
-            _ => Some(part),
-        }
+        Some(part)
     }
 }
 
 /// The bracket expression whose `[` ends at `from` in `text`: where it closes (just past its
 /// `]`) and its [`Part::Set`], or `None` when it does not close, so the `[` is a plain
 /// character. A leading `!` or `^` negates it, a `]` right after that is a member, and
-/// `[:class:]`, `[=c=]` and `[.c.]` are read whole. Each byte is read at most twice, so a word of
-/// many `[` stays linear (H-13).
-fn bracket(text: &str, from: usize) -> Option<(usize, Part)> {
-    let bytes = text.as_bytes().get(from..)?;
-    let negated = matches!(bytes.first(), Some(b'!' | b'^'));
-    let mut at = usize::from(negated);
+/// `[:class:]`, `[=c=]` and `[.c.]` are read whole. An expansion inside (`[$c]`,
+/// `[!$(echo ])]`) is jumped over: it may hold any member, `-` and a negating `!` included, and
+/// a `]` in its source text never closes the set. Each byte is read once, so a word of many `[`
+/// stays linear (H-13).
+fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, Part)> {
+    let bytes = text.as_bytes();
+    let negated = matches!(bytes.get(from), Some(b'!' | b'^'));
+    let mut at = from.saturating_add(usize::from(negated));
     if bytes.get(at) == Some(&b']') {
         at = at.saturating_add(1);
     }
-    // A negated set, or one with a class, may match `-` without naming it.
+    // A negated set, or one with a class or an expansion, may match `-` without naming it.
     let mut dash = negated;
+    let mut ahead = expansions;
+    // The kind (`:`, `=` or `.`) of the class being read, if any.
+    let mut class = None;
     loop {
+        while let [expansion, rest @ ..] = ahead
+            && expansion.range.start < at
+        {
+            ahead = rest;
+        }
+        if let [expansion, rest @ ..] = ahead
+            && expansion.range.start == at
+        {
+            dash = true;
+            ahead = rest;
+            // A range that ends where it starts (which the lexer never makes) still moves on.
+            at = expansion.range.end.max(at.saturating_add(1));
+            continue;
+        }
         let byte = *bytes.get(at)?;
         let next = at.saturating_add(1);
-        at = match (byte, bytes.get(next)) {
-            (b']', _) => return Some((from.checked_add(next)?, Part::Set { dash })),
-            (b'[', Some(&kind @ (b':' | b'=' | b'.'))) => {
-                dash = true;
-                let inner = next.saturating_add(1);
-                let close = bytes
-                    .get(inner..)?
-                    .windows(2)
-                    .position(|pair| pair == [kind, b']'])?;
-                inner.saturating_add(close).saturating_add(2)
+        at = match (class, byte, bytes.get(next)) {
+            (Some(kind), _, Some(&b']')) if byte == kind => {
+                class = None;
+                next.saturating_add(1)
             }
-            (b'-', _) => {
+            // Inside a class, every other byte (`]` and `-` included) is part of its name.
+            (None, b']', _) => return Some((next, Part::Set { dash })),
+            (None, b'[', Some(&kind @ (b':' | b'=' | b'.'))) => {
+                dash = true;
+                class = Some(kind);
+                next.saturating_add(1)
+            }
+            (None, b'-', _) => {
                 dash = true;
                 next
             }

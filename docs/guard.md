@@ -116,7 +116,10 @@ be a `-` (a variable or substitution, which may hold one; an unquoted `?`, `*` o
 expression, which may match a file named `-rf`; or a written `-`) and whose other written
 characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-rf`, `-$x`,
 `"$b"rf` with `b=-`, `?rf`, `[-]rf`). A bracket expression may match `-` unless it is a plain
-set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]`. When another
+set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
+expansion in the set, as in `[!$(echo ])]`, does not close it). Each operand is judged as one
+word, its expansions as quoted text: the words an unquoted expansion or `"$@"` may split into
+are not (see [Limits](#limits)). When another
 operand follows it, it is taken as `-rf`, so `F=-rf; rm $F /`, `rm "$FLAGS" build`,
 `rm "$b"-rf /`, `rm "$b"rf /home/x`, `rm "$a"{r,f} /home` and `rm ?rf /` are denied while
 `rm -f "$tmp"`, `rm "$f".txt "$g".txt`, `rm -f "$tmpdir"/x "$tmpdir"/y`, `rm -f *.o *.a` and
@@ -214,7 +217,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `link`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
 | Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
-| Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied, and so is a word brace expansion builds into the name of a checked program, shell or wrapper among the arguments of a program the guard does not know (`caffeinate {rm,-rf,/}`, `caffeinate "$b"{rm,x} -rf /`). A cost: `mkdir -p tools/{git,hg}` is denied, while `mkdir -p tools/git` is read as a command and allowed |
+| Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | arguments are expanded (up to 256 words) and the words keep their pattern shape; a program word built by brace expansion (`{rm,-rf,/}`) is denied. Among the arguments of a program the guard does not know, a word brace expansion builds into the name of a checked program, shell or wrapper is read as a command, as the literal name is: `caffeinate {rm,-rf,/}` and `caffeinate "$b"{rm,x} -rf /` are denied as `rm -rf /`, while `brew install {git,jq}` and `make {install,clean}` are allowed as their literal forms are |
 | A brace or glob after a variable or substitution: `rm "$b"{-rf,/}`, `git push "$b"{-f,origin,main}`, `tee "$d".clau*/settings.json`, `echo x > "$d".clau*/settings.json` | a word with an unquoted `*`, `?`, `[`, `{` or leading `~` is brace-expanded whatever else it holds (the braces of `${x}` and the text of `$( )` are never a group), and such a word is judged in two readings: as written, and with its expansions empty, as they are when the variable is empty. A command's arguments are checked in both, and so is a redirection's target; either denial denies. A word with an expansion but no unquoted pattern character (`tee "$d".claude/settings.json`) is judged as written only |
 | Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied, as is a name reference or array (`declare -n`, `local -n`, `-a`, `-A`, alone or in a cluster such as `-gn`); after the command sets `IFS`, unquoted values are not put in |
 | A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks), the arguments of a function or script (`"$@"`, `$*`, `$1`) or an indirect expansion (`${!y}`), it is denied |
@@ -226,6 +229,12 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 - values from the environment (`"$EDITOR" file`, `$GIT status` run, with their arguments
   checked; `cp x "$DEST"` is allowed and `git push -f origin "$B"` denied);
+- word splitting of an unquoted expansion, `"$@"` or `"${a[@]}"` into an `rm` operand that is
+  `-rf` on its own: `rm x$b /home/x` with `b=' -rf'`, `rm $F` with `F='-rf /home'` and
+  `set -- a -rf; rm x"$@" /home/x` are allowed, since judging them would also deny the ordinary
+  `rm -f $f`;
+- extended globs (`shopt -s extglob`) in an `rm` operand: `rm @(-rf) /home` and `rm !(x) /home`
+  may match a file named `-rf`, and are allowed;
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,

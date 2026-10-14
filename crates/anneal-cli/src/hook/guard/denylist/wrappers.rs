@@ -419,18 +419,16 @@ fn is_checked(name: &str) -> bool {
     CHECKED.contains(&name) || !matches!(peel(name, &[]), Peel::Program)
 }
 
-/// The name of the program the guard checks, the shell or the wrapper that `word` names when
-/// brace expansion built it (`rm` from `{rm,-rf,/}`): a pattern whose text holds no glob and no
-/// leading `~`, which only brace expansion makes, read as if it were literal. `None` for any
-/// other word.
-pub(super) fn brace_built_checked(word: &Word) -> Option<&str> {
+/// Whether brace expansion built `word` into the name of a program the guard checks, a shell or
+/// a wrapper (`rm` from `{rm,-rf,/}`): a pattern whose text holds no glob and no leading `~`,
+/// which only brace expansion makes, naming one when read as if it were literal.
+pub(super) fn brace_built_checked(word: &Word) -> bool {
     let text = word.text.as_str();
-    let built = word.shape == Shape::Pattern
+    word.shape == Shape::Pattern
         && word.expansions.is_empty()
         && !text.starts_with('~')
-        && !text.contains(['*', '?', '[']);
-    let name = name_of(text);
-    (built && is_checked(name)).then_some(name)
+        && !text.contains(['*', '?', '['])
+        && is_checked(name_of(text))
 }
 
 /// Whether `word` names the program `name` (by path or with `.exe` too).
