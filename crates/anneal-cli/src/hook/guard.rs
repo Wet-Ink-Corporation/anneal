@@ -27,7 +27,7 @@ use serde::Deserialize;
 use crate::decide::clock::{Clock, SystemClock};
 use crate::decide::transport::Transport;
 use crate::decide::transport::http::UreqTransport;
-use crate::hook::{HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
+use crate::hook::{HOOK_BUDGET, HookEnv, StdinError, read_stdin, reason, write_ask, write_deny};
 use crate::paths::{self, PathError};
 /// What [`run_with`] reaches Clef and time through, so its callers can name it.
 pub(crate) use clef::Ports;
@@ -48,12 +48,6 @@ pub(crate) const GIT_TIMEOUT: Duration = Duration::from_secs(1);
 /// How long each ledger statement of the other hooks waits for another process's lock (the
 /// default is 10 s). The guard's own record waits [`RECORD_BUSY_TIMEOUT`] per statement instead.
 pub(crate) const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
-
-/// What the guard plans to spend of the hook's 5 s `timeout`, measured from when it starts
-/// reading its input; the other 500 ms cover process start-up and writing the decision. Clef D1
-/// takes up to 2 s of it, so a deny after D1 can leave less than [`GIT_TIMEOUT`] plus
-/// [`RECORD_LOCK_RESERVE`] for the ledger record, which then gets only what remains.
-const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
 
 /// The least time worth giving git to find the ledger; with less, the record is skipped and the
 /// deny says so.
@@ -280,7 +274,9 @@ where
 /// How long git may take to find the ledger when `remaining` of [`HOOK_BUDGET`] is left: what
 /// is left after every lock wait the record can meet ([`RECORD_LOCK_RESERVE`]), at most
 /// [`GIT_TIMEOUT`]; `None` when that is under [`MIN_GIT_TIMEOUT`], and the record is skipped so
-/// the deny still arrives in time.
+/// the deny still arrives in time. The guard's budget counts from when it starts reading its
+/// input, and Clef D1 takes up to 2 s of it, so a deny after D1 can leave less than
+/// [`GIT_TIMEOUT`] plus [`RECORD_LOCK_RESERVE`] for the record, which then gets only what remains.
 fn git_budget(remaining: Duration) -> Option<Duration> {
     remaining
         .checked_sub(RECORD_LOCK_RESERVE)

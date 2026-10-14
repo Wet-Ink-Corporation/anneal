@@ -18,14 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::decide::client;
 use crate::decide::clock::Clock;
-use crate::hook::{StdinError, read_stdin};
+use crate::hook::{HOOK_BUDGET, StdinError, read_stdin};
 
 /// Most bytes of hook input read; a prompt rides in it (H-13).
 pub(crate) const MAX_INPUT_BYTES: u64 = 4 * 1024 * 1024;
-
-/// How long a prompt hook may take: its `hooks.json` timeout is 5 s, and the rest is left for
-/// starting the process and writing the output.
-pub(crate) const HOOK_BUDGET: Duration = Duration::from_millis(4_500);
 
 /// The fields of Claude Code's `UserPromptSubmit` input the hooks use; the rest are ignored.
 #[derive(Debug, Default, Deserialize)]
