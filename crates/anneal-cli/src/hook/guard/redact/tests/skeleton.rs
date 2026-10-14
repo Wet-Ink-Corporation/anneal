@@ -678,6 +678,19 @@ const TEMPLATES: &[&str] = &[
     "flock /tmp/*.lock {}",
     "su $U -c {}",
     "find . -name *.rs -exec {} x \\;",
+    // A wrapper's assignment that bash may field-split, and a body option followed by another
+    // option (PR 120 review round 8).
+    "env K=$V {}",
+    "sudo K=$V {}",
+    "env K=$V x {}",
+    "su -c '{} x' -c ls",
+    "su -c'{} x' -cls",
+    "su --command '{} x' --command ls",
+    "su --command='echo a' --command='{} b'",
+    "script -c '{} x' -c ls /dev/null",
+    "script -c'{} x' -cls /dev/null",
+    "script --command '{} x' --command ls /dev/null",
+    "script --command='{} x' --command=ls /dev/null",
 ];
 
 #[test]

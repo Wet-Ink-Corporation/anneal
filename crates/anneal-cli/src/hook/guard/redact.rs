@@ -28,7 +28,9 @@
 //!   actions). From the first word that does not (a cluster such as `-iu`, an option the
 //!   tables do not know, a value or operand without its slot's shape such as
 //!   `chrt -i mysql`, chrt or taskset with `-p`, an assignment after a wrapper that takes
-//!   none), every word of the simple command is an
+//!   none, a non-literal one after a wrapper that takes some (`env K=$V x`, which bash
+//!   field-splits), a body option followed by an option word or a word that may expand
+//!   (`su -c 'x y' -c ls`, where the last `-c` wins)), every word of the simple command is an
 //!   argument of no known program: `sudo -iu postgres psql` is
 //!   `sudo -<redacted> <redacted> <redacted>`.
 //! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
@@ -51,9 +53,8 @@
 //! - **Bodies**: a `bash -c`, `eval`, `su -c`, `trap` or `watch` (without `-x`) body (the
 //!   denylist's [`denylist::Layout::Script`]) that is literal is lexed and rendered in turn,
 //!   in `'…'`, at most [`MAX_NESTING`] deep and within the denylist's lexing budget; any other
-//!   body is
-//!   hidden. `find`'s actions are rendered as commands, and its own words by its tables
-//!   wherever the walk finds it (`sudo find`, `X=1 find`).
+//!   body is hidden. `find`'s actions are rendered as commands, and its own words by its
+//!   tables wherever the walk finds it (`sudo find`, `X=1 find`).
 //!
 //! Commands are joined by `; `, or ` | ` when a command reads the pipe of the one just before
 //! it: the lexer keeps no other separator. A command the lexer cannot read is [`UNPARSED`],

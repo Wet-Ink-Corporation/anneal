@@ -239,6 +239,68 @@ const ROWS: &[(&str, &[&str], &str)] = &[
         &["sekritA"],
         "find . -name <redacted> -<redacted> <redacted> <redacted> <redacted>",
     ),
+    // Review round 8: bash field-splits `$V` in a wrapper's assignment, so the words after it
+    // may be the assignment's own or arguments (`V="1 echo"; env K=$V x` runs echo).
+    ("env K=$V psql", &["psql"], "env <redacted> <redacted>"),
+    ("sudo K=$V psql", &["psql"], "sudo <redacted> <redacted>"),
+    (
+        "env A=1 K=$V psql",
+        &["psql"],
+        "env A=<redacted> <redacted> <redacted>",
+    ),
+    // su and script read options anywhere and the last `-c` wins: the first body may never
+    // run, and the word read as its program may be an argument.
+    (
+        "su -c 'hunter2 x' -c ls",
+        &["hunter2"],
+        "su -c <redacted> -c <redacted>",
+    ),
+    (
+        "su -c'hunter2 x' -cls",
+        &["hunter2"],
+        "su -<redacted> -<redacted>",
+    ),
+    (
+        "su --command 'hunter2 x' --command ls",
+        &["hunter2"],
+        "su --command <redacted> --command <redacted>",
+    ),
+    (
+        "su --command='echo a' --command='hunter2 b'",
+        &["hunter2"],
+        "su --command=<redacted> --command=<redacted>",
+    ),
+    (
+        "script -c 'hunter2 x' -c ls /dev/null",
+        &["hunter2"],
+        "script -c <redacted> -c <redacted> /dev/null",
+    ),
+    (
+        "script -c'hunter2 x' -cls /dev/null",
+        &["hunter2"],
+        "script -<redacted> -<redacted> /dev/null",
+    ),
+    (
+        "script --command 'hunter2 x' --command ls /dev/null",
+        &["hunter2"],
+        "script --command <redacted> --command <redacted> /dev/null",
+    ),
+    (
+        "script --command='hunter2 x' --command=ls /dev/null",
+        &["hunter2"],
+        "script --command=<redacted> --command=<redacted> /dev/null",
+    ),
+    // The same check for a shell, where it over-hides: bash takes the first `-c`.
+    (
+        "bash -c 'hunter2 x' -- -y",
+        &["hunter2"],
+        "bash -c <redacted> -- <redacted>",
+    ),
+    (
+        "bash -c 'hunter2 x' \"$0\"",
+        &["hunter2"],
+        "bash -c <redacted> <redacted>",
+    ),
 ];
 
 #[test]
@@ -329,6 +391,26 @@ fn a_shell_flag_cluster_ending_in_c_shows_its_body() {
         (
             "bash -o errexit -c 'rm -rf /'",
             "bash -o <redacted> -c 'rm -rf /'",
+        ),
+    ]);
+}
+
+#[test]
+fn a_body_followed_by_no_option_word_is_still_shown() {
+    assert_cases(&[
+        (
+            "bash -c 'rm -rf /' sh x",
+            "bash -c 'rm -rf /' <redacted> <redacted>",
+        ),
+        ("su -c 'rm -rf /' root", "su -c 'rm -rf /' <redacted>"),
+        ("su root -c 'rm -rf /'", "su <redacted> -c 'rm -rf /'"),
+        (
+            "su --command='rm -rf /' root",
+            "su --command=<redacted> <redacted> 'rm -rf /'",
+        ),
+        (
+            "script -c 'rm -rf /' /dev/null",
+            "script -c 'rm -rf /' /dev/null",
         ),
     ]);
 }

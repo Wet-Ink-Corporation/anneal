@@ -9,7 +9,10 @@
 //! here ([`readings`]): each an exact flag (or, for a shell, a cluster of its flags), an exact
 //! value option followed by its value (or with it attached, `-n1`, `--user=x`, where the
 //! wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
-//! assignments, ending exactly where the walk put the next wrapper, the program or the body.
+//! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
+//! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
+//! body, and a body only when no later word of the simple command starts with `-` or may
+//! expand (`su` and `script` read options anywhere, the last `-c` winning).
 //! A word filling a value or operand slot counts only when it is literal (no glob, variable
 //! or substitution, which may become several words or none) and has that slot's strict shape
 //! ([`shape::Shape`]: chrt's priority all digits, timeout's duration, a value not starting
@@ -93,9 +96,16 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
         else {
             return Some(start);
         };
+        // The words after the body word, which the body's reading must also account for (none
+        // when the body word is the last).
+        let after = match mode {
+            Mode::Body => words.get(stop.saturating_add(1)..).unwrap_or_default(),
+            Mode::Next | Mode::Attached => &[],
+        };
         let run = Run {
             words: run_words,
             roles: run_roles,
+            after,
         };
         if let Some(offset) = run.first_uncertain(reading, mode) {
             return Some(start.saturating_add(offset));
@@ -208,6 +218,8 @@ impl Reading {
 struct Run<'w> {
     words: &'w [Word],
     roles: &'w [Role],
+    /// The words of the simple command after the body word, when the run ends at one.
+    after: &'w [Word],
 }
 
 impl<'w> Run<'w> {
@@ -264,10 +276,23 @@ impl<'w> Run<'w> {
                 Some(_) => Step::Settled(Some(next)),
                 None => Step::Settled(Some(at)),
             },
-            Opt::Body if walk.mode == Mode::Body && next == self.words.len() => Step::Settled(None),
-            Opt::AttachedBody if walk.mode == Mode::Attached => Step::Settled(None),
+            Opt::Body if walk.mode == Mode::Body && next == self.words.len() => self.body(at),
+            Opt::AttachedBody if walk.mode == Mode::Attached => self.body(at),
             Opt::Body | Opt::AttachedBody | Opt::Unknown => Step::Settled(Some(at)),
         }
+    }
+
+    /// The body option at `at`, where the walk read the body: certain only when no later
+    /// word of the simple command is option-shaped or may expand into one. `su` and `script`
+    /// read options anywhere and the last `-c` wins, so after another option word the body
+    /// the walk read may never run (`su -c 'x y' -c ls`).
+    fn body(self, at: usize) -> Step {
+        let later = self.words.get(at.saturating_add(1)..).unwrap_or_default();
+        let unsure = later
+            .iter()
+            .chain(self.after)
+            .any(|word| !word.is_literal() || word.text.starts_with('-'));
+        Step::Settled(unsure.then_some(at))
     }
 
     /// Where the words after the options and operands, ending at `at`, leave the run: the
@@ -278,6 +303,11 @@ impl<'w> Run<'w> {
         }
         if walk.reading.assignments {
             while self.roles.get(at) == Some(&Role::Assignment) {
+                // bash field-splits a wrapper's arguments, assignments included: `env K=$V x`
+                // with `V="1 echo"` runs `echo`, so what follows a non-literal one is unsure.
+                if !self.words.get(at).is_some_and(Word::is_literal) {
+                    return Some(at);
+                }
                 at = at.saturating_add(1);
             }
         }

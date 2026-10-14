@@ -387,6 +387,24 @@ fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
         ("flock /tmp/*.lock rm -rf /", RM_RF),
         ("su $U -c 'rm -rf /'", RM_RF),
         ("find . -name *.rs -exec rm -rf / \\;", RM_RF),
+        // Round 8. The ALLOW rows are main's gaps (the last `-c` wins), kept as main has them.
+        ("env K=$V rm -rf /", RM_RF),
+        ("sudo K=$V rm -rf /", RM_RF),
+        ("env A=1 K=$V rm -rf /", RM_RF),
+        ("su -c 'rm -rf /' -c ls", RM_RF),
+        ("su -c ls -c 'rm -rf /'", ALLOW),
+        ("su -c'rm -rf /' -cls", ALLOW),
+        ("su --command 'rm -rf /' --command ls", RM_RF),
+        ("su --command='echo a' --command='rm -rf /'", ALLOW),
+        ("script -c 'rm -rf /' -c ls /dev/null", RM_RF),
+        ("script -c ls -c 'rm -rf /' /dev/null", ALLOW),
+        ("script -c'rm -rf /' -cls /dev/null", RM_RF),
+        ("script --command 'rm -rf /' --command ls /dev/null", RM_RF),
+        (
+            "script --command='echo a' --command='rm -rf /' /dev/null",
+            ALLOW,
+        ),
+        ("bash -c 'rm -rf /' -- -y", RM_RF),
     ]);
 }
 
