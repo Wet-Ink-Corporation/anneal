@@ -276,26 +276,35 @@ A file the leftover scan could not read (over 1 MiB, past the 64 MiB budget, or 
 open) is a nudge naming how many were skipped and pointing at `anneal repro leftovers`.
 
 - **Success words** (`hook::completeness::claim::CLAIMS`): `all tests pass`, `tests pass`
-  (`test`, `tests`, `check`, `checks`, `build` or `builds`, and `pass`, `passes`, `passed` or
-  `passing`), `works now`, `all green`, `done`, `passes`, `passed`, `passing`, `green`,
-  `fixed`, `complete`, `completed`, `finished`, `succeeded`, `succeeds`, `ready to merge`,
-  `ready for review`, `everything works` (`everything`, `it`, `everything's` or `it's`, then
-  `works` or `working`, with at most one of `still`, `now` or `all` between, or `everything
-  is working`), `implemented` and `resolved`, as whole words in one clause, in any letter
-  case. Fenced code blocks, code spans and HTML comments are quoted text, not claims. Three
-  structural rules withdraw a claim within its clause: a negation (`not`, `never`, `no` or a
-  word ending in `n't`) one or two words before it, a conditional (`if`, `once`, `when`,
-  `whenever`, `unless`, `until`) opening the clause or one or two words before the claim
-  ("When the build passes, I'll tag it.", "I'll merge once checks pass."; a conditional
-  further back governs its own phrase, so "The crash when saving is fixed." claims), and a
-  `?` ending the clause ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash
-  and a line end, so "No failures. Done." claims, and so does "Did the tests pass, or should I
-  re-run?" (the comma ends the first clause before the question mark). A hyphen between two
-  letters or digits is part of the word, so "half-done" is not `done`, but a hyphenated suite
-  word is a suite ("All unit-tests pass." claims `all unit-tests pass`); a spaced hyphen,
-  `--`, an en dash and an em dash still end a clause. Some false positives ("done reading the
-  logs", "here is how it works", "it all works out") are accepted: the block cap bounds them.
-  Clef D4 does not read these words: it judges the status block's sections on its own.
+  (a suite: `test`, `tests`, `check`, `checks`, `build`, `builds`, `lint` or `lints`, or a
+  hyphenated word ending in one such as `unit-tests`, up to two more joined by `and` or `or`,
+  then `pass`, `passes`, `passed` or `passing`), `works now`, `all green`, `done`, `passes`,
+  `passed`, `passing`, `green`, `fixed`, `complete`, `completed`, `finished`, `succeeded`,
+  `succeeds`, `ready to merge`, `ready for review`, `everything works` (`everything`, `it`,
+  `everything's` or `it's`, then `works` or `working`, or `everything is working`),
+  `implemented` and `resolved`, in one clause, in any letter case. Up to two filler words
+  (`still`, `now`, `all`, `also`, `finally`, `really`, `fully`, `the`, `both`, `again`, `just`,
+  `actually`, `indeed`) may stand between a claim's words ("The tests now pass.", "Everything
+  is still working."), and a hyphenated word whose segments spell a whole claim of two or more
+  words is that claim (`all-green`, `ready-to-merge`). Fenced code blocks, code spans and HTML
+  comments are quoted text, not claims. Structural rules withdraw a claim within its clause: a
+  negation (`not`, `never`, `no` or a word ending in `n't`) one or two words before it; a
+  conditional (`if`, `once`, `when`, `whenever`, `unless`, `until`, `after`, `before`) anywhere
+  before it ("I'll merge once the CI checks pass."), except `once more` and `once again`, a
+  conditional followed by a gerund before the claim ("The crash when saving is fixed."
+  claims) and one whose clause ended, two of `is`, `are`, `was`, `were` lying between it and
+  the claim ("The panic when the file is empty is resolved." claims); for an `it` or
+  `everything` claim, `sure`, `ensure`, `verify`, `check`, `whether`, `get`, `keep`, `need` or
+  `to` one or two words before it ("make sure everything works"); and a `?` ending the clause
+  ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
+  and the words `so` and `but`, so "No failures. Done.", "Done (anything else?)" and "All tests
+  pass so should I merge?" claim, and so does "Did the tests pass, or should I re-run?". A
+  hyphen between two letters or digits is part of the word, so "half-done" is not `done`; a
+  spaced hyphen, `--`, an en dash and an em dash still end a clause. Some false positives
+  ("done reading the logs", "here is how it works", "it all works out", "Is it done so I can
+  merge?") and misses ("When I ran it all tests pass" with no comma) are accepted: the block
+  cap bounds them. Clef D4 does not read these words: it judges the status block's sections on
+  its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in

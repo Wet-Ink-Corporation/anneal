@@ -91,7 +91,7 @@ fn a_negated_phrase_is_not_a_claim() {
 }
 
 #[test]
-fn each_n1_reply_is_a_claim() {
+fn finished_working_ready_and_suite_phrases_are_claims() {
     let replies = [
         ("Everything works.", "everything works"),
         ("The feature is implemented and working.", "implemented"),
@@ -264,4 +264,139 @@ fn the_longest_phrase_is_reported() {
         Some("all tests pass"),
         "the first phrase in list order"
     );
+}
+
+#[test]
+fn a_bracketed_question_does_not_hide_the_claim_outside_it() {
+    let replies = [
+        ("Done (anything else?)", "done"),
+        ("All tests pass (want me to push?)", "all tests pass"),
+        (
+            "Everything works now (should I also update the changelog?)",
+            "works now",
+        ),
+        ("Fixed (let me know if you want a test?)", "fixed"),
+        ("Fixed [see the log?]", "fixed"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+    assert_eq!(success_claim("(Is it done?)"), None, "the question itself");
+}
+
+#[test]
+fn so_and_but_start_a_new_clause() {
+    let replies = [
+        ("All tests pass so should I merge?", "all tests pass"),
+        ("It's fixed but should I add a test?", "fixed"),
+        ("Not hard but fixed", "fixed"),
+        // Accepted false positive: the question is only the clause after `so`.
+        ("Is it done so I can merge?", "done"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+}
+
+#[test]
+fn up_to_two_filler_words_may_stand_between_a_claim_s_words() {
+    let replies = [
+        ("Everything is now working.", "everything is now working"),
+        ("It is now working.", "it is now working"),
+        (
+            "Everything is still working.",
+            "everything is still working",
+        ),
+        ("The tests now pass.", "tests now pass"),
+        ("The tests all pass.", "tests all pass"),
+        ("All the tests pass", "all the tests pass"),
+        ("It finally really works.", "it finally really works"),
+        (
+            "Everything is also fully working",
+            "everything is also fully working",
+        ),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+    for reply in [
+        "The tests now really fully pass",
+        "The tests do not all pass.",
+        "Everything is not working",
+        "Tests should pass after the fix.",
+    ] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+}
+
+#[test]
+fn suites_joined_by_and_or_or_are_one_suite() {
+    let replies = [
+        ("Tests and lint pass.", "tests and lint pass"),
+        ("All tests and checks pass", "all tests and checks pass"),
+        ("The build or the tests pass", "tests pass"),
+        ("Lint passes", "lint passes"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+    assert_eq!(success_claim("Not all tests and lint pass"), None);
+}
+
+#[test]
+fn a_hyphenated_word_that_spells_a_whole_claim_is_that_claim() {
+    let replies = [
+        ("CI is all-green.", "all-green"),
+        ("It's ready-to-merge.", "ready-to-merge"),
+        ("PR is ready-for-review", "ready-for-review"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+    for reply in ["half-done", "not all-green", "a pre-fixed list"] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+}
+
+#[test]
+fn a_conditional_anywhere_earlier_in_the_clause_governs_the_claim() {
+    for reply in [
+        "I'll merge once the CI checks pass.",
+        "I'll tag it when the release build passes.",
+        "Wait until all the tests pass.",
+        "Tag it when it is fixed.",
+        "Merge it after everything is working.",
+        "Ping me before the build passes",
+    ] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+    let replies = [
+        ("Once again all tests pass.", "all tests pass"),
+        ("The bug when running locally is fixed.", "fixed"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+}
+
+#[test]
+fn a_purpose_word_before_a_works_claim_withdraws_it() {
+    for reply in [
+        "run the tests to make sure everything works.",
+        "I still need to get it working.",
+        "Let me know whether it works.",
+        "Verify that everything is working",
+        "Keep it working",
+    ] {
+        assert_eq!(success_claim(reply), None, "{reply:?}");
+    }
+    let replies = [
+        ("I checked it twice and it works.", "it works"),
+        ("To be sure, everything works.", "everything works"),
+        ("I made sure; it works now.", "works now"),
+        ("I switched to the new parser and it works.", "it works"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
 }
