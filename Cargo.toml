@@ -11,7 +11,7 @@ edition = "2024"
 # Same pin as rust-toolchain.toml and weigh-in, so the two plugins build with one compiler.
 rust-version = "1.98.1"
 # Moves with plugin/.claude-plugin/plugin.json; CI checks they match.
-version = "0.0.1"
+version = "0.0.5"
 license = "MIT OR Apache-2.0"
 publish = false                # members inherit it (publish.workspace = true); turning it on is H-16
 repository = "https://github.com/Wet-Ink-Corporation/anneal"

@@ -15,7 +15,7 @@ Requires Claude Code **2.1.295 or later**.
 Add the marketplace, then install the plugin from it (the marketplace and the plugin are both named `anneal`):
 
 ```
-/plugin marketplace add Wet-Ink-Corporation/anneal
+/plugin marketplace add Wet-Ink-Corporation/anneal#marketplace
 /plugin install anneal@anneal
 ```
 
