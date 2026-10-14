@@ -32,23 +32,32 @@ const PASSIVE: [&str; 20] = [
     "type", "whatis", "apropos", "for", "select", "case", "test", "[", "[[",
 ];
 
-/// Options that take a value in the next word, per wrapper.
+/// Options that take a value in the next word, per wrapper. `sudo` and `doas` share theirs
+/// (`doas -a style`, `-C config`, `-u user`). sudo's `-h` takes a host only when a word that
+/// is not an option follows (else it is `--help`, which runs nothing), so the next word is
+/// always read as its value. `--login-class` (`-c`) is left out: the flag `--login` would
+/// read as its abbreviation; `--login-class=class` keeps its value in its own word.
 const SUDO_VALUES: &[&str] = &[
+    "-a",
+    "-c",
     "-u",
     "-g",
     "-h",
     "-p",
     "-C",
     "-D",
+    "-R",
     "-r",
     "-t",
     "-T",
     "-U",
+    "--auth-type",
     "--user",
     "--group",
     "--host",
     "--prompt",
     "--chdir",
+    "--chroot",
     "--role",
     "--type",
     "--close-from",
@@ -81,16 +90,19 @@ const CHRT_VALUES: &[&str] = &[
     "--sched-deadline",
 ];
 /// `--eof`, `--replace` and `--max-lines` are absent: their value is optional and only ever
-/// follows `=`, so the next word is the command.
+/// follows `=`, so the next word is the command. `-J`, `-R` and `-S` are BSD xargs's.
 const XARGS_VALUES: &[&str] = &[
     "-a",
     "-d",
     "-E",
     "-I",
+    "-J",
     "-L",
     "-n",
     "-P",
+    "-R",
     "-s",
+    "-S",
     "--arg-file",
     "--delimiter",
     "--max-args",
@@ -159,9 +171,11 @@ pub(in crate::hook::guard) struct FindActions {
     pub(in crate::hook::guard) actions: Vec<Range<usize>>,
 }
 
-/// How the words of one simple command are laid out once wrappers are read ([`unwrap`]).
-pub(in crate::hook::guard) fn layout(words: &[Word]) -> Layout<'_> {
-    match unwrap(words) {
+/// How the words of one simple command are laid out once wrappers are read ([`unwrap`]), and
+/// the role the walk gives each word, by index ([`roles`]).
+pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) {
+    let roles = roles(words);
+    let layout = match unwrap(words) {
         // `unwrap` only ever drops words from the front, so the arguments end `words`.
         Run::Command { args, .. } => words
             .len()
@@ -170,7 +184,7 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> Layout<'_> {
             .map_or(Layout::Other, Layout::Program),
         Run::Script(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
-        Run::Exec(actions) => roles(words)
+        Run::Exec(actions) => roles
             .iter()
             .rposition(|role| *role == Role::Wrapper)
             .map_or(Layout::Other, |find| {
@@ -183,7 +197,8 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> Layout<'_> {
                 })
             }),
         Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) => Layout::Other,
-    }
+    };
+    (layout, roles)
 }
 
 /// The part a word of a simple command plays as [`unwrap`] reads it.
@@ -204,7 +219,7 @@ pub(in crate::hook::guard) enum Role {
 /// The role [`unwrap`]'s walk gives each word of `words`, by index: a word is a wrapper only
 /// where it stands in the place of a program, never as a value or an operand
 /// (`sudo -D /x/nice rm`, `find /a/env -delete`).
-pub(in crate::hook::guard) fn roles(words: &[Word]) -> Vec<Role> {
+fn roles(words: &[Word]) -> Vec<Role> {
     let mut roles = vec![Role::Other; words.len()];
     let mut rest = words;
     loop {
@@ -366,8 +381,8 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         "ionice" => Peel::Inner(skip_options(rest, IONICE_VALUES)),
         // The duration, the priority, the CPU mask, the function's name.
         "timeout" => Peel::Inner(skip_one(skip_options(rest, TIMEOUT_VALUES))),
-        "chrt" => Peel::Inner(skip_one(skip_options(rest, CHRT_VALUES))),
-        "taskset" => Peel::Inner(skip_one(skip_options(rest, &[]))),
+        "chrt" => pid_or_command(rest, CHRT_VALUES),
+        "taskset" => pid_or_command(rest, &[]),
         "function" => Peel::Inner(skip_one(rest)),
         // `busybox <applet> ...`.
         "busybox" => Peel::Inner(rest),
@@ -385,6 +400,33 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         shell if SHELLS.contains(&shell) => strings::shell(shell, rest),
         _ => Peel::Program,
     }
+}
+
+/// `chrt` and `taskset`: the command after their options and the priority or CPU mask, or
+/// nothing when an option is `-p` (`--pid`), a flag (util-linux's `+...p...` optstrings) that
+/// makes them act on the running process whose pid ends the words and run no command.
+fn pid_or_command<'a>(words: &'a [Word], with_value: &[&str]) -> Peel<'a> {
+    // The walk of `skip_options`, looking at each option word but not at the values.
+    let mut rest = words;
+    while let [first, tail @ ..] = rest {
+        let text = first.text.as_str();
+        if text == "--" {
+            rest = tail;
+            break;
+        }
+        if !is_option(first) {
+            break;
+        }
+        if is_long(text, "--pid") || cluster_holds(text, 'p', with_value) {
+            return Peel::Done(Run::Nothing);
+        }
+        rest = if takes_value(text, with_value) {
+            skip_one(tail)
+        } else {
+            tail
+        };
+    }
+    Peel::Inner(skip_one(rest))
 }
 
 /// The program `word` names: its last path component without `.exe`, or unknown when the
@@ -496,13 +538,48 @@ pub(super) fn is_long(text: &str, full: &str) -> bool {
     Long::parse(text).is_some_and(|long| long.is(full))
 }
 
-/// Whether the option `text` takes the next word as its value: it is one of `with_value`
-/// (a long one possibly abbreviated) with no `=value` of its own.
+/// Whether the option `text` takes the next word as its value: a long one of `with_value`
+/// (possibly abbreviated) with no `=value` of its own, or a short cluster read as getopt
+/// reads it, whose first letter that takes a value (`-u` in `with_value`) is its last
+/// (`-iu`); one with more after it has that as its value (`-uroot`, `-iuroot`).
 pub(super) fn takes_value(text: &str, with_value: &[&str]) -> bool {
     match Long::parse(text) {
         Some(long) => long.value.is_none() && with_value.iter().any(|option| long.is(option)),
-        None => with_value.contains(&text),
+        None => short_cluster(text).is_some_and(|letters| {
+            letters
+                .char_indices()
+                .find(|&(_, letter)| short_takes_value(letter, with_value))
+                .is_some_and(|(at, letter)| at.saturating_add(letter.len_utf8()) == letters.len())
+        }),
     }
+}
+
+/// The letters of a short option cluster (`-iu` is `iu`); `None` for a long option or a word
+/// that is not an option.
+fn short_cluster(text: &str) -> Option<&str> {
+    text.strip_prefix('-')
+        .filter(|letters| !letters.is_empty() && !letters.starts_with('-'))
+}
+
+/// Whether the short option `-letter` is one of `with_value`.
+fn short_takes_value(letter: char, with_value: &[&str]) -> bool {
+    with_value.iter().any(|option| {
+        option
+            .strip_prefix('-')
+            .is_some_and(|name| name.chars().eq([letter]))
+    })
+}
+
+/// Whether a short cluster holds the flag `-letter` before any letter that takes a value
+/// (whose value the rest of the cluster is): `-fp` holds `p`, `-Tp` does not when `-T` takes
+/// a value.
+fn cluster_holds(text: &str, letter: char, with_value: &[&str]) -> bool {
+    short_cluster(text).is_some_and(|letters| {
+        letters
+            .chars()
+            .take_while(|&c| !short_takes_value(c, with_value))
+            .any(|c| c == letter)
+    })
 }
 
 /// Skips options up to the first operand, and a `--` that ends them. Options in `with_value`

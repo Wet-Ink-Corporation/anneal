@@ -43,17 +43,22 @@ fn no_value_flags_are_ascii_letters() {
 
 #[test]
 fn a_program_word_is_a_short_name_of_safe_characters() {
-    for kept in [
-        "ls",
-        "/usr/bin/python3.12",
-        "c++",
-        "mkfs.ext4",
-        "./deploy.sh",
-    ] {
+    for kept in ["ls", "python3.12", "c++", "mkfs.ext4", "deploy.sh"] {
         assert!(is_program(kept), "{kept:?}");
     }
     let long = "a".repeat(65);
-    for hidden in ["", "a b", "x=y", "$x", "a:b", "é", long.as_str()] {
+    for hidden in [
+        "",
+        "a b",
+        "x=y",
+        "$x",
+        "a:b",
+        "é",
+        long.as_str(),
+        "/usr/bin/python3.12",
+        "./deploy.sh",
+        "a/b",
+    ] {
         assert!(!is_program(hidden), "{hidden:?}");
     }
 }

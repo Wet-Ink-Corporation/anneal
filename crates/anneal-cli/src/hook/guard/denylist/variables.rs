@@ -175,6 +175,7 @@ impl Variables {
             shape,
             quoted: word.quoted,
             expansions: remaining,
+            arithmetic: word.arithmetic,
         }])
     }
 }
@@ -191,6 +192,7 @@ pub(super) fn literal(text: &str) -> Word {
         },
         quoted: false,
         expansions: Vec::new(),
+        arithmetic: false,
     }
 }
 

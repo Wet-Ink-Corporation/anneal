@@ -344,6 +344,41 @@ fn substitutions_eval_paths_newlines_and_wrappers_do_not_hide_a_command() {
 }
 
 #[test]
+fn a_wrapper_option_cluster_or_value_option_takes_its_value_as_getopt_does() {
+    // A value read as the program (`echo`, which only prints) would hide the real one.
+    assert_table(&[
+        ("sudo -iu x rm -rf /", RM_RF),
+        ("sudo -iu echo rm -rf /", RM_RF),
+        ("sudo -uecho rm -rf /", RM_RF),
+        ("env -iu echo rm -rf /", RM_RF),
+        ("sudo -R echo rm -rf /", RM_RF),
+        ("sudo -c echo rm -rf /", RM_RF),
+        ("sudo -a echo rm -rf /", RM_RF),
+        ("doas -a echo rm -rf /", RM_RF),
+        ("env -P echo rm -rf /", RM_RF),
+        ("xargs -J echo rm -rf", RM_RF),
+        ("xargs -R 1 -I echo rm -rf", RM_RF),
+        ("xargs -S echo rm -rf", RM_RF),
+        ("chrt -f 10 rm -rf /", RM_RF),
+        // With `-p` chrt and taskset change a running process and run nothing.
+        ("chrt -p 10 4242", ALLOW),
+        ("taskset -p 0x3 4242", ALLOW),
+    ]);
+}
+
+#[test]
+fn arithmetic_is_read_as_before_and_its_substitutions_checked() {
+    assert_table(&[
+        ("echo $(( $(rm -rf /) + 1 ))", RM_RF),
+        ("echo $[ `rm -rf /` ]", RM_RF),
+        ("echo $(( 3600 * 24 ))", ALLOW),
+        ("(( x = 1 ))", ALLOW),
+        ("for (( i = 0; i < 3; i++ )); do echo $i; done", ALLOW),
+        ("x=$[ 1 + 2 ]", ALLOW),
+    ]);
+}
+
+#[test]
 fn quoted_mentions_of_a_denied_command_are_allowed() {
     assert_table(&[
         ("echo 'rm -rf /'", ALLOW),

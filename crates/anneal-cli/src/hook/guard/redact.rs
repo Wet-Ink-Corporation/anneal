@@ -7,8 +7,12 @@
 //! Each simple command the lexer lists (those of `$( )`, backticks, subshells and process
 //! substitutions come out as their own, before the command holding them) is rendered in order:
 //!
+//! - **Arithmetic**: a command the lexer read inside `$(( ))` or `(( ))` is one [`REDACTED`],
+//!   and a word it read between an unquoted `$[` and its `]` is [`REDACTED`] whatever its role
+//!   (an assignment still shows its name): their operands only look like programs and
+//!   arguments. A `$( )` or backtick inside one is a command and rendered as one.
 //! - **Words before the program**, each by the role the denylist's walk gives it
-//!   ([`denylist::roles`]), never by its text alone: keywords (`if`, `{`, `!`) as written;
+//!   ([`denylist::layout`]), never by its text alone: keywords (`if`, `{`, `!`) as written;
 //!   assignments as `NAME=<redacted>` (a name over 64 characters is hidden too); the words
 //!   standing in the place of a program that the walk reads as wrappers (`sudo`, `env`,
 //!   `nohup`, `timeout`, `nice`, `exec`, `command`, `xargs`, a shell, `source`, `find`, ...) by
@@ -141,6 +145,11 @@ impl Skeleton {
                 let piped = command.stdin == Stdin::Pipe(index.checked_sub(1));
                 line.separator(if piped { " | " } else { "; " });
             }
+            if command.arithmetic {
+                // Operands and operators of `$(( ))` or `(( ))`, not a program and arguments.
+                line.word(REDACTED);
+                continue;
+            }
             self.words(&command.words, &mut line);
             for target in &command.writes {
                 line.word(">");
@@ -180,18 +189,18 @@ impl Skeleton {
 
     /// Renders one simple command's words, as the denylist lays them out.
     fn words(&mut self, words: &[Word], line: &mut Line) {
-        let roles = denylist::roles(words);
+        let (layout, roles) = denylist::layout(words);
         let all = Lead {
             words,
             roles: &roles,
         };
-        match denylist::layout(words) {
+        match layout {
             Layout::Program(at) => {
                 let (lead, rest) = all.split_at(at);
                 render_lead(lead, None, line);
                 if let Some((program, args)) = rest.words.split_first() {
                     line.word(&shown_program(program));
-                    let name = denylist::program_name(program);
+                    let name = named(program);
                     let mut options = Options::Open;
                     for arg in args {
                         line.word(&shown_argument(arg, name, options));
@@ -232,7 +241,7 @@ impl Skeleton {
     /// `find` with actions: its own words as wrapper words, by `find`'s tables wherever the
     /// walk found it, each action as a command one level deeper.
     fn exec(&mut self, all: Lead<'_>, exec: &FindActions, line: &mut Line) {
-        let find = all.words.get(exec.find).and_then(denylist::program_name);
+        let find = all.words.get(exec.find).and_then(named);
         // `rest` is `all` from index `at`; the actions come in order and do not overlap.
         let (mut rest, mut at) = (all, 0);
         for range in &exec.actions {
@@ -249,8 +258,8 @@ impl Skeleton {
     }
 }
 
-/// Words outside a program's arguments, and the role the denylist's walk gives each
-/// (`denylist::roles`), index for index.
+/// Words outside a program's arguments, and the role the denylist's walk gives each (as
+/// `denylist::layout` returns them), index for index.
 #[derive(Debug, Clone, Copy)]
 struct Lead<'w> {
     words: &'w [Word],
@@ -322,10 +331,11 @@ fn render_lead(lead: Lead<'_>, program: Option<&str>, line: &mut Line) {
     let mut options = Options::Open;
     for (word, role) in lead.words.iter().zip(lead.roles) {
         match role {
+            Role::Keyword if word.arithmetic => line.word(REDACTED),
             Role::Keyword => line.word(&word.text),
             Role::Assignment => line.word(&shown_assignment(word)),
             Role::Wrapper => {
-                wrapper = denylist::program_name(word);
+                wrapper = named(word);
                 options = Options::Open;
                 line.word(&shown_program(word));
             }
@@ -358,10 +368,16 @@ impl Options {
     }
 }
 
-/// A program or wrapper word: the name it runs, without a path or `.exe`
-/// ([`denylist::program_name`]), when literal and of [`allow::is_program`]'s shape.
+/// The name a program or wrapper word runs, without a path or `.exe`
+/// ([`denylist::program_name`]), for the tables: `None` when the word is not literal or is
+/// part of an arithmetic expression (`$[ ]`).
+fn named(word: &Word) -> Option<&str> {
+    denylist::program_name(word).filter(|_| !word.arithmetic)
+}
+
+/// A program or wrapper word: its [`named`] name, when of [`allow::is_program`]'s shape.
 fn shown_program(word: &Word) -> Cow<'_, str> {
-    match denylist::program_name(word) {
+    match named(word) {
         Some(name) if allow::is_program(name) => Cow::Borrowed(name),
         _ => Cow::Borrowed(REDACTED),
     }
@@ -381,7 +397,7 @@ fn shown_assignment(word: &Word) -> Cow<'static, str> {
 /// allowlisted word as written, anything else hidden.
 fn shown_argument<'w>(word: &'w Word, program: Option<&str>, options: Options) -> Cow<'w, str> {
     let text = word.text.as_str();
-    if word.shape == Shape::Dynamic {
+    if word.shape == Shape::Dynamic || word.arithmetic {
         return Cow::Borrowed(REDACTED);
     }
     if options == Options::Open && word.is_literal() && text.starts_with('-') {
@@ -425,7 +441,7 @@ fn shown_option<'w>(text: &'w str, program: Option<&str>) -> Cow<'w, str> {
 
 /// A redirection's target: as written when it is a sensitive target, else hidden.
 fn shown_target(word: &Word) -> Cow<'_, str> {
-    if word.shape != Shape::Dynamic && allow::is_target(&word.text) {
+    if word.shape != Shape::Dynamic && !word.arithmetic && allow::is_target(&word.text) {
         Cow::Borrowed(&word.text)
     } else {
         Cow::Borrowed(REDACTED)

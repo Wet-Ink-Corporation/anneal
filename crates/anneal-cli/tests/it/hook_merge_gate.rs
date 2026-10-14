@@ -684,8 +684,9 @@ fn bypass_rows(merge: &str) -> Vec<(String, &'static str)> {
         (format!("su --login -c '{merge}'"), "merge-gate.directory"),
         // env -S splits its string into env's own options, -C among them.
         (format!("env -S '-C /tmp {merge}'"), "merge-gate.directory"),
-        // Not the canonical command: an env short cluster, a git pager, a dynamic name.
-        (format!("env -vu X -C /tmp {merge}"), "merge-gate.shape"),
+        // env reads `-vu X` as `-v -u X` (getopt), so its later -C is seen.
+        (format!("env -vu X -C /tmp {merge}"), "merge-gate.directory"),
+        // Not the canonical command: a git pager, a dynamic name.
         (
             format!("git -C /other -c core.pager='{merge}' log"),
             "merge-gate.shape",

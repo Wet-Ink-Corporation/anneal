@@ -275,12 +275,22 @@ fn row<T: Copy>(table: &[(&str, T)], program: Option<&str>) -> Option<T> {
         .map(|&(_, value)| value)
 }
 
-/// Whether `text` is a program word shown as written: 1 to 64 of `[A-Za-z0-9._+/-]`.
+/// Whether `text` is a program's name shown as written: 1 to 64 of `[A-Za-z0-9._+-]` (a name,
+/// so no path).
 pub(super) fn is_program(text: &str) -> bool {
     (1..=MAX_NAME_CHARS).contains(&text.len())
         && text
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._+/-".contains(&b))
+            .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+}
+
+/// Whether any table names `text` as a word: a target, a subcommand, an exact flag or a key.
+#[cfg(test)]
+pub(super) fn names(text: &str) -> bool {
+    TARGETS.contains(&text)
+        || SUBCOMMANDS.iter().any(|(_, words)| words.contains(&text))
+        || EXACT_FLAGS.iter().any(|(_, flags)| flags.contains(&text))
+        || KEYED.iter().any(|(_, keys)| keys.contains(&text))
 }
 
 /// Whether `name` is a long option's name shown as written: 1 to 64 of `[A-Za-z0-9._-]`.

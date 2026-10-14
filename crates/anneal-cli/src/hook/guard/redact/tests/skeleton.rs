@@ -1,7 +1,7 @@
 //! The skeleton itself: what each kind of word becomes, wrappers read from the denylist's
 //! table, nested bodies, and the signal D1 keeps.
 
-use super::super::{REDACTED, UNPARSED, redact};
+use super::super::{REDACTED, UNPARSED, allow, redact};
 use super::assert_cases;
 
 #[test]
@@ -381,24 +381,132 @@ fn after_a_literal_double_dash_every_word_is_an_operand() {
     ]);
 }
 
-/// A deterministic generator of argument tokens no allowlist names: `zq` and 8 characters.
+// Review round 2 of PR 120.
+
+#[test]
+fn the_inside_of_an_arithmetic_expression_is_never_a_program_or_argument() {
+    assert_cases(&[
+        ("sleep $(( 3600 * 24 ))", "<redacted>; sleep <redacted>"),
+        ("x=$(( zqVAL ))", "<redacted>; x=<redacted>"),
+        ("(( zqX = 1 ))", REDACTED),
+        (
+            "if (( n > 3 )); then rm -rf /; fi",
+            "if; <redacted>; then rm -rf /; fi",
+        ),
+        (
+            "for (( i = 0; i < 3; i++ )); do echo $i; done",
+            "for; <redacted>; <redacted>; <redacted>; do echo <redacted>; done",
+        ),
+        ("x=$[ zqVAL ]", "x=<redacted> <redacted> <redacted>"),
+        (
+            "sleep $[ 3600 * 24 ] && rm -rf /",
+            "sleep <redacted> <redacted> <redacted> <redacted> <redacted>; rm -rf /",
+        ),
+        (
+            "x=$[ (zqX) + 1 ]",
+            "x=<redacted>; <redacted>; <redacted> <redacted> <redacted>",
+        ),
+    ]);
+}
+
+#[test]
+fn a_substitution_inside_arithmetic_is_still_rendered_as_a_command() {
+    assert_cases(&[
+        (
+            "echo $(( $(rm -rf /) + 1 ))",
+            "rm -rf /; <redacted>; echo <redacted>",
+        ),
+        (
+            "x=$[ `dropdb prod` ]",
+            "dropdb <redacted>; x=<redacted> <redacted> <redacted>",
+        ),
+    ]);
+}
+
+#[test]
+fn a_short_option_cluster_ending_in_a_value_letter_takes_the_next_word() {
+    assert_cases(&[
+        ("sudo -iu postgres psql", "sudo -<redacted> <redacted> psql"),
+        ("sudo -uroot psql", "sudo -<redacted> psql"),
+        ("env -iu HOME rm", "env -<redacted> <redacted> rm"),
+        ("xargs -0n 1 rm", "xargs -<redacted> <redacted> rm"),
+    ]);
+}
+
+#[test]
+fn every_value_option_of_a_wrapper_hides_its_value_and_shows_the_program() {
+    assert_cases(&[
+        (
+            "sudo -a bsd -c staff -R /jail -r role -t type -T 5 -h host psql",
+            "sudo -a <redacted> -c <redacted> -R <redacted> -r <redacted> -t <redacted> \
+             -T <redacted> -h <redacted> psql",
+        ),
+        ("doas -a style psql", "doas -a <redacted> psql"),
+        ("env -P /opt/bin psql", "env -P <redacted> psql"),
+        (
+            "xargs -J % -R 2 -S 512 psql",
+            "xargs -J <redacted> -R <redacted> -S <redacted> psql",
+        ),
+    ]);
+}
+
+#[test]
+fn chrt_or_taskset_acting_on_a_pid_runs_no_program() {
+    assert_cases(&[
+        ("chrt -p 10 4242", "chrt -p <redacted> <redacted>"),
+        ("chrt -f -p 10 4242", "chrt -f -p <redacted> <redacted>"),
+        ("taskset -p 0x3 4242", "taskset -p <redacted> <redacted>"),
+        ("taskset --pid 4242", "taskset --pid <redacted>"),
+        ("chrt -f 10 psql", "chrt -f <redacted> psql"),
+    ]);
+}
+
+/// A deterministic generator of argument tokens.
 struct Tokens(u64);
 
 impl Tokens {
     const ALPHABET: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:@%+,/";
 
+    /// A token no allowlist names: `zq` and 8 characters of [`Self::ALPHABET`].
     fn next(&mut self) -> String {
         let mut token = String::from("zq");
         for _ in 0..8 {
-            self.0 = self
-                .0
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            let index = usize::try_from(self.0 >> 33).expect("31 bits fit") % Self::ALPHABET.len();
-            token.push(char::from(Self::ALPHABET[index]));
+            token.push(self.pick(Self::ALPHABET));
         }
         token
+    }
+
+    /// An identifier, `[a-z][a-z0-9_]{2,8}`.
+    fn identifier(&mut self) -> String {
+        let mut token = String::from(self.pick(b"abcdefghijklmnopqrstuvwxyz"));
+        for _ in 0..self.count(2, 8) {
+            token.push(self.pick(b"abcdefghijklmnopqrstuvwxyz0123456789_"));
+        }
+        token
+    }
+
+    /// A number, `[0-9]{2,6}`.
+    fn digits(&mut self) -> String {
+        (0..self.count(2, 6))
+            .map(|_| self.pick(b"0123456789"))
+            .collect()
+    }
+
+    fn count(&mut self, min: usize, max: usize) -> usize {
+        min + self.index(max - min + 1)
+    }
+
+    fn pick(&mut self, alphabet: &[u8]) -> char {
+        char::from(alphabet[self.index(alphabet.len())])
+    }
+
+    fn index(&mut self, len: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        usize::try_from(self.0 >> 33).expect("31 bits fit") % len
     }
 }
 
@@ -456,6 +564,36 @@ const TEMPLATES: &[&str] = &[
     "sudo /opt/{}/env rm",
     "grep -- --{} file",
     "bash -- --{}",
+    // Arithmetic, option clusters and wrapper values (PR 120 review round 2).
+    "sleep $(( {} * 24 ))",
+    "x=$(( {} ))",
+    "(( {} = 1 ))",
+    "if (( {} > 3 )); then rm -rf /; fi",
+    "for (( i = {}; i < 3; i++ )); do echo; done",
+    "x=$[ {} ]",
+    "sleep $[ {} * 24 ]",
+    "echo $[ ({}) + 1 ]",
+    "echo $(( {} + $(echo x) ))",
+    "sudo -iu {} psql",
+    "sudo -u{} psql",
+    "env -iu {} psql",
+    "xargs -0n {} psql",
+    "sudo -a {} psql",
+    "sudo -c {} psql",
+    "sudo -R {} psql",
+    "sudo -r {} psql",
+    "sudo -t {} psql",
+    "sudo -T {} psql",
+    "sudo -h {} psql",
+    "doas -a {} psql",
+    "env -P {} psql",
+    "xargs -J {} psql",
+    "xargs -R {} -I x psql",
+    "xargs -S {} psql",
+    "chrt -p 10 {}",
+    "chrt -p {}",
+    "taskset -p 0x3 {}",
+    "taskset -p {}",
 ];
 
 #[test]
@@ -474,6 +612,49 @@ fn an_argument_no_allowlist_names_never_reaches_the_output() {
                 !redacted.contains(&token),
                 "{command:?} became {redacted:?}"
             );
+        }
+    }
+}
+
+/// Words the lexer reads as reserved wherever they stand, or that change how it reads the
+/// rest (`$(echo case)` opens a `case`): a template filled with one is another command.
+const RESERVED: &[&str] = &[
+    "case", "esac", "for", "select", "while", "until", "if", "then", "else", "elif", "fi", "do",
+    "done", "function", "time", "coproc",
+];
+
+/// The whole words of `text`: its runs of ASCII letters, digits and `_`.
+fn whole_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+}
+
+#[test]
+fn an_identifier_or_number_no_allowlist_names_never_reaches_the_output() {
+    // TST-06 by plain loops. A token an allow table names may be shown by design, a reserved
+    // word changes the command, and one the template's own rendering holds as a word
+    // (`echo`, `redacted`) cannot be told apart from it: those are skipped.
+    let mut tokens = Tokens(0x5eed_0002);
+    for template in TEMPLATES {
+        let reference = redact(&template.replace("{}", "zqreference"));
+        for _ in 0..30 {
+            for token in [tokens.identifier(), tokens.digits()] {
+                let skipped = allow::names(&token)
+                    || RESERVED.contains(&token.as_str())
+                    || whole_words(&reference).any(|word| word == token);
+                if skipped {
+                    continue;
+                }
+                let command = template.replace("{}", &token);
+
+                let redacted = redact(&command);
+
+                assert_ne!(redacted, UNPARSED, "{command:?} reads");
+                assert!(
+                    whole_words(&redacted).all(|word| word != token),
+                    "{command:?} became {redacted:?}"
+                );
+            }
         }
     }
 }

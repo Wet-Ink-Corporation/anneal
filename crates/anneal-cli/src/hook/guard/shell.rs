@@ -41,6 +41,10 @@ pub(crate) struct SimpleCommand {
     /// name()`). One after keywords alone (`if (`), after `case ... in` or after an array
     /// assignment (`a=(`) does not count.
     pub(crate) defines_function: bool,
+    /// Whether it was read inside an arithmetic expression (`$(( ))`, `(( ))`, or a `( )`
+    /// group inside one or inside `$[ ]`): its words are operands and operators, not a program
+    /// and its arguments. It is listed as any other command, so the denylist reads it as before.
+    pub(crate) arithmetic: bool,
     /// The heredoc it reads, by number, until the body is read.
     heredoc: Option<usize>,
 }
@@ -113,6 +117,17 @@ struct Level {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Writer(Option<usize>);
 
+/// What the list being read holds: commands, or an arithmetic expression (`$(( ))`,
+/// `(( ))`) whose words only look like commands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Reading {
+    /// Commands: the top level, `$( )`, backticks, `<( )` and plain subshells.
+    #[default]
+    Commands,
+    /// An arithmetic expression, and any `( )` group inside it.
+    Arithmetic,
+}
+
 /// Whether `$` inside double quotes, where `$'` and `$"` are not quoting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Quoting {
@@ -121,8 +136,8 @@ enum Quoting {
 }
 
 /// The lexer's state: the input, the cursor, the commands read so far, the heredocs whose
-/// bodies start at the next newline, the bodies read, the pipe the next command reads and
-/// the `case` statements open.
+/// bodies start at the next newline, the bodies read, the pipe the next command reads, the
+/// `case` statements open, what the list being read holds and the unquoted `$[` it has open.
 #[derive(Debug)]
 struct Lexer {
     chars: Vec<char>,
@@ -135,6 +150,9 @@ struct Lexer {
     heredoc_count: usize,
     pipe: Option<Writer>,
     cases: usize,
+    reading: Reading,
+    /// Unquoted `$[` (and `[` inside one) not yet closed by `]` in the list being read.
+    brackets: usize,
 }
 
 /// Characters that end an unquoted word.
@@ -156,7 +174,15 @@ impl Lexer {
             heredoc_count: 0,
             pipe: None,
             cases: 0,
+            reading: Reading::Commands,
+            brackets: 0,
         }
+    }
+
+    /// Whether what is read now is part of an arithmetic expression: in an arithmetic list, or
+    /// after an unquoted `$[` not yet closed.
+    const fn in_arithmetic(&self) -> bool {
+        matches!(self.reading, Reading::Arithmetic) || self.brackets > 0
     }
 
     fn peek(&self) -> Option<char> {
@@ -195,6 +221,16 @@ impl Lexer {
             .into_iter()
             .flatten()
             .collect()
+    }
+
+    /// Reads the list a substitution, subshell or arithmetic expression opens, up to `close`,
+    /// as `reading` and with no `$[` open, then restores both.
+    fn nested(&mut self, close: Close, depth: usize, reading: Reading) -> Result<(), ParseError> {
+        let outer = (self.reading, self.brackets);
+        (self.reading, self.brackets) = (reading, 0);
+        let read = self.list(close, depth);
+        (self.reading, self.brackets) = outer;
+        read
     }
 
     /// Reads commands until `close`, pushing each finished one.
@@ -263,7 +299,16 @@ impl Lexer {
                 self.advance();
                 command.defines_function = opens_definition(&command.words);
                 self.finish(command);
-                self.list(Close::Paren("("), level.depth.saturating_add(1))?;
+                // `((` opens an arithmetic command (bash reads `((a) )` as two subshells, so
+                // this may take a subshell for arithmetic: it then only marks more, and the
+                // commands listed are the same). A group inside arithmetic or `$[` is
+                // arithmetic too.
+                let reading = if self.peek() == Some('(') || self.in_arithmetic() {
+                    Reading::Arithmetic
+                } else {
+                    Reading::Commands
+                };
+                self.nested(Close::Paren("("), level.depth.saturating_add(1), reading)?;
             }
             '<' | '>' => self.redirect(command, level, true)?,
             _ => {
@@ -311,6 +356,8 @@ impl Lexer {
         if let Some(Writer(writer)) = self.pipe.filter(|_| reads_pipe) {
             command.stdin = Stdin::Pipe(writer);
         }
+        // A nested list restores `reading` before it returns, so this is the list's own.
+        command.arithmetic = self.reading == Reading::Arithmetic;
         let index = self.commands.len();
         self.commands.push(mem::take(command));
         Some(index)
