@@ -1,5 +1,6 @@
 use super::{MAX_COMMAND_CHARS, UNPARSED, redact};
 
+mod ambiguous;
 mod probes;
 mod skeleton;
 
@@ -83,7 +84,8 @@ fn an_env_style_assignment_is_redacted_in_any_position() {
         ("timeout 5 env K=v", "timeout <redacted> env K=<redacted>"),
         ("command export K=v", "command export <redacted>"),
         ("env -u NAME K=v", "env -u <redacted> K=<redacted>"),
-        ("nohup K=v run", "nohup K=<redacted> run"),
+        // nohup runs `K=v` as its program, which the denylist reads as an assignment.
+        ("nohup K=v run", "nohup <redacted> <redacted>"),
     ]);
 }
 

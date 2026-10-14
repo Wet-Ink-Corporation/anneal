@@ -20,6 +20,14 @@
 //!   (`sudo -u root`, `timeout 5`, `bash script`) as arguments, so the program after any
 //!   wrapper is shown as a bare one is, and a value that names a wrapper (`sudo -D /x/nice`,
 //!   `find /a/env`) is hidden like any other.
+//! - **Uncertain wrappers**: the walk is the denylist's, unchanged by redaction, and reads
+//!   some wrapper options more loosely than the wrapper does, so a wrapper's words are trusted
+//!   only when they read with certainty by [`certain`]'s tables (exact flags, exact value
+//!   options and their values, `--`, fixed operands). From the first word that does not (a
+//!   cluster such as `-iu`, an option the tables do not know, chrt or taskset with `-p`, an
+//!   assignment after a wrapper that takes none), every word of the simple command is an
+//!   argument of no known program: `sudo -iu postgres psql` is
+//!   `sudo -<redacted> <redacted> <redacted>`.
 //! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
 //!   `/usr/bin/rm` is `rm`), kept when the word is literal and the name 1 to 64 of
 //!   `[A-Za-z0-9._+-]` ([`allow::is_program`]); otherwise hidden. Wrappers are shown the same
@@ -48,10 +56,13 @@
 //! nothing else. The skeleton is trimmed and cut to [`MAX_COMMAND_CHARS`].
 
 mod allow;
+mod certain;
 
 use std::borrow::Cow;
 use std::ops::Range;
 use std::ptr;
+
+use certain::End;
 
 use super::denylist::{self, FindActions, Layout, Role};
 use super::shell::{self, MAX_NESTING, ParseError, Shape, Stdin, Word};
@@ -187,43 +198,48 @@ impl Skeleton {
             .unwrap_or_else(|| REDACTED.to_owned())
     }
 
-    /// Renders one simple command's words, as the denylist lays them out.
+    /// Renders one simple command's words, as the denylist lays them out, up to the first
+    /// word whose place the layout does not give with certainty ([`certain`]); from there
+    /// every word is an argument.
     fn words(&mut self, words: &[Word], line: &mut Line) {
         let (layout, roles) = denylist::layout(words);
         let all = Lead {
             words,
             roles: &roles,
         };
-        match layout {
-            Layout::Program(at) => {
-                let (lead, rest) = all.split_at(at);
-                render_lead(lead, None, line);
-                if let Some((program, args)) = rest.words.split_first() {
-                    line.word(&shown_program(program));
-                    let name = named(program);
-                    let mut options = Options::Open;
-                    for arg in args {
-                        line.word(&shown_argument(arg, name, options));
-                        options = options.after(arg);
-                    }
-                }
-            }
-            Layout::Script(body) => self.script(all, &body, line),
-            Layout::Exec(exec) => self.exec(all, &exec, line),
-            Layout::Other => render_lead(all, None, line),
+        let body = match &layout {
+            Layout::Script(text) => Some(Body::of(words, text)),
+            Layout::Program(_) | Layout::Exec(_) | Layout::Other => None,
+        };
+        let end = match (&layout, &body) {
+            (Layout::Program(at), _) => End::Program(*at),
+            (_, Some(body)) => body.end(),
+            (Layout::Script(_) | Layout::Exec(_) | Layout::Other, None) => End::Unchecked,
+        };
+        if let Some(cut) = certain::first_uncertain(words, &roles, end) {
+            let (lead, rest) = all.split_at(cut);
+            render_lead(lead, None, line);
+            render_arguments(rest.words, lead.options(), line);
+            return;
+        }
+        match (&layout, &body) {
+            (Layout::Program(at), _) => render_program(all, *at, line),
+            (_, Some(body)) => self.script(all, body, line),
+            (Layout::Exec(exec), None) => self.exec(all, exec, line),
+            (Layout::Script(_) | Layout::Other, None) => render_lead(all, None, line),
         }
     }
 
     /// A command whose wrappers run the shell text `body`: the words it came from become its
     /// skeleton in `'…'` (or [`REDACTED`] when they are not literal), the others are rendered
     /// as wrapper words.
-    fn script(&mut self, all: Lead<'_>, body: &str, line: &mut Line) {
-        let Some(source) = body_source(all.words, body) else {
+    fn script(&mut self, all: Lead<'_>, body: &Body<'_>, line: &mut Line) {
+        let Some(source) = &body.source else {
             // A body inside a word or built from several (`env -Sbody`, `alias`): the words
             // are rendered as they are, then the body after them when every word is literal.
             render_lead(all, None, line);
             if all.words.iter().all(Word::is_literal) {
-                line.word(&quoted(&self.nested(body)));
+                line.word(&quoted(&self.nested(body.text)));
             }
             return;
         };
@@ -231,7 +247,7 @@ impl Skeleton {
         let (source, after) = rest.split_at(source.len());
         render_lead(before, None, line);
         if source.words.iter().all(Word::is_literal) {
-            line.word(&quoted(&self.nested(body)));
+            line.word(&quoted(&self.nested(body.text)));
         } else {
             line.word(REDACTED);
         }
@@ -278,6 +294,48 @@ impl Lead<'_> {
                 roles: roles_after,
             },
         )
+    }
+
+    /// The options state [`render_lead`] ends these words in: ended when a literal `--` came
+    /// among the words after the last wrapper.
+    fn options(self) -> Options {
+        let after = self
+            .roles
+            .iter()
+            .rposition(|role| *role == Role::Wrapper)
+            .map_or(0, |at| at.saturating_add(1));
+        self.words
+            .iter()
+            .zip(self.roles)
+            .skip(after)
+            .filter(|(_, role)| **role == Role::Other)
+            .fold(Options::Open, |options, (word, _)| options.after(word))
+    }
+}
+
+/// The shell text a command's wrappers run, and where among its words it came from.
+#[derive(Debug)]
+struct Body<'b> {
+    text: &'b str,
+    /// The word or words it came from ([`body_source`]); `None` when it is inside one word
+    /// or built from several.
+    source: Option<Range<usize>>,
+}
+
+impl<'b> Body<'b> {
+    /// The body `text` of the command `words`.
+    fn of(words: &[Word], text: &'b str) -> Self {
+        Self {
+            text,
+            source: body_source(words, text),
+        }
+    }
+
+    /// Where the words of the wrapper running it end, for [`certain::first_uncertain`].
+    fn end(&self) -> End {
+        self.source
+            .as_ref()
+            .map_or(End::Attached, |source| End::Body(source.start))
     }
 }
 
@@ -344,6 +402,33 @@ fn render_lead(lead: Lead<'_>, program: Option<&str>, line: &mut Line) {
                 options = options.after(word);
             }
         }
+    }
+}
+
+/// Renders a command whose program is the word at `at`: the words before it as wrapper
+/// words, the program by its name, its arguments by its tables.
+fn render_program(all: Lead<'_>, at: usize, line: &mut Line) {
+    let (lead, rest) = all.split_at(at);
+    render_lead(lead, None, line);
+    if let Some((program, args)) = rest.words.split_first() {
+        line.word(&shown_program(program));
+        let name = named(program);
+        let mut options = Options::Open;
+        for arg in args {
+            line.word(&shown_argument(arg, name, options));
+            options = options.after(arg);
+        }
+    }
+}
+
+/// Renders `words` as arguments of no known program, whatever role the walk gave them, from
+/// the `options` state the words before them left: past the first word whose place is
+/// uncertain ([`certain`]), a word may be a value as well as a program, wrapper or
+/// assignment, so only the program-free tables may show it.
+fn render_arguments(words: &[Word], mut options: Options, line: &mut Line) {
+    for word in words {
+        line.word(&shown_argument(word, None, options));
+        options = options.after(word);
     }
 }
 

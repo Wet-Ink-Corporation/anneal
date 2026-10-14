@@ -486,6 +486,16 @@ fn a_merge_the_probe_finds_is_read_even_beside_a_call_it_cannot_read() {
 }
 
 #[test]
+fn an_env_short_cluster_before_a_merge_is_read_as_main_reads_it() {
+    // PR 120's redaction review: the probe reads `-vu` as one flag and `X` as env's program,
+    // as main (603fa75) does, so env's `-C` is not seen as a directory change (the merge gate
+    // denies the command as `merge-gate.shape`, not `merge-gate.directory`).
+    let command = "env -vu X -C /tmp gh pr merge 7";
+
+    assert_eq!(moved(command), [None], "{command}");
+}
+
+#[test]
 fn a_command_the_guard_cannot_read_is_unreadable_here_too() {
     let scan = find_pr_merge("gh pr merge 'unclosed", &context());
 

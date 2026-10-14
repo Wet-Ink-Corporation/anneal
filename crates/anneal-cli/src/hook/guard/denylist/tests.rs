@@ -344,44 +344,37 @@ fn substitutions_eval_paths_newlines_and_wrappers_do_not_hide_a_command() {
 }
 
 #[test]
-fn a_wrapper_option_cluster_or_value_option_takes_its_value_as_getopt_does() {
-    // A value read as the program (`echo`, which only prints) would hide the real one.
+fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
+    // PR 120 changed only the redaction; these are the commands its review rounds probed the
+    // denylist with, each judged as main (603fa75) judges it. The redaction may hide more
+    // than needed, never change what the denylist denies.
     assert_table(&[
         ("sudo -iu x rm -rf /", RM_RF),
-        ("sudo -iu echo rm -rf /", RM_RF),
         ("sudo -uecho rm -rf /", RM_RF),
-        ("env -iu echo rm -rf /", RM_RF),
-        ("sudo -R echo rm -rf /", RM_RF),
-        ("sudo -c echo rm -rf /", RM_RF),
-        ("sudo -a echo rm -rf /", RM_RF),
-        ("doas -a echo rm -rf /", RM_RF),
-        ("env -P echo rm -rf /", RM_RF),
-        ("xargs -J echo rm -rf", RM_RF),
+        ("xargs -eE rm -rf /", RM_RF),
         ("xargs -R 1 -I echo rm -rf", RM_RF),
-        ("xargs -S echo rm -rf", RM_RF),
+        ("watch -dn rm -rf /", RM_RF),
+        ("script -tqc x rm -rf /", ALLOW),
+        ("env -vu X -C /tmp rm -rf /", RM_RF),
         ("chrt -f 10 rm -rf /", RM_RF),
-        // With `-p` chrt and taskset change the process whose pid is the last word and run
-        // nothing, unless that pid is 0: then they act on themselves and run the rest.
         ("chrt -p 10 4242", ALLOW),
         ("taskset -p 0x3 4242", ALLOW),
-        ("chrt -p 10 rm -rf / 4242", ALLOW),
+        ("echo 0 | xargs chrt -p 10 rm -rf / 4242", RM_RF),
+        ("chrt -p 10 rm -rf / 4242", RM_RF),
         ("chrt -o -p 0 rm -rf / 0", RM_RF),
+        ("chrt -o -p 0 rm -rf / -1", RM_RF),
         ("chrt -p 10 rm -rf / 00", RM_RF),
         ("chrt -p 10 rm -rf / +0", RM_RF),
-        ("taskset -p 0x1 rm -rf / 0", RM_RF),
-        ("taskset -cp 0 rm -rf / -0", RM_RF),
-        ("chrt -p 10 rm -rf / $PID", RM_RF),
-        // chrt's -1 means "no pid given", so it runs the command too: a pid of 0 or less
-        // counts as running it.
-        ("chrt -o -p 0 rm -rf / -1", RM_RF),
         ("chrt -p 10 rm -rf / -01", RM_RF),
         ("chrt -p 10 rm -rf / ' -1'", RM_RF),
-        ("taskset -p 0x1 rm -rf / -1", RM_RF),
         ("chrt -p 10 rm -rf / -5", RM_RF),
-        // A pid that is no number makes them exit with an error before running anything.
-        ("chrt -p 10 rm -rf / 0x10", ALLOW),
-        ("chrt -p 10 rm -rf / ' 4242'", ALLOW),
-        ("chrt -p 10 rm -rf / +4242", ALLOW),
+        ("chrt -p 10 rm -rf / $PID", RM_RF),
+        ("chrt -p 10 rm -rf / 0x10", RM_RF),
+        ("chrt -p 10 rm -rf / ' 4242'", RM_RF),
+        ("chrt -p 10 rm -rf / +4242", RM_RF),
+        ("taskset -p 0x1 rm -rf / 0", RM_RF),
+        ("taskset -p 0x1 rm -rf / -1", RM_RF),
+        ("taskset -cp 0 rm -rf / -0", RM_RF),
     ]);
 }
 

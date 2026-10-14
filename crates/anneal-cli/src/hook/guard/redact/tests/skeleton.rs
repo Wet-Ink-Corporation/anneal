@@ -65,9 +65,10 @@ fn only_a_word_the_denylist_reads_as_an_assignment_shows_its_name() {
             "sudo -u root K=v run",
             "sudo -u <redacted> K=<redacted> run",
         ),
+        // nohup takes no assignments: it runs `A=1`, so the rest are its arguments.
         (
             "nohup A=1 env B=2 run",
-            "nohup A=<redacted> env B=<redacted> run",
+            "nohup <redacted> <redacted> <redacted> <redacted>",
         ),
     ]);
 }
@@ -377,7 +378,11 @@ fn after_a_literal_double_dash_every_word_is_an_operand() {
         ),
         ("rm -- -rf /", "rm -- <redacted> /"),
         ("bash -- --x", "bash -- <redacted>"),
-        ("sudo -- env --x=1 rm", "sudo -- env --x=<redacted> rm"),
+        // env knows no `--x`, so the word after it may be its value.
+        (
+            "sudo -- env --x=1 rm",
+            "sudo -- env --x=<redacted> <redacted>",
+        ),
     ]);
 }
 
@@ -424,34 +429,44 @@ fn a_substitution_inside_arithmetic_is_still_rendered_as_a_command() {
 }
 
 #[test]
-fn a_short_option_cluster_ending_in_a_value_letter_takes_the_next_word() {
+fn a_short_option_cluster_of_a_wrapper_hides_the_rest_of_its_command() {
+    // Review round 5: the denylist reads a cluster as one flag, the wrapper may read a value
+    // in it (`-iu` is `-i -u`), so the word after it is no certain program.
     assert_cases(&[
-        ("sudo -iu postgres psql", "sudo -<redacted> <redacted> psql"),
+        (
+            "sudo -iu postgres psql",
+            "sudo -<redacted> <redacted> <redacted>",
+        ),
         ("sudo -uroot psql", "sudo -<redacted> psql"),
-        ("env -iu HOME rm", "env -<redacted> <redacted> rm"),
-        ("xargs -0n 1 rm", "xargs -<redacted> <redacted> rm"),
+        ("env -iu HOME rm", "env -<redacted> <redacted> <redacted>"),
+        ("xargs -0n 1 rm", "xargs -<redacted> <redacted> <redacted>"),
+        ("xargs -n1 rm", "xargs -<redacted> rm"),
     ]);
 }
 
 #[test]
-fn every_value_option_of_a_wrapper_hides_its_value_and_shows_the_program() {
+fn a_wrapper_value_option_the_denylist_does_not_know_hides_the_rest_of_its_command() {
     assert_cases(&[
+        (
+            "sudo -r role -t type -T 5 -u x psql",
+            "sudo -r <redacted> -t <redacted> -T <redacted> -u <redacted> psql",
+        ),
         (
             "sudo -a bsd -c staff -R /jail -r role -t type -T 5 -h host psql",
             "sudo -a <redacted> -c <redacted> -R <redacted> -r <redacted> -t <redacted> \
-             -T <redacted> -h <redacted> psql",
+             -T <redacted> -h <redacted> <redacted>",
         ),
-        ("doas -a style psql", "doas -a <redacted> psql"),
-        ("env -P /opt/bin psql", "env -P <redacted> psql"),
+        ("doas -a style psql", "doas -a <redacted> <redacted>"),
+        ("env -P /opt/bin psql", "env -P <redacted> <redacted>"),
         (
             "xargs -J % -R 2 -S 512 psql",
-            "xargs -J <redacted> -R <redacted> -S <redacted> psql",
+            "xargs -J <redacted> -R <redacted> -S <redacted> <redacted>",
         ),
     ]);
 }
 
 #[test]
-fn chrt_or_taskset_acting_on_a_pid_runs_no_program() {
+fn chrt_or_taskset_with_a_pid_option_hides_the_rest_of_its_command() {
     assert_cases(&[
         ("chrt -p 10 4242", "chrt -p <redacted> <redacted>"),
         ("chrt -f -p 10 4242", "chrt -f -p <redacted> <redacted>"),
@@ -460,15 +475,15 @@ fn chrt_or_taskset_acting_on_a_pid_runs_no_program() {
         ("chrt -f 10 psql", "chrt -f <redacted> psql"),
         (
             "chrt -p 10 psql x 0",
-            "chrt -p <redacted> psql <redacted> <redacted>",
+            "chrt -p <redacted> <redacted> <redacted> <redacted>",
         ),
         (
             "chrt -p 10 psql x -1",
-            "chrt -p <redacted> psql <redacted> -1",
+            "chrt -p <redacted> <redacted> <redacted> -1",
         ),
         (
             "taskset -p 0x1 psql x 0",
-            "taskset -p <redacted> psql <redacted> <redacted>",
+            "taskset -p <redacted> <redacted> <redacted> <redacted>",
         ),
     ]);
 }
@@ -606,6 +621,27 @@ const TEMPLATES: &[&str] = &[
     "chrt -p {}",
     "taskset -p 0x3 {}",
     "taskset -p {}",
+    // Where the denylist's walk places the program and the wrapper may not (PR 120 review
+    // round 5): the token stands where the walk would show a program.
+    "xargs -eE {} x",
+    "watch -dn {} x",
+    "script -tqc {} x",
+    "sudo -iu x {}",
+    "echo 0 | xargs chrt -p 10 {} 4242",
+    "taskset -cp 0x1 {} 4242",
+    "nohup K=v {}",
+    "doas K=v {}",
+    "sudo -e {}",
+    "sudo -h x {}",
+    "time -o x {}",
+    "env -iC x {}",
+    "env - {}",
+    "command -v {}",
+    "ionice -p 1 {}",
+    "timeout --kill 5 {}",
+    "bash -lc {}",
+    "su -ls x -c {}",
+    "flock -nw 5 x {}",
 ];
 
 #[test]

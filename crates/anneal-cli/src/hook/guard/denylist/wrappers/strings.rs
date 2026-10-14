@@ -8,8 +8,7 @@ use super::{
 };
 use crate::hook::guard::shell::Word;
 
-/// `-P altpath` is BSD env's search path.
-const ENV_VALUES: &[&str] = &["-u", "-C", "-P", "--unset", "--chdir"];
+const ENV_VALUES: &[&str] = &["-u", "-C", "--unset", "--chdir"];
 const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
 const FLOCK_VALUES: &[&str] = &["-w", "-E", "--timeout", "--conflict-exit-code"];
 const WATCH_VALUES: &[&str] = &["-n", "--interval", "-q", "--equexit"];

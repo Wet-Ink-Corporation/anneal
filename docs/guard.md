@@ -328,17 +328,30 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `busybox`, `flock`, `xargs`, `coproc`, shells, `eval`, `su`, `script`, `trap`, `watch`,
   `find`, ...) by the program rule, their options by the option rule and their values and
   operands as arguments (`sudo -u <redacted>`, `timeout <redacted>`, `bash <redacted>`). The
-  wrapper list and each wrapper's option arity are the denylist's own, a short-option cluster
-  read as getopt reads it (at its first letter that takes a value, the rest of the word is the
-  value, or the next word when that letter is last: `sudo -iu postgres psql` is
-  `sudo -<redacted> <redacted> psql`), and `chrt -p` or `taskset -p` (`--pid`), which act on
-  the process whose pid is the last word and run no program (`chrt -p 10 4242` is
-  `chrt -p <redacted> <redacted>`) unless that pid reads as a number of 0 or less (chrt
-  reads -1 as no pid) or is known only at run time, when they run the words after the
-  priority or mask (`chrt -p 10 psql x 0` shows `psql`), so
-  the program after any wrapper is shown as a bare one is, and a value or operand that names a wrapper is hidden like
-  any other (`sudo -D /x/nice rm` is `sudo -D <redacted> rm`, `find /a/env -delete` is
+  wrapper list and each wrapper's option arity are the denylist's own, so the program after
+  any wrapper is shown as a bare one is, and a value or operand that names a wrapper is hidden
+  like any other (`sudo -D /x/nice rm` is `sudo -D <redacted> rm`, `find /a/env -delete` is
   `find <redacted> -delete`).
+- **Uncertain wrappers**: the redaction never changes what the denylist denies, so it reads
+  wrappers with the denylist's walk exactly as it is, and that walk is looser than some
+  wrappers are: an option it does not know is a flag, a short-option cluster (`-iu`) is one
+  flag, and `chrt -p` or `taskset -p` runs the words after the priority or mask. Where that
+  differs from the wrapper's own reading, the word the walk places as the program may be an
+  option's value. So a wrapper's words are trusted only when each reads with certainty by the
+  redaction's own tables (`guard::redact::certain`): an exact flag, an exact value option
+  followed by its value (or with it attached: `-n1`, `--user=root`), `--`, then the wrapper's
+  fixed operands (`timeout`'s duration, `chrt`'s priority, `flock`'s file) and, for `sudo` and
+  `env` only, assignments, ending exactly where the walk puts the next wrapper, the program
+  or the body. From the first word that does not (a cluster longer than one letter, an
+  option the tables do not know, `chrt`/`taskset` with `-p` or `--pid`, an assignment after a
+  wrapper that takes none, such as `nohup K=v run`), every word of that simple command is an
+  argument of no known program, hidden unless a program-free table (the sensitive targets,
+  one-letter options, long option names) names it, and no body is rendered:
+  `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`,
+  `xargs -eE psql hunter2` is `xargs -<redacted> <redacted> <redacted>`,
+  `watch -dn psql x` is `watch -<redacted> <redacted> <redacted>`, and
+  `chrt -p 10 psql 4242` is `chrt -p <redacted> <redacted> <redacted>`. Clef loses the program
+  there; nothing leaks.
 - **The program**: its name without a path or `.exe` (`/usr/bin/python3.12` is `python3.12`,
   `./deploy.sh` is `deploy.sh`), kept when the word is literal (no expansion, glob or brace)
   and the name 1 to 64 of `[A-Za-z0-9._+-]`; otherwise `<redacted>` (`"$CMD"`, `./my tool`).
@@ -394,7 +407,8 @@ two commands. Variables set in the command are not followed (the denylist puts t
 the skeleton never shows a value). A program name is shown whatever it is (its path is not), so a secret
 written as a program name (`./deploy-hunter2.sh` is `deploy-hunter2.sh`) or as a short assignment name would reach Clef: that
 is the design's one accepted exposure. A word the lexer read as part of an arithmetic
-expression is never shown as a program, even where the denylist's walk would place one. The prompt hooks' prose redaction
+expression is never shown as a program, even where the denylist's walk would place one, nor
+is a word after a wrapper option the redaction cannot read with certainty. The prompt hooks' prose redaction
 (`decide::redact::safe_prompt`, `docs/hooks.md`) is a different, word-rule filter and is
 unchanged.
 
