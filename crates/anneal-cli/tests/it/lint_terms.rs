@@ -123,8 +123,8 @@ fn no_files_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     assert!(output.stdout.is_empty(), "nothing on stdout");
     assert_eq!(
         String::from_utf8(output.stderr)?,
-        "ERROR the following required arguments were not provided:\n",
-        "one ERROR line, clap's first"
+        "ERROR missing required argument: <FILE>...\n",
+        "one ERROR line naming the missing argument"
     );
     Ok(())
 }

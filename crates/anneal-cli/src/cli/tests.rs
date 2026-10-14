@@ -139,3 +139,71 @@ fn unknown_flag_and_trailing_arguments_never_exit_0() {
         assert!(err.starts_with("ERROR "), "{args:?}: {err}");
     }
 }
+
+/// A command found under the tree: its path and the arguments it requires, as clap names them
+/// in a usage error.
+type Requiring = (Vec<String>, Vec<String>);
+
+/// Every leaf command under `command` (at `path`) that requires an argument.
+fn requiring_leaves(command: &clap::Command, path: &[String], found: &mut Vec<Requiring>) {
+    let mut subcommands = command.get_subcommands().peekable();
+    if subcommands.peek().is_none() {
+        let required: Vec<String> = command
+            .get_arguments()
+            .filter(|arg| arg.is_required_set() && arg.get_default_values().is_empty())
+            .map(ToString::to_string)
+            .collect();
+        if !required.is_empty() {
+            found.push((path.to_vec(), required));
+        }
+        return;
+    }
+    for sub in subcommands {
+        let mut deeper = path.to_vec();
+        deeper.push(sub.get_name().to_owned());
+        requiring_leaves(sub, &deeper, found);
+    }
+}
+
+#[test]
+fn a_missing_required_argument_is_named_for_every_command() {
+    // Built, so each argument renders as clap renders it in the error.
+    let mut tree = Cli::command();
+    tree.build();
+    let mut found = Vec::new();
+    requiring_leaves(&tree, &[], &mut found);
+    assert!(
+        found.len() >= 20,
+        "the walk reaches the commands that require an argument: {found:?}"
+    );
+    for (path, required) in found {
+        let args: Vec<&str> = path.iter().map(String::as_str).collect();
+        let (code, out, err) = anneal(&args);
+        assert_eq!(code, 2, "{path:?}: usage error");
+        assert!(out.is_empty(), "{path:?}: nothing on stdout");
+        assert_eq!(err.lines().count(), 1, "{path:?}: one line: {err}");
+        assert!(
+            err.starts_with("ERROR missing required argument: "),
+            "{path:?}: {err}"
+        );
+        for name in &required {
+            assert!(err.contains(name.as_str()), "{path:?} names {name}: {err}");
+        }
+    }
+}
+
+#[test]
+fn every_missing_required_argument_is_listed_comma_separated() {
+    let command = clap::Command::new("t")
+        .arg(clap::Arg::new("first").required(true))
+        .arg(clap::Arg::new("second").long("second").required(true));
+    let error = command
+        .try_get_matches_from(["t"])
+        .expect_err("both arguments are missing");
+
+    assert_eq!(
+        super::usage_reason(&error),
+        "missing required argument: --second <second>, <first>",
+        "every one, in clap's order (options before positionals)"
+    );
+}
