@@ -8,6 +8,7 @@
 
 use std::ops::Range;
 
+use super::holds;
 use super::shape::Shape;
 use crate::hook::guard::shell::{Shape as WordShape, Word};
 
@@ -70,11 +71,6 @@ const TYPES: Shape = Shape::Words("b c d p f l s D");
 
 /// The words that run an action, up to its `;` or `+`.
 const ACTIONS: &str = "-exec -execdir -ok -okdir";
-
-/// Whether the space-separated `list` holds `text`.
-fn holds(list: &str, text: &str) -> bool {
-    list.split_ascii_whitespace().any(|item| item == text)
-}
 
 /// The syntax of the value the expression word `text` takes, or `None` for one that takes
 /// none.

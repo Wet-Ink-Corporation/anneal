@@ -48,9 +48,10 @@
 //! - **Redirections** at the end: `> <target>` for each file written (any write operator is
 //!   shown as `>`), `< <redacted>` for a file read, `<<< <redacted>` for a heredoc or
 //!   here-string; the target hidden unless it is a sensitive target. Comments are dropped.
-//! - **Bodies**: a `bash -c`, `eval`, `su -c`, `trap` or `watch` body (the denylist's
-//!   [`denylist::Layout::Script`]) that is literal is lexed and rendered in turn, in `'…'`, at
-//!   most [`MAX_NESTING`] deep and within the denylist's lexing budget; any other body is
+//! - **Bodies**: a `bash -c`, `eval`, `su -c`, `trap` or `watch` (without `-x`) body (the
+//!   denylist's [`denylist::Layout::Script`]) that is literal is lexed and rendered in turn,
+//!   in `'…'`, at most [`MAX_NESTING`] deep and within the denylist's lexing budget; any other
+//!   body is
 //!   hidden. `find`'s actions are rendered as commands, and its own words by its tables
 //!   wherever the walk finds it (`sudo find`, `X=1 find`).
 //!
@@ -239,7 +240,7 @@ impl Skeleton {
     /// as wrapper words.
     fn script(&mut self, all: Lead<'_>, body: &Body<'_>, line: &mut Line) {
         let Some(source) = &body.source else {
-            // A body inside a word or built from several (`env -Sbody`, `alias`): the words
+            // A body inside a word or built from several (`--command=body`, `alias`): the words
             // are rendered as they are, then the body after them when every word is literal.
             render_lead(all, None, line);
             if all.words.iter().all(Word::is_literal) {

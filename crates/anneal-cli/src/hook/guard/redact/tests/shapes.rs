@@ -172,6 +172,73 @@ const ROWS: &[(&str, &[&str], &str)] = &[
         &["sekritA"],
         "find . -maxdepth <redacted> -<redacted> <redacted> <redacted> <redacted>",
     ),
+    // Review round 7: env splits `-S`'s string into words and runs them without a shell, so
+    // `;` and backticks in it are arguments, not shell text.
+    (
+        "env -S 'echo a; hunter2'",
+        &["hunter2"],
+        "env -S <redacted>",
+    ),
+    (
+        "env --split-string='echo a; hunter2'",
+        &["hunter2"],
+        "env --split-string=<redacted>",
+    ),
+    ("env -S 'echo `hunter2`'", &["hunter2"], "env -S <redacted>"),
+    (
+        "env -i -S 'echo a; hunter2'",
+        &["hunter2"],
+        "env -i -S <redacted>",
+    ),
+    // watch with `-x` runs its words without a shell.
+    (
+        "watch -x echo 'a; hunter2'",
+        &["hunter2"],
+        "watch -x <redacted> <redacted>",
+    ),
+    (
+        "watch --exec echo 'a; hunter2'",
+        &["hunter2"],
+        "watch --exec <redacted> <redacted>",
+    ),
+    (
+        "watch -n 1 -x echo 'a; hunter2'",
+        &["hunter2"],
+        "watch -n <redacted> -x <redacted> <redacted>",
+    ),
+    // A glob, variable or substitution in a value or operand slot may become several words
+    // or none.
+    (
+        "sudo -u $U psql",
+        &["psql"],
+        "sudo -u <redacted> <redacted>",
+    ),
+    (
+        "sudo -u \"$(whoami)\" psql",
+        &["psql"],
+        "whoami; sudo -u <redacted> <redacted>",
+    ),
+    ("nice -n $N rm", &["rm"], "nice -n <redacted> <redacted>"),
+    (
+        "doas -u u* psql",
+        &["psql"],
+        "doas -u <redacted> <redacted>",
+    ),
+    (
+        "flock /tmp/*.lock psql",
+        &["psql"],
+        "flock <redacted> <redacted>",
+    ),
+    (
+        "su $U -c 'dropdb x'",
+        &["dropdb"],
+        "su <redacted> -c <redacted>",
+    ),
+    (
+        "find . -name *.rs -exec sekritA x \\;",
+        &["sekritA"],
+        "find . -name <redacted> -<redacted> <redacted> <redacted> <redacted>",
+    ),
 ];
 
 #[test]

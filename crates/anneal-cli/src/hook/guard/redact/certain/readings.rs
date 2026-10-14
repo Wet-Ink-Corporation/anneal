@@ -15,7 +15,7 @@ pub(super) struct Reading {
     /// The syntax of the value options of [`Reading::values`] that have one; any other value
     /// is [`Shape::Any`].
     pub(super) shapes: &'static [(&'static str, Shape)],
-    /// Options whose value is the shell text the wrapper runs (`bash -c`, `env -S`).
+    /// Options whose value is the shell text the wrapper runs (`bash -c`, `flock -c`).
     pub(super) body: &'static str,
     /// Words after the options that are not the command (`timeout`'s duration).
     pub(super) operands: usize,
@@ -107,7 +107,6 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
         Reading {
             flags: "-i -0 -v --ignore-environment --null --debug",
             values: "-u -C --unset --chdir",
-            body: "-S --split-string",
             assignments: true,
             ..NONE
         },
@@ -314,9 +313,8 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "watch",
         Reading {
-            flags: "-b -c -C -d -e -g -p -r -t -w -x --beep --color --no-color \
-                    --differences --errexit --chgexit --precise --no-rerun --no-title \
-                    --no-wrap --exec",
+            flags: "-b -c -C -d -e -g -p -r -t -w --beep --color --no-color --differences \
+                    --errexit --chgexit --precise --no-rerun --no-title --no-wrap",
             values: "-n -q --interval --equexit",
             shapes: &[
                 ("-n", Shape::Number),

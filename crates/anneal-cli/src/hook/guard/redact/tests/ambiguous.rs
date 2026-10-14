@@ -75,10 +75,6 @@ fn a_wrapper_read_with_certainty_still_shows_what_it_runs() {
             "script -q -c 'rm -rf /' /dev/null",
         ),
         ("watch -n 1 rm -rf /", "watch -n <redacted> 'rm -rf /'"),
-        (
-            "env --split-string='rm -rf /'",
-            "env --split-string=<redacted> 'rm -rf /'",
-        ),
         ("sudo -- rm -rf /", "sudo -- rm -rf /"),
     ]);
 }

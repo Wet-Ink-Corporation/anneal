@@ -10,11 +10,14 @@
 //! value option followed by its value (or with it attached, `-n1`, `--user=x`, where the
 //! wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
 //! assignments, ending exactly where the walk put the next wrapper, the program or the body.
-//! A word filling a value or operand slot counts only when it has that slot's strict shape
+//! A word filling a value or operand slot counts only when it is literal (no glob, variable
+//! or substitution, which may become several words or none) and has that slot's strict shape
 //! ([`shape::Shape`]: chrt's priority all digits, timeout's duration, a value not starting
-//! with `-`); `find`'s words before its actions are read by [`find`]'s tables. From the first
-//! word that does not read with certainty, the rest of the simple command is rendered as
-//! arguments: the skeleton may hide more than needed, never show a value as a program.
+//! with `-`); `find`'s words before its actions are read by [`find`]'s tables. `env -S` and
+//! `watch -x` are not in the tables: both split their words and run them without a shell,
+//! so what follows is no shell text the skeleton can render. From the first word that does
+//! not read with certainty, the rest of the simple command is rendered as arguments: the
+//! skeleton may hide more than needed, never show a value as a program.
 //!
 //! The tables trust only what they hold: a wrapper or option not listed is uncertain, and a
 //! run of words is certain only where the tables and the walk read it the same way.
@@ -220,67 +223,130 @@ impl<'w> Run<'w> {
     /// The offset of the first word `reading` does not read with certainty, or `None` when
     /// every word does and the run ends as `mode` requires.
     fn first_uncertain(self, reading: Reading, mode: Mode) -> Option<usize> {
-        let len = self.words.len();
+        let mut walk = Walk {
+            reading,
+            mode,
+            operands: 0,
+            options: true,
+            listed: false,
+        };
         let mut at = 0_usize;
-        let mut operands = 0_usize;
-        let mut options = true;
-        let mut listed = false;
         while let Some(word) = self.other(at) {
             let text = word.text.as_str();
-            let next = at.saturating_add(1);
-            if options && word.is_literal() && text == "--" {
-                options = false;
-                at = next;
-                continue;
-            }
-            let is_option = options
-                && word.is_literal()
-                && text.starts_with('-')
-                && (text != "-" || holds(reading.flags, text));
-            if !is_option {
-                if operands < reading.operands {
-                    let shape = if listed {
-                        Shape::CpuList
-                    } else {
-                        reading.operand
-                    };
-                    if !shape.fills(word) {
-                        return Some(at);
-                    }
-                    operands = operands.saturating_add(1);
-                } else if !reading.operands_anywhere {
-                    break;
-                }
-                at = next;
-                continue;
-            }
-            match reading.option(text) {
-                Opt::Flag => {
-                    listed |= holds(reading.lists, text);
-                    at = next;
-                }
-                Opt::Attached => at = next,
-                Opt::Value(shape) => match self.other(next) {
-                    Some(value) if shape.fills(value) => at = next.saturating_add(1),
-                    Some(_) => return Some(next),
-                    None => return Some(at),
-                },
-                Opt::Body if mode == Mode::Body && next == len => return None,
-                Opt::AttachedBody if mode == Mode::Attached => return None,
-                Opt::Body | Opt::AttachedBody | Opt::Unknown => return Some(at),
+            let step = if walk.options && word.is_literal() && text == "--" {
+                walk.options = false;
+                Step::To(at.saturating_add(1))
+            } else if walk.is_option(word) {
+                self.option(&mut walk, at, text)
+            } else {
+                walk.operand(at, word)
+            };
+            match step {
+                Step::To(next) => at = next,
+                Step::End => break,
+                Step::Settled(first) => return first,
             }
         }
-        if operands < reading.operands {
+        self.end(&walk, at)
+    }
+
+    /// The option word `text` at `at`: a flag, a value option and its value, or a body.
+    fn option(self, walk: &mut Walk, at: usize, text: &str) -> Step {
+        let next = at.saturating_add(1);
+        match walk.reading.option(text) {
+            Opt::Flag => {
+                walk.listed |= holds(walk.reading.lists, text);
+                Step::To(next)
+            }
+            Opt::Attached => Step::To(next),
+            Opt::Value(shape) => match self.other(next) {
+                Some(value) if shape.fills(value) => Step::To(next.saturating_add(1)),
+                Some(_) => Step::Settled(Some(next)),
+                None => Step::Settled(Some(at)),
+            },
+            Opt::Body if walk.mode == Mode::Body && next == self.words.len() => Step::Settled(None),
+            Opt::AttachedBody if walk.mode == Mode::Attached => Step::Settled(None),
+            Opt::Body | Opt::AttachedBody | Opt::Unknown => Step::Settled(Some(at)),
+        }
+    }
+
+    /// Where the words after the options and operands, ending at `at`, leave the run: the
+    /// wrapper's own assignments, then the end `mode` requires.
+    fn end(self, walk: &Walk, mut at: usize) -> Option<usize> {
+        if walk.operands < walk.reading.operands {
             return Some(at);
         }
-        if reading.assignments {
+        if walk.reading.assignments {
             while self.roles.get(at) == Some(&Role::Assignment) {
                 at = at.saturating_add(1);
             }
         }
         // A wrapper with body options runs a body only through one of them.
-        let unended = mode != Mode::Next && !reading.body.is_empty();
-        (at < len || unended).then_some(at)
+        let unended = walk.mode != Mode::Next && !walk.reading.body.is_empty();
+        (at < self.words.len() || unended).then_some(at)
+    }
+}
+
+/// What reading one word of a [`Run`] does to the walk over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Go on at this offset.
+    To(usize),
+    /// The options and operands end at this word.
+    End,
+    /// The run's reading is settled: the first uncertain offset, or `None` when certain.
+    Settled(Option<usize>),
+}
+
+/// The state of the walk over one [`Run`] by its wrapper's [`Reading`].
+#[derive(Debug, Clone, Copy)]
+struct Walk {
+    reading: Reading,
+    mode: Mode,
+    /// The operands read so far.
+    operands: usize,
+    /// Whether options may still follow (no `--` yet).
+    options: bool,
+    /// Whether a flag of [`Reading::lists`] was read.
+    listed: bool,
+}
+
+impl Walk {
+    /// Whether `word` stands as an option: literal, starting with `-`, and not a lone `-`
+    /// unless the wrapper takes it as a flag (`su -`).
+    fn is_option(&self, word: &Word) -> bool {
+        let text = word.text.as_str();
+        self.options
+            && word.is_literal()
+            && text.starts_with('-')
+            && (text != "-" || holds(self.reading.flags, text))
+    }
+
+    /// The word at `at` that is no option: one of the wrapper's operands, of its shape, or
+    /// where operands may stand among the options a literal one; else the options end.
+    fn operand(&mut self, at: usize, word: &Word) -> Step {
+        let next = at.saturating_add(1);
+        if self.operands < self.reading.operands {
+            let shape = if self.listed {
+                Shape::CpuList
+            } else {
+                self.reading.operand
+            };
+            if !shape.fills(word) {
+                return Step::Settled(Some(at));
+            }
+            self.operands = self.operands.saturating_add(1);
+            return Step::To(next);
+        }
+        if !self.reading.operands_anywhere {
+            return Step::End;
+        }
+        // A glob, variable or substitution may become an option or several words.
+        if word.is_literal() {
+            Step::To(next)
+        } else {
+            Step::Settled(Some(at))
+        }
     }
 }
 

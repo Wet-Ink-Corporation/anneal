@@ -40,13 +40,15 @@ pub(super) enum Shape {
 
 impl Shape {
     /// Whether the word `word`, on its own after its option or as an operand, fills the slot
-    /// with certainty: literal and of this shape, or for [`Shape::Any`] not starting with `-`
-    /// (it would be an option the wrapper may read as one).
+    /// with certainty: literal (a glob, variable or substitution may become no word or
+    /// several, moving every word after it) and of this shape, or for [`Shape::Any`] not
+    /// starting with `-` (it would be an option the wrapper may read as one).
     pub(super) fn fills(self, word: &Word) -> bool {
-        match self {
-            Self::Any => !word.text.starts_with('-'),
-            _ => word.is_literal() && self.accepts(&word.text),
-        }
+        word.is_literal()
+            && match self {
+                Self::Any => !word.text.starts_with('-'),
+                _ => self.accepts(&word.text),
+            }
     }
 
     /// Whether `text`, a value attached to its option (`-n5`, `--signal=KILL`), has this

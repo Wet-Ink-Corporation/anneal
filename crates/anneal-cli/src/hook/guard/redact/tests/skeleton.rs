@@ -205,7 +205,6 @@ const STRING_WRAPPERS: &[&str] = &[
     "script -c",
     "watch",
     "flock /tmp/lock -c",
-    "env -S",
     "sudo bash -c",
     "xargs sh -c",
     "nohup bash -c",
@@ -267,7 +266,12 @@ fn a_literal_shell_body_is_rendered_as_commands_and_any_other_is_hidden() {
             "su -c 'dropdb prod' root",
             "su -c 'dropdb <redacted>' <redacted>",
         ),
-        ("env -Srm\\ -rf\\ /", "env -<redacted> 'rm -rf /'"),
+        // env splits `-S`'s string into words and runs them without a shell.
+        ("env -Srm\\ -rf\\ /", "env -<redacted>"),
+        (
+            "su --command='rm -rf /'",
+            "su --command=<redacted> 'rm -rf /'",
+        ),
     ]);
 }
 
@@ -662,6 +666,18 @@ const TEMPLATES: &[&str] = &[
     "xargs -n x {}",
     "find . -name -exec {} \\;",
     "find . -exec echo + -exec {} x \\;",
+    // Wrappers that split their words and run them without a shell, and slots filled by a
+    // word that may expand (PR 120 review round 7).
+    "env -S 'echo a; {}'",
+    "env --split-string='echo a; {}'",
+    "env -S 'echo `{}`'",
+    "watch -x echo 'a; {}'",
+    "watch --exec echo 'a; {}'",
+    "sudo -u $U {}",
+    "doas -u u* {}",
+    "flock /tmp/*.lock {}",
+    "su $U -c {}",
+    "find . -name *.rs -exec {} x \\;",
 ];
 
 #[test]

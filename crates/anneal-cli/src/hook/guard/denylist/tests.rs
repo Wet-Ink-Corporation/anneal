@@ -375,6 +375,18 @@ fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
         ("taskset -p 0x1 rm -rf / 0", RM_RF),
         ("taskset -p 0x1 rm -rf / -1", RM_RF),
         ("taskset -cp 0 rm -rf / -0", RM_RF),
+        // Round 7.
+        ("env -S 'echo a; rm -rf /'", RM_RF),
+        ("env --split-string='echo a; rm -rf /'", RM_RF),
+        ("env -S 'echo `rm -rf /`'", RM_RF),
+        ("watch -x echo 'a; rm -rf /'", RM_RF),
+        ("watch --exec echo 'a; rm -rf /'", RM_RF),
+        ("sudo -u $U rm -rf /", RM_RF),
+        ("nice -n $N rm -rf /", RM_RF),
+        ("doas -u u* rm -rf /", RM_RF),
+        ("flock /tmp/*.lock rm -rf /", RM_RF),
+        ("su $U -c 'rm -rf /'", RM_RF),
+        ("find . -name *.rs -exec rm -rf / \\;", RM_RF),
     ]);
 }
 

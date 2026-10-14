@@ -350,7 +350,13 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   (a CPU list such as `0-3,5` after `-c`), `nice -n` an integer, `ionice -c` a class and `-n`
   digits, `watch -n` and `flock -w` a number, the counts of `xargs`, `chrt`, `sudo -C`,
   `flock -E` and `watch -q` digits, `stdbuf`'s sizes a size or `L`, and any other value a word
-  not starting with `-` (`sudo -u -E psql` is uncertain). A shell's short-option cluster
+  not starting with `-` (`sudo -u -E psql` is uncertain); every value and operand must be
+  literal, since a glob, variable or substitution may become several words or none
+  (`sudo -u $U psql`, `flock /tmp/*.lock psql` and `su $U -c …` are uncertain). `env -S`
+  (`--split-string`) and `watch -x` (`--exec`) are never trusted: both split their words
+  and run them directly, with no shell, so their string is no shell text to render
+  (`env -S 'echo a; hunter2'` is `env -S <redacted>`, `watch -x echo 'a; hunter2'` is
+  `watch -x <redacted> <redacted>`). A shell's short-option cluster
   reads letter by letter: each letter one of its no-value flags, `c` only last, the body then
   the next word, as the denylist's walk also reads it (`bash -lc 'rm -rf /'` is
   `bash -<redacted> 'rm -rf /'`; `bash -cl …` and `bash -lsc …` are uncertain). `find`'s
@@ -360,8 +366,8 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `-name` a word not starting with `-`), and each action ending in `;`, or in `+` right
   after `{}`: `find . -name -exec x \;` holds no action (find reads `-exec` as the pattern)
   and is rendered as arguments. From the first word that does not (a cluster longer than one
-  letter, an option the tables do not know, a value or operand without its slot's shape,
-  `chrt`/`taskset` with `-p` or `--pid`, an assignment after a
+  letter, an option the tables do not know, a value or operand without its slot's shape or
+  not literal, `env -S`, `watch -x`, `chrt`/`taskset` with `-p` or `--pid`, an assignment after a
   wrapper that takes none, such as `nohup K=v run`), every word of that simple command is an
   argument of no known program, hidden unless a program-free table (the sensitive targets,
   one-letter options, long option names) names it, and no body is rendered:
@@ -372,8 +378,9 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `chrt -i mysql -phunter2` is `chrt -i <redacted> -<redacted>`. Clef loses the program
   there; nothing leaks. Signal lost by design: a `timeout` duration in another `strtod` form (`1e3`, `0x10`), a `taskset` mask list
   (`ff,ff`), `bash -eo pipefail -c …` (a cluster ending in a value letter), a `find`
-  primary outside the tables (`-fprintf`, `-newerXY`) or an unquoted glob as a `find` value
-  before an action (it may expand to several words).
+  primary outside the tables (`-fprintf`, `-newerXY`), an unquoted glob or variable as a
+  wrapper's or `find`'s value before what it runs (it may expand to several words), and what
+  `env -S` and `watch -x` run.
 - **The program**: its name without a path or `.exe` (`/usr/bin/python3.12` is `python3.12`,
   `./deploy.sh` is `deploy.sh`), kept when the word is literal (no expansion, glob or brace)
   and the name 1 to 64 of `[A-Za-z0-9._+-]`; otherwise `<redacted>` (`"$CMD"`, `./my tool`).
@@ -410,10 +417,12 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   or here-string; a target is kept only when it is a sensitive target (`> /dev/null`,
   `> /dev/sda`). Comments are dropped.
 - **Bodies**: the shell text a wrapper runs (`bash -c`, `sh -c`, `eval`, `su -c`,
-  `script -c`, `flock -c`, `env -S`, `trap`, `watch`; the denylist's `Script`), when the words
+  `script -c`, `flock -c`, `trap`, `watch` without `-x`; the denylist's `Script`, less
+  `env -S`, which runs no shell), when the words
   it comes from are literal, is lexed and rendered the same way one level deeper, in `'…'`, in
   place of those words (`bash -c 'rm -rf /; git push -f origin main'`, `eval 'rm -rf /'`), or
-  after them when it is part of a word (`env -Srm\ -rf\ /` is `env -<redacted> 'rm -rf /'`); a
+  after them when it is part of a word (`su --command='rm -rf /'` is
+  `su --command=<redacted> 'rm -rf /'`); a
   body from a word with an expansion is `<redacted>` (`bash -c "$CMD"`), one that does not lex
   `'<unparsed>'`, and one past 32 levels or the denylist's 4 MiB lexing budget `<redacted>`.
   `find`'s actions are rendered as commands (`find / -exec rm -rf {} ;`), and its own words by
