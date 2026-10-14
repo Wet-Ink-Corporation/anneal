@@ -405,6 +405,30 @@ fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
             ALLOW,
         ),
         ("bash -c 'rm -rf /' -- -y", RM_RF),
+        // Round 9. The ALLOW rows are main's: bash's trap reads a first word of digits or `-`
+        // as a signal to reset, and so does the denylist.
+        ("trap 'rm -rf /'", RM_RF),
+        ("trap 'rm -rf /' -l", RM_RF),
+        ("trap 'rm -rf /' $S", RM_RF),
+        ("trap 2 'rm -rf /'", ALLOW),
+        ("trap - 'rm -rf /'", ALLOW),
+        ("flock /l -c 'rm -rf /' y", RM_RF),
+        ("flock /l --command 'rm -rf /' y", RM_RF),
+        ("flock /l --command='rm -rf /'", RM_RF),
+        ("script -c 'rm -rf /' a b", RM_RF),
+        ("script a -c 'rm -rf /' b", RM_RF),
+        ("script --command='rm -rf /' a b", RM_RF),
+        ("script -O log -c 'rm -rf /' typescript", RM_RF),
+        ("dash -B -c 'rm -rf /'", RM_RF),
+        ("sh -h -c 'rm -rf /'", RM_RF),
+        ("zsh -b -c 'rm -rf /'", RM_RF),
+        ("mksh -T -c 'rm -rf /'", RM_RF),
+        ("bash -n -c 'rm -rf /'", RM_RF),
+        ("bash -l --norc -c 'rm -rf /'", RM_RF),
+        ("bash -o nosuch -c 'rm -rf /'", RM_RF),
+        ("bash -O nosuch -c 'rm -rf /'", RM_RF),
+        ("su -s /bin/false -c 'rm -rf /'", RM_RF),
+        ("alias 'a b=rm -rf /'", RM_RF),
     ]);
 }
 

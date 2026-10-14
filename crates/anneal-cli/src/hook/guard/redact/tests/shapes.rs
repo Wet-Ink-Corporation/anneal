@@ -301,6 +301,107 @@ const ROWS: &[(&str, &[&str], &str)] = &[
         &["hunter2"],
         "bash -c <redacted> <redacted>",
     ),
+    // Review round 9: what follows a body decides whether the wrapper runs it. bash's trap
+    // needs a signal after its action, takes a lone operand or a first one of digits or `-`
+    // as signals to reset, and an option-shaped or expanding word may be no signal.
+    ("trap 'hunter2 x'", &["hunter2"], "trap <redacted>"),
+    ("trap 'hunter2 x' -l", &["hunter2"], "trap <redacted> -l"),
+    (
+        "trap 'hunter2 x' $S",
+        &["hunter2"],
+        "trap <redacted> <redacted>",
+    ),
+    (
+        "trap 2 'hunter2 x'",
+        &["hunter2"],
+        "trap <redacted> <redacted>",
+    ),
+    ("trap - 'hunter2 x'", &["hunter2"], "trap - <redacted>"),
+    // flock's `-c` takes exactly one word after it, and only as its own word.
+    (
+        "flock /l -c 'hunter2 x' y",
+        &["hunter2"],
+        "flock <redacted> -c <redacted> <redacted>",
+    ),
+    (
+        "flock /l --command 'hunter2 x' y",
+        &["hunter2"],
+        "flock <redacted> --command <redacted> <redacted>",
+    ),
+    (
+        "flock /l --command='hunter2 x'",
+        &["hunter2"],
+        "flock <redacted> --command=<redacted>",
+    ),
+    // script takes at most one file, before or after its body.
+    (
+        "script -c 'hunter2 x' a b",
+        &["hunter2"],
+        "script -c <redacted> <redacted> <redacted>",
+    ),
+    (
+        "script a -c 'hunter2 x' b",
+        &["hunter2"],
+        "script <redacted> -c <redacted> <redacted>",
+    ),
+    (
+        "script --command='hunter2 x' a b",
+        &["hunter2"],
+        "script --command=<redacted> <redacted> <redacted>",
+    ),
+    // With a log file named by `-O` (`-B`, `-I`) script takes no file operand.
+    (
+        "script -O log -c 'hunter2 x' typescript",
+        &["hunter2"],
+        "script -O <redacted> -c <redacted> <redacted>",
+    ),
+    // A shell runs its body only when it takes every option before it: dash and zsh take
+    // fewer flags than bash, `-o` only an option name it knows, bash a long option only before
+    // its short ones, `-n` runs nothing and mksh's `-T` takes the next word.
+    (
+        "dash -B -c 'hunter2 x'",
+        &["hunter2"],
+        "dash -B -c <redacted>",
+    ),
+    ("sh -h -c 'hunter2 x'", &["hunter2"], "sh -h -c <redacted>"),
+    (
+        "zsh -b -c 'hunter2 x'",
+        &["hunter2"],
+        "zsh -b -c <redacted>",
+    ),
+    (
+        "mksh -T -c 'hunter2 x'",
+        &["hunter2"],
+        "mksh -T -c <redacted>",
+    ),
+    (
+        "bash -n -c 'hunter2 x'",
+        &["hunter2"],
+        "bash -n -c <redacted>",
+    ),
+    (
+        "bash -l --norc -c 'hunter2 x'",
+        &["hunter2"],
+        "bash -l --norc -c <redacted>",
+    ),
+    (
+        "bash -o nosuch -c 'hunter2 x'",
+        &["hunter2"],
+        "bash -o <redacted> -c <redacted>",
+    ),
+    (
+        "bash -O nosuch -c 'hunter2 x'",
+        &["hunter2"],
+        "bash -O <redacted> -c <redacted>",
+    ),
+    // su runs its body with the `-s` program, which may be no shell.
+    (
+        "su -s /bin/false -c 'hunter2 x'",
+        &["hunter2"],
+        "su -s <redacted> -c <redacted>",
+    ),
+    // bash defines no alias whose name it refuses.
+    ("alias 'a b=hunter2 x'", &["hunter2"], "alias <redacted>"),
 ];
 
 #[test]
@@ -412,5 +513,22 @@ fn a_body_followed_by_no_option_word_is_still_shown() {
             "script -c 'rm -rf /' /dev/null",
             "script -c 'rm -rf /' /dev/null",
         ),
+        // Review round 9: each wrapper's body with what may follow it.
+        ("trap 'rm -rf /' EXIT", "trap 'rm -rf /' <redacted>"),
+        (
+            "trap -- 'rm -rf /' INT 15",
+            "trap -- 'rm -rf /' <redacted> <redacted>",
+        ),
+        ("flock /l -c 'rm -rf /'", "flock <redacted> -c 'rm -rf /'"),
+        (
+            "script /dev/null -c 'rm -rf /'",
+            "script /dev/null -c 'rm -rf /'",
+        ),
+        ("sh -eu -c 'rm -rf /'", "sh -<redacted> -c 'rm -rf /'"),
+        (
+            "bash --norc -l -o pipefail -c 'rm -rf /'",
+            "bash --norc -l -o <redacted> -c 'rm -rf /'",
+        ),
+        ("alias ll='rm -rf /'", "alias <redacted> 'rm -rf /'"),
     ]);
 }

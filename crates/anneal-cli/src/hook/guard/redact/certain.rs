@@ -11,8 +11,16 @@
 //! wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
 //! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
 //! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
-//! body, and a body only when no later word of the simple command starts with `-` or may
-//! expand (`su` and `script` read options anywhere, the last `-c` winning).
+//! body. A body counts only when the words after it are what its wrapper's reading lets
+//! follow ([`after::After`]), each literal and not starting with `-` (`su` and `script`
+//! read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
+//! `flock`, none, its `-c` a word of its own; for `script`, at most one file in the whole run
+//! (and none of `-B`, `-I` or `-O`, after which it takes no file); for `trap`, at least one
+//! signal, after an action neither all digits nor `-`. Otherwise the wrapper may refuse the
+//! command and run nothing (`trap 'x y'` reads `x y` as a signal). A shell's options are its
+//! own (dash and zsh take fewer flags than bash, bash a long option only before the short
+//! ones, `-o` only an option name it knows, no `-n`), `su`'s exclude `-s` (the body runs
+//! under that program), and an alias's name is one bash takes.
 //! A word filling a value or operand slot counts only when it is literal (no glob, variable
 //! or substitution, which may become several words or none) and has that slot's strict shape
 //! ([`shape::Shape`]: chrt's priority all digits, timeout's duration, a value not starting
@@ -25,6 +33,7 @@
 //! The tables trust only what they hold: a wrapper or option not listed is uncertain, and a
 //! run of words is certain only where the tables and the walk read it the same way.
 
+mod after;
 mod find;
 mod readings;
 mod shape;
@@ -33,7 +42,7 @@ use std::ops::Range;
 
 use super::denylist::{self, Role};
 use super::shell::Word;
-use readings::{NONE, Reading, Style};
+use readings::{BodyWord, NONE, Reading, Style};
 use shape::Shape;
 
 /// Where the words of the last wrapper the walk read end, by the layout it gave the command.
@@ -41,8 +50,13 @@ use shape::Shape;
 pub(super) enum End<'a> {
     /// At the program, this index.
     Program(usize),
-    /// At the word or words the body came from, starting at this index.
-    Body(usize),
+    /// At the word or words the body came from, from index `start` up to `end`.
+    Body {
+        /// The index of the body's first word.
+        start: usize,
+        /// The index past its last word.
+        end: usize,
+    },
     /// At the end of the command: the body is inside one of its words (`env -Sbody`,
     /// `--command=body`) or built from several (`alias`).
     Attached,
@@ -79,11 +93,25 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
     for (nth, &at) in wrappers.iter().enumerate() {
         let start = at.saturating_add(1);
         let name = words.get(at).and_then(denylist::program_name);
-        let (stop, mode) = match (wrappers.get(nth.saturating_add(1)), end) {
-            (Some(&next), _) => (next, Mode::Next),
-            (None, End::Program(program)) => (program, Mode::Next),
-            (None, End::Body(body)) => (body, Mode::Body),
-            (None, End::Attached) => (words.len(), Mode::Attached),
+        // Where the run stops, how it must end, and the words of the body and after it, which
+        // the body's reading must also account for (none unless the run ends at a body word).
+        let (stop, mode, body, after) = match (wrappers.get(nth.saturating_add(1)), end) {
+            (Some(&next), _) => (next, Mode::Next, &[][..], &[][..]),
+            (None, End::Program(program)) => (program, Mode::Next, &[][..], &[][..]),
+            (
+                None,
+                End::Body {
+                    start: from,
+                    end: to,
+                },
+            ) => {
+                // Bounds the walk did not give in order are no certain reading.
+                let (Some(body), Some(after)) = (words.get(from..to), words.get(to..)) else {
+                    return Some(start);
+                };
+                (from, Mode::Body, body, after)
+            }
+            (None, End::Attached) => (words.len(), Mode::Attached, &[][..], &[][..]),
             (None, End::Actions(actions)) if name == Some("find") => {
                 return find::first_uncertain(words, start, actions);
             }
@@ -96,15 +124,10 @@ pub(super) fn first_uncertain(words: &[Word], roles: &[Role], end: End<'_>) -> O
         else {
             return Some(start);
         };
-        // The words after the body word, which the body's reading must also account for (none
-        // when the body word is the last).
-        let after = match mode {
-            Mode::Body => words.get(stop.saturating_add(1)..).unwrap_or_default(),
-            Mode::Next | Mode::Attached => &[],
-        };
         let run = Run {
             words: run_words,
             roles: run_roles,
+            body,
             after,
         };
         if let Some(offset) = run.first_uncertain(reading, mode) {
@@ -139,9 +162,10 @@ enum Opt {
     /// An exact body option, or a shell's cluster of flags ending in one: the body is the
     /// next word.
     Body,
-    /// A body option with the body in the same word (`-Sbody`, `--command=body`).
+    /// A body option with the body in the same word (`-cbody`, `--command=body`), where
+    /// [`Reading::body_word`] allows.
     AttachedBody,
-    /// Anything else: an option the tables do not know, a cluster (`-iu`), or a value
+    /// Anything else: an option the tables do not know, a cluster (`-iu`), or a value or body
     /// attached where the wrapper takes none or not of its option's shape.
     Unknown,
 }
@@ -187,7 +211,11 @@ impl Reading {
                     Opt::Unknown
                 }
             }
-            Some((name, _)) if holds(self.body, name) => Opt::AttachedBody,
+            Some((name, _))
+                if self.body_word == BodyWord::NextOrAttached && holds(self.body, name) =>
+            {
+                Opt::AttachedBody
+            }
             _ => Opt::Unknown,
         }
     }
@@ -218,7 +246,9 @@ impl Reading {
 struct Run<'w> {
     words: &'w [Word],
     roles: &'w [Role],
-    /// The words of the simple command after the body word, when the run ends at one.
+    /// The word or words the body came from, when the run ends at them.
+    body: &'w [Word],
+    /// The words of the simple command after those, when the run ends at a body.
     after: &'w [Word],
 }
 
@@ -239,6 +269,7 @@ impl<'w> Run<'w> {
             reading,
             mode,
             operands: 0,
+            loose: 0,
             options: true,
             listed: false,
         };
@@ -265,6 +296,13 @@ impl<'w> Run<'w> {
     /// The option word `text` at `at`: a flag, a value option and its value, or a body.
     fn option(self, walk: &mut Walk, at: usize, text: &str) -> Step {
         let next = at.saturating_add(1);
+        // A shell takes its long options only before its short ones (`bash -l --norc` fails).
+        // Every word before `at` read as an option or a value, and no value starts with `-`.
+        let short = |word: &Word| word.text.starts_with('-') && !word.text.starts_with("--");
+        let after_short = self.words.iter().take(at).any(short);
+        if walk.reading.style == Style::Shell && text.starts_with("--") && after_short {
+            return Step::Settled(Some(at));
+        }
         match walk.reading.option(text) {
             Opt::Flag => {
                 walk.listed |= holds(walk.reading.lists, text);
@@ -276,23 +314,22 @@ impl<'w> Run<'w> {
                 Some(_) => Step::Settled(Some(next)),
                 None => Step::Settled(Some(at)),
             },
-            Opt::Body if walk.mode == Mode::Body && next == self.words.len() => self.body(at),
-            Opt::AttachedBody if walk.mode == Mode::Attached => self.body(at),
+            Opt::Body if walk.mode == Mode::Body && next == self.words.len() => {
+                Step::Settled(self.body(walk, at))
+            }
+            Opt::AttachedBody if walk.mode == Mode::Attached => Step::Settled(self.body(walk, at)),
             Opt::Body | Opt::AttachedBody | Opt::Unknown => Step::Settled(Some(at)),
         }
     }
 
-    /// The body option at `at`, where the walk read the body: certain only when no later
-    /// word of the simple command is option-shaped or may expand into one. `su` and `script`
-    /// read options anywhere and the last `-c` wins, so after another option word the body
-    /// the walk read may never run (`su -c 'x y' -c ls`).
-    fn body(self, at: usize) -> Step {
+    /// The body option at `at` (or the end of the run, for a wrapper that takes its body with
+    /// no option), where the walk read the body: `None` when the words after it are what
+    /// [`Reading::after`] lets follow, else `at`.
+    fn body(self, walk: &Walk, at: usize) -> Option<usize> {
         let later = self.words.get(at.saturating_add(1)..).unwrap_or_default();
-        let unsure = later
-            .iter()
-            .chain(self.after)
-            .any(|word| !word.is_literal() || word.text.starts_with('-'));
-        Step::Settled(unsure.then_some(at))
+        let following = later.iter().chain(self.after);
+        let certain = walk.reading.after.admits(self.body, following, walk.loose);
+        (!certain).then_some(at)
     }
 
     /// Where the words after the options and operands, ending at `at`, leave the run: the
@@ -313,7 +350,15 @@ impl<'w> Run<'w> {
         }
         // A wrapper with body options runs a body only through one of them.
         let unended = walk.mode != Mode::Next && !walk.reading.body.is_empty();
-        (at < self.words.len() || unended).then_some(at)
+        if at < self.words.len() || unended {
+            return Some(at);
+        }
+        // One with none (`trap`, `eval`, `watch`) runs the body after its options and operands.
+        match walk.mode {
+            // `at` is the end of the run: no word of it follows.
+            Mode::Body => self.body(walk, at),
+            Mode::Next | Mode::Attached => None,
+        }
     }
 }
 
@@ -335,6 +380,8 @@ struct Walk {
     mode: Mode,
     /// The operands read so far.
     operands: usize,
+    /// The operands read among the options ([`Reading::operands_anywhere`]) so far.
+    loose: usize,
     /// Whether options may still follow (no `--` yet).
     options: bool,
     /// Whether a flag of [`Reading::lists`] was read.
@@ -352,8 +399,8 @@ impl Walk {
             && (text != "-" || holds(self.reading.flags, text))
     }
 
-    /// The word at `at` that is no option: one of the wrapper's operands, of its shape, or
-    /// where operands may stand among the options a literal one; else the options end.
+    /// The word at `at` that is no option: one of the wrapper's operands, or where operands
+    /// may stand among the options another, each of the operands' shape; else the options end.
     fn operand(&mut self, at: usize, word: &Word) -> Step {
         let next = at.saturating_add(1);
         if self.operands < self.reading.operands {
@@ -372,7 +419,8 @@ impl Walk {
             return Step::End;
         }
         // A glob, variable or substitution may become an option or several words.
-        if word.is_literal() {
+        if self.reading.operand.fills(word) {
+            self.loose = self.loose.saturating_add(1);
             Step::To(next)
         } else {
             Step::Settled(Some(at))

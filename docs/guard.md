@@ -370,10 +370,21 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   not literal, `env -S`, `watch -x`, `chrt`/`taskset` with `-p` or `--pid`, an assignment
   after a wrapper that takes none, such as `nohup K=v run`, a non-literal assignment after
   `sudo` or `env`, such as `env K=$V x`, since bash field-splits a wrapper's arguments and
-  `V="1 echo"` makes `echo` the program, and a body option followed by another word starting
-  with `-` or not literal, such as `su -c 'x y' -c ls`, since `su` and `script` read options
-  anywhere and the last `-c` wins; a shell's body is cut the same way, which hides more than
-  needed for `bash -c 'x' -- -y`), every word of that simple command is an
+  `V="1 echo"` makes `echo` the program, a body followed by a word starting with `-` or not
+  literal, such as `su -c 'x y' -c ls`, since `su` and `script` read options anywhere and the
+  last `-c` wins (a shell's body is cut the same way, which hides more than needed for
+  `bash -c 'x' -- -y`), and a body its wrapper would refuse to run for what follows it:
+  anything after `flock … -c`'s body (flock exits 64), more than one file in all for
+  `script` (`script -c 'x' a b` exits 1) or any with `-B`, `-I` or `-O`, and a `trap` with no
+  signal after its action (`trap 'x y'` reads `x y` as a signal), a signal not literal or
+  starting with `-`, or an action of digits or `-` (`trap 2 'x'` resets both); likewise a
+  shell option the shell may refuse or that runs nothing: bash's flags, `-o` names and long
+  options (only before its short ones: `bash -l --norc` exits 2), no `-n` and no `-O`; for
+  `sh`, `dash`, `zsh`, `ksh`, `mksh` and `ash` only POSIX's `-a -C -e -f -i -m -u -v -x` and
+  `-o` names (`dash -B` and `sh -h` exit 2, zsh's `-b` ends its options, mksh's `-T` takes
+  the next word); `su -s`, which runs the body with that program; `flock --command=x` and
+  `flock -cx`, which flock runs as a program's name; and an alias name bash refuses
+  (`alias 'a b=x'`)), every word of that simple command is an
   argument of no known program, hidden unless a program-free table (the sensitive targets,
   one-letter options, long option names) names it, and no body is rendered:
   `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`,
@@ -424,8 +435,9 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `> /dev/sda`). Comments are dropped.
 - **Bodies**: the shell text a wrapper runs (`bash -c`, `sh -c`, `eval`, `su -c`,
   `script -c`, `flock -c`, `trap`, `watch` without `-x`; the denylist's `Script`, less
-  `env -S`, which runs no shell), when the words it comes from are literal and no later word
-  starts with `-` or may expand, is lexed and rendered the same way one level deeper, in
+  `env -S`, which runs no shell), when the words it comes from are literal and the words after
+  them are what its wrapper lets follow (none starting with `-` or that may expand), is lexed
+  and rendered the same way one level deeper, in
   `'…'`, in place of those words (`bash -c 'rm -rf /; git push -f origin main'`,
   `eval 'rm -rf /'`), or after them when it is part of a word (`su --command='rm -rf /'` is
   `su --command=<redacted> 'rm -rf /'`); a body from a word with an expansion is `<redacted>`

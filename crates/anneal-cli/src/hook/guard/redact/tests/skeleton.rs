@@ -691,6 +691,30 @@ const TEMPLATES: &[&str] = &[
     "script -c'{} x' -cls /dev/null",
     "script --command '{} x' --command ls /dev/null",
     "script --command='{} x' --command=ls /dev/null",
+    // Words after (or before) a body that keep its wrapper from running it (PR 120 review
+    // round 9).
+    "trap '{} x'",
+    "trap '{} x' -l",
+    "trap '{} x' $S",
+    "trap 2 '{} x'",
+    "trap - '{} x'",
+    "flock /l -c '{} x' y",
+    "flock /l --command '{} x' y",
+    "flock /l --command='{} x'",
+    "script -c '{} x' a b",
+    "script a -c '{} x' b",
+    "script --command='{} x' a b",
+    "script -O log -c '{} x' typescript",
+    "dash -B -c '{} x'",
+    "sh -h -c '{} x'",
+    "zsh -b -c '{} x'",
+    "mksh -T -c '{} x'",
+    "bash -n -c '{} x'",
+    "bash -l --norc -c '{} x'",
+    "bash -o x -c '{} x'",
+    "bash -O x -c '{} x'",
+    "su -s /bin/false -c '{} x'",
+    "alias 'a b={} x'",
 ];
 
 #[test]

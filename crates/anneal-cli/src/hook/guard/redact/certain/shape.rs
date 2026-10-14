@@ -36,6 +36,10 @@ pub(super) enum Shape {
     Mode,
     /// One of these space-separated words (`ionice -c idle`).
     Words(&'static str),
+    /// An alias definition or name (`ll=ls -l`, `ll`): a name of the characters POSIX allows
+    /// in one (ASCII letters, digits, `!`, `%`, `,`, `-`, `@` and `_`), then any value after a
+    /// `=`. bash defines no alias whose name it refuses (`alias 'a b=x'`).
+    Alias,
 }
 
 impl Shape {
@@ -85,6 +89,14 @@ impl Shape {
             }
             Self::Mode => mode(text),
             Self::Words(words) => words.split_ascii_whitespace().any(|word| word == text),
+            Self::Alias => {
+                let name = text.split_once('=').map_or(text, |(name, _)| name);
+                !name.is_empty()
+                    && name.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric()
+                            || matches!(byte, b'!' | b'%' | b',' | b'-' | b'@' | b'_')
+                    })
+            }
         }
     }
 }

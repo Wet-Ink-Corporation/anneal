@@ -1,6 +1,7 @@
 //! The tables: how each wrapper the denylist's walk reads takes its words, as far as the
 //! skeleton trusts them.
 
+use super::after::After;
 use super::shape::Shape;
 
 /// How one wrapper reads the words between its name and what it runs, as far as the skeleton
@@ -17,9 +18,14 @@ pub(super) struct Reading {
     pub(super) shapes: &'static [(&'static str, Shape)],
     /// Options whose value is the shell text the wrapper runs (`bash -c`, `flock -c`).
     pub(super) body: &'static str,
+    /// Where a body option of [`Reading::body`] takes its body.
+    pub(super) body_word: BodyWord,
+    /// What may follow the body for the wrapper to run it.
+    pub(super) after: After,
     /// Words after the options that are not the command (`timeout`'s duration).
     pub(super) operands: usize,
-    /// The syntax of those operands.
+    /// The syntax of those operands, and of each operand standing among the options where
+    /// [`Reading::operands_anywhere`] allows (`alias`'s definitions).
     pub(super) operand: Shape,
     /// Flags after which the operands are a [`Shape::CpuList`] instead (`taskset -c`).
     pub(super) lists: &'static str,
@@ -44,12 +50,25 @@ pub(super) enum Style {
     Shell,
 }
 
+/// Where a body option takes its body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodyWord {
+    /// Only the next word: flock compares its second operand with `-c` or `--command` whole,
+    /// and runs `-cx` or `--command=x` as a program's name.
+    Next,
+    /// The next word, or the rest of the option's own (`-cbody`, `--command=body`), as getopt
+    /// reads it.
+    NextOrAttached,
+}
+
 /// A wrapper with no options, operands or assignments the skeleton trusts.
 pub(super) const NONE: Reading = Reading {
     flags: "",
     values: "",
     shapes: &[],
     body: "",
+    body_word: BodyWord::Next,
+    after: After::Operands,
     operands: 0,
     operand: Shape::Any,
     lists: "",
@@ -58,16 +77,40 @@ pub(super) const NONE: Reading = Reading {
     style: Style::Getopt,
 };
 
-/// The shells: one-letter flags, read letter by letter in a cluster, `-o`/`-O` with the next
-/// word as their value, and `-c`, whose body is the next word once the options end.
-const SHELL: Reading = Reading {
-    flags: "-a -b -B -C -e -E -f -h -H -i -k -l -m -n -p -P -r -t -T -u -v -x --login \
+/// bash: its one-letter flags, read letter by letter in a cluster, `-o` with the name of one of
+/// its options as the next word, its long options (which bash takes only before the short
+/// ones, [`Style::Shell`]), and `-c`, whose body is the next word once the options end. A
+/// flag or `-o` name it does not know makes it refuse the command, `-n` reads the body
+/// without running it, and `-O`'s names are not listed, so none of those is here.
+const BASH: Reading = Reading {
+    flags: "-a -b -B -C -e -E -f -h -H -i -k -l -m -p -P -r -t -T -u -v -x --login \
             --noediting --noprofile --norc --posix --restricted --verbose",
-    values: "-o -O --rcfile --init-file",
+    values: "-o --rcfile --init-file",
+    shapes: &[("-o", Shape::Words(BASH_OPTIONS))],
     body: "-c",
     style: Style::Shell,
     ..NONE
 };
+
+/// The other shells (`sh` among them, which may be any of them): only the flags and `-o`
+/// names POSIX gives every shell, without `-n` (no run) and `-b` (zsh's end of options), since
+/// dash refuses bash's other flags and long options, and mksh's `-T` takes the next word.
+const POSIX_SHELL: Reading = Reading {
+    flags: "-a -C -e -f -i -m -u -v -x",
+    values: "-o",
+    shapes: &[("-o", Shape::Words(POSIX_OPTIONS))],
+    ..BASH
+};
+
+/// The `-o` names bash 5 takes, `noexec` left out (it runs nothing).
+const BASH_OPTIONS: &str = "allexport braceexpand emacs errexit errtrace functrace hashall \
+                            histexpand history ignoreeof interactive-comments keyword monitor \
+                            noclobber noglob nolog notify nounset onecmd physical pipefail \
+                            posix privileged verbose vi xtrace";
+
+/// The `-o` names POSIX gives every shell, `noexec` and `nolog` left out.
+const POSIX_OPTIONS: &str =
+    "allexport errexit ignoreeof monitor noclobber noglob notify nounset verbose xtrace";
 
 /// Each wrapper the denylist's walk reads, by name, and how the skeleton trusts its words.
 /// `source`, `.` and `find` are absent: nothing after the first two is a program or a body,
@@ -249,6 +292,7 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
                 ("--conflict-exit-code", Shape::Digits),
             ],
             body: "-c --command",
+            after: After::Nothing,
             operands: 1,
             ..NONE
         },
@@ -276,17 +320,27 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "alias",
         Reading {
+            operand: Shape::Alias,
             operands_anywhere: true,
             ..NONE
         },
     ),
-    ("trap", NONE),
+    (
+        "trap",
+        Reading {
+            after: After::Signals,
+            ..NONE
+        },
+    ),
     (
         "su",
         Reading {
+            // `-s` (`--shell`) is left out: su runs the body with that program, which may be
+            // no shell at all (`su -s /bin/false -c x`).
             flags: "- -f -l -m -p -P --login --preserve-environment --pty --fast",
-            values: "-s -g -G -w --shell --group --supp-group --whitelist-environment",
+            values: "-g -G -w --group --supp-group --whitelist-environment",
             body: "-c --command",
+            body_word: BodyWord::NextOrAttached,
             operands_anywhere: true,
             ..NONE
         },
@@ -294,9 +348,10 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
     (
         "script",
         Reading {
+            // `-B`, `-I` and `-O` (`--log-io`, `--log-in`, `--log-out`) are left out: with one
+            // of them script refuses a file operand, so the operands it allows are not one.
             flags: "-a -e -f -q -t --append --return --flush --quiet",
-            values: "-B -E -I -O -T -m -o --log-io --echo --log-in --log-out --log-timing \
-                     --logging-format --output-limit",
+            values: "-E -T -m -o --echo --log-timing --logging-format --output-limit",
             shapes: &[
                 ("-E", ECHO),
                 ("--echo", ECHO),
@@ -306,6 +361,8 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
                 ("--output-limit", Shape::Size),
             ],
             body: "-c --command",
+            body_word: BodyWord::NextOrAttached,
+            after: After::AtMostOneOperand,
             operands_anywhere: true,
             ..NONE
         },
@@ -325,13 +382,13 @@ pub(super) const READINGS: [(&str, Reading); 34] = [
             ..NONE
         },
     ),
-    ("bash", SHELL),
-    ("sh", SHELL),
-    ("zsh", SHELL),
-    ("dash", SHELL),
-    ("ksh", SHELL),
-    ("mksh", SHELL),
-    ("ash", SHELL),
+    ("bash", BASH),
+    ("sh", POSIX_SHELL),
+    ("zsh", POSIX_SHELL),
+    ("dash", POSIX_SHELL),
+    ("ksh", POSIX_SHELL),
+    ("mksh", POSIX_SHELL),
+    ("ash", POSIX_SHELL),
 ];
 
 /// `ionice -c`'s classes, by number or name.

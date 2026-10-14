@@ -29,10 +29,13 @@
 //!   tables do not know, a value or operand without its slot's shape such as
 //!   `chrt -i mysql`, chrt or taskset with `-p`, an assignment after a wrapper that takes
 //!   none, a non-literal one after a wrapper that takes some (`env K=$V x`, which bash
-//!   field-splits), a body option followed by an option word or a word that may expand
-//!   (`su -c 'x y' -c ls`, where the last `-c` wins)), every word of the simple command is an
-//!   argument of no known program: `sudo -iu postgres psql` is
-//!   `sudo -<redacted> <redacted> <redacted>`.
+//!   field-splits), a body followed by a word its wrapper does not let follow it (an option
+//!   word or one that may expand, `su -c 'x y' -c ls`, where the last `-c` wins; anything
+//!   after `flock -c`'s body; a second file for `script`; for `trap`, no signal or one that is
+//!   not literal, or an action of digits or `-`), a shell option the shell may refuse
+//!   (`dash -B`, `bash -l --norc`, `bash -o nosuch`, `bash -n`), `su -s`, an alias name bash
+//!   refuses), every word of the simple command is an argument of no known program:
+//!   `sudo -iu postgres psql` is `sudo -<redacted> <redacted> <redacted>`.
 //! - **The program word**: its name without a path or `.exe` ([`denylist::program_name`]:
 //!   `/usr/bin/rm` is `rm`), kept when the word is literal and the name 1 to 64 of
 //!   `[A-Za-z0-9._+-]` ([`allow::is_program`]); otherwise hidden. Wrappers are shown the same
@@ -341,7 +344,10 @@ impl<'b> Body<'b> {
     fn end(&self) -> End<'b> {
         self.source
             .as_ref()
-            .map_or(End::Attached, |source| End::Body(source.start))
+            .map_or(End::Attached, |source| End::Body {
+                start: source.start,
+                end: source.end,
+            })
     }
 }
 
