@@ -39,6 +39,7 @@ fn eval_routing(
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_passing_set_exits_0_and_its_table_is_all_diagonal() -> TestResult {
     let (code, envelope, stderr) =
         eval_routing(&fixtures().join("skills"), &fixtures().join("pass"))?;
@@ -74,6 +75,7 @@ fn a_passing_set_exits_0_and_its_table_is_all_diagonal() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_failing_set_exits_1_and_the_table_shows_the_confusion() -> TestResult {
     let (code, envelope, _) = eval_routing(&fixtures().join("skills"), &fixtures().join("fail"))?;
 
@@ -106,6 +108,7 @@ fn a_failing_set_exits_1_and_the_table_shows_the_confusion() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_invalid_fixture_exits_2_with_an_envelope() -> TestResult {
     let work = tempfile::tempdir()?;
     for name in ["spec.yaml", "diagnose.yaml"] {
@@ -136,6 +139,7 @@ fn an_invalid_fixture_exits_2_with_an_envelope() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_fixtures_dir_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     let (code, envelope, stderr) =
         eval_routing(&fixtures().join("skills"), &fixtures().join("no-such-dir"))?;

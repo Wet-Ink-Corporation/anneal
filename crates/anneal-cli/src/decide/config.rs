@@ -18,6 +18,7 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::decide::point::Point;
+use crate::decide::state::cut_chars;
 use crate::decide::transport::ApiToken;
 
 /// `userConfig.cf_account_id`: the Cloudflare account that runs Clef.
@@ -41,6 +42,10 @@ const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "[::1]"];
 
 /// Longest account id.
 const MAX_ACCOUNT_BYTES: usize = 64;
+
+/// How many characters of a mode that does not parse its error shows, as the status hook
+/// shows an unknown status word.
+const SHOWN_MODE_CHARS: usize = 64;
 
 /// How a decision point's answer is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -99,7 +104,8 @@ pub enum ConfigError {
         "{MODE_VAR} {value:?} is not `<off|shadow|enforce>[,<D1..D7>=<off|shadow|enforce>]...`"
     )]
     Mode {
-        /// The value as set.
+        /// The value as set, cut to 64 characters (on a char boundary, with `…`) so the
+        /// reason stays one short line.
         value: String,
     },
     /// The endpoint override is not a loopback `http://` URL.
@@ -147,7 +153,9 @@ impl ClefConfig {
             .transpose()?;
         let (global, overrides) = match read(MODE_VAR)? {
             None => (Mode::Shadow, BTreeMap::new()),
-            Some(value) => parse_mode(&value).ok_or(ConfigError::Mode { value })?,
+            Some(value) => parse_mode(&value).ok_or_else(|| ConfigError::Mode {
+                value: cut_chars(&value, SHOWN_MODE_CHARS),
+            })?,
         };
         let endpoint = endpoint_override(HONOUR_ENDPOINT, || read(ENDPOINT_VAR))?;
         Ok(Self {
@@ -326,6 +334,38 @@ mod tests {
                 "{value:?} is refused"
             );
         }
+    }
+
+    #[test]
+    fn a_long_mode_is_echoed_cut_to_64_characters_at_a_char_boundary() {
+        let value = "é".repeat(100);
+
+        let error = config(&[(MODE_VAR, &value)]).expect_err("not a mode");
+
+        let ConfigError::Mode { value: shown } = &error else {
+            panic!("a mode error: {error:?}");
+        };
+        assert_eq!(
+            *shown,
+            format!("{}…", "é".repeat(64)),
+            "64 characters and `…`"
+        );
+        assert!(
+            error.to_string().len() < 300,
+            "the reason stays short: {error}"
+        );
+    }
+
+    #[test]
+    fn a_mode_of_64_characters_is_echoed_whole() {
+        let value = "x".repeat(64);
+
+        let error = config(&[(MODE_VAR, &value)]).expect_err("not a mode");
+
+        assert!(
+            matches!(&error, ConfigError::Mode { value: shown } if *shown == value),
+            "{error:?}"
+        );
     }
 
     #[test]

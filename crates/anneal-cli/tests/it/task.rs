@@ -219,6 +219,8 @@ fn in_a_git_worktree_both_events_are_tagged_with_its_key_and_outside_with_none()
         .cloned()
         .ok_or("mode reports the worktree key")?;
     let outside = tempfile::tempdir()?;
+    // A `.git` file pointing nowhere stops git here, even if a repository encloses the temp dir.
+    std::fs::write(outside.path().join(".git"), "gitdir: does-not-exist\n")?;
 
     for dir in [repo.path(), outside.path()] {
         let output = task_done(dir, &["T1", "--", "git", "--version"])?;

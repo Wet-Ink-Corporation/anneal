@@ -244,6 +244,7 @@ fn hooks_metadata_that_does_not_parse_is_an_enforcer_error() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn the_envelope_names_the_command_lint_skills() -> TestResult {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_anneal"))
         .args(["lint", "skills"])

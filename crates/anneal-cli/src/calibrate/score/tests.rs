@@ -193,3 +193,38 @@ fn a_threshold_above_every_labelled_probability_is_a_candidate() {
     assert!(close(proposal.threshold, 0.55), "{proposal:?}");
     assert_eq!(proposal.total_cost, 0);
 }
+
+/// D1 decisions all labelled no at `probability`.
+fn all_no_at(probability: f64) -> Vec<Sample> {
+    vec![Sample::new(probability, false); 3]
+}
+
+#[test]
+fn the_midpoint_candidate_is_rounded_to_4_decimal_places() {
+    // Halfway between 0.8 and 0.9 is 0.8500000000000001 in f64; proposals.json shows 0.85.
+    assert_eq!(f64::midpoint(0.8, 0.9).to_string(), "0.8500000000000001");
+
+    let proposal = propose(&all_no_at(0.8), D1_COSTS, 0.1, Some(0.9)).expect("three samples");
+
+    assert_eq!(proposal.threshold.to_string(), "0.85", "{proposal:?}");
+    assert_eq!(proposal.total_cost, 0, "acts on none of them");
+}
+
+#[test]
+fn a_rounding_that_would_leave_the_gap_keeps_the_exact_midpoint() {
+    // Between 0.85001 and 0.85002 the midpoint 0.850015 rounds to 0.85, below both.
+    let (highest, ceiling) = (0.85001, 0.85002);
+
+    let proposal =
+        propose(&all_no_at(highest), D1_COSTS, 0.1, Some(ceiling)).expect("three samples");
+
+    assert_eq!(
+        proposal.threshold.to_bits(),
+        f64::midpoint(highest, ceiling).to_bits(),
+        "the exact midpoint: {proposal:?}"
+    );
+    assert!(
+        highest < proposal.threshold && proposal.threshold < ceiling,
+        "strictly between its neighbours: {proposal:?}"
+    );
+}

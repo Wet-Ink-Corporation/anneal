@@ -268,6 +268,7 @@ fn fixture_arg(relative: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_error_exits_1_and_every_finding_prints_its_rule_location_and_fix() -> TestResult {
     let (code, envelope, stderr) =
         anneal(&["lint", "skills", &fixture_arg("rule-01-name/fail/skills")])?;
@@ -303,6 +304,7 @@ fn an_error_exits_1_and_every_finding_prints_its_rule_location_and_fix() -> Test
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn warnings_and_review_items_are_listed_but_exit_0() -> TestResult {
     let (code, envelope, _) = anneal(&[
         "lint",
@@ -324,6 +326,7 @@ fn warnings_and_review_items_are_listed_but_exit_0() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_path_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     let (code, envelope, stderr) = anneal(&["lint", "skills", &fixture_arg("does-not-exist")])?;
 

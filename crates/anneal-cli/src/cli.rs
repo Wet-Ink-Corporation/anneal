@@ -474,8 +474,15 @@ fn clap_outcome<O: Write>(
     }
 }
 
-/// One line: `unknown argument: <arg>` for an unknown command or flag, else clap's first line.
+/// One line: `unknown argument: <arg>` for an unknown command or flag, `missing required
+/// argument: <arg>, ...` naming every missing one, else clap's first line.
 fn usage_reason(error: &clap::Error) -> String {
+    if error.kind() == ErrorKind::MissingRequiredArgument
+        && let Some(ContextValue::Strings(missing)) = error.get(ContextKind::InvalidArg)
+        && !missing.is_empty()
+    {
+        return format!("missing required argument: {}", missing.join(", "));
+    }
     let unknown = match error.kind() {
         ErrorKind::InvalidSubcommand => error.get(ContextKind::InvalidSubcommand),
         ErrorKind::UnknownArgument => error.get(ContextKind::InvalidArg),

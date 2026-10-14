@@ -43,6 +43,7 @@ fn finding_messages(envelope: &Value) -> Vec<&str> {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn check_exits_0_on_the_acyclic_fixture() -> TestResult {
     let output = dag(&["check", "--dir", "acyclic"])?;
 
@@ -59,6 +60,7 @@ fn check_exits_0_on_the_acyclic_fixture() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn check_exits_1_naming_the_cycle_in_order() -> TestResult {
     let output = dag(&["check", "--dir", "cycle"])?;
 
@@ -78,6 +80,7 @@ fn check_exits_1_naming_the_cycle_in_order() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn check_exits_2_naming_each_dangling_reference() -> TestResult {
     let output = dag(&["check", "--dir", "dangling"])?;
 
@@ -95,6 +98,7 @@ fn check_exits_2_naming_each_dangling_reference() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn check_exits_0_on_the_empty_fixture() -> TestResult {
     let output = dag(&["check", "--dir", "empty"])?;
 
@@ -108,6 +112,7 @@ fn check_exits_0_on_the_empty_fixture() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn frontier_lists_the_ready_tickets_in_a_stable_order() -> TestResult {
     let first = dag(&["frontier", "--dir", "acyclic"])?;
     let second = dag(&["frontier", "--dir", "acyclic"])?;
@@ -133,6 +138,7 @@ fn frontier_lists_the_ready_tickets_in_a_stable_order() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn frontier_flags_tickets_over_the_budget() -> TestResult {
     let output = dag(&["frontier", "--dir", "acyclic", "--budget", "100"])?;
 
@@ -156,6 +162,7 @@ fn frontier_flags_tickets_over_the_budget() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn flags_of_the_other_tracker_are_usage_errors() -> TestResult {
     let cases = [
         (
@@ -189,6 +196,7 @@ fn flags_of_the_other_tracker_are_usage_errors() -> TestResult {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_tickets_directory_exits_70_with_one_error_line() -> TestResult {
     let output = dag(&["check", "--dir", "absent"])?;
 

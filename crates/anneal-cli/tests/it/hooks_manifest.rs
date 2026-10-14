@@ -625,6 +625,7 @@ fn every_hooks_json_entry_has_one_metadata_row_and_every_row_an_entry() -> TestR
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn every_metadata_id_is_an_anneal_hook_the_binary_runs() -> TestResult {
     let ids: BTreeSet<String> = metadata()?.hooks.into_iter().map(|row| row.id).collect();
     let known: BTreeSet<String> = HookName::ALL

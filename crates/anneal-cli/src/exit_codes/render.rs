@@ -58,7 +58,8 @@ table. A few codes mean the same for every command. Only success exits 0: no fai
 Usage errors keep clap's 2 because Claude Code reads a hook's exit 2 as \"block\", so a
 mis-invoked guard fails closed. A usage error writes nothing on stdout, while a command's own
 non-zero code always comes with a JSON envelope on stdout, which tells the two apart. Every
-error writes exactly one `ERROR <reason>` line on stderr.
+error writes exactly one `ERROR <reason>` line on stderr; for a missing required argument it
+names every one missing (`ERROR missing required argument: <FILE>...`).
 
 `anneal hook <name>`, the commands `plugin/hooks/hooks.json` runs, is the one exception to \"only
 success exits 0\": hooks fail open. A hook notes its failures in its output (or, when stdout cannot
