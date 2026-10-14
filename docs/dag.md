@@ -171,12 +171,22 @@ The estimate is a deterministic heuristic that judges whether a ticket fits one 
 tokens = ceil(body characters / 4) + the cost of each named file
 ```
 
-- **Named files** are the ticket's `files` list, followed by every backticked path in its body.
-  A backticked path is one word with a letter and either a `/` or an extension, such as
-  `` `src/a.rs` `` or `` `Cargo.toml:12` ``. A trailing `:line` is dropped. Options (`--x`),
-  URLs and phrases are not paths. Each file counts once, and at most 64 are counted.
+- **Named files** are the ticket's `files` list, counted as written, followed by every
+  backticked path in its body. A backticked path is one word with a letter and either a `/` or
+  a known file extension, such as `` `src/a.rs` ``, `` `docs/dag.md` `` or
+  `` `Cargo.toml:12` ``. A trailing `:line` is dropped. These are not paths: options (`--x`),
+  URLs, phrases, globs (a word holding `*`, `?` or `[`, such as `` `tickets/*.md` ``), command
+  names (a word starting with `/`, such as `` `/orchestrate` ``), and dotted identifiers with
+  no `/` and no known extension (`` `grill.confirmed` ``, `` `data.needs_clarification` ``).
+  The known extensions, in any letter case, are `bash bat c cc cfg cjs cmd conf cpp cs css csv
+  go gql graphql h hpp html ini java js json jsonl jsx kt lock lua md mjs php proto ps1 py rb
+  rs rst scss sh sql svg swift toml ts tsv tsx txt xml yaml yml zsh`. Each file counts once,
+  and at most 64 are counted.
 - **A file's cost** is `ceil(size / 4)` tokens, capped at 25,000, when it is a regular file
-  under the working directory: a relative path with no `..`, not a symlink, and with its
+  under the working directory (for every tracker, also markdown with `--dir`: a path in a
+  ticket is read relative to where `anneal` runs, not to the tickets directory, so run it from
+  the directory the tickets' paths are written against): a relative path with no `..`, not a
+  symlink, and with its
   canonical path inside the canonical working directory, so a symlinked directory cannot lead
   outside it. Any other named
   file (missing, outside the root, or a directory) costs 2,000 tokens. Files are only sized,

@@ -1,8 +1,9 @@
 //! The per-ticket token estimate: a deterministic heuristic of how much context a ticket needs.
 //!
 //! `tokens = ceil(body characters / 4) + the cost of each named file`, where a named file is
-//! one the tracker lists (markdown `files:`) or a backticked path in the body (`` `src/a.rs` ``,
-//! a `:line` suffix dropped). A file costs `ceil(size / 4)` tokens, at most
+//! one the tracker lists (markdown `files:`, as written) or a backticked path in the body
+//! (`` `src/a.rs` ``, a `:line` suffix dropped; not a glob, a `/command` or a dotted identifier
+//! such as `grill.confirmed`). A file costs `ceil(size / 4)` tokens, at most
 //! [`MAX_FILE_TOKENS`], when it is a regular file under the root (relative, no `..`, not a
 //! symlink, and its canonical path inside the canonical root, so a symlinked directory cannot
 //! lead out); any other named file costs [`UNKNOWN_FILE_TOKENS`]. At most [`MAX_FILES`] files
@@ -96,8 +97,9 @@ fn named_files(ticket: &Ticket) -> Vec<&str> {
     named
 }
 
-/// Backticked spans that look like a path: one word with a letter, and a `/` or an extension;
-/// no option (`--x`) or URL. A trailing `:<line>` is dropped.
+/// Backticked spans that look like a path: one word with a letter, and either a `/` or one of
+/// [`KNOWN_EXTENSIONS`]; no option (`--x`), URL, glob (`*`, `?`, `[`) or command name (a
+/// leading `/`, as `/orchestrate`). A trailing `:<line>` is dropped.
 fn body_paths(body: &str) -> impl Iterator<Item = &str> {
     body.split('`').skip(1).step_by(2).filter_map(|span| {
         let path = span
@@ -106,18 +108,33 @@ fn body_paths(body: &str) -> impl Iterator<Item = &str> {
             .map_or(span, |(path, _)| path);
         let looks_like_path = !path.is_empty()
             && !path.contains(char::is_whitespace)
-            && !path.starts_with('-')
+            && !path.starts_with(['-', '/'])
             && !path.contains("://")
+            && !path.contains(['*', '?', '['])
             && path.contains(|c: char| c.is_ascii_alphabetic())
-            && (path.contains('/') || has_extension(path));
+            && (path.contains('/') || has_known_extension(path));
         looks_like_path.then_some(path)
     })
 }
 
-fn has_extension(path: &str) -> bool {
+/// The extensions that make a backticked word without a `/` a file name (compared in any
+/// ASCII letter case), so a dotted identifier such as `grill.confirmed` is not one.
+const KNOWN_EXTENSIONS: &[&str] = &[
+    "bash", "bat", "c", "cc", "cfg", "cjs", "cmd", "conf", "cpp", "cs", "css", "csv", "go", "gql",
+    "graphql", "h", "hpp", "html", "ini", "java", "js", "json", "jsonl", "jsx", "kt", "lock",
+    "lua", "md", "mjs", "php", "proto", "ps1", "py", "rb", "rs", "rst", "scss", "sh", "sql", "svg",
+    "swift", "toml", "ts", "tsv", "tsx", "txt", "xml", "yaml", "yml", "zsh",
+];
+
+fn has_known_extension(path: &str) -> bool {
     Path::new(path)
         .extension()
-        .is_some_and(|ext| !ext.is_empty())
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            KNOWN_EXTENSIONS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(ext))
+        })
 }
 
 /// What `path` costs under `root`.
