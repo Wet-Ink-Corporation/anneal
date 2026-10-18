@@ -48,7 +48,7 @@ Whatever the guard cannot judge, it denies:
 | the arguments of programs the guard does not know read as a command more than 32 times in one check | deny, rule `unparseable` |
 | the decision cannot be written to stdout | exit 2 with one `ERROR` line on stderr (`docs/exit-codes.md`) |
 | bad arguments (a usage error) | exit 2 |
-| no anneal binary is installed | the launcher exits 2 with one `ERROR` line (`--fail-closed`) |
+| no anneal binary is installed | the launcher exits 0 and the guard is off; the session start warns (`docs/hooks.md`) |
 | a crash, a timeout (5 s), any other exit code, or invalid JSON | Claude Code blocks the call (`onFailure: "block"`, Claude Code 2.1.295 or later) |
 
 Claude Code reads exit 2 as "block". Tests pin these cases: `cargo test -p anneal-cli guard`,

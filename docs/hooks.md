@@ -51,9 +51,10 @@ cannot judge. When its output cannot be written it exits 2 with one `ERROR` line
 Code reads as "block". Its entry passes `--fail-closed` and sets `onFailure: "block"`, so a crash
 or a timeout blocks too.
 
-With no binary at all, the launcher exits 0 for a hook (2 for one passed `--fail-closed`). For
-`hook bootstrap` it also prints an install hint as `SessionStart` output, so the session starts
-and says why anneal is off.
+With no binary at all, the launcher exits 0 for every hook, one passed `--fail-closed` included:
+a missing install warns rather than blocks every tool call. For `hook bootstrap` it prints the
+warning as `SessionStart` output, so the session starts and says that anneal's hooks and guards
+are off, and why.
 
 ## `bootstrap` (SessionStart)
 
