@@ -181,9 +181,9 @@ The entry in `plugin/hooks/hooks.json`:
   "args": ["hook", "preconditions", "--fail-closed"], "timeout": 5, "onFailure": "block" }
 ```
 
-A crash, a timeout or output Claude Code cannot read blocks the edit (`onFailure: "block"`), and
-with no binary the launcher exits 2 for `--fail-closed`. The hook itself denies what it cannot
-judge:
+A crash, a timeout or output Claude Code cannot read blocks the edit (`onFailure: "block"`). With
+no binary at all the launcher exits 0 and the hook is off, as the session start warns. The hook
+itself denies what it cannot judge:
 
 | Failure | Result |
 |---|---|

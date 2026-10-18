@@ -3,9 +3,9 @@
 #  1. A build in libexec/<target>/ runs with nothing on PATH, and `hook guard --fail-closed`
 #     through it denies a force push with a PreToolUse deny decision.
 #  2. With no build, the launcher falls back to an anneal on PATH.
-#  3. With neither and nothing to download with, a hook exits 0 (fail open), `hook bootstrap`
-#     also prints the install hint as SessionStart output, a --fail-closed hook exits 2 with one
-#     ERROR line, and a plain call exits 127.
+#  3. With neither and nothing to download with, every hook exits 0, a --fail-closed guard too
+#     (a missing install warns, it does not block), silently except `hook bootstrap`, which prints
+#     the warning as SessionStart output; a plain call exits 127.
 #  4. There is no bin/ directory anywhere in the plugin, and the launcher is executable (hooks
 #     start it by path with no shell).
 #  5. With neither but a release to download (a file:// one), the launcher fetches this
@@ -56,7 +56,7 @@ mkdir -p "$onpath"
 cp "$built" "$onpath/anneal"
 PATH="$onpath:$empty" "$sh_bin" "$launcher" --version | grep -q '^anneal ' || fail "PATH fallback"
 
-# 3. Neither: hooks fail open, guards fail closed, plain calls exit 127.
+# 3. Neither: hooks and guards exit 0, bootstrap warns, plain calls exit 127.
 PATH="$empty" "$sh_bin" "$launcher" hook bootstrap </dev/null >"$work/hint" || fail "a hook with no binary must exit 0"
 grep -q '"hookEventName":"SessionStart","additionalContext":"anneal is not installed' "$work/hint" \
   || fail "hook bootstrap with no binary must print the install hint as SessionStart context"
@@ -65,14 +65,14 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 PATH="$empty" "$sh_bin" "$launcher" hook other </dev/null >"$work/other" || fail "a hook with no binary must exit 0"
 [ ! -s "$work/other" ] || fail "other hooks with no binary must stay silent"
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' \
+  | PATH="$empty" "$sh_bin" "$launcher" hook guard --fail-closed >"$work/guard" 2>&1 \
+  || fail "a --fail-closed guard with no binary must exit 0, not block"
+[ ! -s "$work/guard" ] || fail "a guard with no binary must stay silent"
 set +e
-PATH="$empty" "$sh_bin" "$launcher" hook guard --fail-closed </dev/null 2>"$work/err"
-code=$?
 PATH="$empty" "$sh_bin" "$launcher" --help >/dev/null 2>&1
 plain=$?
 set -e
-[ "$code" = 2 ] || fail "a --fail-closed hook with no binary must exit 2, got $code"
-[ "$(wc -l <"$work/err" | tr -d ' ')" = 1 ] && grep -q '^ERROR ' "$work/err" || fail "one ERROR line expected"
 [ "$plain" = 127 ] || fail "a plain call with no binary must exit 127, got $plain"
 
 # 4. No bin/ anywhere in the plugin, and the launcher keeps its executable bit.
@@ -105,11 +105,11 @@ if command -v curl >/dev/null 2>&1 && { command -v sha256sum || command -v shasu
   rm -r "$fetchcache"
   printf '%s  %s\n' 0000000000000000000000000000000000000000000000000000000000000000 "anneal-$published" >"$release/SHA256SUMS"
   set +e
-  PATH="$tools" ANNEAL_CACHE_DIR="$fetchcache" ANNEAL_RELEASE_URL="file://$release" "$sh_bin" "$launcher" hook guard --fail-closed </dev/null 2>"$work/mismatch"
+  PATH="$tools" ANNEAL_CACHE_DIR="$fetchcache" ANNEAL_RELEASE_URL="file://$release" "$sh_bin" "$launcher" --version </dev/null >/dev/null 2>"$work/mismatch"
   code=$?
   set -e
-  [ "$code" = 2 ] || fail "a build that does not match SHA256SUMS must not run, got $code"
-  grep -q '^ERROR .*SHA256SUMS' "$work/mismatch" || fail "the refusal must name SHA256SUMS"
+  [ "$code" = 127 ] || fail "a build that does not match SHA256SUMS must not run, got $code"
+  grep -q '^anneal: .*SHA256SUMS' "$work/mismatch" || fail "the refusal must name SHA256SUMS"
   [ ! -e "$fetchcache/$version/$published/anneal" ] || fail "a build that does not match SHA256SUMS must not be kept"
 else
   echo "skip: no curl, or no sha256sum or shasum, for the download case"

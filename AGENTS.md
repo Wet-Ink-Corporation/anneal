@@ -51,6 +51,6 @@ Process: explore, frame, plan (`.temper/plans/`), red, green, refactor, self-rev
 ## Plugin rules
 
 - **No `plugin/bin/`.** claude.ai rejects hosted plugins that ship one. Binaries live in `plugin/libexec/<target>/` and hooks call `${CLAUDE_PLUGIN_ROOT}/libexec/anneal` by path, in exec form.
-- **Hooks fail open, guards fail closed.** With no binary a hook exits 0; a hook passed `--fail-closed` exits 2 with one `ERROR` line.
+- **Hooks fail open, guards fail closed, a missing install warns.** A guard (`--fail-closed`, `onFailure: block`) blocks when its binary fails. With no binary anywhere every hook exits 0, guards included, and `hook bootstrap` warns that anneal is off (Ryan, PR 140).
 - **Versions move together.** `Cargo.toml` and `plugin/.claude-plugin/plugin.json` carry one version (`scripts/check-versions.sh`); note user-visible changes under `## Unreleased` in `CHANGELOG.md`.
 - **Line endings are LF** everywhere except `*.cmd` (`.gitattributes`).
