@@ -3,7 +3,20 @@
 # Not bin/: Claude Code puts a plugin's bin/ on PATH, and claude.ai rejects hosted plugins that
 # ship one. Hooks start this launcher by path with no shell (exec form), so it must stay
 # executable; on Windows the same path resolves to libexec/anneal.exe instead.
-# Falls back to an `anneal` on PATH (cargo install --path crates/anneal-cli).
+# Falls back to an `anneal` on PATH (cargo install --path crates/anneal-cli), then to the release
+# build for this plugin's version, downloaded once and cached.
+#
+# The download is for installs that carry no binaries: a plugin synced from claude.ai (cloud
+# sessions) or one from a marketplace that serves main. It fetches anneal-<target> and
+# SHA256SUMS from the GitHub release v<version> (the version in .claude-plugin/plugin.json),
+# keeps the build only when its SHA-256 matches, and caches it in
+# ${ANNEAL_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/anneal}/<version>/<target>/. It needs curl
+# or wget and sha256sum or shasum, never reads stdin (a hook's input stays for the binary), and
+# resumes a partial download on the next call. Each try fits its hook's timeout: 3 s for
+# SHA256SUMS and 10 s for the build in `hook bootstrap` (15 s), 1 s and 3 s in other hooks (5 s),
+# 10 s and 60 s for a plain call. After a failure it waits 2 minutes before trying again.
+# ANNEAL_NO_FETCH=1 turns it off; ANNEAL_RELEASE_URL (https:// or file://) replaces the release
+# URL, for tests and mirrors.
 #
 # Hook calls are `anneal hook <name> [--fail-closed] ...`. With no binary anywhere a hook exits 0
 # (fail open), except one marked --fail-closed (a guard), which prints one ERROR line and exits 2,
@@ -40,7 +53,169 @@ if [ -z "${ANNEAL_LAUNCHER:-}" ]; then
     ANNEAL_LAUNCHER=1 exec "$found" "$@"
   fi
 fi
-why="no anneal binary for $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) under $dir and none on PATH; build one with scripts/build-plugin-bins.sh or install a release"
+
+# Then a release build downloaded earlier, for this plugin's version.
+version=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$dir/../.claude-plugin/plugin.json" 2>/dev/null)
+case "$version" in
+  *[!0-9A-Za-z.+-]*) version="" ;;
+esac
+if [ -n "${ANNEAL_CACHE_DIR:-}" ]; then
+  cache=$ANNEAL_CACHE_DIR
+elif [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache=$XDG_CACHE_HOME/anneal
+elif [ -n "${HOME:-}" ]; then
+  cache=$HOME/.cache/anneal
+else
+  cache=""
+fi
+if [ -n "$cache" ] && [ -n "$version" ]; then
+  for t in $targets; do
+    bin="$cache/$version/$t/anneal$ext"
+    if [ -f "$bin" ] && [ -x "$bin" ]; then
+      exec "$bin" "$@"
+    fi
+  done
+fi
+
+# Then download it. Only the first target of the platform is published.
+tsum=10
+tbin=60
+if [ "${1:-}" = "hook" ]; then
+  if [ "${2:-}" = "bootstrap" ]; then
+    tsum=3
+    tbin=10
+  else
+    tsum=1
+    tbin=3
+  fi
+fi
+get=""
+sum=""
+fetched=""
+fetch_why=""
+# download <url> <file> <seconds> [resume]
+download() {
+  if [ "$get" = curl ]; then
+    if [ -n "${4:-}" ]; then
+      curl -fsSL --proto '=https,file' --proto-redir '=https' --connect-timeout 3 --max-time "$3" -C - -o "$2" "$1" </dev/null 2>/dev/null
+    else
+      curl -fsSL --proto '=https,file' --proto-redir '=https' --connect-timeout 3 --max-time "$3" -o "$2" "$1" </dev/null 2>/dev/null
+    fi
+  elif [ -n "${4:-}" ]; then
+    wget -q -c -T "$3" -O "$2" "$1" </dev/null 2>/dev/null
+  else
+    wget -q -T "$3" -O "$2" "$1" </dev/null 2>/dev/null
+  fi
+}
+checksum() {
+  $sum "$1" 2>/dev/null </dev/null | awk '{ print $1 }'
+}
+fetch() {
+  if [ -n "${ANNEAL_NO_FETCH:-}" ]; then
+    fetch_why="downloading is off (ANNEAL_NO_FETCH is set)"
+    return 1
+  fi
+  t=${targets%% *}
+  if [ -z "$t" ]; then
+    fetch_why="no release build exists for this platform"
+    return 1
+  fi
+  if [ -z "$version" ]; then
+    fetch_why="the plugin manifest names no version"
+    return 1
+  fi
+  if [ -z "$cache" ]; then
+    fetch_why="there is no cache directory (HOME is not set)"
+    return 1
+  fi
+  base=${ANNEAL_RELEASE_URL:-https://github.com/Wet-Ink-Corporation/anneal/releases/download/v$version}
+  case "$base" in
+    https://*|file://*) ;;
+    *)
+      fetch_why="ANNEAL_RELEASE_URL is not an https:// or file:// URL"
+      return 1
+      ;;
+  esac
+  if command -v curl >/dev/null 2>&1; then
+    get=curl
+  elif command -v wget >/dev/null 2>&1; then
+    get=wget
+  else
+    fetch_why="neither curl nor wget is installed to download it"
+    return 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then
+    sum="shasum -a 256"
+  else
+    fetch_why="neither sha256sum nor shasum is installed to check a download"
+    return 1
+  fi
+  asset="anneal-$t$ext"
+  dest="$cache/$version/$t"
+  stamp="$dest/.failed"
+  lock="$dest/.fetching"
+  part="$dest/anneal$ext.part"
+  sums="$dest/SHA256SUMS"
+  if ! mkdir -p "$dest" 2>/dev/null; then
+    fetch_why="the cache directory could not be created"
+    return 1
+  fi
+  if [ -e "$stamp" ] && [ -n "$(find "$stamp" -mmin -2 2>/dev/null)" ]; then
+    fetch_why="a download failed less than 2 minutes ago"
+    return 1
+  fi
+  # One download at a time; a lock left by a killed launcher goes stale after 2 minutes.
+  if [ -d "$lock" ] && [ -z "$(find "$lock" -prune -mmin -2 2>/dev/null)" ]; then
+    rmdir "$lock" 2>/dev/null
+  fi
+  if ! mkdir "$lock" 2>/dev/null; then
+    fetch_why="another download is running"
+    return 1
+  fi
+  trap 'rmdir "$lock" 2>/dev/null; exit 1' HUP INT TERM
+  ok=""
+  if download "$base/SHA256SUMS" "$sums.part" "$tsum" && mv -f "$sums.part" "$sums" 2>/dev/null; then
+    want=$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1; exit }' "$sums" 2>/dev/null)
+    if [ -z "$want" ]; then
+      fetch_why="the release's SHA256SUMS lists no $asset"
+    elif [ -f "$part" ] && [ "$(checksum "$part")" = "$want" ]; then
+      ok=1
+    elif download "$base/$asset" "$part" "$tbin" resume; then
+      if [ "$(checksum "$part")" = "$want" ]; then
+        ok=1
+      else
+        rm -f "$part"
+        fetch_why="the download did not match the release's SHA256SUMS"
+      fi
+    else
+      fetch_why="the download of $asset did not finish"
+    fi
+  else
+    rm -f "$sums.part"
+    fetch_why="the release v$version could not be reached"
+  fi
+  if [ -n "$ok" ]; then
+    if chmod +x "$part" 2>/dev/null && mv -f "$part" "$dest/anneal$ext" 2>/dev/null; then
+      rm -f "$stamp"
+      rmdir "$lock" 2>/dev/null
+      trap - HUP INT TERM
+      fetched="$dest/anneal$ext"
+      return 0
+    fi
+    fetch_why="the download could not be saved"
+  fi
+  : >"$stamp" 2>/dev/null
+  rmdir "$lock" 2>/dev/null
+  trap - HUP INT TERM
+  return 1
+}
+if fetch; then
+  exec "$fetched" "$@"
+fi
+
+why="no anneal binary for $(uname -s 2>/dev/null)-$(uname -m 2>/dev/null) under $dir, none on PATH, and no release build ($fetch_why); let this machine reach github.com, install from the marketplace branch, or put anneal on PATH"
 if [ "${1:-}" = "hook" ]; then
   for arg in "$@"; do
     if [ "$arg" = "--fail-closed" ]; then
@@ -49,9 +224,9 @@ if [ "${1:-}" = "hook" ]; then
     fi
   done
   if [ "${2:-}" = "bootstrap" ]; then
-    # Fixed text with no quotes or backslashes, so it is valid JSON as written (anneal.cmd prints
-    # the same, naming the .ps1 build script).
-    hint="anneal is not installed: no anneal binary in the plugin's libexec and none on PATH, so anneal's hooks and gates are off this session. Install a release, or build one with scripts/build-plugin-bins.sh or cargo install --path crates/anneal-cli."
+    # Text with no quotes or backslashes, so it is valid JSON as written: every fetch_why is
+    # fixed text, and the version and target are checked above (anneal.cmd prints its own).
+    hint="anneal is not installed: no anneal binary in the plugin's libexec, none on PATH, and the release build could not be downloaded ($fetch_why). Until one is in place anneal's advisory hooks are off and its guards block every Bash, Edit, Write and Agent call. Let this machine reach github.com and start a new session, install from the marketplace branch (/plugin marketplace add Wet-Ink-Corporation/anneal#marketplace), or put anneal on PATH (cargo install --path crates/anneal-cli)."
     printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$hint" "$hint"
   fi
   exit 0
