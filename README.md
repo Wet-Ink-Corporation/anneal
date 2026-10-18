@@ -19,18 +19,32 @@ Add the marketplace, then install the plugin from it (the marketplace and the pl
 /plugin install anneal@anneal
 ```
 
-The CLI ships inside the plugin as prebuilt binaries under `plugin/libexec/<target>/`, started through `plugin/libexec/anneal` (or `anneal.cmd` on Windows). Nothing is put on your PATH. A release builds Linux (x86_64 and aarch64, musl), macOS (Apple silicon) and Windows (x86_64). If no build exists for your platform the launcher falls back to an `anneal` on PATH. With neither, the advisory hooks exit quietly and the session start says why, but the guards fail closed: `guard` and `merge-gate` block every Bash call, `preconditions` every Edit, Write, MultiEdit and NotebookEdit, and `brief` every Agent spawn, until a binary is in place.
+That is the whole install. Every option is optional: with none set, anneal runs its deterministic gates and Clef stays off (see Clef below).
 
-The binaries are built by the release workflow and are not committed to `main`, so a marketplace that serves `main` installs the plugin without them. Each GitHub release carries `anneal-plugin-<version>.zip` (the plugin with every build in `libexec/`), the raw binaries and `SHA256SUMS`. Until a `marketplace` branch with the binaries is published, put `anneal` on PATH yourself (`cargo install --path crates/anneal-cli` from a checkout, or a release binary).
+### How the CLI is found
+
+The hooks run the `anneal` CLI through `plugin/libexec/anneal` (or `anneal.cmd` on Windows). Nothing is put on your PATH. The launcher takes the first of:
+
+1. a build in the plugin's `libexec/<target>/`. The `marketplace` branch and the release zip carry Linux (x86_64 and aarch64, musl), macOS (Apple silicon) and Windows (x86_64);
+2. an `anneal` on PATH (`cargo install --path crates/anneal-cli` from a checkout, or a release binary);
+3. a release build it downloaded earlier, in `~/.cache/anneal/<version>/<target>/` (`$XDG_CACHE_HOME/anneal` when set, or `$ANNEAL_CACHE_DIR`);
+4. the release build for the plugin's version, downloaded from the GitHub release `v<version>` (`anneal-<target>`) and kept only when it matches the release's `SHA256SUMS`. This needs `curl` or `wget`, `sha256sum` or `shasum`, and access to `github.com` and the host its release downloads redirect to. A failed download is retried after 2 minutes, resuming where it stopped. `ANNEAL_NO_FETCH=1` turns it off. The Windows launcher does not download yet.
+
+So a plugin installed without binaries (synced from claude.ai, or from a marketplace that serves `main`) fetches its CLI at the first session start. If none of the four works, the advisory hooks exit quietly and the session start says why, but the guards fail closed: `guard` and `merge-gate` block every Bash call, `preconditions` every Edit, Write, MultiEdit and NotebookEdit, and `brief` every Agent spawn, until a binary is in place.
+
+The binaries are built by the release workflow and are not committed to `main`. Each GitHub release carries `anneal-plugin-<version>.zip` (the plugin with every build in `libexec/`), the raw binaries and `SHA256SUMS`.
 
 ### Where it works
 
 | Surface | Skills | Hooks and gates | Clef |
 |---|---|---|---|
-| Claude Code (2.1.295 or later) | yes | yes | yes |
-| claude.ai and Cowork (upload the release zip) | yes | no | no |
+| Claude Code CLI and desktop (2.1.295 or later) | yes | yes | yes |
+| Claude Code on the web (cloud sessions), with the plugin added in claude.ai | yes | yes, once the launcher has downloaded the CLI | no: Clef's client ignores proxy settings, and cloud sessions reach the internet only through a proxy, so every call is unreachable and fails open |
+| claude.ai chat and Cowork (upload the release zip) | yes | no | no |
 
-The skills are portable: claude.ai rejects a plugin that ships a `bin/`, and the zip has none, so it can be uploaded there and to Cowork, where the skills load. Hooks and Clef run only in Claude Code, so on the other surfaces nothing enforces the gates, and a skill's `anneal` commands work only where the CLI can run.
+The skills are portable: claude.ai rejects a plugin that ships a `bin/`, and the zip has none, so it can be uploaded there and to Cowork, where the skills load. Hooks run only in Claude Code, so in claude.ai chat and Cowork nothing enforces the gates, and a skill's `anneal` commands work only where the CLI can run.
+
+In a cloud session the plugin arrives without its `libexec/` builds, so the launcher downloads the CLI at session start. The environment's network policy must let it reach `github.com` and GitHub's release-asset host; if it does not, either allow them or put `anneal` on PATH in the environment's setup script (for example, download `anneal-x86_64-unknown-linux-musl` from the release to `/usr/local/bin/anneal`).
 
 ### Status line (once, in user settings)
 
