@@ -45,12 +45,40 @@ fn an_extglob_target_is_a_pattern_for_rm_rf_and_the_config_entries() {
 }
 
 #[test]
+fn a_quoted_parenthesis_in_a_target_does_not_close_its_group_early() {
+    assert_table(&[
+        (r#"tee .c@(laude|l")")/settings.json"#, CONFIG),
+        (r#"tee .c@(l")"|laude)/settings.json"#, CONFIG),
+        (r#"echo x > .c@(l")"|laude)/settings.json"#, CONFIG),
+        (r#"tee .c@(l")"|x)aude/settings.json"#, CONFIG),
+        (r#"tee .c@(l")"|x)aude.bak/settings.json"#, ALLOW),
+        (
+            r#"bash -O extglob -c 'tee .c@(l")"|laude)/settings.json'"#,
+            CONFIG,
+        ),
+    ]);
+}
+
+#[test]
+fn an_empty_group_outside_a_function_name_is_a_pattern() {
+    assert_table(&[
+        ("rm @()-rf /home", RM_RF),
+        ("tee .clau@()de/settings.json", CONFIG),
+        ("echo x > .clau@( )de/settings.json", CONFIG),
+    ]);
+}
+
+#[test]
 fn a_function_named_with_an_opener_character_is_still_a_definition() {
     assert_table(&[
         ("f?() { rm -rf /tmp/x; }; f?", ALLOW),
         ("f@() { echo ok; }; f@", ALLOW),
         ("f*() { rm -rf /home; }", RM_RF),
         ("f+() { git push -f origin main; }", FORCE_PUSH),
+        ("function f?() { echo ok; }; f?", ALLOW),
+        ("function f*() { rm -rf /home; }", RM_RF),
+        ("f?( ) { echo ok; }; f?", ALLOW),
+        ("f?( ) { rm -rf /home; }", RM_RF),
     ]);
 }
 

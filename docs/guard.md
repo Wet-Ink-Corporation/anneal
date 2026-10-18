@@ -118,11 +118,15 @@ characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-r
 `"$b"rf` with `b=-`, `?rf`, `[-]rf`). An extended glob group (`shopt -s extglob`: `@( )`,
 `+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
 and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
-quote does not close the group. The lexer reads such a group as one pattern word, blanks and
-`|` included (bash without `extglob` refuses the word, so nothing runs then). Two shapes stay
-as bash reads them without `extglob`: `!(` in command position (after only reserved words,
-and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands are checked, and
-an empty `()` after an opener (`f?() { ...; }`) is a function definition.
+quote does not close the group. A protected-config path reads a component's text from its
+first group to its last `)` as `*`, so a quoted `)` cannot cut a group short there either
+(`tee .c@(laude|l")")/settings.json` is denied). The lexer reads such a group as one pattern
+word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then).
+Two shapes stay as bash reads them without `extglob`: `!(` in command position (after only
+reserved words, and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands
+are checked, and an empty `()` (blanks allowed) after a word where a function's name stands
+(command position, or after `function`) is a function definition (`f?() { ...; }`).
+Elsewhere `@()` is an empty group, so `rm @()-rf /home` is denied.
 A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never

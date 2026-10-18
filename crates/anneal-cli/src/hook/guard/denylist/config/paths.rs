@@ -286,34 +286,27 @@ pub(super) fn contains_protected(path: &str, shape: Shape, cwd: &Cwd) -> Option<
     })
 }
 
-/// `component` with each extended glob group (`@(de)`, `!(x)`, `?(a|b)`, opener included)
-/// replaced by `*`, which matches every text the group may; a group that never closes runs to
-/// the end. Quoting is not known here, so a quoted `(` counts too, which only widens a match.
+/// `component` with the text from its first extended glob opener (`@(de)`, `!(x)`, `?(a|b)`)
+/// to its last `)` replaced by one `*`, or to its end when no `)` follows. Quoting is not
+/// known here, so a quoted `)` could seem to close a group early (`.c@(laude|l")")`); the
+/// group's real `)` is never after the last one, so the `*` covers it, which only widens a
+/// match.
 fn without_extglobs(component: &str) -> Cow<'_, str> {
-    if !component.contains('(') {
+    let Some(start) = component
+        .char_indices()
+        .zip(component.chars().skip(1))
+        .find(|((_, c), next)| EXTGLOB_OPENERS.contains(c) && *next == '(')
+        .map(|((at, _), _)| at)
+    else {
         return Cow::Borrowed(component);
-    }
-    let mut out = String::with_capacity(component.len());
-    let mut chars = component.chars().peekable();
-    while let Some(c) = chars.next() {
-        if !(EXTGLOB_OPENERS.contains(&c) && chars.peek() == Some(&'(')) {
-            out.push(c);
-            continue;
-        }
-        out.push('*');
-        let mut open: usize = 0;
-        for inner in chars.by_ref() {
-            match inner {
-                '(' => open = open.saturating_add(1),
-                ')' => open = open.saturating_sub(1),
-                _ => {}
-            }
-            if open == 0 {
-                break;
-            }
-        }
-    }
-    Cow::Owned(out)
+    };
+    let after = component
+        .rfind(')')
+        .filter(|close| *close > start)
+        .and_then(|close| component.get(close.saturating_add(1)..))
+        .unwrap_or("");
+    let before = component.get(..start).unwrap_or("");
+    Cow::Owned(format!("{before}*{after}"))
 }
 
 /// Whether `text` matches the shell pattern `pattern` (`*`, `?`, and `[...]` as any one

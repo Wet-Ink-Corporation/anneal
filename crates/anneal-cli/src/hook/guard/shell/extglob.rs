@@ -9,8 +9,18 @@ pub(super) enum Place {
     /// Where a program or keyword may stand: `!(x)` is the `!` keyword and a subshell, as bash
     /// reads it without `extglob`.
     Command,
+    /// The word after `function`, a function's name: `!(x)` is an extended glob, and an empty
+    /// `()` is the definition's.
+    Name,
     /// An argument or a redirection's target: `!(x)` is an extended glob.
     Argument,
+}
+
+impl Place {
+    /// Whether a function's name may stand here, so a `()` after it defines the function.
+    fn names_function(self) -> bool {
+        matches!(self, Self::Command | Self::Name)
+    }
 }
 
 /// The characters that open an extended glob when an unquoted `(` follows them.
@@ -19,7 +29,7 @@ pub(crate) const OPENERS: [char; 5] = ['@', '+', '!', '?', '*'];
 /// Whether a `(` after `word` opens an extended glob's group: the word ends with an unquoted
 /// [`OPENERS`] character that is not an expansion's (`$@`), and that character is not a `!`
 /// standing alone in command position.
-pub(super) fn opens(word: &Word, place: Place) -> bool {
+fn opens(word: &Word, place: Place) -> bool {
     let len = word.text.len();
     let unquoted_end = word.quotes.last().is_none_or(|quote| quote.end < len)
         && word
@@ -37,6 +47,24 @@ pub(super) fn opens(word: &Word, place: Place) -> bool {
 }
 
 impl Lexer {
+    /// Whether the `(` at the cursor opens an extended glob's group after `word`. Where a
+    /// function's name may stand, an empty `()` (blanks allowed: `f?( )`) is the definition's,
+    /// which bash accepts without `extglob`; elsewhere `@()` is an empty group.
+    pub(super) fn opens_extglob(&self, word: &Word, place: Place) -> bool {
+        self.peek() == Some('(')
+            && opens(word, place)
+            && !(place.names_function() && self.empty_parens())
+    }
+
+    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)`.
+    fn empty_parens(&self) -> bool {
+        self.chars
+            .iter()
+            .skip(self.pos.saturating_add(1))
+            .find(|c| !matches!(c, ' ' | '\t' | '\n'))
+            == Some(&')')
+    }
+
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with
     /// `extglob` reads it: blanks, `|` and `;` included, quotes and substitutions read as in
     /// any word. Without `extglob` bash refuses such a word, so reading it as a pattern can

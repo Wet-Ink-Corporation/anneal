@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use super::extglob::{self, Place};
+use super::extglob::Place;
 use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, Reading, is_meta};
 
 /// A shell word after quote removal.
@@ -203,8 +203,7 @@ impl Lexer {
         let mut word = Word::new();
         word.arithmetic = self.in_arithmetic();
         while let Some(c) = self.peek() {
-            // `f@()` is a function's name and its `()`, which bash accepts without `extglob`.
-            if c == '(' && self.peek_next() != Some(')') && extglob::opens(&word, place) {
+            if self.opens_extglob(&word, place) {
                 self.advance();
                 self.extglob(&mut word, depth)?;
                 continue;

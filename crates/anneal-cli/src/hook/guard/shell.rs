@@ -319,6 +319,9 @@ impl Lexer {
             _ => {
                 let place = if in_command_position(&command.words) {
                     Place::Command
+                } else if matches!(command.words.as_slice(), [only] if only.is_bare(&["function"]))
+                {
+                    Place::Name
                 } else {
                     Place::Argument
                 };
