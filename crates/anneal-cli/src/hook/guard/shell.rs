@@ -84,6 +84,10 @@ pub(crate) enum ParseError {
     /// A redirection operator with no word after it.
     #[error("a redirection with no target")]
     MissingRedirectTarget,
+    /// A `<(` or `>(` inside an extended glob's group: bash ends the group at a `)` its
+    /// commands may hold (a `case` pattern's), so where it ends cannot be read reliably.
+    #[error("a process substitution inside an extended glob")]
+    ProcessInExtglob,
 }
 
 /// Lexes `text` into every simple command it runs, nested ones included.

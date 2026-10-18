@@ -1,7 +1,7 @@
 //! Extended globs (`shopt -s extglob`, #128): `@( )`, `+( )`, `!( )`, `?( )` and `*( )` are
 //! read as globs that may match a file named `-rf`, or a protected path.
 
-use super::{ALLOW, CONFIG, FORCE_PUSH, RM_RF, assert_table};
+use super::{ALLOW, CONFIG, FORCE_PUSH, RM_RF, UNREADABLE, assert_table};
 
 #[test]
 fn an_extglob_operand_may_match_a_file_named_like_rm_s_flags() {
@@ -31,15 +31,34 @@ fn a_quoted_parenthesis_does_not_close_an_extglob_group() {
     ]);
 }
 
+/// Bash ends a group at the first `)` that balances it, which may be a `case` pattern's inside
+/// the substitution, so the commands after the group cannot be read reliably.
 #[test]
-fn a_process_substitution_inside_a_group_is_checked() {
+fn a_process_substitution_inside_a_group_is_unreadable() {
     assert_table(&[
-        ("echo @(<(rm -rf /))", RM_RF),
-        ("echo x@(a|>(rm -rf /home))", RM_RF),
-        ("echo @(a|<(git push -f origin main))", FORCE_PUSH),
-        ("echo @(>(tee .claude/settings.json))", CONFIG),
-        ("bash -O extglob -c 'echo @(<(rm -rf /))'", RM_RF),
-        ("echo @(<(ls))", ALLOW),
+        ("echo @(<(rm -rf /))", UNREADABLE),
+        ("echo x@(a|>(rm -rf /home))", UNREADABLE),
+        ("echo @(<(ls))", UNREADABLE),
+        (
+            "echo @(<(case x in x) ;; esac) ; rm -rf / ; #))",
+            UNREADABLE,
+        ),
+        (
+            "echo @(<(case x in x) ;; esac) ; git push -f origin main ; #))",
+            UNREADABLE,
+        ),
+        (
+            "echo @(>(case x in x) ;; esac) ; echo x > .claude/settings.json ; #))",
+            UNREADABLE,
+        ),
+        ("echo @(<(case x in x) ;; esac) ; rm -rf /\n))", UNREADABLE),
+        (
+            "bash -O extglob -c 'echo @(<(case x in x) ;; esac) ; rm -rf / ; #))'",
+            UNREADABLE,
+        ),
+        // Outside a group a process substitution is read as before.
+        ("diff <(ls a) <(ls b)", ALLOW),
+        ("diff <(rm -rf /) x", RM_RF),
     ]);
 }
 

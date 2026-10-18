@@ -122,8 +122,10 @@ quote does not close the group. A protected-config path reads a component's text
 first group to its last `)` as `*`, so a quoted `)` cannot cut a group short there either
 (`tee .c@(laude|l")")/settings.json` is denied). The lexer reads such a group as one pattern
 word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then),
-and checks the commands of a substitution inside it, `$( )`, backticks, `<( )` or `>( )`
-(`echo @(<(rm -rf /))` is denied).
+and checks the commands of a `$( )` or backtick substitution inside it. A `<( )` or `>( )`
+inside a group is `unparseable`: bash ends the group at the first `)` that balances it, which
+may be a `case` pattern's inside the substitution, so what runs after it cannot be read
+reliably (`echo @(<(ls))` is denied).
 Two shapes stay as bash reads them without `extglob`: `!(` in command position (after only
 reserved words, and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands
 are checked, and an empty `()` (blanks allowed) after a word where a function's name stands
@@ -260,6 +262,10 @@ it cannot model instead of modelling every shell feature, and it does not try to
   `branch=--force` (or `-f`) is allowed, since denying it would deny every
   `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A variable set
   earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
+- a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
+  guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
+  readings end the group at different `)` (a `#` comment inside it), a later command can be
+  missed (main had the same gap, #144);
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,

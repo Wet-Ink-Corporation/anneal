@@ -88,11 +88,11 @@ impl Lexer {
                         return Ok(());
                     }
                 }
-                // Bash with `extglob` runs a process substitution inside a group.
+                // Bash with `extglob` runs a process substitution inside a group, but ends the
+                // group at the first `)` that balances it, which may be a `case` pattern's
+                // inside the substitution; read either way, the commands differ.
                 '<' | '>' if self.peek() == Some('(') => {
-                    let start = self.pos.saturating_sub(1);
-                    self.advance();
-                    self.process_into(word, start, depth)?;
+                    return Err(ParseError::ProcessInExtglob);
                 }
                 _ => self.word_char(c, word, depth)?,
             }
