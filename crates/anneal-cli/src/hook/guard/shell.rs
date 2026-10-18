@@ -416,10 +416,6 @@ impl Lexer {
     }
 }
 
-/// Whether a `(` after `words` (the words of the command it ends) defines a function: some
-/// word comes before it that is not a keyword, the last is not `in` (a `case` pattern) and
-/// does not end with `=` (an array assignment). It may over-count (`[[ ( -f x ) ]]`), which
-/// only makes the merge gate's probe more careful.
 /// Whether a word after `before` stands where bash reads a keyword, so a `!(` there is the `!`
 /// keyword and a subshell: only reserved words come before it, and `time`'s own options
 /// (`-p`, `--`) after a `time`.
@@ -435,6 +431,10 @@ fn in_command_position(before: &[Word]) -> bool {
     })
 }
 
+/// Whether a `(` after `words` (the words of the command it ends) defines a function: some
+/// word comes before it that is not a keyword, the last is not `in` (a `case` pattern) and
+/// does not end with `=` (an array assignment). It may over-count (`[[ ( -f x ) ]]`), which
+/// only makes the merge gate's probe more careful.
 fn opens_definition(words: &[Word]) -> bool {
     let after_keywords = words.iter().all(|word| word.is_bare(&RESERVED));
     let pattern_or_array = words
