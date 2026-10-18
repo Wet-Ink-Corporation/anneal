@@ -113,12 +113,16 @@ pub(crate) fn worktree_root_within(cwd: &Path, timeout: Duration) -> Result<Stri
 /// no repository.
 const NOT_A_REPOSITORY: &str = "not a git repository";
 
+/// What git 2.56 and later say for a `.git` file pointing nowhere, which older git reported as
+/// [`NOT_A_REPOSITORY`] naming the missing target: the same directory, in no repository.
+const GITFILE_POINTS_NOWHERE: &str = "gitfile does not point to a valid repository";
+
 /// The error for a git call in `dir` that exited non-zero, from what it wrote on stderr:
 /// [`PathError::NotARepository`] only when git says so, [`PathError::GitFailed`] otherwise.
 pub(crate) fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
     let dir = dir.to_path_buf();
     let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
-    if stderr.contains(NOT_A_REPOSITORY) {
+    if stderr.contains(NOT_A_REPOSITORY) || stderr.contains(GITFILE_POINTS_NOWHERE) {
         PathError::NotARepository { dir, stderr }
     } else {
         PathError::GitFailed { dir, stderr }

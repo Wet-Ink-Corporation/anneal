@@ -249,6 +249,8 @@ fn only_not_a_git_repository_classifies_as_outside_git() {
     let outside = [
         "fatal: not a git repository (or any of the parent directories): .git\n",
         "fatal: not a git repository: /work/does-not-exist\n",
+        // git 2.56 and later, for the same `.git` file pointing nowhere.
+        "fatal: gitfile does not point to a valid repository: /work/.git\n",
     ];
     let failures = [
         "fatal: detected dubious ownership in repository at '/work'\n",
