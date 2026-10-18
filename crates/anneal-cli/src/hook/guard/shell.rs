@@ -13,12 +13,15 @@
 //! Commands are read here; words (quotes, escapes, `$`) in [`word`], redirections in
 //! [`redirect`], heredoc bodies in [`heredoc`].
 
+mod extglob;
 mod heredoc;
 mod redirect;
 mod word;
 
 use std::mem;
 
+pub(crate) use extglob::OPENERS as EXTGLOB_OPENERS;
+use extglob::Place;
 use redirect::Heredoc;
 pub(crate) use word::{Expansion, Globs, Shape, Word};
 
@@ -314,7 +317,13 @@ impl Lexer {
             }
             '<' | '>' => self.redirect(command, level, true)?,
             _ => {
-                let word = self.word(level.close, level.depth)?;
+                // Before any word but keywords, `!(` is the `!` keyword and a subshell.
+                let place = if command.words.iter().all(|before| before.is_bare(&RESERVED)) {
+                    Place::Command
+                } else {
+                    Place::Argument
+                };
+                let word = self.word(level.close, level.depth, place)?;
                 if word.is_fd() && matches!(self.peek(), Some('<' | '>')) {
                     self.redirect(command, level, word.text == "0")?;
                 } else if word.is_present() {

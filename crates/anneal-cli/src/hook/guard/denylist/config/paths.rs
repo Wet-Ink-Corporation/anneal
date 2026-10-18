@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::iter;
 
 use crate::hook::guard::denylist::wrappers::skip_options;
-use crate::hook::guard::shell::{Shape, Word};
+use crate::hook::guard::shell::{EXTGLOB_OPENERS, Shape, Word};
 
 /// A path component's name.
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +24,12 @@ impl Name {
     /// whether it could match it. Letter case is ignored: on case-insensitive file systems
     /// (APFS, NTFS by default) `.CLAUDE/settings.json` is `.claude/settings.json`.
     fn matches(self, component: &str, glob: bool) -> bool {
+        // An extended glob group may match any text, as `*` does.
+        let component = if glob {
+            without_extglobs(component)
+        } else {
+            Cow::Borrowed(component)
+        };
         let wildcard = glob && component.contains(['*', '?', '[']);
         // The names are lower case; the component is lowered to compare.
         let component = component.to_ascii_lowercase();
@@ -278,6 +284,36 @@ pub(super) fn contains_protected(path: &str, shape: Shape, cwd: &Cwd) -> Option<
                 .map(|(_, label)| *label)
         })
     })
+}
+
+/// `component` with each extended glob group (`@(de)`, `!(x)`, `?(a|b)`, opener included)
+/// replaced by `*`, which matches every text the group may; a group that never closes runs to
+/// the end. Quoting is not known here, so a quoted `(` counts too, which only widens a match.
+fn without_extglobs(component: &str) -> Cow<'_, str> {
+    if !component.contains('(') {
+        return Cow::Borrowed(component);
+    }
+    let mut out = String::with_capacity(component.len());
+    let mut chars = component.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !(EXTGLOB_OPENERS.contains(&c) && chars.peek() == Some(&'(')) {
+            out.push(c);
+            continue;
+        }
+        out.push('*');
+        let mut open: usize = 0;
+        for inner in chars.by_ref() {
+            match inner {
+                '(' => open = open.saturating_add(1),
+                ')' => open = open.saturating_sub(1),
+                _ => {}
+            }
+            if open == 0 {
+                break;
+            }
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// Whether `text` matches the shell pattern `pattern` (`*`, `?`, and `[...]` as any one

@@ -115,7 +115,12 @@ An operand that may expand to an option cluster may hold the flags: one whose fi
 be a `-` (a variable or substitution, which may hold one; an unquoted `?`, `*` or bracket
 expression, which may match a file named `-rf`; or a written `-`) and whose other written
 characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-rf`, `-$x`,
-`"$b"rf` with `b=-`, `?rf`, `[-]rf`). A bracket expression may match `-` unless it is a plain
+`"$b"rf` with `b=-`, `?rf`, `[-]rf`). An extended glob group (`shopt -s extglob`: `@( )`,
+`+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
+and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
+quote does not close the group. The lexer reads such a group as one pattern word, blanks and
+`|` included (bash without `extglob` refuses the word, so nothing runs then), except `!(` in
+command position, which stays the `!` keyword and a subshell whose commands are checked. A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never
 closes is read as bash reads it: its `[` is a member and the set closes at the next `]`, a set
@@ -233,12 +238,19 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 - values from the environment (`"$EDITOR" file`, `$GIT status` run, with their arguments
   checked; `cp x "$DEST"` is allowed and `git push -f origin "$B"` denied);
-- word splitting of an unquoted expansion, `"$@"` or `"${a[@]}"` into an `rm` operand that is
-  `-rf` on its own: `rm x$b /home/x` with `b=' -rf'`, `rm $F` with `F='-rf /home'` and
-  `set -- a -rf; rm x"$@" /home/x` are allowed, since judging them would also deny the ordinary
-  `rm -f $f` (#128);
-- extended globs (`shopt -s extglob`) in an `rm` operand: `rm @(-rf) /home` and `rm !(x) /home`
-  may match a file named `-rf`, and are allowed (#128);
+- word splitting (a documented limit, Ryan's decision on #128): an unquoted expansion,
+  `"$@"` or `"${a[@]}"` may stand for zero, one or several words, and each word is judged as
+  one. So a split can put `-rf` in an `rm` operand of its own (`rm x$b /home/x` with
+  `b=' -rf'`, `rm $F` with `F='-rf /home'`, `set -- a -rf; rm x"$@" /home/x`,
+  `f() { rm x"$@" /home/x; }; f a -rf`), and an expansion that is empty can vanish and move a
+  later word into a checked place (`bash -c $x 'rm -rf /'`, `caffeinate bash $x -c 'rm -rf /'`,
+  `cp x .claude/settings.json $x`, `bash {-xc,$x} 'rm -rf /'` with `x` unset). These are
+  allowed, because judging every such word as possibly several would also deny everyday
+  commands such as `rm -f $f` and `rm -f $dir/x /y`;
+- a quoted expansion in `git push` that holds a force flag: `git push "$branch"` with
+  `branch=--force` (or `-f`) is allowed, since denying it would deny every
+  `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A variable set
+  earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,

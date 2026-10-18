@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use super::extglob::{self, Place};
 use super::{Close, Lexer, MAX_NESTING, ParseError, Quoting, Reading, is_meta};
 
 /// A shell word after quote removal.
@@ -110,7 +111,7 @@ impl Word {
     }
 
     /// Adds the unquoted pattern character `c`, which sets [`Word::globs`] whatever the shape.
-    fn push_pattern(&mut self, c: char) {
+    pub(super) fn push_pattern(&mut self, c: char) {
         self.mark(Shape::Pattern);
         self.globs = Globs::Unquoted;
         self.text.push(c);
@@ -191,11 +192,22 @@ impl Word {
 }
 
 impl Lexer {
-    /// Reads one word, removing quotes and escapes.
-    pub(super) fn word(&mut self, close: Close, depth: usize) -> Result<Word, ParseError> {
+    /// Reads one word, removing quotes and escapes. `place` says whether a `!(` that starts
+    /// it is an extended glob or the `!` keyword before a subshell.
+    pub(super) fn word(
+        &mut self,
+        close: Close,
+        depth: usize,
+        place: Place,
+    ) -> Result<Word, ParseError> {
         let mut word = Word::new();
         word.arithmetic = self.in_arithmetic();
         while let Some(c) = self.peek() {
+            if c == '(' && extglob::opens(&word, place) {
+                self.advance();
+                self.extglob(&mut word, depth)?;
+                continue;
+            }
             if is_meta(c) || (c == '`' && close == Close::Backtick) {
                 break;
             }
@@ -211,7 +223,12 @@ impl Lexer {
     }
 
     /// Adds the already consumed unquoted character `c` (and what it opens) to `word`.
-    fn word_char(&mut self, c: char, word: &mut Word, depth: usize) -> Result<(), ParseError> {
+    pub(super) fn word_char(
+        &mut self,
+        c: char,
+        word: &mut Word,
+        depth: usize,
+    ) -> Result<(), ParseError> {
         match c {
             '\\' => match self.bump() {
                 Some('\n') => {}

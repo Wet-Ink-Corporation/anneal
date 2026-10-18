@@ -2,7 +2,7 @@
 //! heredocs whose bodies follow the line.
 
 use super::{
-    Close, Level, Lexer, ParseError, Quoting, Reading, SimpleCommand, Stdin, Word, Writer,
+    Close, Level, Lexer, ParseError, Place, Quoting, Reading, SimpleCommand, Stdin, Word, Writer,
 };
 
 /// What a redirection operator does.
@@ -143,7 +143,7 @@ impl Lexer {
         if self.peek().is_none_or(super::is_meta) {
             return Err(ParseError::MissingRedirectTarget);
         }
-        let word = self.word(level.close, level.depth)?;
+        let word = self.word(level.close, level.depth, Place::Argument)?;
         if word.is_present() {
             Ok(word)
         } else {
