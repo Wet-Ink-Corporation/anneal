@@ -7,10 +7,9 @@
 //! ([`arguments`]) and a redirection's target ([`of`]). Whether a word's values may be an option
 //! cluster, whatever its variables hold and its globs match, is [`may_start_option_cluster`]; it
 //! judges each word as one word, so word splitting of an unquoted expansion and `"$@"` (which
-//! may make a separate `-rf` word) is a known gap (#128).
+//! may make a separate `-rf` word) is a documented limit (#128).
 
 use std::borrow::Cow;
-
 use std::ops::Range;
 
 use crate::hook::guard::shell::{EXTGLOB_OPENERS, Expansion, Globs, Shape, Word};

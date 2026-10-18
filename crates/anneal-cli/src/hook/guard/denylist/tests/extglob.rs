@@ -90,6 +90,36 @@ fn a_quoted_parenthesis_in_a_target_does_not_close_its_group_early() {
     ]);
 }
 
+/// Bash matches a group within one component: an alternative holding a `/` only fails to match.
+#[test]
+fn a_slash_inside_a_group_does_not_split_the_path() {
+    assert_table(&[
+        ("tee .clau@(de|x/y)/settings.json", CONFIG),
+        ("tee .anne@(al|x/y)/config.json", CONFIG),
+        ("rm -r .clau@(de|x/y)", CONFIG),
+        ("mv .anne@(al|x/y) /tmp/x", CONFIG),
+        ("chmod -R 777 .clau@(de|x/y)", CONFIG),
+        ("tee @(a)/.clau@(de|x/y)/@(s)ettings.json", CONFIG),
+        ("tee @(a)/.claude/@(s)ettings.json", CONFIG),
+        ("tee notes/x@(a|b/c).txt", ALLOW),
+    ]);
+}
+
+/// Bash reads a special parameter's name before `(` as text, so `$@(` opens a group whose `#`
+/// is no comment.
+#[test]
+fn a_special_parameter_before_a_parenthesis_opens_a_group() {
+    assert_table(&[
+        ("echo A $@(x # ) ; rm -rf /\n)", RM_RF),
+        (
+            "echo A $@(x # ) ; echo x > .claude/settings.json\n)",
+            CONFIG,
+        ),
+        ("echo A $?(x # ) ; git push -f origin main\n)", FORCE_PUSH),
+        ("echo $@(x)", ALLOW),
+    ]);
+}
+
 #[test]
 fn an_empty_group_outside_a_function_name_is_a_pattern() {
     assert_table(&[

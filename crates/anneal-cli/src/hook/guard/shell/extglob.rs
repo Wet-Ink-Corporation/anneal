@@ -27,15 +27,12 @@ impl Place {
 pub(crate) const OPENERS: [char; 5] = ['@', '+', '!', '?', '*'];
 
 /// Whether a `(` after `word` opens an extended glob's group: the word ends with an unquoted
-/// [`OPENERS`] character that is not an expansion's (`$@`), and that character is not a `!`
-/// standing alone in command position.
+/// [`OPENERS`] character, and that character is not a `!` standing alone in command position.
+/// A special parameter's name counts (`$@(`, `$?(`): bash appends a `$` with no `(`, `{` or
+/// quote after it as text and reads the next character as any other.
 fn opens(word: &Word, place: Place) -> bool {
     let len = word.text.len();
-    let unquoted_end = word.quotes.last().is_none_or(|quote| quote.end < len)
-        && word
-            .expansions
-            .last()
-            .is_none_or(|expansion| expansion.range.end < len);
+    let unquoted_end = word.quotes.last().is_none_or(|quote| quote.end < len);
     let bang_keyword = place == Place::Command && word.text == "!";
     unquoted_end
         && !bang_keyword

@@ -119,8 +119,10 @@ characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-r
 `+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
 and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
 quote does not close the group. A protected-config path reads a component's text from its
-first group to its last `)` as `*`, so a quoted `)` cannot cut a group short there either
-(`tee .c@(laude|l")")/settings.json` is denied). The lexer reads such a group as one pattern
+first group to its last `)` as one or more `*` components, so a quoted `)` cannot cut a group
+short there either (`tee .c@(laude|l")")/settings.json` is denied), and a `/` inside a group
+is no separator (`tee .clau@(de|x/y)/settings.json` is denied). A special parameter's name
+before `(` opens a group too, as bash reads it (`$@(x)`, `$?(x)`). The lexer reads such a group as one pattern
 word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then),
 and checks the commands of a `$( )` or backtick substitution inside it. A `<( )` or `>( )`
 inside a group is `unparseable`: bash ends the group at the first `)` that balances it, which

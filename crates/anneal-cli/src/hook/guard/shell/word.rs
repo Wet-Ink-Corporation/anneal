@@ -193,7 +193,8 @@ impl Word {
 
 impl Lexer {
     /// Reads one word, removing quotes and escapes. `place` says whether a `!(` that starts
-    /// it is an extended glob or the `!` keyword before a subshell.
+    /// it is an extended glob or the `!` keyword before a subshell, and whether an empty `()`
+    /// after an opener is a function definition's.
     pub(super) fn word(
         &mut self,
         close: Close,

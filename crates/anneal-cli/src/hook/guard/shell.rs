@@ -8,10 +8,11 @@
 //! them. Expansions are not performed: a word that has one is marked [`Shape::Dynamic`], one
 //! with an unquoted glob, brace or leading `~` [`Shape::Pattern`]. A word keeps only its
 //! highest shape, so whether it holds an unquoted pattern character is its own flag,
-//! [`Word::globs`], set whatever the shape (`"$b"{-rf,/}` is dynamic and a pattern).
+//! [`Word::globs`], set whatever the shape (`"$b"{-rf,/}` is dynamic and a pattern). An
+//! extended glob's group (`@(a|b)`) is part of its pattern word.
 //!
-//! Commands are read here; words (quotes, escapes, `$`) in [`word`], redirections in
-//! [`redirect`], heredoc bodies in [`heredoc`].
+//! Commands are read here; words (quotes, escapes, `$`) in [`word`], extended globs in
+//! [`extglob`], redirections in [`redirect`], heredoc bodies in [`heredoc`].
 
 mod extglob;
 mod heredoc;

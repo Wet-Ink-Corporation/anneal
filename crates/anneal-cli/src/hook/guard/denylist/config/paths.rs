@@ -7,6 +7,9 @@ use std::iter;
 use crate::hook::guard::denylist::wrappers::skip_options;
 use crate::hook::guard::shell::{EXTGLOB_OPENERS, Shape, Word};
 
+/// The most components an extended glob span is read as beyond one (see `without_extglobs`).
+const MAX_SPANNED: usize = 32;
+
 /// A path component's name.
 #[derive(Debug, Clone, Copy)]
 enum Name {
@@ -24,12 +27,6 @@ impl Name {
     /// whether it could match it. Letter case is ignored: on case-insensitive file systems
     /// (APFS, NTFS by default) `.CLAUDE/settings.json` is `.claude/settings.json`.
     fn matches(self, component: &str, glob: bool) -> bool {
-        // An extended glob group may match any text, as `*` does.
-        let component = if glob {
-            without_extglobs(component)
-        } else {
-            Cow::Borrowed(component)
-        };
         let wildcard = glob && component.contains(['*', '?', '[']);
         // The names are lower case; the component is lowered to compare.
         let component = component.to_ascii_lowercase();
@@ -242,10 +239,11 @@ struct Reading<'a> {
 fn readings<'a>(path: &'a str, shape: Shape, cwd: &Cwd) -> impl Iterator<Item = Reading<'a>> {
     let relative = !is_absolute(path);
     let glob = shape != Shape::Literal;
+    let anywhere = relative && *cwd == Cwd::Unknown;
     let as_written = Reading {
         path: Cow::Borrowed(path),
         glob,
-        anywhere: relative && *cwd == Cwd::Unknown,
+        anywhere,
     };
     let joined = match cwd {
         Cwd::Dir(dir, dir_shape) if relative => Some(Reading {
@@ -255,7 +253,27 @@ fn readings<'a>(path: &'a str, shape: Shape, cwd: &Cwd) -> impl Iterator<Item = 
         }),
         Cwd::Start | Cwd::Dir(..) | Cwd::Unknown => None,
     };
-    iter::once(as_written).chain(joined)
+    iter::once(as_written)
+        .chain(joined)
+        .flat_map(Reading::without_extglobs)
+}
+
+impl Reading<'_> {
+    /// This reading, or for a glob each reading with its extended glob groups cut out before
+    /// the path is split: a `/` inside a group is no separator (`.clau@(de|x/y)` is `.claude`).
+    fn without_extglobs(self) -> Vec<Self> {
+        let Some(paths) = without_extglobs(&self.path).filter(|_| self.glob) else {
+            return vec![self];
+        };
+        paths
+            .into_iter()
+            .map(|path| Reading {
+                path: Cow::Owned(path),
+                glob: self.glob,
+                anywhere: self.anywhere,
+            })
+            .collect()
+    }
 }
 
 /// The protected path writing `path` (seen from `cwd`) changes, if any.
@@ -286,27 +304,37 @@ pub(super) fn contains_protected(path: &str, shape: Shape, cwd: &Cwd) -> Option<
     })
 }
 
-/// `component` with the text from its first extended glob opener (`@(de)`, `!(x)`, `?(a|b)`)
-/// to its last `)` replaced by one `*`, or to its end when no `)` follows. Quoting is not
-/// known here, so a quoted `)` could seem to close a group early (`.c@(laude|l")")`); the
-/// group's real `)` is never after the last one, so the `*` covers it, which only widens a
-/// match.
-fn without_extglobs(component: &str) -> Cow<'_, str> {
-    let Some(start) = component
+/// The ways `path` may be read once its extended glob groups, if it has any, (`@(de)`, `!(x)`, `?(a|b)`) are
+/// cut out: the span from its first opener to its last `)` (or to its end when no `)`
+/// follows) becomes one, two or more `*` components, up to one more than the `/`s it holds.
+///
+/// Quoting is not known here, so a quoted `)` could seem to close a group early
+/// (`.c@(laude|l")")`), and a `/` inside a group (`.clau@(de|x/y)`) is no separator, as bash
+/// matches a group within one component; the span's real `)` is never after its last one,
+/// and it holds at most that many components, each of which a `*` matches, so the readings
+/// only widen a match. The count is capped at [`MAX_SPANNED`]: past a few, more `*`s change a
+/// match only through as many `..` after the span.
+fn without_extglobs(path: &str) -> Option<Vec<String>> {
+    let start = path
         .char_indices()
-        .zip(component.chars().skip(1))
+        .zip(path.chars().skip(1))
         .find(|((_, c), next)| EXTGLOB_OPENERS.contains(c) && *next == '(')
-        .map(|((at, _), _)| at)
-    else {
-        return Cow::Borrowed(component);
-    };
-    let after = component
-        .rfind(')')
-        .filter(|close| *close > start)
-        .and_then(|close| component.get(close.saturating_add(1)..))
+        .map(|((at, _), _)| at)?;
+    let close = path.rfind(')').filter(|close| *close > start);
+    let after = close
+        .and_then(|close| path.get(close.saturating_add(1)..))
         .unwrap_or("");
-    let before = component.get(..start).unwrap_or("");
-    Cow::Owned(format!("{before}*{after}"))
+    let span = close
+        .and_then(|close| path.get(start..close))
+        .or_else(|| path.get(start..))
+        .unwrap_or("");
+    let before = path.get(..start).unwrap_or("");
+    let slashes = span.matches(['/', '\\']).count().min(MAX_SPANNED);
+    Some(
+        (0..=slashes)
+            .map(|extra| format!("{before}*{}{after}", "/*".repeat(extra)))
+            .collect(),
+    )
 }
 
 /// Whether `text` matches the shell pattern `pattern` (`*`, `?`, and `[...]` as any one
