@@ -121,7 +121,9 @@ and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)`
 quote does not close the group. A protected-config path reads a component's text from its
 first group to its last `)` as `*`, so a quoted `)` cannot cut a group short there either
 (`tee .c@(laude|l")")/settings.json` is denied). The lexer reads such a group as one pattern
-word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then).
+word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then),
+and checks the commands of a substitution inside it, `$( )`, backticks, `<( )` or `>( )`
+(`echo @(<(rm -rf /))` is denied).
 Two shapes stay as bash reads them without `extglob`: `!(` in command position (after only
 reserved words, and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands
 are checked, and an empty `()` (blanks allowed) after a word where a function's name stands

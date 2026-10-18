@@ -88,6 +88,12 @@ impl Lexer {
                         return Ok(());
                     }
                 }
+                // Bash with `extglob` runs a process substitution inside a group.
+                '<' | '>' if self.peek() == Some('(') => {
+                    let start = self.pos.saturating_sub(1);
+                    self.advance();
+                    self.process_into(word, start, depth)?;
+                }
                 _ => self.word_char(c, word, depth)?,
             }
         }

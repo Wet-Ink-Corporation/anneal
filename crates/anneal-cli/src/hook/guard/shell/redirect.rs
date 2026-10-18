@@ -155,6 +155,19 @@ impl Lexer {
     /// (the cursor is past it), returning it as a dynamic word. Inside `>( )` standard input
     /// is a pipe from the outer command.
     fn process(&mut self, start: usize, depth: usize) -> Result<Word, ParseError> {
+        let mut word = Word::new();
+        self.process_into(&mut word, start, depth)?;
+        Ok(word)
+    }
+
+    /// Reads the commands of the process substitution whose `<(` or `>(` starts at `start`
+    /// and adds it to `word` as an expansion (inside an extended glob's group, `@(<(ls))`).
+    pub(super) fn process_into(
+        &mut self,
+        word: &mut Word,
+        start: usize,
+        depth: usize,
+    ) -> Result<(), ParseError> {
         let outer = self.pipe;
         if self.chars.get(start) == Some(&'>') {
             self.pipe = Some(Writer(None));
@@ -165,9 +178,8 @@ impl Lexer {
             Reading::Commands,
         )?;
         self.pipe = outer;
-        let mut word = Word::new();
-        self.push_expansion(&mut word, start, Quoting::Bare);
-        Ok(word)
+        self.push_expansion(word, start, Quoting::Bare);
+        Ok(())
     }
 }
 

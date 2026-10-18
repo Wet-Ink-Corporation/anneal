@@ -32,6 +32,18 @@ fn a_quoted_parenthesis_does_not_close_an_extglob_group() {
 }
 
 #[test]
+fn a_process_substitution_inside_a_group_is_checked() {
+    assert_table(&[
+        ("echo @(<(rm -rf /))", RM_RF),
+        ("echo x@(a|>(rm -rf /home))", RM_RF),
+        ("echo @(a|<(git push -f origin main))", FORCE_PUSH),
+        ("echo @(>(tee .claude/settings.json))", CONFIG),
+        ("bash -O extglob -c 'echo @(<(rm -rf /))'", RM_RF),
+        ("echo @(<(ls))", ALLOW),
+    ]);
+}
+
+#[test]
 fn an_extglob_target_is_a_pattern_for_rm_rf_and_the_config_entries() {
     assert_table(&[
         ("rm -rf /tmp/@(a|b)", RM_RF),
