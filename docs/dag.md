@@ -40,7 +40,7 @@ The body: what to do, and which `src/files.rs` it touches.
 | `blocked_by` | Ids that must be done first. It can be a flow list (`[001, "002"]`), a block list (`- 001` lines) or a comma list (`001, 002`). A ref must match a file stem exactly. |
 | `status` | `done` or `closed` (in any case) means done. Anything else, or no status, means open. |
 | `title` | Defaults to the first `# ` heading, then to the id. |
-| `files` | Files the ticket will touch, in the same list forms. The estimate uses them. |
+| `files` | Files the ticket will touch, in the same list forms. The estimate counts only these when they are given, not the paths its body mentions. |
 
 Other keys are ignored. A ticket whose frontmatter cannot be read stops the command with exit 70
 and names `file:line`. Limits: 10,000 tickets, and 1 MiB per file.
@@ -228,8 +228,10 @@ The estimate is a deterministic heuristic that judges whether a ticket fits one 
 tokens = ceil(body characters / 4) + the cost of each named file
 ```
 
-- **Named files** are the ticket's `files` list, counted as written, followed by every
-  backticked path in its body. A backticked path is one word with a letter and either a `/` or
+- **Named files** are the ticket's `files` list, counted as written. Its body is then not
+  scanned, so a path it mentions only for context (`` `plan.md` ``) adds nothing. A ticket
+  with no `files` (every GitHub issue) names the backticked paths in its body instead. A
+  backticked path is one word with a letter and either a `/` or
   a known file extension, such as `` `src/a.rs` ``, `` `docs/dag.md` `` or
   `` `Cargo.toml:12` ``. A trailing `:line` is dropped. These are not paths: options (`--x`),
   URLs, phrases, globs (a word holding `*`, `?` or `[`, such as `` `tickets/*.md` ``), command
