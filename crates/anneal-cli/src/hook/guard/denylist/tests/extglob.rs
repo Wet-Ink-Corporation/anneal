@@ -143,6 +143,32 @@ fn a_function_named_with_an_opener_character_is_still_a_definition() {
     ]);
 }
 
+/// With `extglob` a group in the program word may name any program, as `?` and `*` may.
+#[test]
+fn a_group_in_the_program_word_is_a_pattern_program() {
+    assert_table(&[
+        ("/bin/r@(m) -rf ~", RM_RF),
+        ("r@(m) -rf /", RM_RF),
+        ("sudo /bin/r@(m) -rf ~", RM_RF),
+        ("/usr/bin/gi@(t) push -f origin main", FORCE_PUSH),
+        ("/bin/ec@(h)o hello", ALLOW),
+    ]);
+}
+
+/// An empty `()` is a definition's only when a body follows; otherwise bash with `extglob`
+/// reads one pattern word whose later words are its arguments.
+#[test]
+fn an_empty_group_with_no_body_after_it_is_a_pattern_program() {
+    assert_table(&[
+        ("/bin/rm@() -rf ~", RM_RF),
+        ("rm@( ) -rf /", RM_RF),
+        ("git@() push -f origin main", FORCE_PUSH),
+        ("f@()\n{ echo ok; }; f@", ALLOW),
+        ("f@() ( rm -rf /home )", RM_RF),
+        ("f@() if true; then echo ok; fi", ALLOW),
+    ]);
+}
+
 #[test]
 fn a_bang_group_in_command_position_is_still_a_negated_subshell() {
     assert_table(&[

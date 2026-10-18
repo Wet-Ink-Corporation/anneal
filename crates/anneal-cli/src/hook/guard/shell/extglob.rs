@@ -45,21 +45,38 @@ fn opens(word: &Word, place: Place) -> bool {
 
 impl Lexer {
     /// Whether the `(` at the cursor opens an extended glob's group after `word`. Where a
-    /// function's name may stand, an empty `()` (blanks allowed: `f?( )`) is the definition's,
-    /// which bash accepts without `extglob`; elsewhere `@()` is an empty group.
+    /// function's name may stand, an empty `()` (blanks allowed: `f?( )`) followed by a
+    /// compound command is a definition's, which bash accepts without `extglob`; elsewhere
+    /// `@()` is an empty group, as bash with `extglob` reads `/bin/echo@() hi`.
     pub(super) fn opens_extglob(&self, word: &Word, place: Place) -> bool {
         self.peek() == Some('(')
             && opens(word, place)
-            && !(place.names_function() && self.empty_parens())
+            && !(place.names_function() && self.defines_function())
     }
 
-    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)`.
-    fn empty_parens(&self) -> bool {
-        self.chars
+    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)` and then a
+    /// compound command, a function's body: `{ `, `(`, or `if`, `for`, `while`, `until`,
+    /// `case`, `select` or `[[` as a word.
+    fn defines_function(&self) -> bool {
+        let blank = |c: &char| matches!(c, ' ' | '\t' | '\n');
+        let mut rest = self
+            .chars
             .iter()
+            .copied()
             .skip(self.pos.saturating_add(1))
-            .find(|c| !matches!(c, ' ' | '\t' | '\n'))
-            == Some(&')')
+            .skip_while(blank);
+        if rest.next() != Some(')') {
+            return false;
+        }
+        let body: String = rest
+            .skip_while(blank)
+            .take_while(|c| !blank(c) && *c != ';')
+            .collect();
+        body.starts_with('(')
+            || matches!(
+                body.as_str(),
+                "{" | "if" | "for" | "while" | "until" | "case" | "select" | "[["
+            )
     }
 
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with

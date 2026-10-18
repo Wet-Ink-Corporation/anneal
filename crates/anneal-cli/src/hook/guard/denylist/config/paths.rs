@@ -304,7 +304,7 @@ pub(super) fn contains_protected(path: &str, shape: Shape, cwd: &Cwd) -> Option<
     })
 }
 
-/// The ways `path` may be read once its extended glob groups, if it has any, (`@(de)`, `!(x)`, `?(a|b)`) are
+/// The ways `path` may be read with its extended glob groups (`@(de)`, `!(x)`, `?(a|b)`)
 /// cut out: the span from its first opener to its last `)` (or to its end when no `)`
 /// follows) becomes one, two or more `*` components, up to one more than the `/`s it holds.
 ///

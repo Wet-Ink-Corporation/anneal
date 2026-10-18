@@ -95,7 +95,8 @@ pub(super) fn has_group(word: &Word) -> bool {
 
 /// Whether `word`'s text is what the shell passes on: a literal word, or one brace expansion
 /// made that holds no other pattern character (`-c` and `rm -rf /` from
-/// `{bash,-c,'rm -rf /'}`): no expansion, glob, brace or leading `~`, and not read inside
+/// `{bash,-c,'rm -rf /'}`): no expansion, glob, extended glob group, brace or leading `~`, and
+/// not read inside
 /// `$[ ]`. Only brace expansion makes such a pattern, since the lexer keeps every pattern
 /// character it reads in the text, so a word as the lexer read it is this only when literal.
 /// A quoted pattern character counts too (`'*'` from `{x,'*'}`), so such a word stays a
@@ -108,7 +109,7 @@ pub(super) fn reads_as_written(word: &Word) -> bool {
             && word.expansions.is_empty()
             && !word.arithmetic
             && !word.text.starts_with('~')
-            && !word.text.contains(['*', '?', '[', '{']))
+            && !word.text.contains(['*', '?', '[', '{', '(']))
 }
 
 /// `args` with their brace groups expanded ([`product`] says what each new word is), a product
