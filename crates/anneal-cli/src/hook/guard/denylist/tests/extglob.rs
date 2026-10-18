@@ -45,11 +45,28 @@ fn an_extglob_target_is_a_pattern_for_rm_rf_and_the_config_entries() {
 }
 
 #[test]
+fn a_function_named_with_an_opener_character_is_still_a_definition() {
+    assert_table(&[
+        ("f?() { rm -rf /tmp/x; }; f?", ALLOW),
+        ("f@() { echo ok; }; f@", ALLOW),
+        ("f*() { rm -rf /home; }", RM_RF),
+        ("f+() { git push -f origin main; }", FORCE_PUSH),
+    ]);
+}
+
+#[test]
 fn a_bang_group_in_command_position_is_still_a_negated_subshell() {
     assert_table(&[
         ("!(rm -rf /)", RM_RF),
         ("if !(git push -f origin main); then echo x; fi", FORCE_PUSH),
         ("if !(false); then echo yes; fi", ALLOW),
+        ("time -p !(rm -rf /)", RM_RF),
+        ("time -- !(rm -rf /)", RM_RF),
+        ("time -p -- !(git push -f origin main)", FORCE_PUSH),
+        (
+            "if true; then time -p !(echo x > .claude/settings.json); fi",
+            CONFIG,
+        ),
         ("[[ $x == @(a|b) ]] && echo y", ALLOW),
         ("[[ $x == !(a) ]] && echo y", ALLOW),
         ("case $x in @(a|b)) rm -rf /;; esac", RM_RF),

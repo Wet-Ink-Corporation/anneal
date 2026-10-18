@@ -203,7 +203,8 @@ impl Lexer {
         let mut word = Word::new();
         word.arithmetic = self.in_arithmetic();
         while let Some(c) = self.peek() {
-            if c == '(' && extglob::opens(&word, place) {
+            // `f@()` is a function's name and its `()`, which bash accepts without `extglob`.
+            if c == '(' && self.peek_next() != Some(')') && extglob::opens(&word, place) {
                 self.advance();
                 self.extglob(&mut word, depth)?;
                 continue;

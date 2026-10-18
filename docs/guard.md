@@ -119,8 +119,11 @@ characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-r
 `+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
 and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
 quote does not close the group. The lexer reads such a group as one pattern word, blanks and
-`|` included (bash without `extglob` refuses the word, so nothing runs then), except `!(` in
-command position, which stays the `!` keyword and a subshell whose commands are checked. A bracket expression may match `-` unless it is a plain
+`|` included (bash without `extglob` refuses the word, so nothing runs then). Two shapes stay
+as bash reads them without `extglob`: `!(` in command position (after only reserved words,
+and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands are checked, and
+an empty `()` after an opener (`f?() { ...; }`) is a function definition.
+A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never
 closes is read as bash reads it: its `[` is a member and the set closes at the next `]`, a set
