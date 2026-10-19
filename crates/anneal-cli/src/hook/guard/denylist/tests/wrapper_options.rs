@@ -128,6 +128,33 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         // bash runs `x` as a script file here, but the words after `--` are read on their own.
         ("su root -g root x -- -c 'rm -rf /'", RM_RF),
         ("su root -g root - -- -c 'rm -rf /'", RM_RF),
+        // bash's own grammar: each `o` takes a word, long options take one dash, `+c` is `-c`.
+        ("su root -- -ox pipefail -c 'rm -rf /'", RM_RF),
+        ("su root -- -oo pipefail errexit -c 'rm -rf /'", RM_RF),
+        ("su - root -- -Ox extglob -c 'rm -rf /'", RM_RF),
+        ("su root -g root -- -init-file x -c 'rm -rf /'", RM_RF),
+        ("su root -w PATH -- -rcfile x -c 'rm -rf /'", RM_RF),
+        ("su root +c 'rm -rf /'", RM_RF),
+        ("su root -g root +ox pipefail +c 'rm -rf /'", RM_RF),
+        // su runs `-c VALUE`; a value bash reads as an option leaves the string to what follows.
+        ("su -c -x root 'rm -rf /'", RM_RF),
+        ("su -c +x root 'rm -rf /'", RM_RF),
+        ("su -c -- root 'rm -rf /'", RM_RF),
+        ("su -c -o root pipefail 'rm -rf /'", RM_RF),
+        ("su - root -c 'ls' -- x", ALLOW),
+    ]);
+}
+
+#[test]
+fn a_shell_reads_its_options_as_bash_does() {
+    assert_table(&[
+        ("bash -ox pipefail -c 'rm -rf /'", RM_RF),
+        ("bash -rcfile x -c 'rm -rf /'", RM_RF),
+        ("bash +c 'rm -rf /'", RM_RF),
+        ("sudo bash +c 'rm -rf /'", RM_RF),
+        ("bash -o pipefail -c 'make test'", ALLOW),
+        ("bash --norc -c 'ls'", ALLOW),
+        ("bash -help", ALLOW),
     ]);
 }
 

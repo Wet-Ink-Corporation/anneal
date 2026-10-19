@@ -10,7 +10,27 @@ use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
 
-const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
+/// bash's long options (bash 5.2), each written with one dash or two and only before its
+/// first short option, and whether it takes the next word; `help` and `version` run nothing.
+const SHELL_LONG: [(&str, bool); 17] = [
+    ("debug", false),
+    ("debugger", false),
+    ("dump-po-strings", false),
+    ("dump-strings", false),
+    ("help", false),
+    ("init-file", true),
+    ("login", false),
+    ("noediting", false),
+    ("noprofile", false),
+    ("norc", false),
+    ("posix", false),
+    ("pretty-print", false),
+    ("rcfile", true),
+    ("restricted", false),
+    ("verbose", false),
+    ("version", false),
+    ("wordexp", false),
+];
 
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
@@ -141,17 +161,20 @@ fn su_login(words: &[Word]) -> bool {
             .any(|word| word.text == "-" && reads_as_written(word))
 }
 
-/// The command strings of the `-c` (`--command`, and for `su` `--session-command`) options
-/// among `options`, in order; `None` for one missing its string.
+/// Whether `option` is a `-c` (`--command`, and for `su` `--session-command`).
+fn is_command(option: &Parsed<'_>) -> bool {
+    matches!(
+        option.name,
+        Name::Short('c') | Name::Long("command" | "session-command")
+    )
+}
+
+/// The command strings of the `-c` options among `options`, in order; `None` for one missing
+/// its string.
 fn commands(options: Vec<Parsed<'_>>) -> impl Iterator<Item = Option<&str>> {
     options
         .into_iter()
-        .filter(|option| {
-            matches!(
-                option.name,
-                Name::Short('c') | Name::Long("command" | "session-command")
-            )
-        })
+        .filter(is_command)
         .map(|option| option.value)
 }
 
@@ -179,12 +202,12 @@ fn login_dash(word: &Word) -> bool {
     word.text == "-" && reads_as_written(word)
 }
 
-/// `su [options] [USER] [ARG...]`: its `-c` strings or, without one, its arguments after the
-/// user as the user's shell reads them (a shell reading stdin when there are none). getopt
-/// permutes su's options and operands, handing the shell its operands after the user (which
-/// may be `-` or bash's `+x`, `+o NAME`), then the words after `--`. With `POSIXLY_CORRECT`
-/// set getopt stops at the user and hands the shell every word after it. Each reading is
-/// checked, and so are the words after `--` on their own.
+/// `su [options] [USER] [ARG...]`: the user's shell runs `-c` and su's last `-c` string, if
+/// any, then su's arguments after the user, read as bash reads them. getopt permutes su's
+/// options and operands, handing the shell its operands after the user (which may be `-` or
+/// bash's `+x`, `+o NAME`), then the words after `--`; with `POSIXLY_CORRECT` set it stops at
+/// the user and hands the shell every word after it. Each reading is checked, every `-c`
+/// string, and, without a `-c`, the words after `--` on their own.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let Read {
         options,
@@ -196,26 +219,31 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         [dash, tail @ ..] if login_dash(dash) => tail,
         rest => rest,
     };
-    let posix = bodies(to_user.options).unwrap_or_else(|| shell_run("su", &all(skip_one(user))));
-    let Some(permuted) = bodies(options) else {
-        let argv: Vec<&Word> = operands
-            .into_iter()
-            .skip_while(|word| login_dash(word))
-            .skip(1)
-            .chain(after_dashes)
-            .collect();
-        return Peel::Done(Run::either([
-            shell_run("su", &argv),
-            shell_run("su", &all(after_dashes)),
-            posix,
-        ]));
-    };
-    Peel::Done(Run::either([permuted, posix]))
+    let posix = su_reading(to_user.options, skip_one(user));
+    let alone = (!options.iter().any(is_command)).then(|| shell_run("su", None, after_dashes));
+    let argv = operands
+        .into_iter()
+        .skip_while(|word| login_dash(word))
+        .skip(1)
+        .chain(after_dashes);
+    let permuted = su_reading(options, argv);
+    Peel::Done(Run::either([permuted, posix].into_iter().chain(alone)))
 }
 
-/// Each of `words`, by reference.
-fn all(words: &[Word]) -> Vec<&Word> {
-    words.iter().collect()
+/// One reading of `su`: its options, and `argv`, the words it hands the user's shell after its
+/// own `-c` and command string. The `-c` strings run; a last one that bash reads as an option
+/// (`su -c -x root 'cmd'`) leaves the command string to `argv`.
+fn su_reading<'a>(options: Vec<Parsed<'a>>, argv: impl IntoIterator<Item = &'a Word>) -> Run<'a> {
+    let lead = options
+        .iter()
+        .rfind(|option| is_command(option))
+        .and_then(|option| option.value)
+        .filter(|value| value.starts_with(['-', '+']));
+    match (bodies(options), lead) {
+        (None, _) => shell_run("su", None, argv),
+        (Some(bodies), None) => bodies,
+        (Some(bodies), Some(lead)) => Run::either([bodies, shell_run("su", Some(lead), argv)]),
+    }
 }
 
 /// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
@@ -236,47 +264,125 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
 /// a script read from stdin.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, &all(words)))
+    Peel::Done(shell_run(name, None, words))
 }
 
-/// What the shell `name` runs, given the arguments `words` ([`shell`]).
-fn shell_run<'a>(name: &'a str, words: &[&'a Word]) -> Run<'a> {
-    let mut rest = words;
-    let (mut command_string, mut from_stdin) = (false, false);
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if text == "--version" || text == "--help" {
-            return Run::Nothing;
+/// What one word of a shell's arguments is to the shell ([`ShellOptions::read`]).
+enum ShellWord {
+    /// An option, or an option's value.
+    Option,
+    /// `--` or `-`: the options end after it.
+    Ends,
+    /// The first operand.
+    Operand,
+    /// `--help` or `--version`: the shell runs nothing.
+    Exits,
+}
+
+/// A shell's options as bash reads them, word by word.
+#[derive(Default)]
+struct ShellOptions {
+    /// `-c` (or `+c`): the first operand is the command string.
+    command_string: bool,
+    /// `-s` (or `+s`): the script is stdin.
+    from_stdin: bool,
+    /// Words still owed as values: one for each `o` or `O` read, one for `--rcfile`.
+    owed: usize,
+    /// Which options bash still reads.
+    phase: ShellPhase,
+}
+
+/// Which of a shell's options bash still reads.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum ShellPhase {
+    /// Long ones and short ones: no short option was read yet.
+    #[default]
+    Long,
+    /// Short ones only.
+    Short,
+}
+
+impl ShellOptions {
+    /// Reads the argument `text` (`literal` when it reads as written).
+    fn read(&mut self, text: &str, literal: bool) -> ShellWord {
+        if let Some(fewer) = self.owed.checked_sub(1) {
+            self.owed = fewer;
+            return ShellWord::Option;
+        }
+        if !literal {
+            return ShellWord::Operand;
         }
         if text == "--" || text == "-" {
-            rest = tail;
-            break;
+            return ShellWord::Ends;
         }
-        let option = reads_as_written(first) && (text.starts_with('-') || text.starts_with('+'));
-        if !option {
-            break;
+        let long = text.strip_prefix("--").or_else(|| text.strip_prefix('-'));
+        if let Some(&(name, takes_value)) = long
+            .filter(|_| self.phase == ShellPhase::Long)
+            .and_then(|long| SHELL_LONG.iter().find(|(name, _)| *name == long))
+        {
+            if name == "help" || name == "version" {
+                return ShellWord::Exits;
+            }
+            self.owed = usize::from(takes_value);
+            return ShellWord::Option;
         }
-        let long = text.starts_with("--");
-        let short = !long && text.starts_with('-');
-        command_string |= short && text.contains('c');
-        from_stdin |= short && text.contains('s');
-        let takes_value = if long {
-            SHELL_VALUES.contains(&text)
-        } else {
-            text.ends_with(['o', 'O'])
+        let Some(letters) = text.strip_prefix('-').or_else(|| text.strip_prefix('+')) else {
+            return ShellWord::Operand;
         };
-        rest = match tail {
-            [_, after @ ..] if takes_value => after,
-            _ => tail,
-        };
+        self.phase = ShellPhase::Short;
+        for letter in letters.chars() {
+            match letter {
+                'c' => self.command_string = true,
+                's' => self.from_stdin = true,
+                'o' | 'O' => self.owed = self.owed.saturating_add(1),
+                _ => {}
+            }
+        }
+        ShellWord::Option
     }
-    if command_string {
-        return rest.first().map_or(Run::Nothing, |string| {
+}
+
+/// What the shell `name` runs, given the arguments `words` ([`shell`]), read as bash reads
+/// them; `lead`, when given, is the value of a `-c` already read (su's `-c VALUE`).
+fn shell_run<'a>(
+    name: &'a str,
+    lead: Option<&'a str>,
+    words: impl IntoIterator<Item = &'a Word>,
+) -> Run<'a> {
+    let mut words = words.into_iter();
+    let mut options = ShellOptions::default();
+    let mut ended = false;
+    if let Some(lead) = lead {
+        options.command_string = true;
+        match options.read(lead, true) {
+            ShellWord::Option => {}
+            ShellWord::Ends => ended = true,
+            ShellWord::Operand => return Run::Script(Cow::Borrowed(lead)),
+            ShellWord::Exits => return Run::Nothing,
+        }
+    }
+    let mut operand = None;
+    if !ended {
+        for word in words.by_ref() {
+            match options.read(&word.text, reads_as_written(word)) {
+                ShellWord::Option => {}
+                ShellWord::Ends => break,
+                ShellWord::Operand => {
+                    operand = Some(word);
+                    break;
+                }
+                ShellWord::Exits => return Run::Nothing,
+            }
+        }
+    }
+    let first = operand.or_else(|| words.next());
+    if options.command_string {
+        return first.map_or(Run::Nothing, |string| {
             Run::Script(Cow::Borrowed(&string.text))
         });
     }
     // With `-s` the operands are arguments and the script is stdin.
-    match rest.first().filter(|_| !from_stdin) {
+    match first.filter(|_| !options.from_stdin) {
         None => Run::StdinScript(name),
         Some(script) => script_file(name, script),
     }

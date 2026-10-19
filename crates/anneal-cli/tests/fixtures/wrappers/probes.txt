@@ -137,6 +137,14 @@ W1	su root -s /bin/bash <(echo; echo W1)
 W1	su root -g root +x -- -c W1
 W1	su root -g root - <(echo; echo W1)
 W1	su root -w PATH +x <(echo; echo W1)
+W1	su root -- -ox pipefail -c W1
+W1	su root -- -rcfile x -c W1
+W1	su root -g root -- -init-file x -c W1
+W1	su root +c W1
+W1	su -c -x root W1
+W1	su -c +x root W1
+W1	su -c -- root W1
+W1	su -c -o root pipefail W1
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1
