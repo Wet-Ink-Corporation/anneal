@@ -458,3 +458,42 @@ fn words_between_an_unquoted_dollar_bracket_and_its_close_are_marked() {
         "from `$[` to its own `]`, and nothing inside the backticks"
     );
 }
+
+#[test]
+fn an_extended_glob_is_one_pattern_word_but_a_leading_bang_group_is_a_subshell() {
+    let commands = parse("rm @(a b|(c)) x!(y) ?(z); !(ls)").expect("parses");
+
+    let lexed: Vec<Vec<(&str, Shape)>> = commands
+        .iter()
+        .map(|command| {
+            command
+                .words
+                .iter()
+                .map(|word| (word.text.as_str(), word.shape))
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        lexed,
+        [
+            vec![
+                ("rm", Shape::Literal),
+                ("@(a b|(c))", Shape::Pattern),
+                ("x!(y)", Shape::Pattern),
+                ("?(z)", Shape::Pattern),
+            ],
+            vec![("!", Shape::Literal)],
+            vec![("ls", Shape::Literal)],
+        ],
+        "a group is read to its own `)`, blanks included; `!(` in command position opens a subshell"
+    );
+}
+
+#[test]
+fn an_extended_glob_that_never_closes_is_unparseable() {
+    assert_eq!(
+        parse("rm @(a"),
+        Err(ParseError::Unclosed { what: "(" }),
+        "the group is never closed"
+    );
+}

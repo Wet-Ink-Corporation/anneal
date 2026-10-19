@@ -115,7 +115,36 @@ An operand that may expand to an option cluster may hold the flags: one whose fi
 be a `-` (a variable or substitution, which may hold one; an unquoted `?`, `*` or bracket
 expression, which may match a file named `-rf`; or a written `-`) and whose other written
 characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-rf`, `-$x`,
-`"$b"rf` with `b=-`, `?rf`, `[-]rf`). A bracket expression may match `-` unless it is a plain
+`"$b"rf` with `b=-`, `?rf`, `[-]rf`). An extended glob group (`shopt -s extglob`: `@( )`,
+`+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
+and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
+quote does not close the group. A protected-config path reads a component's text from its
+first group to its last `)` as one or more `*` components, so a quoted `)` cannot cut a group
+short there either (`tee .c@(laude|l")")/settings.json` is denied), and a `/` inside a group
+is no separator (`tee .clau@(de|x/y)/settings.json` is denied). A special parameter's name
+before `(` opens a group too, as bash reads it (`$@(x)`, `$?(x)`). The lexer reads such a
+group as one pattern word, blanks and `|` included (bash without `extglob` refuses the word,
+so nothing runs then), and checks the commands of a `$( )` substitution inside it. A `<( )`
+or `>( )` inside a group (a line continuation between `<` and `(` included) is
+`unparseable`: bash ends the group at the first `)` that balances it, which may be a `case`
+pattern's inside the substitution, so what runs after it cannot be read reliably
+(`echo @(<(ls))` is denied). A backtick inside a group, at any depth, is `unparseable` too:
+inside a backtick substitution bash ends the substitution there, not where the group ends
+(`` echo `echo @(a`:`rm -rf ~ # )` `` runs `rm`), so `` echo @(`ls`) `` is denied as well.
+A `$[ ]` inside a group is `unparseable` too, since bash skips it whole, parentheses
+included; a line continuation after a `$` inside a group is dropped first, as bash drops it
+(`echo @($\<newline>(rm -rf /))` is judged as `rm -rf /`).
+A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
+`function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
+keyword and a subshell whose commands are checked. A word ending in an opener before an
+empty `()` (blanks and line continuations allowed) where a function's name stands (command
+position, or after `function`) is `unparseable`: without `extglob` it defines a function,
+with it it is one pattern word whose later words are its arguments (`/bin/echo@() { hi }`
+runs `echo`), so `f?() { ...; }` and `/bin/rm@() -rf ~` are denied (a cost: name such a
+function without the opener). Elsewhere `@()` is an empty group, so `rm @()-rf /home` is
+denied. A group in the program word may name any program, as `?` and `*` may:
+`/bin/r@(m) -rf ~` is judged as an unknown program, its arguments checked.
+A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never
 closes is read as bash reads it: its `[` is a member and the set closes at the next `]`, a set
@@ -233,12 +262,25 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 - values from the environment (`"$EDITOR" file`, `$GIT status` run, with their arguments
   checked; `cp x "$DEST"` is allowed and `git push -f origin "$B"` denied);
-- word splitting of an unquoted expansion, `"$@"` or `"${a[@]}"` into an `rm` operand that is
-  `-rf` on its own: `rm x$b /home/x` with `b=' -rf'`, `rm $F` with `F='-rf /home'` and
-  `set -- a -rf; rm x"$@" /home/x` are allowed, since judging them would also deny the ordinary
-  `rm -f $f` (#128);
-- extended globs (`shopt -s extglob`) in an `rm` operand: `rm @(-rf) /home` and `rm !(x) /home`
-  may match a file named `-rf`, and are allowed (#128);
+- word splitting (a documented limit, Ryan's decision on #128): an unquoted expansion,
+  `"$@"` or `"${a[@]}"` may stand for zero, one or several words, and each word is judged as
+  one. So a split can put `-rf` in an `rm` operand of its own (`rm x$b /home/x` with
+  `b=' -rf'`, `rm $F` with `F='-rf /home'`, `set -- a -rf; rm x"$@" /home/x`,
+  `f() { rm x"$@" /home/x; }; f a -rf`), and an expansion that is empty can vanish and move a
+  later word into a checked place (`bash -c $x 'rm -rf /'`, `caffeinate bash $x -c 'rm -rf /'`,
+  `cp x .claude/settings.json $x`, `bash {-xc,$x} 'rm -rf /'` with `x` unset). These are
+  allowed, because judging every such word as possibly several would also deny everyday
+  commands such as `rm -f $f` and `rm -f $dir/x /y`;
+- a quoted expansion in `git push` that holds a force flag: `git push "$branch"` with
+  `branch=--force` (or `-f`) is allowed, since denying it would deny every
+  `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A glob that may
+  match a file named like the flag is the same gap (`git push ?f origin main`,
+  `git push @(-f) origin main`). A variable set
+  earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
+- a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
+  guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
+  readings end the group at different `)` (a `#` comment inside it), a later command can be
+  missed (main had the same gap, #144);
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,

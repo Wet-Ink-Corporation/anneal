@@ -8,17 +8,21 @@
 //! them. Expansions are not performed: a word that has one is marked [`Shape::Dynamic`], one
 //! with an unquoted glob, brace or leading `~` [`Shape::Pattern`]. A word keeps only its
 //! highest shape, so whether it holds an unquoted pattern character is its own flag,
-//! [`Word::globs`], set whatever the shape (`"$b"{-rf,/}` is dynamic and a pattern).
+//! [`Word::globs`], set whatever the shape (`"$b"{-rf,/}` is dynamic and a pattern). An
+//! extended glob's group (`@(a|b)`) is part of its pattern word.
 //!
-//! Commands are read here; words (quotes, escapes, `$`) in [`word`], redirections in
-//! [`redirect`], heredoc bodies in [`heredoc`].
+//! Commands are read here; words (quotes, escapes, `$`) in [`word`], extended globs in
+//! [`extglob`], redirections in [`redirect`], heredoc bodies in [`heredoc`].
 
+mod extglob;
 mod heredoc;
 mod redirect;
 mod word;
 
 use std::mem;
 
+pub(crate) use extglob::OPENERS as EXTGLOB_OPENERS;
+use extglob::Place;
 use redirect::Heredoc;
 pub(crate) use word::{Expansion, Globs, Shape, Word};
 
@@ -81,6 +85,22 @@ pub(crate) enum ParseError {
     /// A redirection operator with no word after it.
     #[error("a redirection with no target")]
     MissingRedirectTarget,
+    /// A `<(` or `>(` inside an extended glob's group: bash ends the group at a `)` its
+    /// commands may hold (a `case` pattern's), so where it ends cannot be read reliably.
+    #[error("a process substitution inside an extended glob")]
+    ProcessInExtglob,
+    /// A backtick inside an extended glob's group: inside a backtick substitution bash ends
+    /// the substitution there, so whether it opens another cannot be read reliably.
+    #[error("a backtick inside an extended glob")]
+    BacktickInExtglob,
+    /// A `$[` inside an extended glob's group: bash skips it whole, parentheses included, so
+    /// where the group ends cannot be read reliably.
+    #[error("an old arithmetic expression inside an extended glob")]
+    ArithmeticInExtglob,
+    /// A word ending in an extended glob opener before an empty `()` where a function's name
+    /// may stand (`f?()`): a definition without `extglob`, a pattern word with it.
+    #[error("a function name or extended glob before an empty `()`")]
+    ExtglobName,
 }
 
 /// Lexes `text` into every simple command it runs, nested ones included.
@@ -155,6 +175,8 @@ struct Lexer {
     reading: Reading,
     /// Unquoted `$[` (and `[` inside one) not yet closed by `]` in the list being read.
     brackets: usize,
+    /// Extended glob groups open around the cursor, at any depth.
+    groups: usize,
 }
 
 /// Characters that end an unquoted word.
@@ -178,6 +200,7 @@ impl Lexer {
             cases: 0,
             reading: Reading::Commands,
             brackets: 0,
+            groups: 0,
         }
     }
 
@@ -314,7 +337,7 @@ impl Lexer {
             }
             '<' | '>' => self.redirect(command, level, true)?,
             _ => {
-                let word = self.word(level.close, level.depth)?;
+                let word = self.word(level.close, level.depth, place_of(&command.words))?;
                 if word.is_fd() && matches!(self.peek(), Some('<' | '>')) {
                     self.redirect(command, level, word.text == "0")?;
                 } else if word.is_present() {
@@ -406,6 +429,45 @@ impl Lexer {
             self.advance();
         }
     }
+}
+
+/// Where the word after `before` is read: a function's name after a bare `function`, in
+/// command position, or as an argument.
+fn place_of(before: &[Word]) -> Place {
+    if matches!(before, [only] if only.is_bare(&["function"])) {
+        Place::Name
+    } else if in_command_position(before) {
+        Place::Command
+    } else {
+        Place::Argument
+    }
+}
+
+/// Whether a word after `before` stands where bash reads a keyword, so a `!(` there is the `!`
+/// keyword and a subshell: only reserved words come before it, `time`'s own options (`-p`,
+/// `--`) after a `time`, and `function NAME {` or `coproc [NAME] {` (a body's first word).
+fn in_command_position(before: &[Word]) -> bool {
+    let mut after_time = false;
+    let mut at = 0_usize;
+    while let Some(word) = before.get(at) {
+        let step = if after_time && word.is_bare(&["-p", "--"]) {
+            1
+        } else if word.is_bare(&RESERVED) {
+            after_time = word.text == "time";
+            1
+        } else if word.is_bare(&["function", "coproc"]) {
+            after_time = false;
+            // A name then `{`: the `{` is read next, as a reserved word.
+            let named = before
+                .get(at.saturating_add(2))
+                .is_some_and(|brace| brace.is_bare(&["{"]));
+            if named { 2 } else { 1 }
+        } else {
+            return false;
+        };
+        at = at.saturating_add(step);
+    }
+    true
 }
 
 /// Whether a `(` after `words` (the words of the command it ends) defines a function: some
