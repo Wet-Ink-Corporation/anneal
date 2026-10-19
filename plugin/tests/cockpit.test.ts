@@ -4,7 +4,7 @@
 // and `anneal calibrate` envelopes as the CLI prints them (docs/status.md, docs/calibrate.md).
 
 import { expect, mock, test } from 'claude-code/testing'
-import type { CommandRunInput, On, ProcessRunResult, StateRead, ValueOrDeny } from 'claude-code'
+import type { CommandRunInput, Hook, On, ProcessRunResult, StateRead, ValueOrDeny } from 'claude-code'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 /** The surfaces the band and pane are drawn on, one loop over both. */
@@ -140,6 +140,27 @@ type Host = {
 /** What a test answers for `$.state.get` of a key in place of the store; absent passes through. */
 type StateAnswer = (key: string) => ValueOrDeny<StateRead<unknown>> | undefined
 
+/**
+ * `on` with `mock.clock`'s own `clock.now` hook behind a refusal: while `refusals.now` is above 0
+ * each read is refused and counts it down, after which the mock clock answers. An event takes one
+ * hook, so the refusal wraps the mock's rather than sitting beside it.
+ */
+const refusingNow = (on: On, refusals: { now: number }): On => {
+  const wrapped = (event: string, ...rest: unknown[]): unknown => {
+    const hook = rest[0]
+    if (event !== 'clock.now' || rest.length !== 1 || typeof hook !== 'function') {
+      return (on as (event: string, ...rest: unknown[]) => unknown)(event, ...rest)
+    }
+    const answer = hook as Hook<'clock.now'>
+    return on('clock.now', async ($, e, next) => {
+      if (refusals.now <= 0) return answer($, e, next)
+      refusals.now -= 1
+      return { deny: 'the clock is unavailable' }
+    })
+  }
+  return wrapped as On
+}
+
 /** Each test starts its clock far from the last, as the module's pacing outlives a test. */
 let epoch = 0
 
@@ -149,14 +170,16 @@ const host = (
   options: {
     surfaces?: readonly string[]
     calibrate?: Answer
-    /** A clock of the test's own in place of `mock.clock`. */
-    clock?: (on: On) => MockClock
+    /** `$.clock.now` refused while `now` is above 0, each refusal counting it down. */
+    refuseClock?: { now: number }
     /** Stands in for the store's answers to `$.state.get`. */
     state?: StateAnswer
   } = {},
 ): Host => {
   epoch += 1_000_000
-  const clock = options.clock === undefined ? mock.clock(on, { now: epoch }) : options.clock(on)
+  const clock = mock.clock(options.refuseClock === undefined ? on : refusingNow(on, options.refuseClock), {
+    now: epoch,
+  })
   const state: Host = {
     clock,
     runs: [],
@@ -928,9 +951,6 @@ test('/anneal calibration takes only refresh: there is no apply', async ($, on) 
 
 // ---- Review fixes: launchers, failures, shapes, whole rows ---------------------------------------
 
-/** A real-time pause, for a test whose clock is its own and has no `settle` of the engine's. */
-declare const setTimeout: (callback: () => void, ms: number) => unknown
-
 /** A promise and the call that settles it, to hold a run until the test lets it answer. */
 const gate = (): { readonly promise: Promise<void>; readonly open: () => void } => {
   let open = (): void => undefined
@@ -939,35 +959,6 @@ const gate = (): { readonly promise: Promise<void>; readonly open: () => void } 
   })
   return { promise, open }
 }
-
-/**
- * A clock of the test's own: `clock.now` refused while `refusals.now` is above 0, and every
- * `clock.after` firing at once.
- */
-const ownClock =
-  (refusals: { now: number }) =>
-  (on: On): MockClock => {
-    let now = epoch
-    on('clock.now', async () => {
-      if (refusals.now > 0) {
-        refusals.now -= 1
-        return { deny: 'the clock is unavailable' }
-      }
-      return { value: now }
-    })
-    on('clock.after', async () => ({ value: undefined }))
-    const settle = async (): Promise<void> => {
-      for (let pass = 0; pass < 5; pass += 1) await new Promise<void>(resolve => setTimeout(resolve, 5))
-    }
-    return {
-      now: () => now,
-      advance: async ms => {
-        now += ms
-        await settle()
-      },
-      settle,
-    }
-  }
 
 /**
  * Makes `anneal` the launcher the cockpit tries first, whatever an earlier test left: with
@@ -1043,7 +1034,7 @@ test('an anneal status that runs and fails is unavailable, not unbuilt, in the t
 
 test('a clock the host refuses leaves nothing scheduled, so the next ask refreshes', async ($, on) => {
   const refusals = { now: 1 }
-  const state = host(on, MID_BUILD, { clock: ownClock(refusals) })
+  const state = host(on, MID_BUILD, { refuseClock: refusals })
   await turnComplete($)
   await state.clock.settle()
   expect(refusals.now).toBe(0)
@@ -1226,7 +1217,7 @@ test('an ask while anneal calibrate runs is absorbed: one run, and its result is
   state.hold.calibrate = held.promise
   await openCalibration($, state)
   expect(state.calibrateRuns.length).toBe(1)
-  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refresh failed (no run finished).')
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: a calibration refresh is already running.')
   expect(state.calibrateRuns.length).toBe(1)
   held.open()
   await state.clock.settle()

@@ -99,8 +99,12 @@ type Ran =
       readonly hasStarted: boolean
     }
 
-/** The errors of a command that could not start: not there, not executable, not a program. */
-const START_FAILURE = /\b(ENOENT|EACCES|ENOEXEC|EPERM|ENOTDIR)\b|\b(cannot|could not|failed to) start\b/i
+/**
+ * The errors of a command that could not start: not there, not executable, not a program.
+ * EINVAL is Node refusing to spawn a `.cmd` or `.bat` without a shell (on Windows since the
+ * CVE-2024-27980 fix), so `anneal.cmd` failing that way passes to the next launcher.
+ */
+const START_FAILURE = /\b(ENOENT|EACCES|ENOEXEC|EPERM|ENOTDIR|EINVAL)\b|\b(cannot|could not|failed to) start\b/i
 
 /**
  * Whether `$.process.run` rejected because the command could not start, rather than because it
@@ -600,14 +604,24 @@ const calibrationFailed = async ($: EngineInterface, error: unknown): Promise<An
   }
 }
 
+/** What a calibration refresh left stored, and whether a run already under way absorbed the ask. */
+export type CalibrationRefresh = {
+  readonly held: AnnealCalibrationReading
+  /** True when another run was under way: this ask started none, and `held` is what is stored now. */
+  readonly isAbsorbed: boolean
+}
+
 /**
  * Runs `anneal calibrate` and stores what it printed: a failure after a good run keeps that run
  * and says why, and an unchanged result writes nothing. Resolves to what is stored; a run under
- * way absorbs the ask and resolves to what is stored now. It never rejects: a host that refuses
- * a call is recorded as the reason.
+ * way absorbs the ask and resolves to what is stored now, marked absorbed. It never rejects: a
+ * host that refuses a call is recorded as the reason.
  */
-export const refreshCalibration = async ($: EngineInterface): Promise<AnnealCalibrationReading> => {
-  if (isCalibrating) return heldCalibration($).catch(error => calibrationFailed($, error))
+export const refreshCalibration = async ($: EngineInterface): Promise<CalibrationRefresh> => {
+  if (isCalibrating) {
+    const held = await heldCalibration($).catch(error => calibrationFailed($, error))
+    return { held, isAbsorbed: true }
+  }
   isCalibrating = true
   try {
     const current = await heldCalibration($)
@@ -615,9 +629,9 @@ export const refreshCalibration = async ($: EngineInterface): Promise<AnnealCali
     const kept = next.kind === 'unavailable' ? calibrationFailure(current, next.reason) : next
     if (JSON.stringify(kept) !== JSON.stringify(current)) await $.state.set(calibration, kept)
 
-    return kept
+    return { held: kept, isAbsorbed: false }
   } catch (error) {
-    return calibrationFailed($, error)
+    return { held: await calibrationFailed($, error), isAbsorbed: false }
   } finally {
     isCalibrating = false
   }
@@ -1084,7 +1098,8 @@ const calibrationCommand = async (
   const surfaces = await $.session.surfaces()
   const statusNow = async (): Promise<AnnealReading> => (await $.state.get(reading)).value ?? { kind: 'unread' }
   if (isRefresh) {
-    const held = await refreshCalibration($)
+    const { held, isAbsorbed } = await refreshCalibration($)
+    if (isAbsorbed) return { text: 'anneal: a calibration refresh is already running.' }
     if (surfaces.length === 0) return { text: calibrationTextOrNote(held, await statusNow()) }
     if (held.kind === 'read' && held.failed === undefined) return { text: 'anneal: calibration refreshed.' }
     const reason = held.kind === 'read' ? held.failed : held.kind === 'unavailable' ? held.reason : 'no run finished'
@@ -1106,7 +1121,7 @@ const calibrationCommand = async (
     await $.ui.close({ id })
   }
 
-  return { text: calibrationTextOrNote(await refreshCalibration($), await statusNow()) }
+  return { text: calibrationTextOrNote((await refreshCalibration($)).held, await statusNow()) }
 }
 
 export const register: Register = on => {
