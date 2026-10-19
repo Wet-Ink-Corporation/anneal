@@ -353,6 +353,7 @@ fn a_login_shell_of_sudo_or_su_is_noted_as_a_directory_change() {
         ("su - me -c 'gh pr merge 5'", "su --login"),
         ("su -l -c 'gh pr merge 5'", "su --login"),
         ("su --login me -c 'gh pr merge 5'", "su --login"),
+        ("su -- - me -c 'gh pr merge 5'", "su --login"),
     ];
 
     for (command, how) in rows {

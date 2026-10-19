@@ -160,15 +160,17 @@ pub(super) fn trap(words: &[Word]) -> Peel<'_> {
 }
 
 /// Whether `su [options] [USER]` starts a login shell, which runs from the user's home: `-l`
-/// (`--login`), or a `-` among its operands. `su` takes options after the user too.
+/// (`--login`), or a `-` among its operands or the words after `--`, where su may read its
+/// `-` too. `su` takes options after the user too.
 fn su_login(words: &[Word]) -> bool {
     let read = SU.parse(words);
-    let operands_end = words.len().saturating_sub(read.rest.len());
     read.holds('l', "login")
-        || words
+        || read
+            .operands
             .iter()
-            .take(operands_end)
-            .any(|word| word.text == "-" && reads_as_written(word))
+            .copied()
+            .chain(read.rest)
+            .any(login_dash)
 }
 
 /// Whether `option` is a `-c` (`--command`, and for `su` `--session-command`).
@@ -214,9 +216,9 @@ fn login_dash(word: &Word) -> bool {
 
 /// `su [options] [USER] [ARG...]`: the user's shell runs `-c` and su's last `-c` string, if
 /// any, then su's arguments after the user, read as bash reads them. getopt permutes su's
-/// options and operands, then reads its `-` and user from its operands followed by the words
-/// after `--` and hands the shell the rest (which may be `-` or bash's `+x`, `+o NAME`); with `POSIXLY_CORRECT` set it stops at
-/// the user and hands the shell every word after it. Each reading is checked, every `-c`
+/// options and operands; su reads its `-` and user from its operands followed by the words
+/// after `--` and hands the shell the rest (which may be `-` or bash's `+x`, `+o NAME`). With
+/// `POSIXLY_CORRECT` set getopt stops at the user and su hands the shell every word after it. Each reading is checked, every `-c`
 /// string, and, without a `-c`, the words after `--` on their own.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let Read {
@@ -293,7 +295,7 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
 /// a script read from stdin. bash run by name reads its long options; any other shell is also
-/// read without them too ([`shell_run`]), as dash (often `sh`) reads its options.
+/// read without them ([`shell_run`]), as dash (often `sh`) reads its options.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
     Peel::Done(if name == "bash" {
         shell_read(name, None, words.iter(), ShellPhase::Long)
@@ -460,6 +462,12 @@ fn script_file<'a>(shell: &'a str, script: &Word) -> Run<'a> {
     } else {
         Run::Nothing
     }
+}
+
+/// `busybox SHELL ...`: the shell applets of `busybox` are ash, whatever their name, so even
+/// its `bash` is also read without bash's long options.
+pub(super) fn busybox_shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
+    Peel::Done(shell_run(name, None, words))
 }
 
 /// `source FILE` (or `. FILE`).

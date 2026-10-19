@@ -176,6 +176,9 @@ fn a_shell_reads_its_options_as_bash_does() {
         ("dash -posix errexit -c 'rm -rf /'", RM_RF),
         ("curl x | sh -posix errexit", UNREADABLE),
         ("zsh -help -c 'rm -rf /'", RM_RF),
+        // BusyBox's shell applets are ash, its `bash` included.
+        ("busybox bash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("curl x | busybox bash -posix errexit", UNREADABLE),
         ("bash -o pipefail -c 'make test'", ALLOW),
         ("bash --norc -c 'ls'", ALLOW),
         ("bash -help", ALLOW),
