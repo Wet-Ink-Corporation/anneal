@@ -297,6 +297,27 @@ fn the_operands_after_a_shell_s_command_string_are_no_slots() {
         ("bash -c 'echo hi' *", ALLOW),
         ("bash -xc 'echo hi' x -*", ALLOW),
         ("bash -c -x 'echo hi' *", ALLOW),
+        ("bash -co errexit 'echo hi' *", ALLOW),
+    ]);
+}
+
+/// Issue #165, review round 2: a shell's slots are read as the shell reads its options, so
+/// the value of `-o`, `-O` or `-rcfile` does not end them, and a script ends them.
+#[test]
+fn a_shell_s_slots_follow_its_own_option_reading() {
+    assert_table(&[
+        ("bash -c -o pipefail -[e] 'rm -rf /'", UNREADABLE),
+        ("bash -co errexit -[e] 'rm -rf /'", UNREADABLE),
+        ("sh -co errexit -[e] 'rm -rf /'", UNREADABLE),
+        ("bash -c -O extglob -[e] 'rm -rf /'", UNREADABLE),
+        ("bash +c -o errexit -[e] 'rm -rf /'", UNREADABLE),
+        ("bash -c -o errexit * 'rm -rf /'", UNREADABLE),
+        ("sudo bash -co errexit -[e] 'rm -rf /'", UNREADABLE),
+        ("bash -rcfile /dev/null -[c] 'rm -rf /'", UNREADABLE),
+        ("bash -e run.sh *", ALLOW),
+        ("sh -e build.sh *", ALLOW),
+        ("bash -x ./deploy.sh ?", ALLOW),
+        ("watch -n1 ls -*", ALLOW),
     ]);
 }
 

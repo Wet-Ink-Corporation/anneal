@@ -372,7 +372,7 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
 }
 
 /// Whether `word` is a literal `--`.
-fn ends_options(word: &Word) -> bool {
+pub(super) fn ends_options(word: &Word) -> bool {
     word.text == "--" && reads_as_written(word)
 }
 
@@ -417,6 +417,31 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 /// ash) nor whether it has them.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
     Peel::Done(shell_run(name, None, words))
+}
+
+/// How many of a shell's argument words `words` it reads as options or their values, the word
+/// that ends them (its first operand, `--` or `-`) included, in the longer of [`shell_run`]'s
+/// two readings: the words where a pattern may stand for an option (#165).
+pub(super) fn shell_option_words(words: &[Word]) -> usize {
+    [ShellPhase::Long, ShellPhase::Short]
+        .into_iter()
+        .map(|phase| {
+            let mut options = ShellOptions {
+                phase,
+                ..ShellOptions::default()
+            };
+            words
+                .iter()
+                .position(|word| {
+                    !matches!(
+                        options.read(&word.text, reads_as_written(word)),
+                        ShellWord::Option
+                    )
+                })
+                .map_or(words.len(), |at| at.saturating_add(1))
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// What one word of a shell's arguments is to the shell ([`ShellOptions::read`]).

@@ -2,6 +2,9 @@
 //! runs `bash -c` when a file named `-c` is in the directory, so which option such a word is
 //! cannot be read from the command. Variables stay the word-splitting limit of #128.
 
+use super::grammar::Grammar;
+use super::strings::{ends_options, shell_option_words};
+use super::tables::{ENV, FLOCK, SUDO, WATCH};
 use super::{Peel, SHELLS, Word, braces, readings};
 
 /// Wrappers that read no options of their own, or whose words are patterns of their own
@@ -22,10 +25,11 @@ const DASH: &[char] = &['-'];
 /// The slots are every word the wrapper took before the command it wraps, and that command's
 /// first word, which the wrapper took for a program only because the pattern did not read as
 /// an option. A wrapper that runs a string or a script itself has its slots read from its
-/// words: for `su`, which permutes and hands its words after the user, `--` included, to the
-/// user's shell, every word, signed as a shell signs them; for `script`, every word before a
-/// `--`; for a shell or `env -S`, its leading options, the word after each and the first
-/// operand, a shell's `-c` string ending them.
+/// words: for a shell, the words it reads as options or their values and the word that ends
+/// them, as [`shell_option_words`] reads them; for `su`, which permutes and hands its words
+/// after the user, `--` included, to the user's shell, every word, signed as a shell signs
+/// them; for `script`, every word before a `--`; for `sudo -s`, `env -S`, `watch` and
+/// `flock -c`, the words their grammar reads as options and the word after them.
 pub(super) fn unsure_option<'a>(
     name: &str,
     rest: &'a [Word],
@@ -34,47 +38,47 @@ pub(super) fn unsure_option<'a>(
     if READS_NO_OPTIONS.contains(&name) {
         return None;
     }
-    match peeled {
+    let slots = match peeled {
+        Peel::Program => return None,
         Peel::Inner(inner) | Peel::Appending(inner) => {
             let taken = rest.len().saturating_sub(inner.len());
-            let before = rest
-                .split_at_checked(taken)
-                .map_or(rest, |(before, _)| before);
-            before
-                .iter()
-                .chain(inner.first())
-                .find(|word| unsure(word, DASH))
+            return before_and_first(rest, taken).find(|word| unsure(word, DASH));
         }
-        Peel::Done(_) if name == "su" => rest.iter().find(|word| unsure(word, SHELL_SIGNS)),
-        Peel::Done(_) if name == "script" => rest
-            .iter()
-            .take_while(|word| !ends_options(word))
-            .find(|word| unsure(word, DASH)),
-        Peel::Done(_) if SHELLS.contains(&name) => leading(rest, SHELL_SIGNS),
-        Peel::Done(_) => leading(rest, DASH),
-        Peel::Program => None,
+        Peel::Done(_) if name == "su" => {
+            return rest.iter().find(|word| unsure(word, SHELL_SIGNS));
+        }
+        Peel::Done(_) if SHELLS.contains(&name) => {
+            let read = shell_option_words(rest);
+            return rest
+                .iter()
+                .take(read)
+                .find(|word| unsure(word, SHELL_SIGNS));
+        }
+        Peel::Done(_) if name == "script" => {
+            rest.iter().position(ends_options).unwrap_or(rest.len())
+        }
+        Peel::Done(_) => grammar(name).map_or(rest.len(), |grammar| {
+            rest.len().saturating_sub(grammar.parse(rest).rest.len())
+        }),
+    };
+    before_and_first(rest, slots).find(|word| unsure(word, DASH))
+}
+
+/// The grammar of a wrapper that may run a string itself.
+fn grammar(name: &str) -> Option<&'static Grammar> {
+    match name {
+        "sudo" | "doas" => Some(&SUDO),
+        "env" => Some(&ENV),
+        "watch" => Some(&WATCH),
+        "flock" => Some(&FLOCK),
+        _ => None,
     }
 }
 
-/// The first unsure word among `words`' leading options, each option's next word (which may
-/// be its value) and the first operand. After a short cluster holding `c`, the first word that
-/// is no option is a shell's command string, and what follows it are operands (`$0` and the
-/// rest), not options.
-fn leading<'a>(words: &'a [Word], signs: &[char]) -> Option<&'a Word> {
-    let mut value_may_follow = false;
-    let mut string_pending = false;
-    for word in words {
-        if unsure(word, signs) {
-            return Some(word);
-        }
-        let option = word.text.starts_with(signs);
-        if ends_options(word) || !(option || value_may_follow) || (string_pending && !option) {
-            return None;
-        }
-        string_pending |= option && !word.text.starts_with("--") && word.text.contains('c');
-        value_may_follow = option;
-    }
-    None
+/// The first `taken` words of `words` and the word after them.
+fn before_and_first(words: &[Word], taken: usize) -> impl Iterator<Item = &Word> {
+    let (before, after) = words.split_at_checked(taken).unwrap_or((words, &[]));
+    before.iter().chain(after.first())
 }
 
 /// Whether `word` holds an unquoted glob or group (a brace or `~` alone, as in `-I{}`, is
@@ -86,9 +90,4 @@ fn unsure(word: &Word, signs: &[char]) -> bool {
         && word.text.contains(['*', '?', '[', '('])
         && !braces::reads_as_written(word)
         && readings::may_start_option(word, signs)
-}
-
-/// Whether `word` is a literal `--`.
-fn ends_options(word: &Word) -> bool {
-    word.is_literal() && word.text == "--"
 }
