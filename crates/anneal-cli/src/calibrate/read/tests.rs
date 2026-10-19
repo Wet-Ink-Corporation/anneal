@@ -220,3 +220,72 @@ fn a_file_past_the_headroom_is_an_error() -> TestResult {
     );
     Ok(())
 }
+
+/// Writes `rows` as the live log of a fresh home and reads it back.
+fn read_rows(rows: &[Value]) -> Result<super::LogRows, Box<dyn std::error::Error>> {
+    let home = tempfile::tempdir()?;
+    let dir = home.path().join("decisions");
+    fs::create_dir_all(&dir)?;
+    write_lines(&dir.join("decisions.jsonl"), rows, "")?;
+    Ok(read_log(&DecisionLog::in_home(home.path()))?)
+}
+
+#[test]
+fn a_label_row_without_actor_or_via_still_reads_and_is_not_via_mod() -> TestResult {
+    let rows = read_rows(&[label("d1-1-0", "yes")])?;
+
+    assert_eq!(
+        (
+            rows.labels.get("d1-1-0").map(String::as_str),
+            rows.via_mod.len(),
+            rows.skipped_rows
+        ),
+        (Some("yes"), 0, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_via_this_build_does_not_know_still_reads_as_a_label() -> TestResult {
+    let rows = read_rows(&[json!({
+        "kind": "label", "id": "d1-1-0", "outcome": "no", "ts_ms": 2,
+        "actor": "robot", "via": "carrier-pigeon",
+    })])?;
+
+    assert_eq!(
+        (
+            rows.labels.get("d1-1-0").map(String::as_str),
+            rows.via_mod.len(),
+            rows.skipped_rows
+        ),
+        (Some("no"), 0, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn the_last_label_of_an_id_decides_whether_it_came_via_the_mod() -> TestResult {
+    let via = |id: &str, outcome: &str, via: &str| json!({"kind": "label", "id": id, "outcome": outcome, "ts_ms": 2, "via": via});
+
+    let rows = read_rows(&[
+        label("d1-1-0", "no"),
+        via("d1-1-0", "yes", "mod"),
+        via("d1-1-1", "yes", "mod"),
+        via("d1-1-1", "no", "terminal"),
+    ])?;
+
+    assert_eq!(
+        (
+            rows.labels.get("d1-1-0").map(String::as_str),
+            rows.labels.get("d1-1-1").map(String::as_str)
+        ),
+        (Some("yes"), Some("no")),
+        "the later label wins"
+    );
+    assert_eq!(
+        rows.via_mod.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["d1-1-0"],
+        "only an id whose last label came via the mod"
+    );
+    Ok(())
+}

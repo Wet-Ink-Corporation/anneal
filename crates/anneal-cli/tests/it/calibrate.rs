@@ -256,3 +256,64 @@ fn the_current_threshold_is_kept_when_no_candidate_is_cheaper() -> TestResult {
     assert_eq!(envelope["data"]["apply"], json!([]), "nothing to apply");
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn labelling_one_decision_twice_keeps_both_rows_and_calibrate_uses_the_last() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let dir = home.path().join("decisions");
+    fs::create_dir_all(&dir)?;
+    let id = "d1760000000000-7-0";
+    let decision = json!({
+        "kind": "decision", "id": id, "point": "D7", "question": "noul",
+        "probabilities": {"yes": 0.9, "no": 0.1},
+        "top": null, "probability": 0.9, "action": "ask_human",
+    });
+    let log = dir.join("decisions.jsonl");
+    fs::write(&log, format!("{decision}\n"))?;
+    for words in [
+        &["decide", "label", id, "no"][..],
+        &[
+            "decide", "label", id, "yes", "--actor", "human", "--via", "mod",
+        ][..],
+    ] {
+        let output = anneal(home.path()).args(words).output()?;
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+
+    let output = anneal(home.path())
+        .args(["calibrate", "--point", "D7"])
+        .output()?;
+
+    let labels: Vec<Value> = fs::read_to_string(&log)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<Value>, _>>()?
+        .into_iter()
+        .filter(|row| row["kind"] == json!("label"))
+        .collect();
+    assert_eq!(
+        labels
+            .iter()
+            .map(|row| (&row["outcome"], row.get("via")))
+            .collect::<Vec<_>>(),
+        [(&json!("no"), None), (&json!("yes"), Some(&json!("mod")))],
+        "both label rows are kept, in order"
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let noul = &envelope(&output)?["data"]["points"][0]["questions"][0];
+    assert_eq!(
+        (&noul["labelled"], &noul["labelled_via_mod"]),
+        (&json!(1), &json!(1))
+    );
+    assert!(
+        close(&noul["brier"], 0.01),
+        "the last label, yes, is scored: {noul}"
+    );
+    let stderr = std::str::from_utf8(&output.stderr)?;
+    assert!(
+        stderr.lines().any(|line| line.contains(", via mod 1")),
+        "{stderr}"
+    );
+    Ok(())
+}
