@@ -183,6 +183,44 @@ fn a_brace_built_option_beside_an_expansion_is_read_as_the_option() -> TestResul
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_model_s_human_verdict_is_denied_as_human_only_and_its_plan_approval_is_not() -> TestResult {
+    let scratch = Scratch::new()?;
+    let verdict = "bash -c 'anneal verdict set --pr 7 --sha HEAD --level approved --source \
+                   human --actor human --via bash'";
+
+    let denied = deny_reason(&scratch.guard(&scratch.bash(verdict)?)?)?;
+    let approved = scratch.guard(&scratch.bash("anneal plan approve p.md --actor human")?)?;
+
+    assert_eq!(
+        denied,
+        "ERROR guard human-only: human verdicts are human-only: use /anneal or run it in your \
+         own terminal",
+        "the rule and the one line"
+    );
+    assert_eq!(
+        (
+            approved.status.code(),
+            approved.stdout.is_empty(),
+            approved.stderr.is_empty()
+        ),
+        (Some(0), true, true),
+        "plan approve stays allowed, silently: {approved:?}"
+    );
+    let events = scratch.blocked()?;
+    let points: Vec<Option<&Value>> = events
+        .iter()
+        .map(|event| event.pointer("/event/point"))
+        .collect();
+    assert_eq!(
+        points,
+        [Some(&Value::from("guard.human-only"))],
+        "the denial alone is recorded"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_allowed_command_is_silent_and_records_nothing() -> TestResult {
     let scratch = Scratch::new()?;
 

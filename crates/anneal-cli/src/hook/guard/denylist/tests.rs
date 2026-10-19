@@ -4,10 +4,15 @@
 //! every denied command in [`forms`].
 
 mod bypasses;
+mod emptied;
 mod extglob;
 mod forms;
+mod human_only;
 mod indirection;
 mod merge;
+mod shell_option_readings;
+mod shell_options;
+mod shell_reader_merge;
 mod wrapper_options;
 mod wrapper_probes;
 

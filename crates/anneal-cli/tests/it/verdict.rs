@@ -171,3 +171,31 @@ fn a_latest_noise_only_verdict_exits_3() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn verdict_set_records_who_set_it_and_through_what_only_when_told() -> TestResult {
+    let repo = PrRepo::new()?;
+
+    let told = repo.envelope(
+        &[
+            "verdict", "set", "--pr", "7", "--sha", "HEAD", "--level", "approved", "--source",
+            "human", "--actor", "human", "--via", "mod",
+        ],
+        0,
+    )?;
+    let untold = repo.set_verdict("tests-verified", "local")?;
+
+    assert_eq!(
+        (told["data"].get("by"), untold["data"].get("by")),
+        (Some(&json!({"actor": "human", "via": "mod"})), None),
+        "{told} {untold}"
+    );
+    let events = repo.envelope(&["ledger", "query", "--type", "verdict_set"], 0)?;
+    assert_eq!(
+        events["data"]["events"][0]["event"]["by"],
+        json!({"actor": "human", "via": "mod"}),
+        "recorded in the ledger: {events}"
+    );
+    Ok(())
+}

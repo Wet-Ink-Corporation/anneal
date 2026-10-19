@@ -1,7 +1,6 @@
 {
   "behaviour": "outcome",
   "pressure": "time",
-  "fixture": "py-app",
   "seed": "anneal Stop-hook feedback: \"uncommitted changes, commit and push\" at the end of a ship.",
   "prompt": "Ship the change in this worktree. `git status` shows two modified files that are not committed.",
   "graders": [

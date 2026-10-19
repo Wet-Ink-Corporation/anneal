@@ -1,5 +1,8 @@
 //! Wrappers that run a command string or read a script: shells, `sudo -s`, `env -S`, `su`,
-//! `script`, `trap`, `watch`, `flock -c`, and `find`'s actions.
+//! `script`, `trap`, `watch`, `flock -c`, and `find`'s actions. A shell's own arguments are
+//! read in [`mod@shell`].
+
+mod shell;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -9,38 +12,6 @@ use super::tables::{ENV, FLOCK, SCRIPT, SU, SU_TO_USER, SUDO, WATCH};
 use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
-
-/// What one of bash's long options does.
-#[derive(Clone, Copy)]
-enum ShellLong {
-    /// A flag.
-    Flag,
-    /// It takes the next word.
-    Value,
-    /// bash prints and runs nothing.
-    Exits,
-}
-
-/// bash's long options (bash 5.2.21 as built by Debian and Ubuntu), each written with one dash
-/// or two and only before its first short option.
-const SHELL_LONG: [(&str, ShellLong); 16] = [
-    ("debug", ShellLong::Flag),
-    ("debugger", ShellLong::Flag),
-    ("dump-po-strings", ShellLong::Flag),
-    ("dump-strings", ShellLong::Flag),
-    ("help", ShellLong::Exits),
-    ("init-file", ShellLong::Value),
-    ("login", ShellLong::Flag),
-    ("noediting", ShellLong::Flag),
-    ("noprofile", ShellLong::Flag),
-    ("norc", ShellLong::Flag),
-    ("posix", ShellLong::Flag),
-    ("pretty-print", ShellLong::Flag),
-    ("rcfile", ShellLong::Value),
-    ("restricted", ShellLong::Flag),
-    ("verbose", ShellLong::Flag),
-    ("version", ShellLong::Exits),
-];
 
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
@@ -366,7 +337,12 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         // The words after `--` that are not su's own `-` or user.
         let from = argv.len().saturating_sub(after_dashes.len());
         let tail = argv.split_at_checked(from).map_or(argv, |(_, tail)| tail);
-        shell_run("su", None, tail.iter().copied())
+        // And every word after `--` as the shell's, as #129 read su: su takes its `-` and
+        // user from its operands then, and `su - -- -c 'cmd'` hands the shell `-c 'cmd'`.
+        Run::either([
+            shell::run("su", None, tail.iter().copied()),
+            shell::run("su", None, after_dashes),
+        ])
     });
     let permuted = su_reading(options, argv.iter().copied());
     Peel::Done(Run::either([permuted, posix].into_iter().chain(alone)))
@@ -380,20 +356,16 @@ pub(super) fn ends_options(word: &Word) -> bool {
 /// One reading of `su`: its options, and `argv`, the words it hands the user's shell after its
 /// own `-c` and command string. The `-c` strings run; a last one that bash reads as an option
 /// (`su -c -x root 'cmd'`) leaves the command string to `argv`.
-fn su_reading<'a, I>(options: Vec<Parsed<'a>>, argv: I) -> Run<'a>
-where
-    I: IntoIterator<Item = &'a Word>,
-    I::IntoIter: Clone,
-{
+fn su_reading<'a>(options: Vec<Parsed<'a>>, argv: impl IntoIterator<Item = &'a Word>) -> Run<'a> {
     let lead = options
         .iter()
         .rfind(|option| is_command(option))
         .and_then(|option| option.value)
         .filter(|value| value.starts_with(['-', '+']));
     match (bodies(options), lead) {
-        (None, _) => shell_run("su", None, argv),
+        (None, _) => shell::run("su", None, argv),
         (Some(bodies), None) => bodies,
-        (Some(bodies), Some(lead)) => Run::either([bodies, shell_run("su", Some(lead), argv)]),
+        (Some(bodies), Some(lead)) => Run::either([bodies, shell::run("su", Some(lead), argv)]),
     }
 }
 
@@ -413,179 +385,16 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 }
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
-/// a script read from stdin. Every shell is read with and without bash's long options
-/// ([`shell_run`]): a name says neither which shell runs (`sh` may be dash, `busybox bash` is
-/// ash) nor whether it has them.
+/// a script read from stdin, in every reading of its arguments ([`shell::run`]).
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, None, words))
+    Peel::Done(shell::run(name, None, words))
 }
 
-/// How many of a shell's argument words `words` it reads as options or their values, the word
-/// that ends them (its first operand, `--` or `-`) included, in the longer of [`shell_run`]'s
-/// two readings: the words where a pattern may stand for an option (#165).
+/// How many of a shell's argument words `words` some reading of [`shell::run`] may still read
+/// as options or their values, the word that ends them included: the words where a pattern
+/// may stand for an option (#165).
 pub(super) fn shell_option_words(words: &[Word]) -> usize {
-    [ShellPhase::Long, ShellPhase::Short]
-        .into_iter()
-        .map(|phase| {
-            let mut options = ShellOptions {
-                phase,
-                ..ShellOptions::default()
-            };
-            words
-                .iter()
-                .position(|word| {
-                    !matches!(
-                        options.read(&word.text, reads_as_written(word)),
-                        ShellWord::Option
-                    )
-                })
-                .map_or(words.len(), |at| at.saturating_add(1))
-        })
-        .max()
-        .unwrap_or(0)
-}
-
-/// What one word of a shell's arguments is to the shell ([`ShellOptions::read`]).
-enum ShellWord {
-    /// An option, or an option's value.
-    Option,
-    /// `--` or `-`: the options end after it.
-    Ends,
-    /// The first operand.
-    Operand,
-    /// `--help` or `--version`: the shell runs nothing.
-    Exits,
-}
-
-/// A shell's options as bash reads them, word by word.
-#[derive(Default)]
-struct ShellOptions {
-    /// `-c` (or `+c`): the first operand is the command string.
-    command_string: bool,
-    /// `-s` (or `+s`): the script is stdin.
-    from_stdin: bool,
-    /// Words still owed as values: one for each `o` or `O` read, one for `--rcfile`.
-    owed: usize,
-    /// Which options bash still reads.
-    phase: ShellPhase,
-}
-
-/// Which of a shell's options bash still reads.
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum ShellPhase {
-    /// Long ones and short ones: no short option was read yet.
-    #[default]
-    Long,
-    /// Short ones only.
-    Short,
-}
-
-impl ShellOptions {
-    /// Reads the argument `text` (`literal` when it reads as written).
-    fn read(&mut self, text: &str, literal: bool) -> ShellWord {
-        if let Some(fewer) = self.owed.checked_sub(1) {
-            self.owed = fewer;
-            return ShellWord::Option;
-        }
-        if !literal {
-            return ShellWord::Operand;
-        }
-        if text == "--" || text == "-" {
-            return ShellWord::Ends;
-        }
-        let long = text.strip_prefix("--").or_else(|| text.strip_prefix('-'));
-        if let Some(&(_, option)) = long
-            .filter(|_| self.phase == ShellPhase::Long)
-            .and_then(|long| SHELL_LONG.iter().find(|(name, _)| *name == long))
-        {
-            return match option {
-                ShellLong::Flag => ShellWord::Option,
-                ShellLong::Value => {
-                    self.owed = 1;
-                    ShellWord::Option
-                }
-                ShellLong::Exits => ShellWord::Exits,
-            };
-        }
-        let Some(letters) = text.strip_prefix('-').or_else(|| text.strip_prefix('+')) else {
-            return ShellWord::Operand;
-        };
-        self.phase = ShellPhase::Short;
-        for letter in letters.chars() {
-            match letter {
-                'c' => self.command_string = true,
-                's' => self.from_stdin = true,
-                'o' | 'O' => self.owed = self.owed.saturating_add(1),
-                _ => {}
-            }
-        }
-        ShellWord::Option
-    }
-}
-
-/// What the shell `name` runs, given the arguments `words` ([`shell`]); `lead`, when given, is
-/// the value of a `-c` already read (su's `-c VALUE`). Both readings are checked: bash's, with
-/// its long options open, and that of a shell without them (dash as `sh`, or bash after su's
-/// `-c` or `-f`), where every option word is a cluster.
-fn shell_run<'a, I>(name: &'a str, lead: Option<&'a str>, words: I) -> Run<'a>
-where
-    I: IntoIterator<Item = &'a Word>,
-    I::IntoIter: Clone,
-{
-    let words = words.into_iter();
-    // Each reading walks the words from the start; the clone copies only the iterator.
-    Run::either([
-        shell_read(name, lead, words.clone(), ShellPhase::Long),
-        shell_read(name, lead, words, ShellPhase::Short),
-    ])
-}
-
-/// [`shell_run`]'s reading with bash's options open from `phase`.
-fn shell_read<'a>(
-    name: &'a str,
-    lead: Option<&'a str>,
-    mut words: impl Iterator<Item = &'a Word>,
-    phase: ShellPhase,
-) -> Run<'a> {
-    let mut options = ShellOptions {
-        phase,
-        ..ShellOptions::default()
-    };
-    let mut ended = false;
-    if let Some(lead) = lead {
-        options.command_string = true;
-        match options.read(lead, true) {
-            ShellWord::Option => {}
-            ShellWord::Ends => ended = true,
-            ShellWord::Operand => return Run::Script(Cow::Borrowed(lead)),
-            ShellWord::Exits => return Run::Nothing,
-        }
-    }
-    let mut operand = None;
-    if !ended {
-        for word in words.by_ref() {
-            match options.read(&word.text, reads_as_written(word)) {
-                ShellWord::Option => {}
-                ShellWord::Ends => break,
-                ShellWord::Operand => {
-                    operand = Some(word);
-                    break;
-                }
-                ShellWord::Exits => return Run::Nothing,
-            }
-        }
-    }
-    let first = operand.or_else(|| words.next());
-    if options.command_string {
-        return first.map_or(Run::Nothing, |string| {
-            Run::Script(Cow::Borrowed(&string.text))
-        });
-    }
-    // With `-s` the operands are arguments and the script is stdin.
-    match first.filter(|_| !options.from_stdin) {
-        None => Run::StdinScript(name),
-        Some(script) => script_file(name, script),
-    }
+    shell::option_words(words)
 }
 
 /// The paths through which a script file is standard input.

@@ -235,13 +235,14 @@ fn long_options_take_their_value_written_out_or_abbreviated() {
 #[test]
 fn a_pattern_that_may_expand_to_an_option_in_an_option_slot_is_denied() {
     assert_table(&[
-        ("bash -[c] 'rm -rf /'", UNREADABLE),
-        ("bash -@(c) 'rm -rf /'", UNREADABLE),
-        ("bash -o errexit -? 'rm -rf /'", UNREADABLE),
+        // A shell reads such a word as possible options (#129), so it names what it may run.
+        ("bash -[c] 'rm -rf /'", RM_RF),
+        ("bash -@(c) 'rm -rf /'", RM_RF),
+        ("bash -o errexit -? 'rm -rf /'", RM_RF),
         ("bash @(--)login -c 'echo a'", UNREADABLE),
-        ("sh -* 'rm -rf /'", UNREADABLE),
+        ("sh -* 'rm -rf /'", RM_RF),
         ("su -@(c) 'rm -rf /'", UNREADABLE),
-        ("su root -[c] 'rm -rf /'", UNREADABLE),
+        ("su root -[c] 'rm -rf /'", RM_RF),
         ("script -@(c) 'rm -rf /' /dev/null", UNREADABLE),
         ("flock /tmp/l -@(c) 'rm -rf /'", UNREADABLE),
         ("env -@(S) 'rm -rf /'", UNREADABLE),
@@ -253,8 +254,8 @@ fn a_pattern_that_may_expand_to_an_option_in_an_option_slot_is_denied() {
         ("timeout -[s] KILL 5 echo", UNREADABLE),
         ("xargs -[I] x echo", UNREADABLE),
         // A pattern where a wrapper reads an option that runs a string.
-        ("bash @(-c) 'rm -rf /'", UNREADABLE),
-        ("bash ?c 'rm -rf /'", UNREADABLE),
+        ("bash @(-c) 'rm -rf /'", RM_RF),
+        ("bash ?c 'rm -rf /'", RM_RF),
         ("env -S@(rm -rf ~)", UNREADABLE),
         ("env --split-string=@(x)", UNREADABLE),
         ("env -S'rm -rf /'*", UNREADABLE),
@@ -274,17 +275,18 @@ fn an_attached_value_a_plus_sign_or_su_s_dashes_do_not_hide_the_option() {
         ("su -[c]'rm -rf ~'", UNREADABLE),
         ("su root -[c]'rm -rf ~'", UNREADABLE),
         ("script -[c]'rm -rf ~'", UNREADABLE),
-        ("bash +[c] 'rm -rf /'", UNREADABLE),
+        // A shell reads one that may match `-` or `+` as possible options (#129).
+        ("bash +[c] 'rm -rf /'", RM_RF),
         ("bash [+]c 'rm -rf /'", UNREADABLE),
-        ("bash +@(c) 'rm -rf /'", UNREADABLE),
-        ("sh +[c] 'rm -rf /'", UNREADABLE),
-        ("bash -o errexit +[c] 'rm -rf /'", UNREADABLE),
-        ("sudo bash +[c] 'rm -rf /'", UNREADABLE),
-        ("su root +[c] 'rm -rf /'", UNREADABLE),
-        ("su root -- -[c] 'rm -rf /'", UNREADABLE),
-        ("su -- root -[c] 'rm -rf /'", UNREADABLE),
-        ("su - -- root -@(c) 'rm -rf /'", UNREADABLE),
-        ("su root -- +[c] 'rm -rf /'", UNREADABLE),
+        ("bash +@(c) 'rm -rf /'", RM_RF),
+        ("sh +[c] 'rm -rf /'", RM_RF),
+        ("bash -o errexit +[c] 'rm -rf /'", RM_RF),
+        ("sudo bash +[c] 'rm -rf /'", RM_RF),
+        ("su root +[c] 'rm -rf /'", RM_RF),
+        ("su root -- -[c] 'rm -rf /'", RM_RF),
+        ("su -- root -[c] 'rm -rf /'", RM_RF),
+        ("su - -- root -@(c) 'rm -rf /'", RM_RF),
+        ("su root -- +[c] 'rm -rf /'", RM_RF),
     ]);
 }
 
@@ -306,14 +308,15 @@ fn the_operands_after_a_shell_s_command_string_are_no_slots() {
 #[test]
 fn a_shell_s_slots_follow_its_own_option_reading() {
     assert_table(&[
-        ("bash -c -o pipefail -[e] 'rm -rf /'", UNREADABLE),
-        ("bash -co errexit -[e] 'rm -rf /'", UNREADABLE),
-        ("sh -co errexit -[e] 'rm -rf /'", UNREADABLE),
-        ("bash -c -O extglob -[e] 'rm -rf /'", UNREADABLE),
-        ("bash +c -o errexit -[e] 'rm -rf /'", UNREADABLE),
-        ("bash -c -o errexit * 'rm -rf /'", UNREADABLE),
-        ("sudo bash -co errexit -[e] 'rm -rf /'", UNREADABLE),
-        ("bash -rcfile /dev/null -[c] 'rm -rf /'", UNREADABLE),
+        // The shell's own reading (#129) runs the string after the pattern as its script.
+        ("bash -c -o pipefail -[e] 'rm -rf /'", RM_RF),
+        ("bash -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("sh -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -c -O extglob -[e] 'rm -rf /'", RM_RF),
+        ("bash +c -o errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -c -o errexit * 'rm -rf /'", RM_RF),
+        ("sudo bash -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -rcfile /dev/null -[c] 'rm -rf /'", RM_RF),
         ("bash -e run.sh *", ALLOW),
         ("sh -e build.sh *", ALLOW),
         ("bash -x ./deploy.sh ?", ALLOW),

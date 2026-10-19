@@ -11,9 +11,11 @@
 //! of variables the command sets are put in ([`variables`]), and a word holding both an
 //! expansion and a pattern is also judged with the expansion empty ([`readings`]). Then the
 //! entries: [`git`] (force push to a protected branch, `git add -f`), [`rm`] (recursive force
-//! delete outside temp and scratch) and [`config`] (Bash writes to lint or hook config). What
-//! the guard cannot model it denies. See `docs/guard.md`.
+//! delete outside temp and scratch), [`config`] (Bash writes to lint or hook config) and
+//! [`anneal`] (a human verdict or label, `--actor human`, from a model's Bash call). What the
+//! guard cannot model it denies. See `docs/guard.md`.
 
+mod anneal;
 mod braces;
 mod checker;
 mod config;

@@ -4,6 +4,9 @@
 //! payload field, is additive and bumps the version; renaming or removing a type or a field is
 //! a ledger migration. Every payload field name is a persisted JSON key, and every optional
 //! field is `#[serde(default)]`, so an event written before the field existed still reads.
+//!
+//! One exception: the optional [`By`] on `plan_approved` and `verdict_set` (#62) was added at
+//! version 9 without a bump, pending Ryan's decision on a version 10.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -13,8 +16,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::tag::TagKey;
 
-/// The version of the event registry this build reads and writes. Bumped when an event type
-/// or a payload field is added.
+mod by;
+
+pub use by::{Actor, By, EmptyBy, Via};
+
+/// The version of the event registry this build reads and writes.
+///
+/// Bumped when an event type or a payload field is added, except `by` on `plan_approved` and
+/// `verdict_set` (#62), added at 9 pending Ryan's decision on a version 10.
 pub const REGISTRY_VERSION: u32 = 9;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
@@ -305,6 +314,10 @@ pub struct PlanApproved {
     pub plan: String,
     /// The hash of the plan's content that was approved.
     pub hash: String,
+    /// Who approved it and through what, as far as the approval said (#62); written only when
+    /// known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
 }
 
 /// `grill_confirmed`: the human confirmed a plan's grilling. Subject tag `plan:`.
@@ -383,6 +396,10 @@ pub struct VerdictSet {
     /// The base ref the patch id was taken from, as given (registry v6).
     #[serde(default)]
     pub base: Option<String>,
+    /// Who set it and through what, as far as the verdict said (#62); written only when known.
+    /// `source` is what the verdict claims to come from; `by` is who gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
 }
 
 /// `round_started`: a review or fix-loop round started, on a pull request or a ticket.
@@ -920,6 +937,7 @@ mod tests {
                 sha: Some("a21c5e7b17ac7075034918873814cd7950807243".to_owned()),
                 patch_id: Some("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c".to_owned()),
                 base: Some("origin/main".to_owned()),
+                by: None,
             }),
             "every field is read"
         );

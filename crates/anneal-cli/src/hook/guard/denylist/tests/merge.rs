@@ -124,6 +124,22 @@ fn a_brace_built_shell_option_beside_an_expansion_still_runs_its_script() {
 }
 
 #[test]
+fn a_shell_argument_that_may_be_c_has_its_merge_found() {
+    // #129: with `o=-c` (or `y` unset, or `x=-e`) each runs `gh pr merge 1`.
+    let forms = [
+        "bash $o 'gh pr merge 1'",
+        "bash \"$y\"-c 'gh pr merge 1'",
+        "bash -c \"$x\" 'gh pr merge 1'",
+        "env bash \"$o\" 'gh pr merge 1'",
+        "sudo bash $o 'gh pr merge 1'",
+    ];
+
+    for command in forms {
+        assert_eq!(targets(command), [Target::Number(1)], "{command}");
+    }
+}
+
+#[test]
 fn a_gh_call_built_by_brace_expansion_is_read_as_its_words() {
     // #127 review round 3: `caffeinate {gh,pr,view,1}` runs `gh pr view 1`, as main read it.
     assert_eq!(unseen("caffeinate {gh,pr,view,1}"), None);
