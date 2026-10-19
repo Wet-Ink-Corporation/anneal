@@ -13,11 +13,31 @@ const READS_NO_OPTIONS: [&str; 9] = [
     "function", "busybox", "coproc", "eval", "alias", "source", ".", "trap", "find",
 ];
 
-/// The signs a shell reads options with: `+c` is `-c`.
-const SHELL_SIGNS: &[char] = &['-', '+'];
+/// How a program reads an option word.
+struct Reader {
+    /// The signs that start an option.
+    signs: &'static [char],
+    /// Whether an option may carry its value in the same word (`-uroot`).
+    attached: bool,
+}
 
-/// The sign every other wrapper reads options with.
-const DASH: &[char] = &['-'];
+/// A shell: `+c` is `-c`, and its options carry no value in their word.
+const SHELL: Reader = Reader {
+    signs: &['-', '+'],
+    attached: false,
+};
+
+/// Every other wrapper's getopt.
+const GETOPT: Reader = Reader {
+    signs: &['-'],
+    attached: true,
+};
+
+/// `su`, whose words are read by its getopt and by the user's shell.
+const SU: Reader = Reader {
+    signs: &['-', '+'],
+    attached: true,
+};
 
 /// The first word of `rest`, the arguments of the wrapper `name` that `peeled` removed, that
 /// stands where the wrapper reads an option and is a pattern that may expand to one.
@@ -42,17 +62,14 @@ pub(super) fn unsure_option<'a>(
         Peel::Program => return None,
         Peel::Inner(inner) | Peel::Appending(inner) => {
             let taken = rest.len().saturating_sub(inner.len());
-            return before_and_first(rest, taken).find(|word| unsure(word, DASH));
+            return before_and_first(rest, taken).find(|word| unsure(word, &GETOPT));
         }
         Peel::Done(_) if name == "su" => {
-            return rest.iter().find(|word| unsure(word, SHELL_SIGNS));
+            return rest.iter().find(|word| unsure(word, &SU));
         }
         Peel::Done(_) if SHELLS.contains(&name) => {
             let read = shell_option_words(rest);
-            return rest
-                .iter()
-                .take(read)
-                .find(|word| unsure(word, SHELL_SIGNS));
+            return rest.iter().take(read).find(|word| unsure(word, &SHELL));
         }
         Peel::Done(_) if name == "script" => {
             rest.iter().position(ends_options).unwrap_or(rest.len())
@@ -61,7 +78,7 @@ pub(super) fn unsure_option<'a>(
             rest.len().saturating_sub(grammar.parse(rest).rest.len())
         }),
     };
-    before_and_first(rest, slots).find(|word| unsure(word, DASH))
+    before_and_first(rest, slots).find(|word| unsure(word, &GETOPT))
 }
 
 /// The grammar of a wrapper that may run a string itself.
@@ -82,12 +99,12 @@ fn before_and_first(words: &[Word], taken: usize) -> impl Iterator<Item = &Word>
 }
 
 /// Whether `word` holds an unquoted glob or group (a brace or `~` alone, as in `-I{}`, is
-/// none) and may expand to an option signed with one of `signs`, whatever value is attached
-/// (`-[c]`, `@(--)login`, `-S@(rm -rf ~)`, `-[S]'rm -rf ~'`); a word brace expansion made
-/// that reads as written (`-c` from `{-c,x}`) is exactly its text.
-fn unsure(word: &Word, signs: &[char]) -> bool {
+/// none) and may expand to an option as `reader` reads one, whatever value is attached
+/// (`-[c]`, `@(--)login`, `-S@(rm -rf ~)`, `-[S]'rm -rf ~'`, `*' rm -rf ~'`); a word brace
+/// expansion made that reads as written (`-c` from `{-c,x}`) is exactly its text.
+fn unsure(word: &Word, reader: &Reader) -> bool {
     word.has_pattern()
         && word.text.contains(['*', '?', '[', '('])
         && !braces::reads_as_written(word)
-        && readings::may_start_option(word, signs)
+        && readings::may_start_option(word, reader.signs, reader.attached)
 }

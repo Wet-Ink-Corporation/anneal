@@ -321,6 +321,25 @@ fn a_shell_s_slots_follow_its_own_option_reading() {
     ]);
 }
 
+/// Issue #165, review round 3: a `*` may hold an option's sign, letter and the start of its
+/// attached value at once, so what follows it does not clear it where options take a value.
+#[test]
+fn a_star_may_hold_an_option_and_its_attached_value() {
+    assert_table(&[
+        ("env *' rm -rf ~'", UNREADABLE),
+        ("env *='rm -rf ~'", UNREADABLE),
+        ("script *' rm -rf ~'", UNREADABLE),
+        ("su *' rm -rf ~'", UNREADABLE),
+        ("su root *' rm -rf ~'", UNREADABLE),
+        ("sudo *' -s'", UNREADABLE),
+        // `?` is one character: it may be only the sign.
+        ("env ?' rm -rf ~'", ALLOW),
+        // A shell's options carry no value in their word.
+        ("bash *.sh", ALLOW),
+        ("bash *' x'", ALLOW),
+    ]);
+}
+
 /// Issue #165: a pattern that cannot start an option, or one after the option slots, is read
 /// as before.
 #[test]

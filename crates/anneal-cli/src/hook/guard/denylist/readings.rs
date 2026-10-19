@@ -81,7 +81,7 @@ pub(super) fn may_start_option_cluster(word: &Word) -> bool {
     let mut first = true;
     for part in parts(word) {
         let fits = match part {
-            Part::Any => true,
+            Part::Any | Part::One => true,
             // Past the first part, a set may match a letter or a digit.
             Part::Set { dash, .. } => dash || !first,
             Part::Written(c) => c == '-' || (!first && c.is_ascii_alphanumeric()),
@@ -96,16 +96,21 @@ pub(super) fn may_start_option_cluster(word: &Word) -> bool {
 
 /// Whether `word`, not literal, may expand to an option of a program that reads options
 /// signed with one of `signs` (`-`, and for a shell `+`): its first part may be such a sign
-/// (written, any text, or a bracket expression that may match it), and its second part, if
-/// any, may be an option letter (any text, a bracket expression, an ASCII letter or digit, or
-/// `-`), whatever follows: an attached value is not judged (`-[S]'rm -rf ~'`).
-pub(super) fn may_start_option(word: &Word, signs: &[char]) -> bool {
+/// (written, one character, any text, or a bracket expression that may match it), and its
+/// second part, if any, may be an option letter (one character or more, a bracket expression,
+/// an ASCII letter or digit, or `-`), whatever follows: an attached value is not judged
+/// (`-[S]'rm -rf ~'`). When the program's options may carry a value (`attached`), a first part
+/// of any text (`*`, an expansion, a group) may hold the sign, the letter and the start of the
+/// value at once (`*' rm -rf ~'` as `-S rm -rf ~`), so what follows it is not judged either;
+/// a shell's options carry none, so `bash *.sh` stays an operand.
+pub(super) fn may_start_option(word: &Word, signs: &[char], attached: bool) -> bool {
     if word.is_literal() {
         return false;
     }
     let mut parts = parts(word);
     let signed = match parts.next() {
-        Some(Part::Any) => true,
+        Some(Part::Any) if attached => return true,
+        Some(Part::Any | Part::One) => true,
         Some(Part::Set { dash, plus }) => {
             (dash && signs.contains(&'-')) || (plus && signs.contains(&'+'))
         }
@@ -114,7 +119,7 @@ pub(super) fn may_start_option(word: &Word, signs: &[char]) -> bool {
     };
     signed
         && parts.next().is_none_or(|part| match part {
-            Part::Any | Part::Set { .. } => true,
+            Part::Any | Part::One | Part::Set { .. } => true,
             Part::Written(c) => c == '-' || c.is_ascii_alphanumeric(),
         })
 }
@@ -128,8 +133,10 @@ const ANY_SIGN: Part = Part::Set {
 /// A part of a word as the shell expands it, for [`may_start_option_cluster`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
-    /// An expansion, `?` or `*`: any text, a `-` included.
+    /// An expansion, `*` or an extended glob group: any text, a `-` included.
     Any,
+    /// `?`: any one character.
+    One,
     /// A bracket expression: one character, and whether it may be `-` and `+`.
     Set { dash: bool, plus: bool },
     /// A character as written.
@@ -196,7 +203,8 @@ impl Iterator for Parts<'_> {
                 ),
                 Part::Any,
             )),
-            '?' | '*' if self.globs => Some((after, Part::Any)),
+            '?' if self.globs => Some((after, Part::One)),
+            '*' if self.globs => Some((after, Part::Any)),
             '[' if self.globs => bracket(self.text, after, self.expansions),
             _ => None,
         };
