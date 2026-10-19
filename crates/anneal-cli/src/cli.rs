@@ -36,6 +36,7 @@ use crate::repro::{self, ReproArgs};
 use crate::rollout::{self, RolloutArgs};
 use crate::round::{self, RoundArgs};
 use crate::ship::{self, ShipArgs};
+use crate::status::{self, StatusArgs};
 use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
@@ -131,6 +132,9 @@ pub enum Command {
     /// Run evaluation suites, such as skill routing
     #[command(after_help = command_help(CommandName::Eval))]
     Eval(EvalArgs),
+    /// Fold the ledger and the anneal home into one status document (text, or JSON with --json)
+    #[command(after_help = command_help(CommandName::Status))]
+    Status(StatusArgs),
     /// Render the Claude Code status line and save the context usage for the context monitor
     /// (fails open, like a hook)
     #[command(after_help = command_help(CommandName::Statusline))]
@@ -180,6 +184,7 @@ impl Command {
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
+            Self::Status(_) => CommandName::Status,
             Self::Statusline(_) => CommandName::Statusline,
             Self::Hook(_) => CommandName::Hook,
         }
@@ -212,7 +217,8 @@ impl Command {
             | Self::Verify(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
-            | Self::Eval(_) => OnFailure::Exit,
+            | Self::Eval(_)
+            | Self::Status(_) => OnFailure::Exit,
         }
     }
 }
@@ -328,6 +334,10 @@ fn dispatch<O: Write, E: Write>(
             ship::run(args, &cwd, out)
         }
         Command::Watch(args) => run_watch(args, out),
+        Command::Status(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            status::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Statusline(StatuslineArgs) => run_statusline(out, err),
         Command::Rollout(args) => rollout::run(args, out),
         Command::Perf(args) => perf::run(args, &mut ProcessRunner, out),
