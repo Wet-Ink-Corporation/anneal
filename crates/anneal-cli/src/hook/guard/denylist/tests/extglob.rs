@@ -158,6 +158,16 @@ fn an_env_split_string_is_read_with_env_s_escapes() {
         ("env -S 'git\\_push\\_-f\\_origin\\_main'", FORCE_PUSH),
         ("env -S 'tee\\_.claude/settings.json'", CONFIG),
         ("env -S 'sh -c\\_#' 'rm -rf /'", RM_RF),
+        // `\t`, `\n`, `\r`, `\f` and `\v` are the control characters, kept in their word.
+        ("env -S 'sh -c rm\\t-rf\\t/'", RM_RF),
+        ("env -S 'sh -c git\\tpush\\t-f\\torigin\\tmain'", FORCE_PUSH),
+        ("env -S 'bash -c \"echo x\\nrm -rf /\"'", RM_RF),
+        ("env -S 'sh -c echo\\nrm\\t-rf\\t/'", RM_RF),
+        // A raw CR, VT or FF separates words.
+        ("env -S $'rm\\r-rf\\r/'", RM_RF),
+        ("env -S $'rm\\v-rf\\f/'", RM_RF),
+        // A Unicode blank is no separator for env: the `#` after it is text.
+        ("env -S 'rm\\_-rf\\_\u{a0}#\\_/'", RM_RF),
         // Quoted, or inside a word, a `#` is text.
         ("env -S 'echo a#b' x", ALLOW),
         ("env -S \"echo '#' x\"", ALLOW),

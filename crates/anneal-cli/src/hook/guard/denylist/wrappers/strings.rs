@@ -86,13 +86,20 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     }
 }
 
-/// `script` as shell text that splits as `env -S` splits it: `\_` outside single quotes is a
-/// blank (a separator outside quotes, a space inside double quotes), and `\c` outside single
-/// quotes or an unquoted `#` starting a word ends the string. The escapes env shares with the
-/// shell (`\\`, `\'`, `\"`, `\$`, `\#`) are left for the lexer; inside single quotes env also
-/// reads `\\` and `\'`, which the lexer then reads otherwise or refuses.
+/// The characters `env -S` splits words at, beside `\_`.
+const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
+
+/// `script` as shell text that splits as `env -S` splits it (GNU coreutils 9.4):
+/// - outside quotes, a CR, VT or FF separates words, as a blank does;
+/// - outside single quotes, `\_` is a blank (a separator outside quotes, a space inside double
+///   quotes), `\t`, `\n`, `\r`, `\f` and `\v` are those characters kept in their word, and `\c`
+///   ends the string, as an unquoted `#` starting a word does;
+/// - inside double quotes `\'` and `\#` are the character;
+/// - inside single quotes `\'` is a quote and `\\` a backslash, the quote staying open.
+///
+/// The other escapes (`\\`, `\"`, `\$`, `\#` unquoted) read as the shell reads them.
 fn split_by_env(script: &str) -> Cow<'_, str> {
-    if !script.contains(['\\', '#']) {
+    if !script.contains(['\\', '#', '\r', '\u{b}', '\u{c}']) {
         return Cow::Borrowed(script);
     }
     let mut text = String::with_capacity(script.len());
@@ -100,22 +107,39 @@ fn split_by_env(script: &str) -> Cow<'_, str> {
     let mut chars = script.chars().peekable();
     while let Some(c) = chars.next() {
         match (quote, c) {
-            (Some('\''), '\\') => {
-                text.push(c);
-                if let Some(next) = chars.next_if(|next| matches!(next, '\\' | '\'')) {
-                    text.push(next);
+            (Some('\''), '\\') => match chars.next_if(|next| matches!(next, '\\' | '\'')) {
+                Some('\'') => text.push_str(r"'\''"),
+                // `\\` is one backslash, and a lone one is itself.
+                _ => text.push(c),
+            },
+            (_, '\\') => match (chars.next(), quote) {
+                (Some('_'), _) => text.push(' '),
+                (Some('c'), _) => break,
+                (Some(next @ ('t' | 'n' | 'r' | 'f' | 'v')), _) => {
+                    let control = match next {
+                        't' => '\t',
+                        'n' => '\n',
+                        'r' => '\r',
+                        'f' => '\u{c}',
+                        _ => '\u{b}',
+                    };
+                    if quote.is_some() {
+                        text.push(control);
+                    } else {
+                        text.push('\'');
+                        text.push(control);
+                        text.push('\'');
+                    }
                 }
-            }
-            (_, '\\') => match chars.next() {
-                Some('_') => text.push(' '),
-                Some('c') => break,
-                Some(next) => {
+                (Some(next @ ('\'' | '#')), Some(_)) => text.push(next),
+                (Some(next), _) => {
                     text.push(c);
                     text.push(next);
                 }
-                None => text.push(c),
+                (None, _) => text.push(c),
             },
-            (None, '#') if text.is_empty() || text.ends_with(char::is_whitespace) => break,
+            (None, '\r' | '\u{b}' | '\u{c}') => text.push(' '),
+            (None, '#') if text.is_empty() || text.ends_with(ENV_BLANKS) => break,
             (None, '\'' | '"') => {
                 quote = Some(c);
                 text.push(c);
@@ -369,5 +393,45 @@ pub(super) fn find(words: &[Word]) -> Peel<'_> {
         Peel::Done(Run::Nothing)
     } else {
         Peel::Done(Run::Exec(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_by_env;
+    use crate::hook::guard::shell;
+
+    /// Each string lexes, once `split_by_env` has read it, into the words GNU coreutils 9.4's
+    /// `env -S` split it into (observed with `env -S "printf <%q>\_ <string>"`).
+    #[test]
+    fn a_string_lexes_into_the_words_env_splits_it_into() {
+        let table: &[(&str, &[&str])] = &[
+            (r"rm\_-rf\_/", &["rm", "-rf", "/"]),
+            (r"sh -c rm\t-rf", &["sh", "-c", "rm\t-rf"]),
+            (r"a 'b\'c' d", &["a", "b'c", "d"]),
+            (r"a 'b\\c'", &["a", r"b\c"]),
+            (r#"a "b\'c\#d""#, &["a", "b'c#d"]),
+            ("a #b c", &["a"]),
+            (r"a\c b", &["a"]),
+            ("a b#c", &["a", "b#c"]),
+            (r#"a "b\_c""#, &["a", "b c"]),
+            (r"a '\_'", &["a", r"\_"]),
+            ("a\rb\u{b}c", &["a", "b", "c"]),
+            ("a\u{a0}#b", &["a\u{a0}#b"]),
+        ];
+        let wrong: Vec<String> = table
+            .iter()
+            .filter_map(|(string, expected)| {
+                let read = split_by_env(string);
+                let words: Vec<String> = shell::parse_without_extglob(&read)
+                    .expect("the string lexes")
+                    .into_iter()
+                    .flat_map(|command| command.words)
+                    .map(|word| word.text)
+                    .collect();
+                (words != *expected).then(|| format!("{string:?} lexed as {words:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "misread:\n{}", wrong.join("\n"));
     }
 }
