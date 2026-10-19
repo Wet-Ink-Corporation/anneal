@@ -122,21 +122,25 @@ quote does not close the group. A protected-config path reads a component's text
 first group to its last `)` as one or more `*` components, so a quoted `)` cannot cut a group
 short there either (`tee .c@(laude|l")")/settings.json` is denied), and a `/` inside a group
 is no separator (`tee .clau@(de|x/y)/settings.json` is denied). A special parameter's name
-before `(` opens a group too, as bash reads it (`$@(x)`, `$?(x)`). The lexer reads such a group as one pattern
-word, blanks and `|` included (bash without `extglob` refuses the word, so nothing runs then),
-and checks the commands of a `$( )` or backtick substitution inside it. A `<( )` or `>( )`
-inside a group is `unparseable`: bash ends the group at the first `)` that balances it, which
-may be a `case` pattern's inside the substitution, so what runs after it cannot be read
-reliably (`echo @(<(ls))` is denied).
+before `(` opens a group too, as bash reads it (`$@(x)`, `$?(x)`). The lexer reads such a
+group as one pattern word, blanks and `|` included (bash without `extglob` refuses the word,
+so nothing runs then), and checks the commands of a `$( )` substitution inside it. A `<( )`
+or `>( )` inside a group (a line continuation between `<` and `(` included) is
+`unparseable`: bash ends the group at the first `)` that balances it, which may be a `case`
+pattern's inside the substitution, so what runs after it cannot be read reliably
+(`echo @(<(ls))` is denied). A backtick inside a group, at any depth, is `unparseable` too:
+inside a backtick substitution bash ends the substitution there, not where the group ends
+(`` echo `echo @(a`:`rm -rf ~ # )` `` runs `rm`), so `` echo @(`ls`) `` is denied as well.
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an
-empty `()` (blanks allowed) where a function's name stands (command position, or after
-`function`) is `unparseable`: without `extglob` it defines a function, with it it is one
-pattern word whose later words are its arguments (`/bin/echo@() { hi }` runs `echo`), so
-`f?() { ...; }` and `/bin/rm@() -rf ~` are denied (a cost: name such a function without the
-opener). Elsewhere `@()` is an empty group, so `rm @()-rf /home` is denied. A group in the program word may name any program, as `?` and
-`*` may: `/bin/r@(m) -rf ~` is judged as an unknown program, its arguments checked.
+empty `()` (blanks and line continuations allowed) where a function's name stands (command
+position, or after `function`) is `unparseable`: without `extglob` it defines a function,
+with it it is one pattern word whose later words are its arguments (`/bin/echo@() { hi }`
+runs `echo`), so `f?() { ...; }` and `/bin/rm@() -rf ~` are denied (a cost: name such a
+function without the opener). Elsewhere `@()` is an empty group, so `rm @()-rf /home` is
+denied. A group in the program word may name any program, as `?` and `*` may:
+`/bin/r@(m) -rf ~` is judged as an unknown program, its arguments checked.
 A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never

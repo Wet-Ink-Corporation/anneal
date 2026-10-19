@@ -261,18 +261,21 @@ fn readings<'a>(path: &'a str, shape: Shape, cwd: &Cwd) -> impl Iterator<Item = 
 impl Reading<'_> {
     /// This reading, or for a glob each reading with its extended glob groups cut out before
     /// the path is split: a `/` inside a group is no separator (`.clau@(de|x/y)` is `.claude`).
-    fn without_extglobs(self) -> Vec<Self> {
-        let Some(paths) = without_extglobs(&self.path).filter(|_| self.glob) else {
-            return vec![self];
+    fn without_extglobs(self) -> impl Iterator<Item = Self> {
+        let cut = if self.glob {
+            without_extglobs(&self.path)
+        } else {
+            None
         };
-        paths
+        let (glob, anywhere) = (self.glob, self.anywhere);
+        let whole = cut.is_none().then_some(self);
+        whole
             .into_iter()
-            .map(|path| Reading {
+            .chain(cut.into_iter().flatten().map(move |path| Reading {
                 path: Cow::Owned(path),
-                glob: self.glob,
-                anywhere: self.anywhere,
-            })
-            .collect()
+                glob,
+                anywhere,
+            }))
     }
 }
 

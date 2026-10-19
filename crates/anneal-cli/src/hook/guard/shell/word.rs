@@ -410,6 +410,9 @@ impl Lexer {
         quoting: Quoting,
         depth: usize,
     ) -> Result<(), ParseError> {
+        if self.groups > 0 {
+            return Err(ParseError::BacktickInExtglob);
+        }
         let start = self.pos.saturating_sub(1);
         self.nested(Close::Backtick, depth.saturating_add(1), Reading::Commands)?;
         self.push_expansion(word, start, quoting);

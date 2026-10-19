@@ -89,6 +89,10 @@ pub(crate) enum ParseError {
     /// commands may hold (a `case` pattern's), so where it ends cannot be read reliably.
     #[error("a process substitution inside an extended glob")]
     ProcessInExtglob,
+    /// A backtick inside an extended glob's group: inside a backtick substitution bash ends
+    /// the substitution there, so whether it opens another cannot be read reliably.
+    #[error("a backtick inside an extended glob")]
+    BacktickInExtglob,
     /// A word ending in an extended glob opener before an empty `()` where a function's name
     /// may stand (`f?()`): a definition without `extglob`, a pattern word with it.
     #[error("a function name or extended glob before an empty `()`")]
@@ -167,6 +171,8 @@ struct Lexer {
     reading: Reading,
     /// Unquoted `$[` (and `[` inside one) not yet closed by `]` in the list being read.
     brackets: usize,
+    /// Extended glob groups open around the cursor, at any depth.
+    groups: usize,
 }
 
 /// Characters that end an unquoted word.
@@ -190,6 +196,7 @@ impl Lexer {
             cases: 0,
             reading: Reading::Commands,
             brackets: 0,
+            groups: 0,
         }
     }
 
@@ -326,15 +333,7 @@ impl Lexer {
             }
             '<' | '>' => self.redirect(command, level, true)?,
             _ => {
-                let place = if matches!(command.words.as_slice(), [only] if only.is_bare(&["function"]))
-                {
-                    Place::Name
-                } else if in_command_position(&command.words) {
-                    Place::Command
-                } else {
-                    Place::Argument
-                };
-                let word = self.word(level.close, level.depth, place)?;
+                let word = self.word(level.close, level.depth, place_of(&command.words))?;
                 if word.is_fd() && matches!(self.peek(), Some('<' | '>')) {
                     self.redirect(command, level, word.text == "0")?;
                 } else if word.is_present() {
@@ -425,6 +424,18 @@ impl Lexer {
         while self.peek().is_some_and(|c| c != '\n') {
             self.advance();
         }
+    }
+}
+
+/// Where the word after `before` is read: a function's name after a bare `function`, in
+/// command position, or as an argument.
+fn place_of(before: &[Word]) -> Place {
+    if matches!(before, [only] if only.is_bare(&["function"])) {
+        Place::Name
+    } else if in_command_position(before) {
+        Place::Command
+    } else {
+        Place::Argument
     }
 }
 

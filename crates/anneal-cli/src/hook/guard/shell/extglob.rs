@@ -61,20 +61,51 @@ impl Lexer {
         Ok(true)
     }
 
-    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)`.
+    /// Whether the `(` at the cursor is followed, past blanks, newlines and line continuations,
+    /// by `)`.
     fn empty_parens(&self) -> bool {
-        self.chars
+        let mut rest = self
+            .chars
             .iter()
             .skip(self.pos.saturating_add(1))
-            .find(|c| !matches!(c, ' ' | '\t' | '\n'))
-            == Some(&')')
+            .peekable();
+        while let Some(c) = rest.next() {
+            match c {
+                ' ' | '\t' | '\n' => {}
+                '\\' if rest.next_if_eq(&&'\n').is_some() => {}
+                _ => return *c == ')',
+            }
+        }
+        false
+    }
+
+    /// The character at the cursor past any line continuations (`\` and a newline).
+    fn peek_past_continuations(&self) -> Option<char> {
+        let mut at = self.pos;
+        while self.chars.get(at) == Some(&'\\')
+            && self.chars.get(at.saturating_add(1)) == Some(&'\n')
+        {
+            at = at.saturating_add(2);
+        }
+        self.chars.get(at).copied()
     }
 
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with
-    /// `extglob` reads it: blanks, `|` and `;` included, quotes and substitutions read as in
-    /// any word. Without `extglob` bash refuses such a word, so reading it as a pattern can
-    /// only add denials.
+    /// `extglob` reads it: blanks, `|` and `;` included, quotes and `$( )` substitutions read
+    /// as in any word. Without `extglob` bash refuses such a word, so reading it as a pattern
+    /// can only add denials.
+    ///
+    /// # Errors
+    /// Those of any word, [`ParseError::ProcessInExtglob`] for a `<(` or `>(` inside the
+    /// group, and [`ParseError::BacktickInExtglob`] for a backtick inside it at any depth.
     pub(super) fn extglob(&mut self, word: &mut Word, depth: usize) -> Result<(), ParseError> {
+        self.groups = self.groups.saturating_add(1);
+        let read = self.group(word, depth);
+        self.groups = self.groups.saturating_sub(1);
+        read
+    }
+
+    fn group(&mut self, word: &mut Word, depth: usize) -> Result<(), ParseError> {
         word.push_pattern('(');
         let mut open: usize = 1;
         loop {
@@ -96,7 +127,7 @@ impl Lexer {
                 // Bash with `extglob` runs a process substitution inside a group, but ends the
                 // group at the first `)` that balances it, which may be a `case` pattern's
                 // inside the substitution; read either way, the commands differ.
-                '<' | '>' if self.peek() == Some('(') => {
+                '<' | '>' if self.peek_past_continuations() == Some('(') => {
                     return Err(ParseError::ProcessInExtglob);
                 }
                 _ => self.word_char(c, word, depth)?,

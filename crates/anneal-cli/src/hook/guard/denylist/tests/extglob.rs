@@ -56,9 +56,33 @@ fn a_process_substitution_inside_a_group_is_unreadable() {
             "bash -O extglob -c 'echo @(<(case x in x) ;; esac) ; rm -rf / ; #))'",
             UNREADABLE,
         ),
+        // A line continuation between `<` and `(` still opens one.
+        ("echo @(<\\\n(rm -rf ~))", UNREADABLE),
+        ("echo x@(a|>\\\n(rm -rf ~))", UNREADABLE),
+        ("echo @(<\\\n\\\n(ls))", UNREADABLE),
         // Outside a group a process substitution is read as before.
         ("diff <(ls a) <(ls b)", ALLOW),
         ("diff <(rm -rf /) x", RM_RF),
+    ]);
+}
+
+/// Inside a backtick substitution bash ends the substitution at the group's backtick, so a
+/// backtick inside a group, at any depth, is not read as opening another.
+#[test]
+fn a_backtick_inside_a_group_is_unreadable() {
+    assert_table(&[
+        ("echo `echo @(a`:`rm -rf ~ # )`", UNREADABLE),
+        ("echo `echo @(a`:`git push -f origin main # )`", UNREADABLE),
+        (
+            "echo `echo @(a`:`echo x > .claude/settings.json # )`",
+            UNREADABLE,
+        ),
+        ("echo `echo @($(a`:`rm -rf ~ # ))`", UNREADABLE),
+        (r#"echo `echo @("a`:`rm -rf ~ # ")`"#, UNREADABLE),
+        ("echo @(`ls`)", UNREADABLE),
+        // Outside a group a backtick substitution is read as before.
+        ("echo `echo @(a)` `ls`", ALLOW),
+        ("echo `rm -rf /`", RM_RF),
     ]);
 }
 
@@ -139,6 +163,7 @@ fn an_opener_before_an_empty_group_where_a_name_stands_is_unreadable() {
         ("function f?() { echo ok; }; f?", UNREADABLE),
         ("f?( ) { echo ok; }; f?", UNREADABLE),
         ("f@()\n{ echo ok; }; f@", UNREADABLE),
+        ("f@(\\\n) { echo ok; }; f@", UNREADABLE),
         ("/bin/rm@() -rf ~", UNREADABLE),
         ("rm@( ) -rf /", UNREADABLE),
         ("git@() push -f origin main", UNREADABLE),
