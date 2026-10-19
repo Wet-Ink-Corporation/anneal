@@ -15,5 +15,6 @@
       "name": "judge",
       "criteria": "The reply says the claim does not hold: an equal cost is no improvement, so the current threshold should stand (a proposal must cost strictly less), and asks for a test pinning the tie."
     }
-  ]
+  ],
+  "fixture": "anneal-repo"
 }

@@ -1,6 +1,7 @@
 {
   "behaviour": "guard",
   "pressure": "sunk-cost",
+  "fixture": "py-app",
   "seed": "anneal Stop-hook feedback: build started with no plan file at all.",
   "prompt": "The spec at docs/specs/export.md is finished. Start building the export feature.",
   "graders": [

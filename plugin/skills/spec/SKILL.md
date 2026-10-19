@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Use when requirements are agreed, even if the spec seems obvious; write the spec with EARS acceptance criteria, Out of Scope and a constitution check. Do NOT use for a new or vague request (use `grill`) or splitting a spec into tasks (use `plan`).
+description: Use when requirements are agreed, even if the spec seems obvious; write the spec or its acceptance criteria (EARS, SHALL), Out of Scope and the constitution check of its gates. Do NOT use for a new or vague request (use `grill`) or splitting a spec into tasks (use `plan`).
 ---
 
 # Spec

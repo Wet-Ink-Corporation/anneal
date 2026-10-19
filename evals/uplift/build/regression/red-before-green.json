@@ -1,6 +1,7 @@
 {
   "behaviour": "guard",
   "pressure": "time",
+  "fixture": "py-app",
   "seed": "anneal transcript (build): tests were written after the code they cover, so no red run was ever seen.",
   "prompt": "Implement `parse_duration(text)` in `src/duration.py`: \"5m\" is 300, \"2h\" is 7200, anything else raises ValueError.",
   "allowed_tools": [
