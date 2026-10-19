@@ -1,14 +1,14 @@
 ---
 id: "kb-decision-wi-5fe51a"
-title: "Deny expansions too"
+title: "Document the gap"
 kind: decision
 status: accepted
 authority_tier: decision
-summary: "In the context of \"Should the guard deny git force pushes whose target comes from an expansion such as git push \"$branch\" (A), or only document the gap (C)?\", facing the guard allows git push \"$branch\" with a force flag hidden in the expansion, we decided for Deny expansions too and neglected Document the gap, on the premise that agents rarely push to a variable branch, accepting that if wrong: legitimate scripted pushes get denied."
+summary: "In the context of \"Should the guard deny git force pushes whose target comes from an expansion such as git push \"$branch\" (A), or only document the gap (C)?\", facing the guard allows git push \"$branch\" with a force flag hidden in the expansion, we decided for Document the gap and neglected Deny expansions too, on the premise that the risk is acceptable, accepting that if wrong: a forced push slips through."
 depends_on: []
 related: []
 source_paths: []
-last_reviewed: "2026-10-18"
+last_reviewed: "2026-10-19"
 reversibility: high
 phase: null
 supersedes: []
@@ -18,14 +18,14 @@ question: "Should the guard deny git force pushes whose target comes from an exp
 door: two-way
 blast_radius: system
 decider: "human:ryan"
-provenance: user-approved
-decided_at: "2026-10-18T21:10:29Z"
-tree_hash: "0f26f9d8d3d80de80ec7b1cb4a5069c619ffbf45"
+provenance: user-directed
+decided_at: "2026-10-19T01:17:00Z"
+tree_hash: "a09d3a0debb1f365c3af1735a1c335b9038942c1"
 recommended: "A"
 flip_condition: "your agents push to variable branches often"
 ---
 
-# Deny expansions too
+# Document the gap
 
 ## Context and problem statement
 
@@ -41,14 +41,14 @@ Raised by an agent (sweep) as a question and captured by Weigh-In as `wi-5fe51a`
 
 ## Considered options
 
-### A · Deny expansions too (chosen)
+### A · Deny expansions too
 
 Treat a dynamic push target as possibly forced and deny
 
 - Holds if agents rarely push to a variable branch.
 - If wrong: legitimate scripted pushes get denied.
 
-### C · Document the gap
+### C · Document the gap (chosen)
 
 Keep allowing it; list it in docs/guard.md
 
@@ -61,14 +61,14 @@ Keep allowing it; list it in docs/guard.md
 
 ## Decision outcome
 
-Chosen option: **Deny expansions too**, the recommended option.
+Chosen option: **Document the gap**, overriding the recommendation (A).
 
-Decider's note: Ryan, card 2026-10-18: deny force pushes whose target comes from an expansion too
+Decider's note: Ryan, card 2026-10-19: document the gap; supersedes his earlier A, matching his #127 walkthrough pick
 
 ### Consequences
 
-- Good, because it holds if agents rarely push to a variable branch.
-- Bad, because if wrong: legitimate scripted pushes get denied.
+- Good, because it holds if the risk is acceptable.
+- Bad, because if wrong: a forced push slips through.
 
 ### Confirmation
 
@@ -80,6 +80,6 @@ if variable-target pushes are common in your workflows
 
 ## Provenance
 
-- Decided 2026-10-18T21:10:29Z by human:ryan (user-approved), via chat.
+- Decided 2026-10-19T01:17:00Z by human:ryan (user-directed), via chat.
 - Raised in session `8be558d7-9d48-52d4-b638-cb5f9847aeb0`.
 - Verbatim: "Should the guard deny git force pushes whose target comes from an expansion such as git push \"$branch\" (A), or only document the gap (C)?"
