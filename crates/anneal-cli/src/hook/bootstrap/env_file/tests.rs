@@ -43,9 +43,63 @@ fn without_either_variable_nothing_is_written() {
     let without_root = export_libexec(lookup_of(Some(&file), None));
     let empty_root = export_libexec(lookup_of(Some(&file), Some("")));
     let without_file = export_libexec(lookup_of(None, Some("/plugins/anneal")));
+    let empty_file = export_libexec(lookup_of(Some(Path::new("")), Some("/plugins/anneal")));
 
-    assert_eq!((without_root, empty_root, without_file), (None, None, None));
+    assert_eq!(
+        (without_root, empty_root, without_file, empty_file),
+        (None, None, None, None)
+    );
     assert!(!file.exists(), "no env file is created");
+}
+
+#[test]
+fn a_trailing_separator_on_the_plugin_root_is_not_doubled() {
+    let (_dir, file) = scratch();
+
+    let note = export_libexec(lookup_of(Some(&file), Some("/plugins/anneal/")));
+
+    assert_eq!(note, None);
+    assert_eq!(
+        fs::read_to_string(&file).expect("the env file was written"),
+        "export PATH='/plugins/anneal/libexec':\"$PATH\"\n"
+    );
+}
+
+#[test]
+fn a_line_already_held_with_a_crlf_ending_is_not_repeated() {
+    let (_dir, file) = scratch();
+    let held = "export FOO=1\r\nexport PATH='/p/libexec':\"$PATH\"\r\n";
+    fs::write(&file, held).expect("an env file with CRLF line endings");
+
+    let note = export_libexec(lookup_of(Some(&file), Some("/p")));
+
+    assert_eq!(note, None);
+    assert_eq!(fs::read_to_string(&file).expect("the env file"), held);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_plugin_root_that_is_not_utf_8_is_refused_with_a_note() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let (_dir, file) = scratch();
+    let root = OsString::from_vec(b"/p\xff".to_vec());
+    let lookup = |var: &str| match var {
+        "CLAUDE_ENV_FILE" => Some(OsString::from(file.as_os_str())),
+        "CLAUDE_PLUGIN_ROOT" => Some(root.clone()),
+        _ => None,
+    };
+
+    let note = export_libexec(lookup);
+
+    assert_eq!(
+        note.as_deref(),
+        Some(
+            "anneal did not put its libexec on PATH for Bash, so run it as the plugin's \
+             libexec/anneal: the plugin directory is not UTF-8"
+        )
+    );
+    assert!(!file.exists(), "nothing is written");
 }
 
 #[test]

@@ -49,11 +49,12 @@ enum ExportError {
 pub(super) fn export_libexec(lookup: impl Fn(&str) -> Option<OsString>) -> Option<String> {
     let file = lookup(ENV_FILE_VAR).filter(|value| !value.is_empty())?;
     let root = lookup(PLUGIN_ROOT_VAR).filter(|value| !value.is_empty())?;
-    let libexec = Path::new(&root).join("libexec");
-    let written = libexec
+    // Joined as text with `/`, not `Path::join`, so the line is the same on every platform.
+    let written = root
         .to_str()
         .ok_or(ExportError::NotUtf8)
-        .and_then(export_line)
+        .map(|root| format!("{}/libexec", root.trim_end_matches(['/', '\\'])))
+        .and_then(|dir| export_line(&dir))
         .and_then(|line| append_once(Path::new(&file), &line));
     written.err().map(|error| {
         format!(
