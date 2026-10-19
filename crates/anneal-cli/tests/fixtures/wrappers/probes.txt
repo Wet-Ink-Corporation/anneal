@@ -145,6 +145,12 @@ W1	su -c -x root W1
 W1	su -c +x root W1
 W1	su -c -- root W1
 W1	su -c -o root pipefail W1
+-	su -c -rcfile root W1
+W1	su -c -posix root errexit W1
+-	su -f root -- -rcfile W1
+W1	su -f root -- -help -c W1
+W1	sh -posix errexit -c W1
+W1	dash -posix errexit -c W1
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1

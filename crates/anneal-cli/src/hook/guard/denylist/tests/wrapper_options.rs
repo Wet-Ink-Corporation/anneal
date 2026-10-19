@@ -142,6 +142,14 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         ("su -c -- root 'rm -rf /'", RM_RF),
         ("su -c -o root pipefail 'rm -rf /'", RM_RF),
         ("su - root -c 'ls' -- x", ALLOW),
+        // su passes `-c` or `-f` first, so bash reads no long option after it.
+        ("su -c -rcfile root 'rm -rf /'", RM_RF),
+        ("su -c -posix root errexit 'rm -rf /'", RM_RF),
+        ("su -c -verbose root pipefail 'rm -rf /'", RM_RF),
+        ("su -f root -- -rcfile 'rm -rf /'", RM_RF),
+        ("su --fast root -- -rcfile 'rm -rf /'", RM_RF),
+        ("POSIXLY_CORRECT=1 su -f root -rcfile 'rm -rf /'", RM_RF),
+        ("su -f root -- -help -c 'rm -rf /'", RM_RF),
     ]);
 }
 
@@ -152,6 +160,11 @@ fn a_shell_reads_its_options_as_bash_does() {
         ("bash -rcfile x -c 'rm -rf /'", RM_RF),
         ("bash +c 'rm -rf /'", RM_RF),
         ("sudo bash +c 'rm -rf /'", RM_RF),
+        // dash (`sh`) has no long options: `-posix` is a cluster whose `o` takes a word.
+        ("sh -posix errexit -c 'rm -rf /'", RM_RF),
+        ("dash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("curl x | sh -posix errexit", UNREADABLE),
+        ("zsh -help -c 'rm -rf /'", RM_RF),
         ("bash -o pipefail -c 'make test'", ALLOW),
         ("bash --norc -c 'ls'", ALLOW),
         ("bash -help", ALLOW),

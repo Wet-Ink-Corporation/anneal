@@ -10,26 +10,36 @@ use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
 
-/// bash's long options (bash 5.2), each written with one dash or two and only before its
-/// first short option, and whether it takes the next word; `help` and `version` run nothing.
-const SHELL_LONG: [(&str, bool); 17] = [
-    ("debug", false),
-    ("debugger", false),
-    ("dump-po-strings", false),
-    ("dump-strings", false),
-    ("help", false),
-    ("init-file", true),
-    ("login", false),
-    ("noediting", false),
-    ("noprofile", false),
-    ("norc", false),
-    ("posix", false),
-    ("pretty-print", false),
-    ("rcfile", true),
-    ("restricted", false),
-    ("verbose", false),
-    ("version", false),
-    ("wordexp", false),
+/// What one of bash's long options does.
+#[derive(Clone, Copy)]
+enum ShellLong {
+    /// A flag.
+    Flag,
+    /// It takes the next word.
+    Value,
+    /// bash prints and runs nothing.
+    Exits,
+}
+
+/// bash's long options (bash 5.2.21 as built by Debian and Ubuntu), each written with one dash
+/// or two and only before its first short option.
+const SHELL_LONG: [(&str, ShellLong); 16] = [
+    ("debug", ShellLong::Flag),
+    ("debugger", ShellLong::Flag),
+    ("dump-po-strings", ShellLong::Flag),
+    ("dump-strings", ShellLong::Flag),
+    ("help", ShellLong::Exits),
+    ("init-file", ShellLong::Value),
+    ("login", ShellLong::Flag),
+    ("noediting", ShellLong::Flag),
+    ("noprofile", ShellLong::Flag),
+    ("norc", ShellLong::Flag),
+    ("posix", ShellLong::Flag),
+    ("pretty-print", ShellLong::Flag),
+    ("rcfile", ShellLong::Value),
+    ("restricted", ShellLong::Flag),
+    ("verbose", ShellLong::Flag),
+    ("version", ShellLong::Exits),
 ];
 
 /// The `find` actions that run a command on each match.
@@ -233,7 +243,11 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
 /// One reading of `su`: its options, and `argv`, the words it hands the user's shell after its
 /// own `-c` and command string. The `-c` strings run; a last one that bash reads as an option
 /// (`su -c -x root 'cmd'`) leaves the command string to `argv`.
-fn su_reading<'a>(options: Vec<Parsed<'a>>, argv: impl IntoIterator<Item = &'a Word>) -> Run<'a> {
+fn su_reading<'a, I>(options: Vec<Parsed<'a>>, argv: I) -> Run<'a>
+where
+    I: IntoIterator<Item = &'a Word>,
+    I::IntoIter: Clone,
+{
     let lead = options
         .iter()
         .rfind(|option| is_command(option))
@@ -316,15 +330,18 @@ impl ShellOptions {
             return ShellWord::Ends;
         }
         let long = text.strip_prefix("--").or_else(|| text.strip_prefix('-'));
-        if let Some(&(name, takes_value)) = long
+        if let Some(&(_, option)) = long
             .filter(|_| self.phase == ShellPhase::Long)
             .and_then(|long| SHELL_LONG.iter().find(|(name, _)| *name == long))
         {
-            if name == "help" || name == "version" {
-                return ShellWord::Exits;
-            }
-            self.owed = usize::from(takes_value);
-            return ShellWord::Option;
+            return match option {
+                ShellLong::Flag => ShellWord::Option,
+                ShellLong::Value => {
+                    self.owed = 1;
+                    ShellWord::Option
+                }
+                ShellLong::Exits => ShellWord::Exits,
+            };
         }
         let Some(letters) = text.strip_prefix('-').or_else(|| text.strip_prefix('+')) else {
             return ShellWord::Operand;
@@ -342,15 +359,34 @@ impl ShellOptions {
     }
 }
 
-/// What the shell `name` runs, given the arguments `words` ([`shell`]), read as bash reads
-/// them; `lead`, when given, is the value of a `-c` already read (su's `-c VALUE`).
-fn shell_run<'a>(
+/// What the shell `name` runs, given the arguments `words` ([`shell`]); `lead`, when given, is
+/// the value of a `-c` already read (su's `-c VALUE`). Both readings are checked: bash's, with
+/// its long options open, and that of a shell without them (dash as `sh`, or bash after su's
+/// `-c` or `-f`), where every option word is a cluster.
+fn shell_run<'a, I>(name: &'a str, lead: Option<&'a str>, words: I) -> Run<'a>
+where
+    I: IntoIterator<Item = &'a Word>,
+    I::IntoIter: Clone,
+{
+    let words = words.into_iter();
+    // Each reading walks the words from the start; the clone copies only the iterator.
+    Run::either([
+        shell_read(name, lead, words.clone(), ShellPhase::Long),
+        shell_read(name, lead, words, ShellPhase::Short),
+    ])
+}
+
+/// [`shell_run`]'s reading with bash's options open from `phase`.
+fn shell_read<'a>(
     name: &'a str,
     lead: Option<&'a str>,
-    words: impl IntoIterator<Item = &'a Word>,
+    mut words: impl Iterator<Item = &'a Word>,
+    phase: ShellPhase,
 ) -> Run<'a> {
-    let mut words = words.into_iter();
-    let mut options = ShellOptions::default();
+    let mut options = ShellOptions {
+        phase,
+        ..ShellOptions::default()
+    };
     let mut ended = false;
     if let Some(lead) = lead {
         options.command_string = true;
