@@ -93,6 +93,8 @@ const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
 /// - outside quotes, a LF (which the shell reads as a separator of commands), CR, VT or FF
 ///   separates words, as a blank does, and `;`, `&`, `|`, `<`, `>`, `(` and `)` are characters
 ///   of their word, since env reads no operator;
+/// - outside single quotes a backtick is a character of its word, since env runs no
+///   substitution (a `$` other than `${NAME}` makes env refuse the string);
 /// - outside single quotes, `\_` is a blank (a separator outside quotes, a space inside double
 ///   quotes), `\t`, `\n`, `\r`, `\f` and `\v` are those characters kept in their word, and `\c`
 ///   ends the string, as an unquoted `#` starting a word does;
@@ -101,8 +103,8 @@ const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
 ///
 /// The other escapes (`\\`, `\"`, `\$`, `\#` unquoted) read as the shell reads them.
 fn split_by_env(script: &str) -> Cow<'_, str> {
-    const SPECIAL: [char; 13] = [
-        '\\', '#', '\n', '\r', '\u{b}', '\u{c}', ';', '&', '|', '<', '>', '(', ')',
+    const SPECIAL: [char; 14] = [
+        '\\', '#', '\n', '\r', '\u{b}', '\u{c}', ';', '&', '|', '<', '>', '(', ')', '`',
     ];
     if !script.contains(SPECIAL) {
         return Cow::Borrowed(script);
@@ -145,7 +147,12 @@ fn split_by_env(script: &str) -> Cow<'_, str> {
             },
             (None, '\n' | '\r' | '\u{b}' | '\u{c}') => text.push(' '),
             (None, '#') if text.is_empty() || text.ends_with(ENV_BLANKS) => break,
-            (None, ';' | '&' | '|' | '<' | '>' | '(' | ')') => push_quoted(&mut text, c),
+            (None, ';' | '&' | '|' | '<' | '>' | '(' | ')' | '`') => push_quoted(&mut text, c),
+            (Some('"'), '`') => {
+                text.push('"');
+                push_quoted(&mut text, c);
+                text.push('"');
+            }
             (None, '\'' | '"') => {
                 quote = Some(c);
                 text.push(c);
@@ -433,6 +440,7 @@ mod tests {
             ("a\nb \"c\nd\"", &["a", "b", "c\nd"]),
             ("a;b | c && d;#e", &["a;b", "|", "c", "&&", "d;#e"]),
             ("a (b) <c >>d", &["a", "(b)", "<c", ">>d"]),
+            ("a ` b `c \"d`e\"", &["a", "`", "b", "`c", "d`e"]),
             ("a\u{a0}#b", &["a\u{a0}#b"]),
         ];
         let wrong: Vec<String> = table
