@@ -81,6 +81,8 @@ pub(super) struct Read<'a> {
     pub(super) rest: &'a [Word],
     /// The operands read past for [`Order::Permute`], in order; none for [`Order::Stop`].
     pub(super) operands: Vec<&'a Word>,
+    /// Whether the options ended at a `--` read as their end, not as an option's value.
+    pub(super) ended: bool,
 }
 
 impl<'a> Read<'a> {
@@ -153,6 +155,7 @@ impl Grammar {
                     options,
                     rest: tail,
                     operands,
+                    ended: true,
                 };
             }
             if !is_option(first) {
@@ -162,6 +165,7 @@ impl Grammar {
                             options,
                             rest,
                             operands,
+                            ended: false,
                         };
                     }
                     Order::Permute => {
@@ -184,6 +188,7 @@ impl Grammar {
             options,
             rest,
             operands,
+            ended: false,
         }
     }
 
@@ -440,6 +445,17 @@ mod tests {
             .map(|word| word.text.as_str())
             .collect();
         assert_eq!(operands, ["y", "z"]);
+    }
+
+    #[test]
+    fn only_a_double_dash_read_as_the_end_of_options_ends_them() {
+        let ending = words("-a -- -b x");
+        let value = words("-b -- -a x");
+        let operand = words("-a y");
+
+        assert!(STOP.parse(&ending).ended, "the `--` ends the options");
+        assert!(!STOP.parse(&value).ended, "the `--` is `-b`'s value");
+        assert!(!STOP.parse(&operand).ended, "an operand ends the options");
     }
 
     #[test]

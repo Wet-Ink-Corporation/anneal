@@ -230,6 +230,168 @@ fn long_options_take_their_value_written_out_or_abbreviated() {
     ]);
 }
 
+/// Issue #165: a glob or extglob in a shell's or wrapper's option slot may expand to an
+/// option (`-[c]` to `-c` beside a file named `-c`), so the option it may be cannot be read.
+#[test]
+fn a_pattern_that_may_expand_to_an_option_in_an_option_slot_is_denied() {
+    assert_table(&[
+        // A shell reads such a word as possible options (#129), so it names what it may run.
+        ("bash -[c] 'rm -rf /'", RM_RF),
+        ("bash -@(c) 'rm -rf /'", RM_RF),
+        ("bash -o errexit -? 'rm -rf /'", RM_RF),
+        ("bash @(--)login -c 'echo a'", UNREADABLE),
+        ("sh -* 'rm -rf /'", RM_RF),
+        ("su -@(c) 'rm -rf /'", UNREADABLE),
+        ("su root -[c] 'rm -rf /'", RM_RF),
+        ("script -@(c) 'rm -rf /' /dev/null", UNREADABLE),
+        ("flock /tmp/l -@(c) 'rm -rf /'", UNREADABLE),
+        ("env -@(S) 'rm -rf /'", UNREADABLE),
+        ("sudo -@(s) 'rm -rf /'", UNREADABLE),
+        ("sudo -u root -[s] 'rm -rf /'", UNREADABLE),
+        // Read as an operand too, so the denial names what that reading runs.
+        ("nice -[n] 5 rm -rf /", RM_RF),
+        ("sudo -u @(root) -[s] 'rm -rf /'", UNREADABLE),
+        ("timeout -[s] KILL 5 echo", UNREADABLE),
+        ("xargs -[I] x echo", UNREADABLE),
+        // A pattern where a wrapper reads an option that runs a string.
+        ("bash @(-c) 'rm -rf /'", RM_RF),
+        ("bash ?c 'rm -rf /'", RM_RF),
+        ("env -S@(rm -rf ~)", UNREADABLE),
+        ("env --split-string=@(x)", UNREADABLE),
+        ("env -S'rm -rf /'*", UNREADABLE),
+    ]);
+}
+
+/// Issue #165, review round 1: the option part is judged whatever value is attached to it, a
+/// shell's `+` signs an option as `-` does, and su hands its words after `--` to the user's
+/// shell.
+#[test]
+fn an_attached_value_a_plus_sign_or_su_s_dashes_do_not_hide_the_option() {
+    assert_table(&[
+        // Beside a directory named `-Srm -rf `, the trailing `/` matches it.
+        ("env -[S]'rm -rf /'", UNREADABLE),
+        ("env -[S]'rm -rf ${HOME}'", UNREADABLE),
+        ("env -@(S)'rm -rf ${HOME}'", UNREADABLE),
+        ("su -[c]'rm -rf ~'", UNREADABLE),
+        ("su root -[c]'rm -rf ~'", UNREADABLE),
+        ("script -[c]'rm -rf ~'", UNREADABLE),
+        // A shell reads one that may match `-` or `+` as possible options (#129).
+        ("bash +[c] 'rm -rf /'", RM_RF),
+        ("bash [+]c 'rm -rf /'", UNREADABLE),
+        ("bash +@(c) 'rm -rf /'", RM_RF),
+        ("sh +[c] 'rm -rf /'", RM_RF),
+        ("bash -o errexit +[c] 'rm -rf /'", RM_RF),
+        ("sudo bash +[c] 'rm -rf /'", RM_RF),
+        ("su root +[c] 'rm -rf /'", RM_RF),
+        ("su root -- -[c] 'rm -rf /'", RM_RF),
+        ("su -- root -[c] 'rm -rf /'", RM_RF),
+        ("su - -- root -@(c) 'rm -rf /'", RM_RF),
+        ("su root -- +[c] 'rm -rf /'", RM_RF),
+    ]);
+}
+
+/// Issue #165, review round 1: after a shell's command string come its operands (`$0` and the
+/// rest), which it reads as no options.
+#[test]
+fn the_operands_after_a_shell_s_command_string_are_no_slots() {
+    assert_table(&[
+        ("sh -c 'echo \"$@\"' *", ALLOW),
+        ("bash -c 'echo hi' *", ALLOW),
+        ("bash -xc 'echo hi' x -*", ALLOW),
+        ("bash -c -x 'echo hi' *", ALLOW),
+        ("bash -co errexit 'echo hi' *", ALLOW),
+    ]);
+}
+
+/// Issue #165, review round 2: a shell's slots are read as the shell reads its options, so
+/// the value of `-o`, `-O` or `-rcfile` does not end them, and a script ends them.
+#[test]
+fn a_shell_s_slots_follow_its_own_option_reading() {
+    assert_table(&[
+        // The shell's own reading (#129) runs the string after the pattern as its script.
+        ("bash -c -o pipefail -[e] 'rm -rf /'", RM_RF),
+        ("bash -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("sh -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -c -O extglob -[e] 'rm -rf /'", RM_RF),
+        ("bash +c -o errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -c -o errexit * 'rm -rf /'", RM_RF),
+        ("sudo bash -co errexit -[e] 'rm -rf /'", RM_RF),
+        ("bash -rcfile /dev/null -[c] 'rm -rf /'", RM_RF),
+        ("bash -e run.sh *", ALLOW),
+        ("sh -e build.sh *", ALLOW),
+        ("bash -x ./deploy.sh ?", ALLOW),
+        ("watch -n1 ls -*", ALLOW),
+    ]);
+}
+
+/// Issue #165, review round 3: a `*` may hold an option's sign, letter and the start of its
+/// attached value at once, so what follows it does not clear it where options take a value.
+#[test]
+fn a_star_may_hold_an_option_and_its_attached_value() {
+    assert_table(&[
+        ("env *' rm -rf ~'", UNREADABLE),
+        ("env *='rm -rf ~'", UNREADABLE),
+        ("script *' rm -rf ~'", UNREADABLE),
+        ("su *' rm -rf ~'", UNREADABLE),
+        ("su root *' rm -rf ~'", UNREADABLE),
+        ("sudo *' -s'", UNREADABLE),
+        // `?` is one character: it may be only the sign.
+        ("env ?' rm -rf ~'", ALLOW),
+        // A shell's options carry no value in their word.
+        ("bash *.sh", ALLOW),
+        ("bash *' x'", ALLOW),
+    ]);
+}
+
+/// Issue #165: a pattern after the `--` that ends a wrapper's options is its command, while a
+/// `--` an option takes as its value ends nothing, so the word after it is still a slot.
+#[test]
+fn a_pattern_after_a_wrapper_s_double_dash_is_its_command_not_an_option() {
+    assert_table(&[
+        ("sudo -- *.sh", ALLOW),
+        ("env -- *.sh", ALLOW),
+        ("nice -- *.sh", ALLOW),
+        ("sudo -u root -- *.sh", ALLOW),
+        ("sudo -- -[s] 'rm -rf /'", ALLOW),
+        ("sudo -[u] root -- ls", UNREADABLE),
+        ("sudo -u -- ls", ALLOW),
+        ("sudo -u -- -[s] 'rm -rf /'", UNREADABLE),
+        ("sudo --user -- -[s] 'rm -rf /'", UNREADABLE),
+        ("env -u -- -[S]'rm -rf ~'", UNREADABLE),
+        ("env -C -- -[S]'rm -rf ~'", UNREADABLE),
+        ("xargs -E -- -[s] 'rm -rf /'", UNREADABLE),
+        ("xargs -d -- -[s] 'rm -rf /'", UNREADABLE),
+        ("sudo --user=-- -[s] 'rm -rf /'", UNREADABLE),
+        ("doas -- *.sh", ALLOW),
+        ("stdbuf -- *.sh", ALLOW),
+        ("xargs -- -[s] x", ALLOW),
+        // A wrapper that takes operands after its options keeps the slot after them.
+        ("timeout -- 5 -[s] x", UNREADABLE),
+        ("chrt -o 0 -- -[s] x", UNREADABLE),
+    ]);
+}
+
+/// Issue #165: a pattern that cannot start an option, or that stands after the slots.
+#[test]
+fn a_pattern_outside_an_option_slot_is_read_as_before() {
+    assert_table(&[
+        ("bash run.sh *", ALLOW),
+        ("bash ./x-*.sh", ALLOW),
+        ("bash *.sh", ALLOW),
+        ("sudo rm -f *.o", ALLOW),
+        ("sudo -u root ls -[a]", ALLOW),
+        ("timeout 5 ls *", ALLOW),
+        ("xargs -n1 ls *", ALLOW),
+        ("find . -name *.rs -print", ALLOW),
+        ("env -i ls *", ALLOW),
+        ("sudo [ -f x ]", ALLOW),
+        ("xargs -I{} echo {}", ALLOW),
+        ("sudo -u ~root ls", ALLOW),
+        ("nice [ -f x ]", ALLOW),
+        ("bash [ab]*.sh", ALLOW),
+    ]);
+}
+
 #[test]
 fn ordinary_wrapped_commands_stay_allowed() {
     assert_table(&[

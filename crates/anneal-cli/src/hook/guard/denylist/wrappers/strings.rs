@@ -314,6 +314,7 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         options,
         rest: after_dashes,
         operands,
+        ..
     } = SU.parse(words);
     let to_user = SU_TO_USER.parse(words);
     // su takes a lone `-` first, then the user. Under POSIXLY_CORRECT a `--` after that `-`
@@ -348,7 +349,7 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
 }
 
 /// Whether `word` is a literal `--`.
-fn ends_options(word: &Word) -> bool {
+pub(super) fn ends_options(word: &Word) -> bool {
     word.text == "--" && reads_as_written(word)
 }
 
@@ -387,6 +388,13 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 /// a script read from stdin, in every reading of its arguments ([`shell::run`]).
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
     Peel::Done(shell::run(name, None, words))
+}
+
+/// How many of a shell's argument words `words` some reading of [`shell::run`] may still read
+/// as options or their values, the word that ends them included: the words where a pattern
+/// may stand for an option (#165).
+pub(super) fn shell_option_words(words: &[Word]) -> usize {
+    shell::option_words(words)
 }
 
 /// The paths through which a script file is standard input.
