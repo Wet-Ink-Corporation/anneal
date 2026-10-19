@@ -157,6 +157,9 @@ pub const VERDICT_VALID: Code = Code::new(0, "valid");
 pub const VERDICT_INVALID: Code = Code::new(1, "invalid");
 /// `verdict set|valid`: every finding is noise.
 pub const VERDICT_NOISE_ONLY: Code = Code::new(3, "noise-only");
+/// `verdict set`: the verdict is recorded, but its `anneal/verdict` commit status was not
+/// posted (#116).
+pub const VERDICT_STATUS_UNPOSTED: Code = Code::new(4, "set: recorded, status not posted");
 /// `watch pr|ci|deploy`: the watched target is green.
 pub const WATCH_GREEN: Code = Code::new(0, "green");
 /// `watch pr|ci|deploy`: merge conflict.
@@ -307,7 +310,12 @@ impl CommandCodes {
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),
             CommandName::Verdict => (
                 "set|valid",
-                &[VERDICT_VALID, VERDICT_INVALID, VERDICT_NOISE_ONLY],
+                &[
+                    VERDICT_VALID,
+                    VERDICT_INVALID,
+                    VERDICT_NOISE_ONLY,
+                    VERDICT_STATUS_UNPOSTED,
+                ],
             ),
             CommandName::Watch => (
                 "pr|ci|deploy",

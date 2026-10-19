@@ -2,10 +2,12 @@
 //!
 //! `set --pr <n> --sha <rev> --level <tests-verified|reviewed|approved> --source
 //! <local|review-plugin|human> [--actor human|model] [--via mod|bash|terminal] [--base <ref>]
-//! [--session <id>]` appends one `verdict_set` with the full commit `--sha` names, the base
-//! (`--base`, else `origin/main`, else `main`), the `git patch-id --verbatim` of
-//! `git diff <base>...<sha>` and, when given, who ran it and through what (`by`, #62). It has
-//! no `--store`: the verdict goes to the ledger the merge gate reads.
+//! [--session <id>] [--no-status]` appends one `verdict_set` with the full commit `--sha`
+//! names, the base (`--base`, else `origin/main`, else `main`), the `git patch-id --verbatim`
+//! of `git diff <base>...<sha>` and, when given, who ran it and through what (`by`, #62). It
+//! has no `--store`: the verdict goes to the ledger the merge gate reads. Then, with a GitHub
+//! token and without `--no-status`, it posts the `anneal/verdict` commit status on that commit
+//! (#116); a status that was not posted exits 4 with the verdict still recorded.
 //!
 //! `valid --pr <n> [--head <rev>] [--base <ref>]` judges the pull request's verdicts against
 //! `--head` (default `HEAD`) as `assess` describes: exit 0 when its latest fresh verdict is a
@@ -15,30 +17,35 @@
 //! - `assess`: freshness and the requirements, pure.
 //! - `pull_request`: the verdicts read from the ledger with the head they are judged
 //!   against, shared with the merge gate.
+//! - `set`: `verdict set`, the append and then the status.
+//! - `commit_status`: the `anneal/verdict` status: its state from the merge gate, the
+//!   repository from `origin`, and the ureq adapter that posts it.
 
 pub(crate) mod assess;
+pub(crate) mod commit_status;
 pub(crate) mod pull_request;
+mod set;
 
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use anneal_ledger::event::{Verdict, VerdictSet, VerdictSource};
-use anneal_ledger::{EventEnvelope, LedgerEvent, Store, Timestamp};
+use anneal_ledger::event::{Verdict, VerdictSource};
 use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::command::CommandName;
-use crate::decide::label::{self, Actor, Via};
+use crate::decide::label::{Actor, Via};
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::existing_ledger::{self, LedgerError};
 use crate::exit_codes::{self, Code};
 use crate::paths::{self, GIT_TIMEOUT, PathError};
-use crate::pr_diff::{self, Budget, PrError};
+use crate::pr_diff::{Budget, PrError};
 use crate::repo_config;
 use assess::{Fresh, Invalid, Judged, Outcome};
+pub(crate) use commit_status::GithubEnv;
 use pull_request::{PullRequest, Query, ReadError};
 
 /// How long `verdict valid` waits for another process's ledger lock, as `Store::open` does.
@@ -88,6 +95,9 @@ pub struct SetArgs {
     /// The session id to record
     #[arg(long, value_name = "ID")]
     session: Option<String>,
+    /// Post no anneal/verdict commit status [default: posted when a GitHub token is set]
+    #[arg(long)]
+    no_status: bool,
 }
 
 /// `anneal verdict valid`.
@@ -115,6 +125,17 @@ pub enum Level {
     Approved,
 }
 
+impl Level {
+    /// The level as `--level` names it.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::TestsVerified => "tests-verified",
+            Self::Reviewed => "reviewed",
+            Self::Approved => "approved",
+        }
+    }
+}
+
 impl From<Level> for Verdict {
     fn from(level: Level) -> Self {
         match level {
@@ -136,6 +157,17 @@ pub enum Source {
     Human,
 }
 
+impl Source {
+    /// The source as `--source` names it.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::ReviewPlugin => "review-plugin",
+            Self::Human => "human",
+        }
+    }
+}
+
 impl From<Source> for VerdictSource {
     fn from(source: Source) -> Self {
         match source {
@@ -146,21 +178,43 @@ impl From<Source> for VerdictSource {
     }
 }
 
-/// Runs `anneal verdict <action>` in `cwd`, reading environment variables through `lookup`.
-pub(crate) fn run<O: Write>(
-    args: &VerdictArgs,
-    cwd: &Path,
-    lookup: impl Fn(&str) -> Option<OsString>,
-    out: &mut O,
-) -> Result<Code, CliError> {
-    let root = worktree_root(cwd)?;
-    let place = Place {
-        cwd,
-        root: Path::new(&root),
-    };
+/// What `anneal verdict` gets from the process: its working directory, its environment (for
+/// the ledger), what the environment says about GitHub (read at the edge), and stdout and
+/// stderr.
+#[derive(Debug)]
+pub(crate) struct Io<'a, L, O, E> {
+    /// The working directory.
+    pub(crate) cwd: &'a Path,
+    /// The environment.
+    pub(crate) lookup: L,
+    /// The token and API override `verdict set` posts its commit status with.
+    pub(crate) github: &'a GithubEnv,
+    /// The envelope's stream.
+    pub(crate) out: O,
+    /// The stream for `verdict set`'s warning when its status is not posted.
+    pub(crate) err: E,
+}
+
+/// Runs `anneal verdict <action>` with `io`.
+pub(crate) fn run<L, O, E>(args: &VerdictArgs, io: Io<'_, L, O, E>) -> Result<Code, CliError>
+where
+    L: Fn(&str) -> Option<OsString>,
+    O: Write,
+    E: Write,
+{
+    let root = worktree_root(io.cwd)?;
+    let root = Path::new(&root);
     match &args.action {
-        VerdictAction::Set(set) => run_set(set, place, lookup, out),
-        VerdictAction::Valid(valid) => run_valid(valid, place, lookup, out),
+        VerdictAction::Set(set) => set::run(set, root, io),
+        VerdictAction::Valid(valid) => {
+            let Io {
+                cwd,
+                lookup,
+                mut out,
+                ..
+            } = io;
+            run_valid(valid, Place { cwd, root }, lookup, &mut out)
+        }
     }
 }
 
@@ -181,84 +235,6 @@ fn worktree_root(cwd: &Path) -> Result<String, CliError> {
         }),
         other => CliError::Path(other),
     })
-}
-
-/// `anneal verdict set`.
-fn run_set<O: Write>(
-    args: &SetArgs,
-    place: Place<'_>,
-    lookup: impl Fn(&str) -> Option<OsString>,
-    out: &mut O,
-) -> Result<Code, CliError> {
-    let Place { cwd, root } = place;
-    let budget = Budget::per_call(GIT_TIMEOUT);
-    let sha = pr_diff::resolve_commit(root, &args.sha, budget.next().map_err(PrError::from)?)
-        .map_err(PrError::from)?
-        .ok_or_else(|| PrError::UnknownCommit {
-            flag: "--sha",
-            rev: args.sha.clone(),
-        })?;
-    let base = match &args.base {
-        Some(base) => base.clone(),
-        None => pr_diff::default_base(root, budget.next().map_err(PrError::from)?)
-            .map_err(PrError::from)?
-            .ok_or(PrError::NoBase)?
-            .to_owned(),
-    };
-    let base_commit = pull_request::resolve_base(root, &base, budget)?;
-    let patch_id = pr_diff::patch_id(
-        root,
-        &base_commit,
-        &sha,
-        budget.next().map_err(PrError::from)?,
-    )
-    .map_err(PrError::from)?;
-    let event = LedgerEvent::VerdictSet(VerdictSet {
-        pr: args.pr,
-        verdict: args.level.into(),
-        source: Some(args.source.into()),
-        sha: Some(sha),
-        patch_id,
-        base: Some(base),
-        by: label::Source {
-            actor: args.actor,
-            via: args.via,
-        }
-        .by(),
-    });
-    let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
-    envelope.session_id.clone_from(&args.session);
-    // The pull request and session become ledger tags; check them before a ledger is opened
-    // (or created), so a value the store would refuse is a usage error that leaves no file.
-    if let Err(error) = envelope.tags() {
-        return Err(CliError::Usage {
-            reason: format!("the --session is recorded as a ledger tag: {error}"),
-        });
-    }
-    let location = paths::ledger_store(None, lookup, cwd)?;
-    let position = Store::open(&location.path)?.append(&envelope)?;
-    let data = SetData {
-        event: &envelope.event,
-        store: &location.path,
-        position,
-    };
-    Envelope::new(
-        CommandName::Verdict,
-        Some("set"),
-        exit_codes::VERDICT_VALID,
-        data,
-    )
-    .emit(out)
-    .map_err(CliError::Output)
-}
-
-/// `data` of `verdict set`: the event's payload and where it was recorded.
-#[derive(Debug, Serialize)]
-struct SetData<'a> {
-    #[serde(flatten)]
-    event: &'a LedgerEvent,
-    store: &'a Path,
-    position: u64,
 }
 
 /// `anneal verdict valid`.

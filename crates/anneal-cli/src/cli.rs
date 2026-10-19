@@ -328,10 +328,7 @@ fn dispatch<O: Write, E: Write>(
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             floor_guard::run(args, &cwd, out)
         }
-        Command::Verdict(args) => {
-            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-            verdict::run(args, &cwd, |var| std::env::var_os(var), out)
-        }
+        Command::Verdict(args) => run_verdict(args, out, err),
         Command::Eval(args) => eval::run(args, out),
         Command::Decide(args) => run_decide(args, out),
         Command::Calibrate(args) => run_calibrate(args, out, err),
@@ -423,6 +420,26 @@ fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> 
         clock: &SystemClock::new(),
     };
     grill::run(args, &env, out)
+}
+
+/// `anneal verdict` from the process's working directory, with its environment for the
+/// ledger, and `GH_TOKEN`, `GITHUB_TOKEN` and `ANNEAL_GITHUB_API` read here for the commit
+/// status `verdict set` posts.
+fn run_verdict<O: Write, E: Write>(
+    args: &VerdictArgs,
+    out: &mut O,
+    err: &mut E,
+) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let github = verdict::GithubEnv::read(|var| std::env::var_os(var));
+    let io = verdict::Io {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        github: &github,
+        out,
+        err,
+    };
+    verdict::run(args, io)
 }
 
 /// `anneal watch` from the process's working directory, with its environment for the merge

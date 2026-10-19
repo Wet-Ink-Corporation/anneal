@@ -128,6 +128,7 @@ A green result proves no quality floor (coverage, lint level, test count) was lo
 | 0 | valid |
 | 1 | invalid |
 | 3 | noise-only |
+| 4 | set: recorded, status not posted |
 
 A green result proves the review verdict is well-formed and backed by findings. It does **not** prove that the reviewer was right.
 

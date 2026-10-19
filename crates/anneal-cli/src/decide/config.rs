@@ -209,7 +209,7 @@ fn endpoint_override(
 
 /// `value` without one trailing `/`, when it is `http://`, a loopback host, an optional port
 /// (1 to 5 digits, at most 65535) and an optional path of `[A-Za-z0-9._~/-]`; else `None`.
-fn loopback_base(value: &str) -> Option<String> {
+pub(crate) fn loopback_base(value: &str) -> Option<String> {
     let rest = value.strip_prefix("http://")?;
     let (authority, path) = rest
         .find('/')
