@@ -301,28 +301,7 @@ pub(super) fn run<'a>(
     lead: Option<&'a str>,
     words: impl IntoIterator<Item = &'a Word>,
 ) -> Run<'a> {
-    let args: Vec<Arg<'a>> = lead
-        .map(Arg::Lead)
-        .into_iter()
-        .chain(words.into_iter().map(Arg::Word))
-        .collect();
-    let start = Modes {
-        command: lead.is_some(),
-        stdin: false,
-    };
-    let mut walk = Walk::new(args.len(), start);
-    let mut on = [[false; 4]; 3];
-    for at in 0..=args.len() {
-        let Some(states) = walk.states(at, &mut on) else {
-            break;
-        };
-        for state in State::all().filter(|state| holds(&states, *state)) {
-            match args.get(at) {
-                Some(&arg) => walk.step(at, arg, state),
-                None => walk.end(at, state.modes),
-            }
-        }
-    }
+    let (args, walk, _) = walked(lead, words);
     let scripts = args
         .iter()
         .zip(&walk.scripts)
@@ -337,7 +316,7 @@ pub(super) fn run<'a>(
         };
         match script_file(name, script) {
             Run::StdinScript(_) => stdin = true,
-            Run::Unseen(_) => unseen = true,
+            Run::Unseen(_) | Run::UnsureOption { .. } => unseen = true,
             // A file on disk: the guard does not read it, and it runs nothing to judge here.
             Run::Nothing
             | Run::Command { .. }
@@ -356,6 +335,48 @@ pub(super) fn run<'a>(
         _ => Run::Either(runs),
     }
     .or_nothing(nothing)
+}
+
+/// How many of the shell's arguments `words` some reading still reads as options: up to and
+/// including the last word a reading reaches while reading them, an option, its value or the
+/// word that ends them (#165).
+pub(super) fn option_words(words: &[Word]) -> usize {
+    walked(None, words).2.map_or(0, |at| at.saturating_add(1))
+}
+
+/// The arguments `lead` and `words` and every reading's walk over them, with the last argument
+/// a reading reaches while still reading options.
+fn walked<'a>(
+    lead: Option<&'a str>,
+    words: impl IntoIterator<Item = &'a Word>,
+) -> (Vec<Arg<'a>>, Walk, Option<usize>) {
+    let args: Vec<Arg<'a>> = lead
+        .map(Arg::Lead)
+        .into_iter()
+        .chain(words.into_iter().map(Arg::Word))
+        .collect();
+    let start = Modes {
+        command: lead.is_some(),
+        stdin: false,
+    };
+    let mut walk = Walk::new(args.len(), start);
+    let mut on = [[false; 4]; 3];
+    let mut last = None;
+    for at in 0..=args.len() {
+        let Some(states) = walk.states(at, &mut on) else {
+            break;
+        };
+        for state in State::all().filter(|state| holds(&states, *state)) {
+            match args.get(at) {
+                Some(&arg) => {
+                    last = Some(at);
+                    walk.step(at, arg, state);
+                }
+                None => walk.end(at, state.modes),
+            }
+        }
+    }
+    (args, walk, last)
 }
 
 impl Run<'_> {
