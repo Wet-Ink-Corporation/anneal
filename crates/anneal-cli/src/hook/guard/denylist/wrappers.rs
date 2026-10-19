@@ -333,14 +333,7 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         "taskset" => Peel::Inner(skip_one(tables::TASKSET.parse(rest).rest)),
         "function" => Peel::Inner(skip_one(rest)),
         // `busybox <applet> ...`.
-        "busybox" => match rest.split_first() {
-            Some((applet, words))
-                if SHELLS.contains(&applet.text.as_str()) && braces::reads_as_written(applet) =>
-            {
-                strings::busybox_shell(&applet.text, words)
-            }
-            _ => Peel::Inner(rest),
-        },
+        "busybox" => Peel::Inner(rest),
         "coproc" => strings::coproc(rest),
         "flock" => strings::flock(rest),
         "xargs" => Peel::Appending(tables::XARGS.parse(rest).rest),

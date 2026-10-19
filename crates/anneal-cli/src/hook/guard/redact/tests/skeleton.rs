@@ -290,10 +290,10 @@ fn a_literal_shell_body_is_rendered_as_commands_and_any_other_is_hidden() {
         ("eval rm -rf /", "eval 'rm -rf /'"),
         ("bash -c $'rm -rf /\\nls'", "bash -c 'rm -rf /; ls'"),
         ("bash -c 'echo \"open'", "bash -c '<unparsed>'"),
-        // bash run by name has one reading of its long options, so its body is still shown.
+        // A shell is read with and without long options, so a body after one is hidden.
         (
             "bash --login -c 'git push -f origin main'",
-            "bash --login -c 'git push -f origin main'",
+            "bash --login -c <redacted>",
         ),
         (
             "su -c 'dropdb prod' root",

@@ -218,8 +218,9 @@ fn login_dash(word: &Word) -> bool {
 /// any, then su's arguments after the user, read as bash reads them. getopt permutes su's
 /// options and operands; su reads its `-` and user from its operands followed by the words
 /// after `--` and hands the shell the rest (which may be `-` or bash's `+x`, `+o NAME`). With
-/// `POSIXLY_CORRECT` set getopt stops at the user and su hands the shell every word after it. Each reading is checked, every `-c`
-/// string, and, without a `-c`, the words after `--` on their own.
+/// `POSIXLY_CORRECT` set getopt stops at the user and su hands the shell every word after it.
+/// Each reading is checked, every `-c` string, and, without a `-c`, the words after `--` on
+/// their own.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let Read {
         options,
@@ -294,14 +295,11 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 }
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
-/// a script read from stdin. bash run by name reads its long options; any other shell is also
-/// read without them ([`shell_run`]), as dash (often `sh`) reads its options.
+/// a script read from stdin. Every shell is read with and without bash's long options
+/// ([`shell_run`]): a name says neither which shell runs (`sh` may be dash, `busybox bash` is
+/// ash) nor whether it has them.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(if name == "bash" {
-        shell_read(name, None, words.iter(), ShellPhase::Long)
-    } else {
-        shell_run(name, None, words)
-    })
+    Peel::Done(shell_run(name, None, words))
 }
 
 /// What one word of a shell's arguments is to the shell ([`ShellOptions::read`]).
@@ -462,12 +460,6 @@ fn script_file<'a>(shell: &'a str, script: &Word) -> Run<'a> {
     } else {
         Run::Nothing
     }
-}
-
-/// `busybox SHELL ...`: the shell applets of `busybox` are ash, whatever their name, so even
-/// its `bash` is also read without bash's long options.
-pub(super) fn busybox_shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, None, words))
 }
 
 /// `source FILE` (or `. FILE`).
