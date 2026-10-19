@@ -141,7 +141,8 @@ after it are the shell's, which reads their groups (`env -S 'watch rm @(-rf) /ho
 `env -S rm @(-rf) /home` are denied); either reading's denial denies. It is also read as env
 splits it, with each word after the string kept whole (`env -S bash -c 'rm -rf /'` is denied)
 and env's escapes applied, as GNU coreutils 9.4 splits it: `\_`, and outside quotes a LF, CR, VT
-or FF, separate words; `\t`, `\n`, `\r`, `\f` and `\v` are those characters inside their word;
+or FF, separate words, and `;`, `&`, `|`, `<`, `>`, `(` and `)` are characters of their word (env
+reads no operator, so `env -S 'rm -rf ; /home'` is denied); `\t`, `\n`, `\r`, `\f` and `\v` are those characters inside their word;
 inside single quotes `\'` is a quote and `\\` a backslash; and `\c` or an unquoted `#` starting
 a word ends the string, so the words after it follow (`env -S 'bash -c #' 'rm -rf /'`,
 `env -S 'rm\_-rf\_/'` and `env -S 'sh -c rm\t-rf\t/'` are denied). A `${VAR}` env expands is

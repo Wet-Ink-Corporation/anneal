@@ -168,6 +168,20 @@ fn an_env_split_string_is_read_with_env_s_escapes() {
         ("env -S 'git push\n-f origin main'", FORCE_PUSH),
         ("env -S $'rm\\r-rf\\r/'", RM_RF),
         ("env -S $'rm\\v-rf\\f/'", RM_RF),
+        // env reads no operator: `;`, `|`, `&`, `<`, `>`, `(` and `)` are word characters.
+        ("env -S 'rm -rf ; /home'", RM_RF),
+        ("env -S 'rm -rf ;' /home", RM_RF),
+        ("env -S 'rm -rf -- ; /home'", RM_RF),
+        ("env -S 'sudo rm -rf ; /home'", RM_RF),
+        ("env -S 'rm -rf | /home'", RM_RF),
+        ("env -S 'rm -rf && /home'", RM_RF),
+        ("env -S 'rm -rf || /home'", RM_RF),
+        ("env -S 'rm -rf > /home'", RM_RF),
+        ("env -S 'rm -rf <> /home'", RM_RF),
+        ("env -S 'rm -rf & ${HOME}'", RM_RF),
+        ("env -S 'rm -rf ;# /home'", RM_RF),
+        ("env -S 'rm -rf (x) /home'", RM_RF),
+        ("env -S 'git push origin ; -f main'", FORCE_PUSH),
         // A Unicode blank is no separator for env: the `#` after it is text.
         ("env -S 'rm\\_-rf\\_\u{a0}#\\_/'", RM_RF),
         // Quoted, or inside a word, a `#` is text.
