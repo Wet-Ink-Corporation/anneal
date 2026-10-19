@@ -7,6 +7,8 @@ mod bypasses;
 mod forms;
 mod indirection;
 mod merge;
+mod wrapper_options;
+mod wrapper_probes;
 
 use std::ffi::OsString;
 
@@ -346,8 +348,8 @@ fn substitutions_eval_paths_newlines_and_wrappers_do_not_hide_a_command() {
 #[test]
 fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
     // PR 120 changed only the redaction; these are the commands its review rounds probed the
-    // denylist with, each judged as main (603fa75) judges it. The redaction may hide more
-    // than needed, never change what the denylist denies.
+    // denylist with, each judged as main (603fa75) judges it but for the gaps #121 closed. The
+    // redaction may hide more than needed, never change what the denylist denies.
     assert_table(&[
         ("sudo -iu x rm -rf /", RM_RF),
         ("sudo -uecho rm -rf /", RM_RF),
@@ -387,22 +389,23 @@ fn the_probes_of_every_redaction_review_round_get_main_s_verdict() {
         ("flock /tmp/*.lock rm -rf /", RM_RF),
         ("su $U -c 'rm -rf /'", RM_RF),
         ("find . -name *.rs -exec rm -rf / \\;", RM_RF),
-        // Round 8. The ALLOW rows are main's gaps (the last `-c` wins), kept as main has them.
+        // Round 8. Main allowed the rows where the last `-c` is `rm -rf /` (#121): every `-c`
+        // is read since, the last one being the one su and script run.
         ("env K=$V rm -rf /", RM_RF),
         ("sudo K=$V rm -rf /", RM_RF),
         ("env A=1 K=$V rm -rf /", RM_RF),
         ("su -c 'rm -rf /' -c ls", RM_RF),
-        ("su -c ls -c 'rm -rf /'", ALLOW),
-        ("su -c'rm -rf /' -cls", ALLOW),
+        ("su -c ls -c 'rm -rf /'", RM_RF),
+        ("su -c'rm -rf /' -cls", RM_RF),
         ("su --command 'rm -rf /' --command ls", RM_RF),
-        ("su --command='echo a' --command='rm -rf /'", ALLOW),
+        ("su --command='echo a' --command='rm -rf /'", RM_RF),
         ("script -c 'rm -rf /' -c ls /dev/null", RM_RF),
-        ("script -c ls -c 'rm -rf /' /dev/null", ALLOW),
+        ("script -c ls -c 'rm -rf /' /dev/null", RM_RF),
         ("script -c'rm -rf /' -cls /dev/null", RM_RF),
         ("script --command 'rm -rf /' --command ls /dev/null", RM_RF),
         (
             "script --command='echo a' --command='rm -rf /' /dev/null",
-            ALLOW,
+            RM_RF,
         ),
         ("bash -c 'rm -rf /' -- -y", RM_RF),
         // Round 9. The ALLOW rows are main's: bash's trap reads a first word of digits or `-`

@@ -3,17 +3,13 @@
 
 use std::borrow::Cow;
 
-use super::{
-    Long, Peel, Run, SUDO_VALUES, is_long, is_option, join, skip_one, skip_options, takes_value,
-};
+use super::grammar::{Grammar, Name, Read};
+use super::tables::{ENV, FLOCK, SCRIPT, SU, SUDO, WATCH};
+use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
 
-const ENV_VALUES: &[&str] = &["-u", "-C", "--unset", "--chdir"];
 const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
-const FLOCK_VALUES: &[&str] = &["-w", "-E", "--timeout", "--conflict-exit-code"];
-const WATCH_VALUES: &[&str] = &["-n", "--interval", "-q", "--equexit"];
-const SU_VALUES: &[&str] = &["-s", "-g", "-G", "-w", "--shell", "--group", "--supp-group"];
 
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
@@ -24,10 +20,10 @@ const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
 /// match's directory (`-execdir`, `-okdir`).
 pub(super) fn chdir(name: &str, words: &[Word]) -> Option<&'static str> {
     match name {
-        "env" => options_hold(words, ENV_VALUES, "--chdir", 'C').then_some("env --chdir"),
-        "sudo" => options_hold(words, SUDO_VALUES, "--chdir", 'D')
+        "env" => options_hold(words, &ENV, 'C', "chdir").then_some("env --chdir"),
+        "sudo" => options_hold(words, &SUDO, 'D', "chdir")
             .then_some("sudo --chdir")
-            .or_else(|| options_hold(words, SUDO_VALUES, "--login", 'i').then_some("sudo --login")),
+            .or_else(|| options_hold(words, &SUDO, 'i', "login").then_some("sudo --login")),
         "su" => su_login(words).then_some("su --login"),
         "find" => words
             .iter()
@@ -37,81 +33,47 @@ pub(super) fn chdir(name: &str, words: &[Word]) -> Option<&'static str> {
     }
 }
 
-/// Whether the options leading `words` (each of `with_value` skipping its value) include
-/// `long`, abbreviated or not, or a short cluster holding `short`. A cluster where the
-/// letter is another option's value counts too: the guard reads it as the change.
-fn options_hold(words: &[Word], with_value: &[&str], long: &str, short: char) -> bool {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if text == "--" || !is_option(first) {
-            return false;
-        }
-        if is_long(text, long) || (!text.starts_with("--") && text.contains(short)) {
-            return true;
-        }
-        rest = if takes_value(text, with_value) {
-            skip_one(tail)
-        } else {
-            tail
-        };
-    }
-    false
+/// Whether the options leading `words`, read by `grammar`, hold the short letter `short` or the
+/// long option `long`. A word among them that starts with `-` and holds the letter counts too,
+/// as another option's value or as `env -S`'s string, which env reads as its own options: the
+/// guard reads it as the change.
+fn options_hold(words: &[Word], grammar: &Grammar, short: char, long: &str) -> bool {
+    let read = grammar.parse(words);
+    let options = words.len().saturating_sub(read.rest.len());
+    read.holds(short, long)
+        || words.iter().take(options).any(|word| {
+            is_option(word) && !word.text.starts_with("--") && word.text.contains(short)
+        })
 }
 
 /// `sudo` and `doas`: the command after their options, or, with `-s` or `-i` and no command,
 /// a shell reading stdin.
 pub(super) fn sudo(words: &[Word]) -> Peel<'_> {
-    let rest = skip_options(words, SUDO_VALUES);
-    let mut options = words.iter().take(words.len().saturating_sub(rest.len()));
-    let shell = options.any(|word| {
-        is_long(&word.text, "--shell")
-            || is_long(&word.text, "--login")
-            || (is_option(word) && !word.text.starts_with("--") && word.text.contains(['s', 'i']))
-    });
-    if rest.is_empty() && shell {
+    let read = SUDO.parse(words);
+    if read.rest.is_empty() && (read.holds('s', "shell") || read.holds('i', "login")) {
         Peel::Done(Run::StdinScript("sudo"))
     } else {
-        Peel::Inner(rest)
+        Peel::Inner(read.rest)
     }
 }
 
-/// `env`'s command after its options, or the script `-S` (`--split-string`) runs.
+/// `env`'s command after its options and a lone `-` (`-i`'s old spelling), or the script `-S`
+/// (`--split-string`) runs, followed by the words after it.
 pub(super) fn env(words: &[Word]) -> Peel<'_> {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        let split = if text == "-S" {
-            Some((tail.first().map(|w| w.text.as_str()), skip_one(tail)))
+    let read = ENV.parse(words);
+    if let Some(split) = read.named('S', "split-string").next() {
+        // `-S` as the last word splits nothing: an empty script.
+        let script = split.value.unwrap_or("");
+        return Peel::Done(Run::Script(if split.after.is_empty() {
+            Cow::Borrowed(script)
         } else {
-            long_value(text, tail, "--split-string").or_else(|| {
-                text.strip_prefix("-S")
-                    .filter(|s| !s.is_empty())
-                    .map(|attached| (Some(attached), tail))
-            })
-        };
-        if let Some((script, after)) = split.filter(|_| reads_as_written(first)) {
-            // `-S` as the last word splits nothing: an empty script.
-            let script = script.unwrap_or("");
-            return Peel::Done(Run::Script(if after.is_empty() {
-                Cow::Borrowed(script)
-            } else {
-                Cow::Owned(format!("{script} {}", join(after)))
-            }));
-        }
-        if text == "--" {
-            return Peel::Inner(tail);
-        }
-        if !is_option(first) {
-            break;
-        }
-        rest = if takes_value(text, ENV_VALUES) {
-            skip_one(tail)
-        } else {
-            tail
-        };
+            Cow::Owned(format!("{script} {}", join(split.after)))
+        }));
     }
-    Peel::Inner(rest)
+    match read.rest {
+        [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => Peel::Inner(tail),
+        rest => Peel::Inner(rest),
+    }
 }
 
 /// A long option's value (`None` when it is missing) and the words after it.
@@ -144,7 +106,7 @@ pub(super) fn coproc(words: &[Word]) -> Peel<'_> {
 
 /// `flock [options] FILE command` or `flock [options] FILE -c string`.
 pub(super) fn flock(words: &[Word]) -> Peel<'_> {
-    let after_file = skip_one(skip_options(words, FLOCK_VALUES));
+    let after_file = skip_one(FLOCK.parse(words).rest);
     match after_file {
         [flag, tail @ ..] if is_option(flag) && flag.text == "-c" => {
             command_string(tail.first().map(|string| string.text.as_str()))
@@ -166,78 +128,57 @@ pub(super) fn trap(words: &[Word]) -> Peel<'_> {
         })
 }
 
-/// Whether `su [options] [USER]` starts a login shell, which runs from the user's home: `-`,
-/// `--login` (abbreviated or not) or a short cluster holding `l`, before `-c`/`--command`.
-/// `su` takes options after the user too, so the walk goes on past operands.
+/// Whether `su [options] [USER]` starts a login shell, which runs from the user's home: `-l`
+/// (`--login`), or a `-` among its operands. `su` takes options after the user too.
 fn su_login(words: &[Word]) -> bool {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if text == "--" || text == "-c" || is_long(text, "--command") {
-            return false;
-        }
-        let cluster = is_option(first) && !text.starts_with("--") && text.contains('l');
-        if text == "-" || is_long(text, "--login") || cluster {
-            return true;
-        }
-        rest = if takes_value(text, SU_VALUES) {
-            skip_one(tail)
-        } else {
-            tail
-        };
-    }
-    false
+    let read = SU.parse(words);
+    let operands_end = words.len().saturating_sub(read.rest.len());
+    read.holds('l', "login")
+        || words
+            .iter()
+            .take(operands_end)
+            .any(|word| word.text == "-" && reads_as_written(word))
 }
 
-/// `su [options] [USER]`: the `-c` string, or, without one, a shell reading stdin.
+/// The command strings of `read`'s `-c` (`--command`, and for `su` `--session-command`)
+/// options: the last one runs, the earlier ones are read too. One body is the word or part of
+/// a word it was written in; several are joined by newlines. Without one, `wrapper` runs a
+/// shell reading stdin; with only a `-c` missing its string, nothing.
+fn bodies<'a>(read: &Read<'a>, wrapper: &'static str) -> Peel<'a> {
+    let options: Vec<Option<&'a str>> = read
+        .options
+        .iter()
+        .filter(|option| {
+            matches!(
+                option.name,
+                Name::Short('c') | Name::Long("command" | "session-command")
+            )
+        })
+        .map(|option| option.value)
+        .collect();
+    if options.is_empty() {
+        return Peel::Done(Run::StdinScript(wrapper));
+    }
+    match options.into_iter().flatten().collect::<Vec<_>>().as_slice() {
+        [] => Peel::Done(Run::Nothing),
+        [body] => Peel::Done(Run::Script(Cow::Borrowed(body))),
+        several => Peel::Done(Run::Script(Cow::Owned(several.join("\n")))),
+    }
+}
+
+/// `su [options] [USER]`: its `-c` strings, or, without one, a shell reading stdin.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if let Some((command, _)) = long_value(text, tail, "--command") {
-            return command_string(command);
-        }
-        if text == "-c" {
-            return command_string(tail.first().map(|command| command.text.as_str()));
-        }
-        rest = if takes_value(text, SU_VALUES) {
-            skip_one(tail)
-        } else {
-            tail
-        };
-    }
-    Peel::Done(Run::StdinScript("su"))
+    bodies(&SU.parse(words), "su")
 }
 
-/// `script [options] [FILE]`: the `-c` string, or, without one, a shell reading stdin.
+/// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
 pub(super) fn script(words: &[Word]) -> Peel<'_> {
-    let mut rest = words;
-    while let [first, tail @ ..] = rest {
-        rest = tail;
-        let text = first.text.as_str();
-        if let Some((command, _)) = long_value(text, tail, "--command") {
-            return command_string(command);
-        }
-        let cluster = is_option(first) && !text.starts_with("--");
-        let command = text
-            .split_once('c')
-            .filter(|_| cluster)
-            .map(|(_, attached)| attached);
-        match command {
-            // `-c` last in its cluster: the next word is the command.
-            Some("") => {
-                return command_string(tail.first().map(|command| command.text.as_str()));
-            }
-            Some(attached) => return Peel::Done(Run::Script(Cow::Borrowed(attached))),
-            None => {}
-        }
-    }
-    Peel::Done(Run::StdinScript("script"))
+    bodies(&SCRIPT.parse(words), "script")
 }
 
 /// `watch [options] command...`: the words joined are run by `sh -c`.
 pub(super) fn watch(words: &[Word]) -> Peel<'_> {
-    let rest = skip_options(words, WATCH_VALUES);
+    let rest = WATCH.parse(words).rest;
     if rest.is_empty() {
         Peel::Done(Run::Nothing)
     } else {

@@ -217,7 +217,7 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | A script from a process substitution or descriptor: `bash <(curl ...)`, `source <(...)`, `bash /dev/fd/3`, `bash < <(...)` | denied |
 | `eval`, `alias NAME=VALUE`, `trap '...' SIG`, `su -c`, `script -c`, `watch`, `flock -c`, `env -S '...'` | the string is lexed and checked (`eval` and `watch` join their arguments) |
 | Environment: `VAR=x cmd`, `env [-i] [-u N] VAR=x cmd` | assignments and options are skipped |
-| Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked |
+| Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked. Options are read as each wrapper's getopt reads them (#121): short options cluster (`sudo -iu root` is `-i -u root`), a value letter takes the rest of its cluster or else the next word (`-uroot`, `-u root`), an optional letter only the rest of its cluster (`xargs -eE`, `watch -dn`), long options take their value after `=` or in the next word and may be abbreviated. Where implementations differ the guard takes their union: `sudo` with `doas` (`-a`, `-c`, `-R` take values), GNU with BSD `env` (`-L`, `-P`, `-U`) and `xargs` (`-J`, `-R`, `-S`). `chrt` reads a priority only when it is all digits, then skips one `--` (util-linux 2.42; `chrt -o rm -rf /` runs `rm`); with `-p` the words after the priority are still read as a command, since chrt runs them with a pid of 0. `su` and `script` read options anywhere, and every `-c` (`--command`, su's `--session-command`) is read, the last being the one they run. Each grammar is checked against the installed binaries by `crates/anneal-cli/tests/fixtures/wrappers/probes.txt` |
 | Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `link`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
 | Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
@@ -262,8 +262,8 @@ The merge gate (`docs/verdict.md`) reads commands with this checker in a probe m
 (`Entries::PrMerge`) that collects `gh pr merge` calls and notes `GH_REPO`/`GH_HOST`
 assignments and directory changes (`cd`, `pushd`, `popd` anywhere; `env -C`, `sudo -D`,
 `sudo -i`, `su -`/`-l`, `find -execdir`). Those notes are defence in depth with the same
-limits as above (an `env` short cluster such as `env -vu X -C`, a gh run from a git pager, a
-name built at run time): the merge gate's invariant rests on the merge naming its repository
+limits as above (a gh run from a git pager, a name built at run time; an `env` short cluster
+such as `env -vu X -C` is read as env reads it since #121): the merge gate's invariant rests on the merge naming its repository
 with `--repo <host>/<owner>/<repo>`, which gh reads before the working directory and the `GH_*`
 variables.
 
@@ -360,10 +360,10 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `find <redacted> -delete`).
 - **Uncertain wrappers**: the redaction never changes what the denylist denies, so it reads
   wrappers with the denylist's walk exactly as it is, and that walk is looser than some
-  wrappers are: an option it does not know is a flag, a short-option cluster (`-iu`) is one
-  flag, and `chrt -p` or `taskset -p` runs the words after the priority or mask. Where that
-  differs from the wrapper's own reading, the word the walk places as the program may be an
-  option's value. So a wrapper's words are trusted only when each reads with certainty by the
+  wrappers are: an option it does not know is a flag, a union of implementations is read
+  (`sudo -c x` takes a value Linux sudo refuses), and `chrt -p` or `taskset -p` runs the words
+  after the priority or mask. Where that differs from the wrapper's own reading, the word the
+  walk places as the program may be an option's value. So a wrapper's words are trusted only when each reads with certainty by the
   redaction's own tables (`guard::redact::certain`): an exact flag, an exact value option
   followed by its value (or with it attached: `-n1`, `--user=root`; a shell takes none
   attached, so `bash -oerrexit` is uncertain), `--`, then the wrapper's fixed operands

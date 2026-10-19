@@ -550,13 +550,13 @@ fn a_merge_the_probe_finds_is_read_even_beside_a_call_it_cannot_read() {
 }
 
 #[test]
-fn an_env_short_cluster_before_a_merge_is_read_as_main_reads_it() {
-    // PR 120's redaction review: the probe reads `-vu` as one flag and `X` as env's program,
-    // as main (603fa75) does, so env's `-C` is not seen as a directory change (the merge gate
-    // denies the command as `merge-gate.shape`, not `merge-gate.directory`).
+fn an_env_short_cluster_before_a_merge_is_read_as_env_reads_it() {
+    // PR 120 pinned main's (603fa75) reading, `-vu` one flag and `X` env's program; since #121
+    // the probe reads `-vu X` as `-v -u X`, as env does, so env's `-C` is a directory change
+    // (the merge gate denies the command as `merge-gate.directory`).
     let command = "env -vu X -C /tmp gh pr merge 7";
 
-    assert_eq!(moved(command), [None], "{command}");
+    assert_eq!(moved(command), [Some("env --chdir")], "{command}");
 }
 
 #[test]

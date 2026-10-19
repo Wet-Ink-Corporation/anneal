@@ -3,7 +3,9 @@
 //! The command strings wrappers run (`bash -c`, `su -c`, `trap`, `watch`, ...) and `find`'s
 //! actions are read in [`strings`].
 
+mod grammar;
 mod strings;
+mod tables;
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -33,72 +35,10 @@ const PASSIVE: [&str; 20] = [
     "type", "whatis", "apropos", "for", "select", "case", "test", "[", "[[",
 ];
 
-/// Options that take a value in the next word, per wrapper.
-const SUDO_VALUES: &[&str] = &[
-    "-u",
-    "-g",
-    "-h",
-    "-p",
-    "-C",
-    "-D",
-    "-r",
-    "-t",
-    "-T",
-    "-U",
-    "--user",
-    "--group",
-    "--host",
-    "--prompt",
-    "--chdir",
-    "--role",
-    "--type",
-    "--close-from",
-    "--other-user",
-    "--command-timeout",
-];
+/// Options that take a value in the next word, for bash's `exec` and `time`; every other
+/// wrapper's options are read by its [`grammar::Grammar`] in [`tables`].
 const EXEC_VALUES: &[&str] = &["-a"];
 const TIME_VALUES: &[&str] = &["-f", "-o", "--format", "--output"];
-const NICE_VALUES: &[&str] = &["-n", "--adjustment"];
-const TIMEOUT_VALUES: &[&str] = &["-s", "-k", "--signal", "--kill-after"];
-const STDBUF_VALUES: &[&str] = &["-i", "-o", "-e", "--input", "--output", "--error"];
-const IONICE_VALUES: &[&str] = &[
-    "-c",
-    "-n",
-    "-p",
-    "-P",
-    "-u",
-    "--class",
-    "--classdata",
-    "--pid",
-    "--pgid",
-    "--uid",
-];
-const CHRT_VALUES: &[&str] = &[
-    "-T",
-    "-P",
-    "-D",
-    "--sched-runtime",
-    "--sched-period",
-    "--sched-deadline",
-];
-/// `--eof`, `--replace` and `--max-lines` are absent: their value is optional and only ever
-/// follows `=`, so the next word is the command.
-const XARGS_VALUES: &[&str] = &[
-    "-a",
-    "-d",
-    "-E",
-    "-I",
-    "-L",
-    "-n",
-    "-P",
-    "-s",
-    "--arg-file",
-    "--delimiter",
-    "--max-args",
-    "--max-procs",
-    "--max-chars",
-    "--process-slot-var",
-];
 
 /// The program of a simple command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,19 +302,19 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         }
         "exec" => Peel::Inner(skip_options(rest, EXEC_VALUES)),
         "time" => Peel::Inner(skip_options(rest, TIME_VALUES)),
-        "nice" => Peel::Inner(skip_options(rest, NICE_VALUES)),
-        "stdbuf" => Peel::Inner(skip_options(rest, STDBUF_VALUES)),
-        "ionice" => Peel::Inner(skip_options(rest, IONICE_VALUES)),
-        // The duration, the priority, the CPU mask, the function's name.
-        "timeout" => Peel::Inner(skip_one(skip_options(rest, TIMEOUT_VALUES))),
-        "chrt" => Peel::Inner(skip_one(skip_options(rest, CHRT_VALUES))),
-        "taskset" => Peel::Inner(skip_one(skip_options(rest, &[]))),
+        "nice" => Peel::Inner(tables::NICE.parse(rest).rest),
+        "stdbuf" => Peel::Inner(tables::STDBUF.parse(rest).rest),
+        "ionice" => Peel::Inner(tables::IONICE.parse(rest).rest),
+        // The duration, the CPU mask, the function's name.
+        "timeout" => Peel::Inner(skip_one(tables::TIMEOUT.parse(rest).rest)),
+        "chrt" => Peel::Inner(chrt(rest)),
+        "taskset" => Peel::Inner(skip_one(tables::TASKSET.parse(rest).rest)),
         "function" => Peel::Inner(skip_one(rest)),
         // `busybox <applet> ...`.
         "busybox" => Peel::Inner(rest),
         "coproc" => strings::coproc(rest),
         "flock" => strings::flock(rest),
-        "xargs" => Peel::Appending(skip_options(rest, XARGS_VALUES)),
+        "xargs" => Peel::Appending(tables::XARGS.parse(rest).rest),
         "eval" => Peel::Done(Run::Script(Cow::Owned(join(rest)))),
         "alias" => strings::alias(rest),
         "source" | "." => strings::source(rest),
@@ -385,6 +325,28 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         "find" => strings::find(rest),
         shell if SHELLS.contains(&shell) => strings::shell(shell, rest),
         _ => Peel::Program,
+    }
+}
+
+/// `chrt [options] [PRIORITY] command`: util-linux 2.42 reads a priority only when it is all
+/// digits (or must, for `-f` and `-r`, refusing anything else), then skips one `--`; 2.39
+/// always reads one, refusing one not all digits. With `-p` the words after the priority are
+/// a pid for both, yet chrt runs them when the last is 0 (or -1), so they are read as a command.
+fn chrt(words: &[Word]) -> &[Word] {
+    let rest = tables::CHRT.parse(words).rest;
+    let rest = match rest {
+        [priority, tail @ ..]
+            if priority.is_literal()
+                && !priority.text.is_empty()
+                && priority.text.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            tail
+        }
+        _ => rest,
+    };
+    match rest {
+        [dashes, tail @ ..] if dashes.text == "--" => tail,
+        _ => rest,
     }
 }
 
