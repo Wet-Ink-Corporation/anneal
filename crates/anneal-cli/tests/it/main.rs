@@ -54,6 +54,7 @@ mod repro;
 mod rollout;
 mod round;
 mod ship;
+mod snapshot;
 mod spec_tree;
 mod status;
 mod statusline;

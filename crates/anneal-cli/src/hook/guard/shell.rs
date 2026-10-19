@@ -109,7 +109,21 @@ pub(crate) enum ParseError {
 /// [`ParseError`] when a quote or substitution is not closed, nesting is too deep, or a
 /// redirection has no target: the shell would refuse it or read it differently.
 pub(crate) fn parse(text: &str) -> Result<Vec<SimpleCommand>, ParseError> {
-    let mut lexer = Lexer::new(text);
+    parse_with(text, Extglob::Read)
+}
+
+/// Lexes `text` as [`parse`] does, but with no extended glob group read: for a string split
+/// by a program that is no shell (`env -S`), which knows no `@( )`, so reading one as a word
+/// would join words it keeps apart.
+///
+/// # Errors
+/// As [`parse`].
+pub(crate) fn parse_without_extglob(text: &str) -> Result<Vec<SimpleCommand>, ParseError> {
+    parse_with(text, Extglob::Ignored)
+}
+
+fn parse_with(text: &str, extglob: Extglob) -> Result<Vec<SimpleCommand>, ParseError> {
+    let mut lexer = Lexer::new(text, extglob);
     lexer.list(Close::End, 0)?;
     Ok(lexer.into_commands())
 }
@@ -177,6 +191,16 @@ struct Lexer {
     brackets: usize,
     /// Extended glob groups open around the cursor, at any depth.
     groups: usize,
+    extglob: Extglob,
+}
+
+/// Whether the text is read with extended glob groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extglob {
+    /// Shell text: a group is one pattern word, as bash with `extglob` reads it.
+    Read,
+    /// Text split by something that is no shell (`env -S`): a group is not read.
+    Ignored,
 }
 
 /// Characters that end an unquoted word.
@@ -188,8 +212,9 @@ const fn is_meta(c: char) -> bool {
 }
 
 impl Lexer {
-    fn new(text: &str) -> Self {
+    fn new(text: &str, extglob: Extglob) -> Self {
         Self {
+            extglob,
             chars: text.chars().collect(),
             pos: 0,
             commands: Vec::new(),

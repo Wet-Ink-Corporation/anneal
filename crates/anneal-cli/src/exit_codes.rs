@@ -127,6 +127,14 @@ pub const REPRO_TIMED_OUT: Code = Code::new(
     4,
     "record: timed out, killed; a hang is not a reproduction, nothing recorded",
 );
+/// `repro`'s table, out of [`CommandCodes::of`] to keep that function short.
+const REPRO_CODES: [Code; 5] = [
+    REPRO_OK,
+    REPRO_LEFTOVERS,
+    REPRO_NOT_STARTED,
+    REPRO_NOT_RED,
+    REPRO_TIMED_OUT,
+];
 /// `lint`: no error findings (warnings and review items are listed but do not fail).
 pub const LINT_CLEAN: Code = Code::new(0, "no errors");
 /// `lint`: at least one error finding.
@@ -264,6 +272,10 @@ pub const CALIBRATE_REFUSED: Code = Code::new(
 /// `status`: no ledger exists yet. The document (or text) is still written, with only the
 /// sections read from the anneal home, and no ledger is created.
 pub const STATUS_NO_LEDGER: Code = Code::new(2, "no ledger exists yet; none was created");
+
+/// `snapshot write`: the mod's snapshot was saved for its session. Invalid input is a usage
+/// error (2) and saves nothing.
+pub const SNAPSHOT_WRITTEN: Code = Code::new(0, "snapshot written");
 /// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
 /// failure noted in its output or on stderr.
 pub const HOOK_DONE: Code = Code::new(
@@ -286,16 +298,7 @@ impl CommandCodes {
             CommandName::Mode => ("", &[MODE_RECORDED]),
             // No scope: it would widen the help's title column; each meaning names its
             // subcommand instead.
-            CommandName::Repro => (
-                "",
-                &[
-                    REPRO_OK,
-                    REPRO_LEFTOVERS,
-                    REPRO_NOT_STARTED,
-                    REPRO_NOT_RED,
-                    REPRO_TIMED_OUT,
-                ],
-            ),
+            CommandName::Repro => ("", &REPRO_CODES),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
             CommandName::Dag => (
                 "check|frontier",
@@ -334,6 +337,7 @@ impl CommandCodes {
             CommandName::Calibrate => ("", &[OK, CALIBRATE_REFUSED]),
             CommandName::Status => ("", &[OK, STATUS_NO_LEDGER]),
             CommandName::Statusline => ("", &[OK]),
+            CommandName::Snapshot => ("write", &[SNAPSHOT_WRITTEN]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };
         Self {

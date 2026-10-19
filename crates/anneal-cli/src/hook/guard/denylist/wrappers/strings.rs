@@ -64,16 +64,133 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     if let Some(split) = read.named('S', "split-string").next() {
         // `-S` as the last word splits nothing: an empty script.
         let script = split.value.unwrap_or("");
-        return Peel::Done(Run::Script(if split.after.is_empty() {
+        // The shell read the words after the string, groups included: that reading joins them
+        // to it as text, as before. env splits its string itself, with its own escapes and no
+        // group read, and keeps each word after it whole: those readings quote them, with the
+        // string as env reads it and, in case env reads it otherwise, as written. Either
+        // denial denies.
+        let joined = if split.after.is_empty() {
             Cow::Borrowed(script)
         } else {
             Cow::Owned(format!("{script} {}", join(split.after)))
-        }));
+        };
+        return Peel::Done(Run::either([
+            Run::Script(joined),
+            Run::Split(followed_by(as_env_args(&split_by_env(script)), split.after)),
+            Run::Split(followed_by(as_env_args(script), split.after)),
+        ]));
     }
     match read.rest {
         [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => Peel::Inner(tail),
         rest => Peel::Inner(rest),
     }
+}
+
+/// The characters `env -S` splits words at, beside `\_`.
+const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
+
+/// `script` as shell text that splits as `env -S` splits it (GNU coreutils 9.4):
+/// - outside quotes, a LF (which the shell reads as a separator of commands), CR, VT or FF
+///   separates words, as a blank does, and `;`, `&`, `|`, `<`, `>`, `(` and `)` are characters
+///   of their word, since env reads no operator;
+/// - outside single quotes a backtick is a character of its word, since env runs no
+///   substitution (a `$` other than `${NAME}` makes env refuse the string);
+/// - outside single quotes, `\_` is a blank (a separator outside quotes, a space inside double
+///   quotes), `\t`, `\n`, `\r`, `\f` and `\v` are those characters kept in their word, and `\c`
+///   ends the string, as an unquoted `#` starting a word does;
+/// - inside double quotes `\'` and `\#` are the character;
+/// - inside single quotes `\'` is a quote and `\\` a backslash, the quote staying open.
+///
+/// The other escapes (`\\`, `\"`, `\$`, `\#` unquoted) read as the shell reads them.
+fn split_by_env(script: &str) -> Cow<'_, str> {
+    const SPECIAL: [char; 14] = [
+        '\\', '#', '\n', '\r', '\u{b}', '\u{c}', ';', '&', '|', '<', '>', '(', ')', '`',
+    ];
+    if !script.contains(SPECIAL) {
+        return Cow::Borrowed(script);
+    }
+    let mut text = String::with_capacity(script.len());
+    let mut quote = None;
+    let mut chars = script.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some('\''), '\\') => match chars.next_if(|next| matches!(next, '\\' | '\'')) {
+                Some('\'') => text.push_str(r"'\''"),
+                // `\\` is one backslash, and a lone one is itself.
+                _ => text.push(c),
+            },
+            (_, '\\') => match (chars.next(), quote) {
+                (Some('_'), _) => text.push(' '),
+                // Inside double quotes env refuses `\c` and runs nothing; the quote left open
+                // there makes the reading unparseable, which only denies.
+                (Some('c'), _) => break,
+                (Some(next @ ('t' | 'n' | 'r' | 'f' | 'v')), _) => {
+                    let control = match next {
+                        't' => '\t',
+                        'n' => '\n',
+                        'r' => '\r',
+                        'f' => '\u{c}',
+                        _ => '\u{b}',
+                    };
+                    if quote.is_some() {
+                        text.push(control);
+                    } else {
+                        push_quoted(&mut text, control);
+                    }
+                }
+                (Some(next @ ('\'' | '#')), Some(_)) => text.push(next),
+                (Some(next), _) => {
+                    text.push(c);
+                    text.push(next);
+                }
+                (None, _) => text.push(c),
+            },
+            (None, '\n' | '\r' | '\u{b}' | '\u{c}') => text.push(' '),
+            (None, '#') if text.is_empty() || text.ends_with(ENV_BLANKS) => break,
+            (None, ';' | '&' | '|' | '<' | '>' | '(' | ')' | '`') => push_quoted(&mut text, c),
+            (Some('"'), '`') => {
+                text.push('"');
+                push_quoted(&mut text, c);
+                text.push('"');
+            }
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                text.push(c);
+            }
+            (Some(open), _) if c == open => {
+                quote = None;
+                text.push(c);
+            }
+            _ => text.push(c),
+        }
+    }
+    Cow::Owned(text)
+}
+
+/// `split` run by `env` again: env reads the words it split from its string as its own
+/// arguments, options (a nested `-S` among them) and assignments first.
+fn as_env_args(split: &str) -> Cow<'static, str> {
+    Cow::Owned(format!("env {split}"))
+}
+
+/// Pushes `c` single-quoted, so the shell reads it as a character of its word.
+fn push_quoted(text: &mut String, c: char) {
+    text.push('\'');
+    text.push(c);
+    text.push('\'');
+}
+
+/// `script` followed by each word of `after`, single-quoted whole.
+fn followed_by<'a>(script: Cow<'a, str>, after: &[Word]) -> Cow<'a, str> {
+    if after.is_empty() {
+        return script;
+    }
+    Cow::Owned(after.iter().fold(script.into_owned(), |mut text, word| {
+        text.push_str(" '");
+        text.push_str(&word.text.replace('\'', r"'\''"));
+        text.push('\'');
+        text
+    }))
 }
 
 /// A long option's value (`None` when it is missing) and the words after it.
@@ -302,5 +419,49 @@ pub(super) fn find(words: &[Word]) -> Peel<'_> {
         Peel::Done(Run::Nothing)
     } else {
         Peel::Done(Run::Exec(actions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_by_env;
+    use crate::hook::guard::shell;
+
+    /// Each string lexes, once `split_by_env` has read it, into the words GNU coreutils 9.4's
+    /// `env -S` split it into (observed with `env -S "printf <%q>\_ <string>"`).
+    #[test]
+    fn a_string_lexes_into_the_words_env_splits_it_into() {
+        let table: &[(&str, &[&str])] = &[
+            (r"rm\_-rf\_/", &["rm", "-rf", "/"]),
+            (r"sh -c rm\t-rf", &["sh", "-c", "rm\t-rf"]),
+            (r"a 'b\'c' d", &["a", "b'c", "d"]),
+            (r"a 'b\\c'", &["a", r"b\c"]),
+            (r#"a "b\'c\#d""#, &["a", "b'c#d"]),
+            ("a #b c", &["a"]),
+            (r"a\c b", &["a"]),
+            ("a b#c", &["a", "b#c"]),
+            (r#"a "b\_c""#, &["a", "b c"]),
+            (r"a '\_'", &["a", r"\_"]),
+            ("a\rb\u{b}c", &["a", "b", "c"]),
+            ("a\nb \"c\nd\"", &["a", "b", "c\nd"]),
+            ("a;b | c && d;#e", &["a;b", "|", "c", "&&", "d;#e"]),
+            ("a (b) <c >>d", &["a", "(b)", "<c", ">>d"]),
+            ("a ` b `c \"d`e\"", &["a", "`", "b", "`c", "d`e"]),
+            ("a\u{a0}#b", &["a\u{a0}#b"]),
+        ];
+        let wrong: Vec<String> = table
+            .iter()
+            .filter_map(|(string, expected)| {
+                let read = split_by_env(string);
+                // env runs one command: its words are one simple command's.
+                let words: Vec<Vec<String>> = shell::parse_without_extglob(&read)
+                    .expect("the string lexes")
+                    .into_iter()
+                    .map(|command| command.words.into_iter().map(|word| word.text).collect())
+                    .collect();
+                (words != [expected.to_vec()]).then(|| format!("{string:?} lexed as {words:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "misread:\n{}", wrong.join("\n"));
     }
 }

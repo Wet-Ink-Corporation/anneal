@@ -444,4 +444,71 @@ fn no_log_reports_every_point_in_shadow() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn a_log_with_no_mod_labels_keeps_the_summary_without_a_via_mod_count() -> TestResult {
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+
+    let ran = calibrate(home.path(), &["--point", "D1"]);
+
+    assert!(
+        ran.stderr
+            .lines()
+            .any(|line| line.starts_with("  noul: n 5, labelled 5, Brier ")),
+        "{}",
+        ran.stderr
+    );
+    assert!(!ran.stderr.contains("via mod"), "{}", ran.stderr);
+    let noul = &point(&ran.envelope, "D1")["questions"][0];
+    assert_eq!(noul["labelled_via_mod"], json!(0));
+    Ok(())
+}
+
+#[test]
+fn mod_labels_are_counted_apart_in_the_envelope_and_the_summary() -> TestResult {
+    let home = tempfile::tempdir()?;
+    hand_log(home.path())?;
+    let relabel = json!({
+        "kind": "label", "id": "d1-1-1", "outcome": "yes", "ts_ms": 3,
+        "actor": "human", "via": "mod",
+    });
+    write_log(home.path(), "decisions.1.jsonl", &[relabel])?;
+
+    let ran = calibrate(home.path(), &["--point", "D1"]);
+
+    let noul = &point(&ran.envelope, "D1")["questions"][0];
+    assert_eq!(
+        (&noul["labelled"], &noul["labelled_via_mod"]),
+        (&json!(5), &json!(0)),
+        "decisions.1 is older than the live file, so the live label wins"
+    );
+    write_log(
+        home.path(),
+        "decisions.jsonl",
+        &[
+            decision("d1-1-0", "D1", 0.1, "defer"),
+            label("d1-1-0", "no"),
+            decision("d1-1-1", "D1", 0.3, "defer"),
+            label("d1-1-1", "no"),
+            json!({"kind": "label", "id": "d1-1-1", "outcome": "yes", "ts_ms": 3, "via": "mod"}),
+        ],
+    )?;
+
+    let ran = calibrate(home.path(), &["--point", "D1"]);
+
+    let noul = &point(&ran.envelope, "D1")["questions"][0];
+    assert_eq!(
+        (&noul["labelled"], &noul["labelled_via_mod"]),
+        (&json!(2), &json!(1))
+    );
+    assert!(
+        ran.stderr
+            .lines()
+            .any(|line| line.starts_with("  noul: n 2, labelled 2, via mod 1, Brier ")),
+        "{}",
+        ran.stderr
+    );
+    Ok(())
+}
+
 mod apply;

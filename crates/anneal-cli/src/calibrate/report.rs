@@ -118,6 +118,8 @@ pub(crate) struct QuestionReport<'t> {
     pub(crate) n: u32,
     /// Answered decisions with a usable label.
     pub(crate) labelled: u32,
+    /// Of `labelled`, those whose latest label came through a mod (`via: mod`).
+    pub(crate) labelled_via_mod: u32,
     /// Decisions without an answer.
     pub(crate) unanswered: u32,
     /// Answered decisions whose label does not fit the question.
@@ -155,6 +157,8 @@ struct Group {
     n: u32,
     asks: u32,
     unusable: u32,
+    /// Samples whose label came through a mod.
+    via_mod: u32,
     samples: Vec<Sample>,
 }
 
@@ -232,9 +236,13 @@ pub(crate) fn report<'t>(thresholds: &'t Thresholds, rows: &LogRows) -> Report<'
             .get(&decision.id)
             .map(|label| outcome(decision, label))
         {
-            Some(Some(positive)) => group
-                .samples
-                .push(Sample::new(decision.probability, positive)),
+            Some(Some(positive)) => {
+                group
+                    .samples
+                    .push(Sample::new(decision.probability, positive));
+                let via_mod = rows.via_mod.contains(&decision.id);
+                group.via_mod = group.via_mod.saturating_add(u32::from(via_mod));
+            }
             Some(None) => group.unusable = group.unusable.saturating_add(1),
             None => {}
         }
@@ -321,6 +329,7 @@ fn question_report<'t>(
         subject: rule.subject(),
         n: group.n,
         labelled,
+        labelled_via_mod: group.via_mod,
         unanswered,
         unusable_labels: group.unusable,
         brier,

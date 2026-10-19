@@ -1,14 +1,15 @@
 # Surviving compaction: status line, context monitor, handoff
 
 Long sessions must survive `/compact` and `/clear`. Whatever must outlive them lives on disk,
-and a script writes it. Four pieces do this (#38):
+and a script writes it. These pieces do this (#38; the mod's snapshot, #60):
 
 | Piece | Runs | Does |
 |---|---|---|
 | `anneal statusline` | Claude Code's status line, wired once in user settings | prints `anneal ctx 120k/200k 60%` and saves the session's reading |
+| `anneal snapshot write --json` | the TypeScript mod (#57), at most every 2 s | saves the session's reading the mod read from `$.session.usage()` |
 | `context-monitor` hook | `PostToolBatch`, no matcher, 5 s, fails open | warns once at 60% and stops once at 75% of the auto-compact window, per crossing |
 | `handoff` hook | `PreCompact`, no matcher, 30 s, fails open | writes `.continue-here` at the repository root |
-| `bootstrap` hook | `SessionStart` | injects `.continue-here`, and a one-time hint while no status line is set up |
+| `bootstrap` hook | `SessionStart` | injects `.continue-here`, and a one-time hint while neither the status line nor the mod saves usage |
 
 The `/handoff` skill (user-invoked) is the decision at a phase boundary: continue, clear, hand
 off, a subagent or compact.
@@ -32,15 +33,45 @@ status-line input (at most 1 MiB) and uses `session_id` and `context_window`:
 
 The reading goes to `context-usage.json` in the anneal home (`~/.anneal`, or `$ANNEAL_HOME`):
 per session a SHA-256 of its id, `used_tokens`, `window` and `window_source`
-(`env`, `model` or `default`), newest last, at most 64 sessions. Like a hook it fails open: on
-any failure it still prints a line (`(input unreadable)`, `(usage not saved)`), writes one
-`ERROR` line on stderr and exits 0; only a usage error exits 2.
+(`env`, `model` or `default`), `source` (`statusline`) and `written_at_ms` (milliseconds since
+the Unix epoch), newest last, at most 64 sessions. A snapshot saved before `source` and
+`written_at_ms` existed reads as the status line's, older than any stamped one; readers ignore
+fields they do not know, so a later field stays readable (an anneal older than #60 refuses
+the stamped fields, so its monitor reports one `ERROR` line until it is updated). Like a hook
+it fails open: on any failure it still prints a line (`(input unreadable)`, `(usage not
+saved)`), writes one `ERROR` line on stderr and exits 0; only a usage error exits 2.
+
+## The mod's snapshot
+
+The TypeScript mod (#57) reads the session's usage from `$.session.usage()` and hands it to
+`anneal snapshot write --json` on stdin, so the file format stays the CLI's. Debouncing (at most
+one write every 2 s) is the mod's job. The input is one JSON object of at most 64 KiB, any other
+field refused:
+
+- `session_id`: the session, not blank;
+- `window`: tokens, more than 0. Without `window_source` it is the model's context window and
+  the auto-compact window is resolved from it as the status line resolves it (the variable,
+  clamped to the model's window); with `window_source` (`env`, `model` or `default`) it is
+  already the auto-compact window and is saved as given, so a saved snapshot round-trips;
+- `used_tokens` (optional, `null` for none yet): finite and not negative;
+- `used_percentage` (optional): 0 to 100 of `window`, used only when `used_tokens` is absent or
+  `null`.
+
+The snapshot goes to `context-usage-mod.json` beside `context-usage.json`, in the same format,
+stamped `source: mod` and `written_at_ms`. One file per source, so neither writer races the
+other's load-then-save. The command prints the usual envelope (`data` is the snapshot as saved)
+and exits 0; input of another shape or out of range is a usage error (2, one `ERROR` line,
+nothing on stdout, nothing saved); a stdin, clock, anneal home or file failure exits 70. See
+`docs/exit-codes.md`.
 
 ## The context monitor
 
 Hooks receive no usage field, so the monitor reads the session's reading from
-`context-usage.json`. With none (no status line configured, or none yet this session) it is
-silent. It keeps the level each session last reached (`context-monitor.json`, same format):
+`context-usage.json` and `context-usage-mod.json`. When both hold one, the fresher wins: the
+later `written_at_ms`, the mod's on a tie (an unstamped one is older than any). With none
+(neither the status line nor the mod configured, or none yet this session) it is silent. The
+thresholds and crossings are the same whichever source the reading came from. It keeps the
+level each session last reached (`context-monitor.json`, same format):
 
 - usage rises past 60%: one warning, as `additionalContext`;
 - usage rises past 75%: one stop, as `decision: "block"` with a reason naming `/handoff`.
@@ -110,7 +141,10 @@ picked up.
 
 ## The setup hint
 
-While the anneal home has no `context-usage.json`, the bootstrap adds a one-line hint to set up
-the status line, once per anneal home (it records `statusline-hint.json`). The first session
+While the anneal home has no `context-usage.json` and no mod snapshot under 10 minutes old
+(`written_at_ms` in `context-usage-mod.json`), the bootstrap adds a one-line hint to set up the
+status line, once per anneal home (it records `statusline-hint.json`). A fresh mod snapshot
+suppresses the hint without recording it, so it can still show once the mod stops; a mod file
+that cannot be read counts as fresh, so the hint errs toward silence. The first session
 start can run before the status line's first run, so a user who has just set it up may still
 see the hint once.
