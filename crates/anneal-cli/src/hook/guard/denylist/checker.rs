@@ -278,10 +278,12 @@ impl<'c> Checker<'c> {
     /// reading ([`readings::arguments`]). `cd` is followed once: the first reading already
     /// sends it anywhere, and following the second too would move it from anywhere to one
     /// directory (`cd "$d"/x*` to `/x*`), so relative writes after it would no longer be judged
-    /// as possibly protected. The second reading reads the same calls again, so the gh calls it
-    /// counts are dropped (each is counted once), and so are the merges it finds when the first
-    /// reading found one: it is the same call (`gh pr merge 1$x` is one merge, its pull request
-    /// known only at run time), while a merge only the emptied reading shows is kept.
+    /// as possibly protected. The second reading reads the same calls again, so the gh calls and
+    /// argument commands it counts are dropped (each is counted once; it still stops at the
+    /// budget while it runs, and reads no more than the first), and so are the merges it finds
+    /// when the first reading found one: it is the same call (`gh pr merge 1$x` is one merge,
+    /// its pull request known only at run time), while a merge only the emptied reading shows
+    /// is kept.
     fn program(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let merges_before = self.merges.len();
         let denial = self.reading(program, args, scope);
@@ -290,8 +292,10 @@ impl<'c> Checker<'c> {
         }
         let emptied = readings::arguments(args)?;
         let (counted, found) = (self.gh_calls_here, self.merges.len());
+        let commands = self.argument_commands;
         let denial = self.reading(program, &emptied, scope);
         self.gh_calls_here = counted;
+        self.argument_commands = commands;
         if found > merges_before {
             self.merges.truncate(found);
         }

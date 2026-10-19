@@ -3,14 +3,20 @@
 //!
 //! A word known only at run time that may be an option cluster (`$o`, `"$y"-c`, `+$x`:
 //! [`may_start_shell_options`]) is read both ways (#129): as the operand it is when its value is
-//! not an option, and as options that may set `c` and `s`, take the next word as a value
-//! (`-o NAME`) or end the options (`--`). So `bash $o 'rm -rf /'` (`o=-c`), `bash "$o" -e x`,
-//! `bash "$o" pipefail -c x` (`o=-o`) and `bash -c "$x" 'rm -rf /'` (`x=-e`) have the string
-//! read as the script they may run, as bash 5 and dash run it. A literal `+` cluster sets `c`
-//! and `s` as a `-` one does (`bash +c x`, checked on both).
+//! not an option, and as options that may set `c` and `s`, take any number of later words as
+//! values (`-oo NAME NAME`) or end the options (`--`). So `bash $o 'rm -rf /'` (`o=-c`),
+//! `bash "$o" -e x`, `bash "$o" pipefail -c x` (`o=-o`) and `bash -c "$x" 'rm -rf /'`
+//! (`x=-e`) have the string read as the script they may run, as bash 5 and dash run it.
+//!
+//! A literal short cluster takes one value per `o` or `O` letter wherever it stands, as bash
+//! reads `bash -oc posix '...'`; the reading before #129, where only a trailing `o` takes one,
+//! is kept beside it. A literal `+` cluster is read both ways: setting `c` and `s` as a `-` one
+//! does (`bash +c x`, as bash and dash run it) and setting nothing, so the next word is the
+//! script file (`zsh +s <(...)`, as zsh, ksh and mksh may read it).
 //!
 //! The readings are walked as a set of states per word position, each the modes set so far
-//! (four at most), so the walk is linear in the words however many may be options (H-13).
+//! (four at most), plus the modes that reach every position from one on, so the walk is
+//! linear in the words however many may be options (H-13).
 
 use std::borrow::Cow;
 
@@ -90,6 +96,9 @@ struct Walk {
     /// For each position, one past the last word included, which modes reach it while the
     /// options are still being read.
     reach: Vec<[bool; 4]>,
+    /// For each position, which modes reach it and every later one while the options are
+    /// still being read: a cluster known only at run time may take any number of values.
+    reach_on: Vec<[bool; 4]>,
     /// The word at this position is a reading's `-c` string.
     scripts: Vec<bool>,
     /// The word at this position is a reading's script file.
@@ -103,6 +112,7 @@ impl Walk {
     fn new(words: usize) -> Self {
         let mut walk = Self {
             reach: vec![[false; 4]; words.saturating_add(1)],
+            reach_on: vec![[false; 4]; words.saturating_add(1)],
             scripts: vec![false; words],
             files: vec![false; words],
             stdin: false,
@@ -114,9 +124,18 @@ impl Walk {
     /// A reading with `modes` reaches position `at` still reading options; past the end (an
     /// option's missing value) it reaches the end, with no operand left.
     fn mark(&mut self, at: usize, modes: Modes) {
-        let end = self.reach.len().saturating_sub(1);
-        if let Some(slot) = self
-            .reach
+        Self::set(&mut self.reach, at, modes);
+    }
+
+    /// A reading with `modes` reaches position `at` and every later one still reading options.
+    fn mark_on(&mut self, at: usize, modes: Modes) {
+        Self::set(&mut self.reach_on, at, modes);
+    }
+
+    /// Sets `modes` at position `at` of `states`, or at the end past it.
+    fn set(states: &mut [[bool; 4]], at: usize, modes: Modes) {
+        let end = states.len().saturating_sub(1);
+        if let Some(slot) = states
             .get_mut(at.min(end))
             .and_then(|states| states.get_mut(modes.slot()))
         {
@@ -150,8 +169,7 @@ impl Walk {
             self.end(at, modes);
             if may_start_shell_options(word) {
                 for widened in modes.widened() {
-                    self.mark(next, widened);
-                    self.mark(next.saturating_add(1), widened);
+                    self.mark_on(next, widened);
                     self.end(next, widened);
                 }
             }
@@ -162,29 +180,56 @@ impl Walk {
             "--version" | "--help" => {}
             "--" | "-" => self.end(next, modes),
             _ if text.starts_with(['-', '+']) => {
-                let takes_value = if text.starts_with("--") {
-                    SHELL_VALUES.contains(&text)
-                } else {
-                    text.ends_with(['o', 'O'])
-                };
-                let after = if takes_value {
-                    next.saturating_add(1)
-                } else {
-                    next
-                };
-                self.mark(after, modes.after(text));
+                let set = modes.after(text);
+                for after in value_ends(text).map(|values| next.saturating_add(values)) {
+                    self.mark(after, set);
+                    // A `+` cluster turns its options off in zsh, ksh and mksh.
+                    if text.starts_with('+') {
+                        self.mark(after, modes);
+                    }
+                }
             }
             _ => self.end(at, modes),
         }
     }
+
+    /// The modes that reach position `at`: those marked there, and those that reach every
+    /// position from an earlier one on, kept in `on` as the walk goes forward.
+    fn states(&self, at: usize, on: &mut [bool; 4]) -> Option<[bool; 4]> {
+        let mut states = *self.reach.get(at)?;
+        let from = self.reach_on.get(at)?;
+        for ((state, carried), starts) in states.iter_mut().zip(on.iter_mut()).zip(from) {
+            *carried |= *starts;
+            *state |= *carried;
+        }
+        Some(states)
+    }
+}
+
+/// How many words the literal cluster `text` may take as values, each a reading: a long
+/// option of [`SHELL_VALUES`] takes one; a short cluster one per `o` or `O` letter, as bash
+/// reads `-oc posix` and `-coo posix pipefail`, and, as read before #129, one only when it
+/// ends in such a letter.
+fn value_ends(text: &str) -> [usize; 2] {
+    if text.starts_with("--") {
+        let values = usize::from(SHELL_VALUES.contains(&text));
+        return [values, values];
+    }
+    let letters = text
+        .chars()
+        .skip(1)
+        .filter(|c| matches!(c, 'o' | 'O'))
+        .count();
+    [letters, usize::from(text.ends_with(['o', 'O']))]
 }
 
 /// What the shell `name` runs, given the arguments `words`: each reading's `-c` string, script
 /// file or standard input, every one checked on its own.
 pub(super) fn run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
     let mut walk = Walk::new(words.len());
+    let mut on = [false; 4];
     for at in 0..=words.len() {
-        let Some(states) = walk.reach.get(at).copied() else {
+        let Some(states) = walk.states(at, &mut on) else {
             break;
         };
         for (modes, reached) in Modes::ALL.into_iter().zip(states) {
@@ -208,7 +253,9 @@ pub(super) fn run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
         match script_file(name, script) {
             Run::StdinScript(_) => stdin = true,
             Run::Unseen(_) => unseen = true,
-            _ => {}
+            Run::Nothing | Run::Command { .. } | Run::Script(_) | Run::Exec(_) | Run::Either(_) => {
+                // A file on disk: the guard does not read it, and it runs nothing to judge here.
+            }
         }
     }
     let mut runs: Vec<Run<'a>> = scripts
