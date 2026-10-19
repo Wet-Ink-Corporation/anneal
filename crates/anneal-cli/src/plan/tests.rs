@@ -1,13 +1,19 @@
 use std::error::Error;
 use std::path::Path;
 
-use anneal_ledger::Store;
+use anneal_ledger::{EventEnvelope, Store};
 use serde_json::Value;
 
 use super::{
-    PlanBytes, Recording, approval, conflict, latest, normalised, plan_id, read, record, refuse,
+    PlanBytes, Recording, approval_by, conflict, latest, normalised, plan_id, read, record, refuse,
 };
+use crate::error::CliError;
 use crate::exit_codes;
+
+/// The `plan_approved` event for `plan` with no approver named.
+fn approval(plan: &PlanBytes, session: Option<&str>) -> Result<EventEnvelope, CliError> {
+    approval_by(plan, session, None)
+}
 
 #[test]
 fn the_plan_id_drops_only_current_directory_components() {
@@ -171,11 +177,11 @@ fn losing_a_race_to_the_same_hash_by_another_approver_appends_after_it()
     let model = By::known(Some(Actor::Model), Some(Via::Bash));
     let human = By::known(Some(Actor::Human), Some(Via::Terminal));
     let previous = latest(&store, &plan.approvals)?;
-    let winner = store.append(&super::approval_by(&plan, None, model)?)?;
+    let winner = store.append(&approval_by(&plan, None, model)?)?;
 
     let recording = record(
         &store,
-        &super::approval_by(&plan, None, human)?,
+        &approval_by(&plan, None, human)?,
         &plan,
         previous.as_ref(),
     )?;
@@ -201,7 +207,7 @@ fn losing_a_race_to_another_hash_after_an_approver_race_is_still_a_conflict()
     let dir = tempfile::tempdir()?;
     let (plan, store) = setup(dir.path())?;
     let previous = latest(&store, &plan.approvals)?;
-    store.append(&super::approval_by(
+    store.append(&approval_by(
         &plan,
         None,
         By::known(Some(Actor::Model), None),
@@ -210,7 +216,7 @@ fn losing_a_race_to_another_hash_after_an_approver_race_is_still_a_conflict()
 
     let recording = record(
         &store,
-        &super::approval_by(&plan, None, By::known(Some(Actor::Human), Some(Via::Mod)))?,
+        &approval_by(&plan, None, By::known(Some(Actor::Human), Some(Via::Mod)))?,
         &plan,
         previous.as_ref(),
     )?;
@@ -228,7 +234,7 @@ fn losing_a_race_to_another_hash_after_an_approver_race_is_still_a_conflict()
 /// another approver, as if model approvals kept landing first.
 struct AlwaysOutraced {
     /// The approval that keeps winning, re-read at a new position each time.
-    winner: anneal_ledger::EventEnvelope,
+    winner: EventEnvelope,
     /// How many conditioned appends were tried.
     tries: std::cell::Cell<usize>,
 }
@@ -236,9 +242,9 @@ struct AlwaysOutraced {
 impl super::ApprovalLedger for AlwaysOutraced {
     fn append_if(
         &self,
-        _event: &anneal_ledger::EventEnvelope,
+        _event: &EventEnvelope,
         _condition: &anneal_ledger::Condition,
-    ) -> Result<anneal_ledger::Appended, crate::error::CliError> {
+    ) -> Result<anneal_ledger::Appended, CliError> {
         self.tries.set(self.tries.get().saturating_add(1));
         Ok(anneal_ledger::Appended::Conflict)
     }
@@ -246,7 +252,7 @@ impl super::ApprovalLedger for AlwaysOutraced {
     fn latest(
         &self,
         _approvals: &anneal_ledger::Filter,
-    ) -> Result<Option<anneal_ledger::Recorded>, crate::error::CliError> {
+    ) -> Result<Option<anneal_ledger::Recorded>, CliError> {
         let position = u64::try_from(self.tries.get()).unwrap_or(u64::MAX);
         // Each read hands back an owned event, as the store's does.
         Ok(Some(anneal_ledger::Recorded {
@@ -265,17 +271,12 @@ fn an_approval_that_keeps_losing_to_other_approvers_gives_up_as_a_conflict_after
     let (plan, _store) = setup(dir.path())?;
     let model = By::known(Some(Actor::Model), Some(Via::Bash));
     let ledger = AlwaysOutraced {
-        winner: super::approval_by(&plan, None, model)?,
+        winner: approval_by(&plan, None, model)?,
         tries: std::cell::Cell::new(0),
     };
     let human = By::known(Some(Actor::Human), Some(Via::Terminal));
 
-    let recording = record(
-        &ledger,
-        &super::approval_by(&plan, None, human)?,
-        &plan,
-        None,
-    )?;
+    let recording = record(&ledger, &approval_by(&plan, None, human)?, &plan, None)?;
 
     assert_eq!(recording, Recording::Conflict, "it gave up");
     assert_eq!(

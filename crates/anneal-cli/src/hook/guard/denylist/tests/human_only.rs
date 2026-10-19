@@ -255,6 +255,49 @@ fn a_literal_human_actor_before_an_unread_anneal_path_is_denied() {
 }
 
 #[test]
+fn a_literal_human_actor_with_operands_known_only_at_run_time_is_denied() {
+    assert_table(&[
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --actor human",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --actor human; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "bash -c 'anneal decide label \"$@\"' _ d1 yes --actor human",
+            HUMAN_ONLY,
+        ),
+        (
+            "args=(d1 yes --actor human); anneal decide label \"${args[@]}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "su root -c 'anneal decide label \"$@\"' -- d1 yes --actor human",
+            HUMAN_ONLY,
+        ),
+        ("anneal decide label $ARGS \"$flag\"", HUMAN_ONLY),
+    ]);
+}
+
+#[test]
+fn operands_known_only_at_run_time_stay_allowed_without_a_human_actor() {
+    assert_table(&[
+        ("anneal decide label \"$@\"", ALLOW),
+        ("anneal decide label \"${args[@]}\"", ALLOW),
+        ("anneal decide label $ARGS", ALLOW),
+        ("anneal decide label \"$id\" yes", ALLOW),
+        ("anneal decide label \"$id\" yes --actor model", ALLOW),
+        ("anneal decide label \"$*\" \"${args[*]}\"", ALLOW),
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --actor model",
+            ALLOW,
+        ),
+    ]);
+}
+
+#[test]
 fn an_unread_anneal_path_without_a_literal_human_actor_stays_allowed() {
     assert_table(&[
         (

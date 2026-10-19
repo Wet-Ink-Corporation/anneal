@@ -448,12 +448,6 @@ fn refuse<O: Write>(
     emit(&envelope.with_findings(&refusal.findings), out)
 }
 
-/// The `plan_approved` event for `plan`, with the session it names and no approver.
-#[cfg(test)]
-fn approval(plan: &PlanBytes, session: Option<&str>) -> Result<EventEnvelope, CliError> {
-    approval_by(plan, session, None)
-}
-
 /// The `plan_approved` event for `plan`, with the session it names and who approved it.
 fn approval_by(
     plan: &PlanBytes,

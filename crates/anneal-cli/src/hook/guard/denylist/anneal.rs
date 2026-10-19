@@ -8,16 +8,20 @@
 //! "$SHA"` is a value, never an option) or after `=`, and no abbreviated long options. A word
 //! not read as written may be any text its written start allows, so `--actor "$who"` and a
 //! lone `"$flags"` (which may be `--actor=human`) are denied, unless the command could then not
-//! have its required operands (`decide label "$id" yes`). Arguments `xargs` appends at run time
-//! may be anything, so with them the path alone denies. A subcommand-path word not read as
-//! written (`anneal "$@"`, `anneal $SUB`) may stand for the whole path, so a literal
-//! `--actor=human` or `--actor human` anywhere in the call denies, before or after it, in any
-//! simple command at any nesting ([`Seen`]: `f() { anneal "$@"; }; f verdict set --actor
-//! human`, `bash -c 'anneal "$@"' _ verdict set --actor human`, `set -- ... --actor human;
-//! anneal "$@"`). The program is
-//! anneal in any ASCII case, with or without `.exe` (`ANNEAL`, `anneal.EXE`). Each word is
-//! judged as one word: word splitting of an unquoted expansion into `--actor human`
-//! (`--sha $x`) is the guard's documented limit (#128).
+//! have its required operands (`decide label "$id" yes`). A word that may become several words
+//! (`"$@"`, `"${x[@]}"`, or any unquoted expansion, which the shell field-splits) may supply
+//! any number of operands, so beside it another such word alone denies (`decide label $ARGS
+//! "$flag"`). Arguments `xargs` appends at run time may be anything, so with them the path
+//! alone denies. A call the guard cannot read ([`unread_call`]: a subcommand-path word not read
+//! as written, `anneal "$@"` or `anneal $SUB`, which may stand for the whole path, or a
+//! target's operands from a word that may become several, `anneal decide label "$@"`) is
+//! denied by a literal `--actor=human` or `--actor human` anywhere in the call, before or after
+//! it, in any simple command at any nesting ([`Seen`]: `f() { anneal "$@"; }; f verdict set
+//! --actor human`, `bash -c 'anneal decide label "$@"' _ d1 yes --actor human`, `set -- ...
+//! --actor human; anneal "$@"`). The program is anneal in any ASCII case, with or without
+//! `.exe` (`ANNEAL`, `anneal.EXE`). A word that may become several words is otherwise judged
+//! as one word: word splitting of an unquoted expansion into `--actor human` (`--sha $x`) is
+//! the guard's documented limit (#128).
 
 use crate::hook::guard::shell::Word;
 use crate::hook::guard::{Denial, Rule};
@@ -114,35 +118,59 @@ pub(super) fn unread_path(args: &[Word]) -> Option<&[Word]> {
     }
 }
 
+/// Whether `anneal <args>` is a call the guard cannot read: its subcommand path is not read as
+/// written ([`unread_path`]), or a target's path read as written is followed by a word that
+/// may become several words ([`may_be_several`]: `anneal decide label "$@"`), which may supply
+/// any operands and options, `--actor human` among them.
+pub(super) fn unread_call(args: &[Word]) -> bool {
+    unread_path(args).is_some() || several_after_path(args)
+}
+
+/// Whether `args` start with a target's path, read as written, followed by a word that may
+/// become several words.
+fn several_after_path(args: &[Word]) -> bool {
+    let [command, sub, rest @ ..] = args else {
+        return false;
+    };
+    let path_read = braces::reads_as_written(command)
+        && braces::reads_as_written(sub)
+        && TARGETS
+            .iter()
+            .any(|target| target.path == [command.text.as_str(), sub.text.as_str()]);
+    path_read
+        && rest
+            .iter()
+            .any(|word| !braces::reads_as_written(word) && may_be_several(word))
+}
+
 /// What a check has seen, so far, of the two halves of a human actor passed to an anneal call
-/// the guard cannot read: such a call ([`unread_path`]) and a literal human actor
+/// the guard cannot read: such a call ([`unread_call`]) and a literal human actor
 /// ([`names_human`]) anywhere in the call, in either order. The actor may reach the call's
 /// arguments through words the guard does not follow (`"$@"` of a function, a shell's
 /// positional arguments, `set --`, an array), so the two together deny wherever they stand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Seen {
-    /// An anneal call had a subcommand-path word not read as written.
-    unread_path: bool,
+    /// An anneal call the guard cannot read ([`unread_call`]).
+    unread_call: bool,
     /// A word read `--actor=human`, or two read `--actor human`.
     human: bool,
 }
 
 impl Seen {
-    /// Notes an anneal call whose path is not read as written; the denial once a human actor
-    /// was seen too.
-    pub(super) fn path_unread(&mut self) -> Option<Denial> {
-        self.unread_path = true;
+    /// Notes an anneal call the guard cannot read; the denial once a human actor was seen too.
+    pub(super) fn call_unread(&mut self) -> Option<Denial> {
+        self.unread_call = true;
         self.both()
     }
 
-    /// Notes a literal human actor; the denial once an unread anneal path was seen too.
+    /// Notes a literal human actor; the denial once an unread anneal call was seen too.
     pub(super) fn human_named(&mut self) -> Option<Denial> {
         self.human = true;
         self.both()
     }
 
     fn both(self) -> Option<Denial> {
-        (self.unread_path && self.human).then(denial)
+        (self.unread_call && self.human).then(denial)
     }
 }
 
@@ -190,21 +218,20 @@ fn claims_human(target: &Target, args: &[Word], appended: bool) -> bool {
     if appended {
         return true;
     }
-    let mut operands: usize = 0;
-    let mut unsure = false;
+    let mut count = Count::default();
     let mut words = rest.iter().peekable();
     while let Some(word) = words.next() {
         let next = words.peek().copied();
         if !braces::reads_as_written(word) {
             // Maybe an operand, maybe `--actor=human`, maybe `--actor` before `human`.
-            operands = operands.saturating_add(1);
-            unsure |= may_be(word, "--actor=human")
+            let unsure = may_be(word, "--actor=human")
                 || (may_be(word, ACTOR) && next.is_some_and(|value| may_be(value, HUMAN)));
+            count.unread(word, unsure);
             continue;
         }
         let text = word.text.as_str();
         if text == "--" {
-            operands = operands.saturating_add(words.count());
+            count.operands = count.operands.saturating_add(words.count());
             break;
         }
         if text == ACTOR && next.is_some_and(|value| may_be(value, HUMAN)) {
@@ -218,7 +245,7 @@ fn claims_human(target: &Target, args: &[Word], appended: bool) -> bool {
             return true;
         }
         if !text.starts_with('-') {
-            operands = operands.saturating_add(1);
+            count.operands = count.operands.saturating_add(1);
         } else if target.values.contains(&text)
             && next.is_some_and(|value| {
                 !(braces::reads_as_written(value) && value.text.starts_with('-'))
@@ -228,8 +255,68 @@ fn claims_human(target: &Target, args: &[Word], appended: bool) -> bool {
             words.next();
         }
     }
-    // A word read as an option leaves one operand fewer for the command's required ones.
-    unsure && operands.saturating_sub(1) >= target.operands
+    count.may_claim(target.operands)
+}
+
+/// What [`claims_human`] counted of the words after a target's path.
+#[derive(Debug, Default)]
+struct Count {
+    /// Operands, each word not read as written counted as one.
+    operands: usize,
+    /// Words not read as written that may become several words.
+    several: usize,
+    /// A word not read as written as one word may be the human actor.
+    unsure_one: bool,
+    /// A word that may become several words may be the human actor.
+    unsure_several: bool,
+}
+
+impl Count {
+    /// Counts `word`, not read as written, as one operand; `unsure` when it may be the human
+    /// actor.
+    fn unread(&mut self, word: &Word, unsure: bool) {
+        self.operands = self.operands.saturating_add(1);
+        if may_be_several(word) {
+            self.several = self.several.saturating_add(1);
+            self.unsure_several |= unsure;
+        } else {
+            self.unsure_one |= unsure;
+        }
+    }
+
+    /// Whether an unsure word may be the human actor while the command still has its
+    /// `required` operands: a word read as an option leaves one operand fewer, and a word
+    /// that may become several words, other than the unsure one, may supply any number. A
+    /// lone word of several words (`decide label "$@"`) is left to [`Seen`], which denies it
+    /// beside a literal human actor.
+    fn may_claim(&self, required: usize) -> bool {
+        let counted = self.operands.saturating_sub(1) >= required;
+        (self.unsure_one && (counted || self.several >= 1))
+            || (self.unsure_several && (counted || self.several >= 2))
+    }
+}
+
+/// Whether `word` may become several words: it holds an unquoted expansion, which the shell
+/// field-splits (`$x`, `$*`, `${x[*]}`, `$(cmd)`), or a quoted one that expands to one word
+/// per element (`"$@"`, `"${x[@]}"`, `"${!prefix@}"`), as the lexer marks each expansion's
+/// source text and quoting.
+fn may_be_several(word: &Word) -> bool {
+    word.expansions.iter().any(|expansion| {
+        !expansion.quoted
+            || word
+                .text
+                .get(expansion.range.clone())
+                .is_none_or(expands_per_element)
+    })
+}
+
+/// Whether a quoted expansion's source text gives one word per element: `$@`, `${@...}`, an
+/// array's `[@]` subscript, or `${!prefix@}`.
+fn expands_per_element(source: &str) -> bool {
+    source == "$@"
+        || source.starts_with("${@")
+        || (source.starts_with("${") && source.contains("[@]"))
+        || (source.starts_with("${!") && source.ends_with("@}"))
 }
 
 /// Characters after which a pattern word's text is no longer what it matches.

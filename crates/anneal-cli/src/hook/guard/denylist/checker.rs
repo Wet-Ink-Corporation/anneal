@@ -83,11 +83,11 @@ pub(super) struct Checker<'c> {
     /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
     /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
     argument_depth: usize,
-    /// Whether the command, so far, has an anneal call with a subcommand-path word not read
-    /// as written ([`anneal::unread_path`]: `anneal "$@"`, as in a function body) and a
-    /// literal `--actor human` in any simple command: together, in either order, they deny
-    /// (`f() { anneal "$@"; }; f verdict set --actor human`, `set -- verdict set --actor
-    /// human; anneal "$@"`).
+    /// Whether the command, so far, has an anneal call the guard cannot read
+    /// ([`anneal::unread_call`]: `anneal "$@"`, as in a function body, or `anneal decide label
+    /// "$@"`) and a literal `--actor human` in any simple command: together, in either order,
+    /// they deny (`f() { anneal "$@"; }; f verdict set --actor human`, `set -- d1 yes --actor
+    /// human; anneal decide label "$@"`).
     anneal_seen: anneal::Seen,
 }
 
@@ -386,8 +386,8 @@ impl<'c> Checker<'c> {
     }
 
     /// The `human-only` denial once a reading of a program's arguments (`args`, unwrapped and
-    /// brace-expanded) holds a literal human actor, or runs anneal with a subcommand path not
-    /// read as written, and the other half was seen in the command ([`anneal::Seen`]); notes
+    /// brace-expanded) holds a literal human actor, or is an anneal call the guard cannot read
+    /// ([`anneal::unread_call`]), and the other half was seen in the command ([`anneal::Seen`]); notes
     /// what it holds. Only the guard applies it.
     fn anneal_arguments(&mut self, program: Program<'_>, args: &[Word]) -> Option<Denial> {
         if self.entries != Entries::Denylist {
@@ -402,8 +402,8 @@ impl<'c> Checker<'c> {
             Program::Named(name) => anneal::is_anneal(name),
             Program::Unknown(word) => anneal::may_name_anneal(word),
         };
-        if runs_anneal && anneal::unread_path(args).is_some() {
-            return self.anneal_seen.path_unread();
+        if runs_anneal && anneal::unread_call(args) {
+            return self.anneal_seen.call_unread();
         }
         None
     }

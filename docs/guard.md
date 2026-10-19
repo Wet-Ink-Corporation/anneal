@@ -258,10 +258,14 @@ value-taking option's value is the next word or follows `=`, so `--sha "$SHA"` i
 never an option; long options are not abbreviated. A word not read as written may be any text
 its written start allows: `--actor "$who"` and a lone `"$flags"` (which may be
 `--actor=human`) are denied, unless the command could then no longer have its required operands
-(`decide label "$id" yes` is allowed: were `"$id"` an option, `label` would lack one).
-Arguments `xargs` appends at run time may be anything, so `cat f | xargs anneal verdict set --pr 7`
-is denied. Each word is judged as one word: an unquoted expansion that word splitting makes
-`--actor human` (`--sha $x` with `x='HEAD --actor human'`) is the documented limit below (#128).
+(`decide label "$id" yes` is allowed: were `"$id"` an option, `label` would lack one). A word
+that may become several words (`"$@"`, `"${x[@]}"`, `"${!prefix@}"`, or any unquoted expansion,
+which word splitting may split: `$x`, `$*`, `${x[*]}`, `$(cmd)`) may supply any number of
+operands, so beside it another word not read as written is denied however many operands are
+left (`decide label $ARGS "$flag"`). Arguments `xargs` appends at run time may be anything, so
+`cat f | xargs anneal verdict set --pr 7` is denied. Apart from that, each word is judged as one
+word: an unquoted expansion that word splitting makes `--actor human` (`--sha $x` with
+`x='HEAD --actor human'`) is the documented limit below (#128).
 `verdict set ... --source human` without `--actor` is not denied: the merge gate does not read
 the actor yet (`docs/verdict.md`).
 
@@ -275,7 +279,15 @@ in any simple command at any nesting (a nested `bash -c` string included):
 `bash -c 'anneal "$@"' _ verdict set --pr 7 --actor human`,
 `bash -c 'anneal $0 "$@"' verdict set --actor human`,
 `set -- verdict set --pr 7 --actor human; anneal "$@"` and
-`args=(verdict set --pr 7 --actor human); anneal "${args[@]}"`. The guard does not follow which
+`args=(verdict set --pr 7 --actor human); anneal "${args[@]}"`. The same holds for an
+operand-position expansion: a `verdict set` or `decide label` path read as written followed by
+a word that may become several words stands for operands and options alike, so
+`v() { anneal decide label "$@"; }; v d1 yes --actor human`,
+`set -- d1 yes --actor human; anneal decide label "$@"`,
+`bash -c 'anneal decide label "$@"' _ d1 yes --actor human`,
+`args=(d1 yes --actor human); anneal decide label "${args[@]}"` and
+`su root -c 'anneal decide label "$@"' -- d1 yes --actor human` are denied, while
+`anneal decide label "$@"` with no human actor in the call stays allowed. The guard does not follow which
 words reach `"$@"`, so an unrelated `--actor human` in the same call is denied too (false
 denials accepted: `echo --actor human; anneal "$@"`); split such a command into separate Bash
 calls. A call with only one of the two is not denied by this reading. The program is anneal in any ASCII case and with or without
