@@ -109,6 +109,36 @@ fn a_backtick_inside_a_group_is_unreadable() {
     ]);
 }
 
+/// `env -S` splits its string itself and knows no extended glob, so a group there is no word
+/// of its own: `@(rm -rf ~)` is `@(rm`, `-rf` and `~)`, or a file of that name run as a command.
+#[test]
+fn an_env_split_string_reads_no_group() {
+    assert_table(&[
+        ("env -S @(rm -rf ~)", RM_RF),
+        ("env -S '@(rm -rf ~)'", RM_RF),
+        ("env --split-string='x@(rm -rf ~)'", RM_RF),
+        ("env -S '@(git push -f origin main)'", FORCE_PUSH),
+        ("env -S '@(echo x > .claude/settings.json)'", CONFIG),
+        ("env -S 'bash -c \"rm @(-rf) /home\"'", RM_RF),
+    ]);
+}
+
+/// A group in a wrapper's value, or in the shell text a wrapper runs, is read as it is outside.
+#[test]
+fn a_group_in_a_wrapper_s_value_is_read_as_a_pattern() {
+    assert_table(&[
+        ("bash -c 'rm @(-rf) /home'", RM_RF),
+        ("su -c 'rm @(-rf) /home'", RM_RF),
+        ("script -c 'rm @(-rf) /home' /dev/null", RM_RF),
+        ("flock /tmp/l -c 'rm @(-rf) /home'", RM_RF),
+        ("watch 'rm @(-rf) /home'", RM_RF),
+        ("eval 'rm @(-rf) /home'", RM_RF),
+        ("sudo -u @(root) rm -rf /", RM_RF),
+        ("timeout @(5) rm -rf /", RM_RF),
+        ("sudo r@(m) -rf /", RM_RF),
+    ]);
+}
+
 #[test]
 fn an_extglob_target_is_a_pattern_for_rm_rf_and_the_config_entries() {
     assert_table(&[

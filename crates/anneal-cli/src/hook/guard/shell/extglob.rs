@@ -1,7 +1,7 @@
 //! Extended globs (`shopt -s extglob`): `@(a|b)`, `+( )`, `!( )`, `?( )` and `*( )` are one
 //! pattern word, not a word followed by a subshell (#128).
 
-use super::{Lexer, ParseError, Word};
+use super::{Extglob, Lexer, ParseError, Word};
 
 /// Where a word is read: what an opening `!(` means there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl Lexer {
     /// one pattern word whose later words are its arguments (`/bin/echo@() { hi }` runs
     /// `echo`), so neither reading can be trusted. Elsewhere `@()` is an empty group.
     pub(super) fn opens_extglob(&self, word: &Word, place: Place) -> Result<bool, ParseError> {
-        if self.peek() != Some('(') || !opens(word, place) {
+        if self.extglob == Extglob::Ignored || self.peek() != Some('(') || !opens(word, place) {
             return Ok(false);
         }
         if place.names_function() && self.empty_parens() {
@@ -101,8 +101,9 @@ impl Lexer {
 
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with
     /// `extglob` reads it: blanks, `|` and `;` included, quotes and `$( )` substitutions read
-    /// as in any word. Without `extglob` bash refuses such a word, so reading it as a pattern
-    /// can only add denials.
+    /// as in any word. In shell text bash without `extglob` refuses such a word, so reading it
+    /// as a pattern can only add denials there; a string no shell reads (`env -S`) is lexed with
+    /// groups ignored ([`super::parse_without_extglob`]).
     ///
     /// # Errors
     /// Those of any word, [`ParseError::ProcessInExtglob`] for a `<(` or `>(` inside the

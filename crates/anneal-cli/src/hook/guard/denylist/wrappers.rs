@@ -63,8 +63,11 @@ pub(super) enum Run<'a> {
         /// Whether more arguments are appended at run time.
         appended: bool,
     },
-    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `env -S`, `trap`.
+    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `trap`.
     Script(Cow<'a, str>),
+    /// `env -S`'s string, read in turn as shell text but split by env, which reads no
+    /// extended glob group.
+    Split(Cow<'a, str>),
     /// A shell (named) reading its script from standard input.
     StdinScript(&'a str),
     /// A shell (named) running a script from a process substitution or a file descriptor,
@@ -132,7 +135,7 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
             .checked_sub(args.len())
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
-        Run::Script(text) => Layout::Script(text),
+        Run::Script(text) | Run::Split(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
         Run::Exec(actions) => roles
             .iter()

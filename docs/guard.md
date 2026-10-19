@@ -134,6 +134,8 @@ inside a backtick substitution bash ends the substitution there, not where the g
 A `$[ ]` inside a group is `unparseable` too, since bash skips it whole, parentheses
 included; a line continuation after a `$` inside a group is dropped first, as bash drops it
 (`echo @($\<newline>(rm -rf /))` is judged as `rm -rf /`).
+An `env -S` string is split by env, which reads no group, so no group is read there:
+`env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read.
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an

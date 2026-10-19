@@ -10,7 +10,7 @@ use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
 use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, readings, rm};
-use crate::hook::guard::shell::{self, SimpleCommand, Word};
+use crate::hook::guard::shell::{self, ParseError, SimpleCommand, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// Where a command is checked: what its standard input gets (when it does not redirect it),
@@ -124,6 +124,16 @@ impl<'c> Checker<'c> {
 
     /// Checks shell text.
     pub(super) fn text(&mut self, text: &str, scope: Scope<'_>) -> Option<Denial> {
+        self.lexed_by(text, scope, shell::parse)
+    }
+
+    /// Checks text read as `parse` lexes it.
+    fn lexed_by(
+        &mut self,
+        text: &str,
+        scope: Scope<'_>,
+        parse: fn(&str) -> Result<Vec<SimpleCommand>, ParseError>,
+    ) -> Option<Denial> {
         if scope.depth > MAX_DEPTH {
             return Some(unreadable(format!(
                 "the command nests bash -c, eval or find -exec deeper than {MAX_DEPTH}"
@@ -135,7 +145,7 @@ impl<'c> Checker<'c> {
                 "the command re-reads more than {MAX_LEXED_MIB} MiB through bash -c or eval"
             )));
         }
-        let commands = match shell::parse(text) {
+        let commands = match parse(text) {
             Ok(commands) => commands,
             Err(error) => {
                 return Some(unreadable(format!("the command cannot be read: {error}")));
@@ -213,6 +223,7 @@ impl<'c> Checker<'c> {
             Run::Nothing => None,
             Run::Either(runs) => runs.into_iter().find_map(|run| self.run(run, scope)),
             Run::Script(text) => self.text(&text, scope.nested()),
+            Run::Split(text) => self.lexed_by(&text, scope.nested(), shell::parse_without_extglob),
             Run::StdinScript(shell) => self.stdin_script(shell, scope),
             Run::Unseen(shell) => Some(unreadable(format!(
                 "{shell} runs a script from a process substitution, known only at run time; \
