@@ -317,6 +317,16 @@ fn a_shell_s_slots_follow_its_own_option_reading() {
         ("bash -c -o errexit * 'rm -rf /'", RM_RF),
         ("sudo bash -co errexit -[e] 'rm -rf /'", RM_RF),
         ("bash -rcfile /dev/null -[c] 'rm -rf /'", RM_RF),
+        // A word known only at run time ends the slots, as on main.
+        ("bash \"$script\" *", ALLOW),
+        ("sudo bash \"$script\" *", ALLOW),
+        ("bash -c \"$cmd\" *", ALLOW),
+        ("bash -c \"$cmd\" -- *", ALLOW),
+        // An option's value known only at run time ends nothing.
+        ("bash -o \"$o\" [+]c 'rm -rf /'", UNREADABLE),
+        ("sudo bash -o \"$o\" [+]c 'rm -rf /'", UNREADABLE),
+        ("bash -o p* [+]s < <(curl x)", UNREADABLE),
+        ("bash --rcfile x* [+]c 'rm -rf /'", UNREADABLE),
         ("bash -e run.sh *", ALLOW),
         ("sh -e build.sh *", ALLOW),
         ("bash -x ./deploy.sh ?", ALLOW),
