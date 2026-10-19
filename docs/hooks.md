@@ -73,7 +73,8 @@ The context is, in order:
    exists at the worktree root (a regular file of at most 32 KiB whose head the hook recorded),
    framed as data, with the injection scan's line on a hit; see `docs/handoff.md`.
 3. **The status-line hint**, once per anneal home, while no status line has saved context usage
-   (`context-usage.json`), so the context monitor is off; see `docs/handoff.md`.
+   (`context-usage.json`) and no mod snapshot is under 10 minutes old (`context-usage-mod.json`,
+   from `anneal snapshot write`), so the context monitor is off; see `docs/handoff.md`.
 4. **The live state**, only when it changed for this session (volatile last): the newest five
    ledger events. The ledger is found as `anneal ledger` finds it (`$ANNEAL_STORE`, else the git
    common dir, else `.anneal/` in the folder). With no ledger file there is no live state, and
@@ -538,12 +539,13 @@ prompt labels it with the ruling's id (it held). Until then D6 is labelled only 
 ## `context-monitor` (PostToolBatch)
 
 No matcher, 5 s timeout, `onFailure: continue`, role `scaffolding`. Hooks receive no context
-usage, so it reads the reading `anneal statusline` saved for the session in the anneal home
-(`context-usage.json`) and keeps the level each session last reached (`context-monitor.json`).
+usage, so it reads the reading saved for the session in the anneal home, by `anneal statusline`
+(`context-usage.json`) or for the mod by `anneal snapshot write` (`context-usage-mod.json`), the
+fresher of the two, and keeps the level each session last reached (`context-monitor.json`).
 It warns once (`additionalContext`) when usage rises past 60% of the auto-compact window and
 stops once (`decision: "block"`, which ends the agentic loop before the next model call) when
-it rises past 75%; falling below a threshold re-arms it. With no reading (no status line
-configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
+it rises past 75%; falling below a threshold re-arms it. With no reading (neither the status
+line nor the mod configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
 answers a `PostToolUse` input as `PostToolUse`. Its own failures are one `ERROR` line as the
 `systemMessage`, never a block. It sits under `PostToolBatch`, not `PostToolUse *`, so it runs
 once per batch and no per-call entry exists. See `docs/handoff.md`.

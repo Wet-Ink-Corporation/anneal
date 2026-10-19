@@ -3,8 +3,9 @@
 //!
 //! It reads the status-line input on stdin (at most 1 MiB), prints one line
 //! (`anneal ctx 120k/200k 60%`: tokens used of the auto-compact window), and saves the reading
-//! for the session in the anneal home's `context-usage.json`, which the context-monitor hook
-//! reads, since hooks receive no usage field. The tokens used are
+//! for the session in the anneal home's `context-usage.json`, stamped `source: statusline`
+//! with the time, which the context-monitor hook reads (or the mod's snapshot, when fresher),
+//! since hooks receive no usage field. The tokens used are
 //! `context_window.used_percentage` of `context_window.context_window_size`; the window is
 //! `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, the model's window, or 200,000 tokens (see
 //! `docs/handoff.md`).
@@ -14,13 +15,15 @@
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::time::SystemTimeError;
 
 use clap::Args;
 use serde::Deserialize;
 
-use crate::context::sessions::{SessionFile, SessionsError};
+use crate::context::sessions::SessionsError;
 use crate::context::usage::{self, Level, Reading, WINDOW_VAR};
-use crate::context::{self, Snapshot};
+use crate::context::{self, Saved, Snapshot, Source, WriterEnv};
+use crate::decide::clock::{Clock, SystemClock};
 use crate::error::CliError;
 use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
@@ -66,6 +69,8 @@ enum InputError {
 enum SaveError {
     #[error("finding the anneal home")]
     Home(#[source] PathError),
+    #[error("reading the clock")]
+    Clock(#[source] SystemTimeError),
     #[error(transparent)]
     File(#[from] SessionsError),
 }
@@ -74,18 +79,46 @@ enum SaveError {
 /// and the anneal home through `lookup`, writes the line to `out` and any failure as one
 /// `ERROR` line to `err`.
 ///
+/// The reading is stamped with the system clock's time.
+///
 /// # Errors
 /// [`CliError::Output`] when `out` or `err` cannot be written; every other failure is in the
 /// line and on `err`, and the code is still 0.
-pub fn run<R, L, O, E>(stdin: R, lookup: L, mut out: O, mut err: E) -> Result<Code, CliError>
+pub fn run<R, L, O, E>(stdin: R, lookup: L, out: O, err: E) -> Result<Code, CliError>
 where
     R: Read,
     L: Fn(&str) -> Option<OsString>,
     O: Write,
     E: Write,
 {
+    let env = WriterEnv {
+        stdin,
+        lookup,
+        clock: &SystemClock::new(),
+    };
+    run_with(env, out, err)
+}
+
+/// [`run`] with `env`'s input, environment and clock.
+pub(crate) fn run_with<R, L, C, O, E>(
+    env: WriterEnv<'_, R, L, C>,
+    mut out: O,
+    mut err: E,
+) -> Result<Code, CliError>
+where
+    R: Read,
+    L: Fn(&str) -> Option<OsString>,
+    C: Clock,
+    O: Write,
+    E: Write,
+{
+    let WriterEnv {
+        stdin,
+        lookup,
+        clock,
+    } = env;
     let (line, problem) = match read_input(stdin) {
-        Ok(input) => show(&input, &lookup),
+        Ok(input) => show(&input, &lookup, clock),
         Err(error) => (
             "anneal ctx - (input unreadable)".to_owned(),
             Some(reason(&error)),
@@ -104,7 +137,11 @@ fn read_input<R: Read>(stdin: R) -> Result<Input, InputError> {
 }
 
 /// The line for `input`, and why its reading was not saved, if it was not.
-fn show(input: &Input, lookup: impl Fn(&str) -> Option<OsString>) -> (String, Option<String>) {
+fn show(
+    input: &Input,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    clock: &impl Clock,
+) -> (String, Option<String>) {
     let window = input.context_window.as_ref();
     let reading = usage::reading(
         window.and_then(|window| window.used_percentage),
@@ -115,7 +152,7 @@ fn show(input: &Input, lookup: impl Fn(&str) -> Option<OsString>) -> (String, Op
     let Some(session) = input.session_id.as_deref() else {
         return (line, None);
     };
-    match save(session, &reading, lookup) {
+    match save(session, &reading, lookup, clock) {
         Ok(()) => (line, None),
         Err(error) => {
             line.push_str(" (usage not saved)");
@@ -147,24 +184,23 @@ fn line(reading: &Reading) -> String {
     )
 }
 
-/// Saves `reading` as `session`'s snapshot in the anneal home.
+/// Saves `reading` as `session`'s status-line snapshot in the anneal home, stamped with
+/// `clock`'s time.
 fn save(
     session: &str,
     reading: &Reading,
     lookup: impl Fn(&str) -> Option<OsString>,
+    clock: &impl Clock,
 ) -> Result<(), SaveError> {
     let home = paths::anneal_home_from(lookup).map_err(SaveError::Home)?;
-    let path = context::in_home(&home, context::USAGE_FILE);
-    let mut file = SessionFile::<Snapshot>::load(&path, context::USAGE_KIND)?;
-    file.set(
-        session,
-        Snapshot {
-            used_tokens: reading.used_tokens,
-            window: reading.window.tokens,
-            window_source: reading.window.source,
-        },
-    );
-    Ok(file.save(&path)?)
+    let now_ms = clock.unix_millis().map_err(SaveError::Clock)?;
+    let snapshot = Snapshot {
+        used_tokens: reading.used_tokens,
+        window: reading.window.tokens,
+        window_source: reading.window.source,
+    };
+    let saved = Saved::stamped(snapshot, Source::Statusline, now_ms);
+    Ok(context::save(&home, session, saved)?)
 }
 
 #[cfg(test)]

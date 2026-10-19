@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::decide::clock::SystemClock;
 use crate::hook::{HookEnv, reason};
 use crate::paths;
 use state::Sessions;
@@ -132,7 +133,7 @@ fn context(
         // The live state's note below already says the working directory cannot be read.
         Err(_) => (None, None),
     };
-    let (hint, hint_note) = compaction::statusline_hint(&lookup);
+    let (hint, hint_note) = compaction::statusline_hint(&lookup, &SystemClock::new());
     let (state, state_note) = match &cwd {
         Ok(cwd) => fresh_state(input.session_id.as_deref(), cwd, lookup),
         Err(error) => (

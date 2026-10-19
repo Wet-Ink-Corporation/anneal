@@ -1,10 +1,12 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::run;
+use super::{run, run_with};
 use crate::context::sessions::SessionFile;
 use crate::context::usage::WindowSource;
-use crate::context::{self, Snapshot};
+use crate::context::{self, Saved, Snapshot, Source, WriterEnv};
+use crate::decide::clock::Clock;
+use crate::hook::clef_fake::Fixed;
 
 /// Runs the status line on `input` with the anneal home `home` and the auto-compact window
 /// variable `window`: the exit code's value, stdout and stderr.
@@ -52,6 +54,32 @@ fn a_reading_is_shown_and_saved_for_the_session() {
             window_source: WindowSource::Model,
         }),
         "the reading is saved under the session"
+    );
+}
+
+#[test]
+fn a_saved_reading_is_stamped_as_the_status_line_s_with_its_time() {
+    let home = tempfile::tempdir().expect("a temporary directory");
+    let input = r#"{"session_id":"s1","context_window":{"used_percentage":5}}"#;
+    let lookup = |var: &str| (var == "ANNEAL_HOME").then(|| OsString::from(home.path()));
+
+    let env = WriterEnv {
+        stdin: input.as_bytes(),
+        lookup,
+        clock: &Fixed,
+    };
+    run_with(env, Vec::new(), Vec::new()).expect("Vecs accept writes");
+    let path = context::in_home(home.path(), context::USAGE_FILE);
+    let saved = SessionFile::<Saved>::load(&path, context::USAGE_KIND)
+        .expect("the usage file loads")
+        .get("s1")
+        .copied()
+        .map(|saved| (saved.source, saved.written_at_ms));
+
+    assert_eq!(
+        saved,
+        Some((Source::Statusline, Fixed.unix_millis().ok())),
+        "the status line's, stamped with the time it was saved"
     );
 }
 
