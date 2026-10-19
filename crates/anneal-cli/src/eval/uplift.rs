@@ -20,7 +20,7 @@ mod report;
 mod stats;
 mod suites;
 mod tally;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod test_git;
 
 use std::path::Path;

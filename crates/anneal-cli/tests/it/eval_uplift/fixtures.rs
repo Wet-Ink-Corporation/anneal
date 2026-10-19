@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::{TestResult, envelope, eval_uplift, fixtures};
+use super::{TestResult, envelope, eval_uplift};
 
 /// The refusal a run of the seeded suites gives without `--allow-scaffolds`.
 const SCAFFOLD_REFUSAL: &str = "ERROR eval: fixtures are named by 1 selected case \
@@ -232,10 +232,10 @@ fn with_allow_scaffolds_seeded_batches_run_scaffolds_and_every_copy_holds_the_ru
 #[cfg(unix)]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_baseline_plugin_copy_holds_the_running_anneal_too() -> TestResult {
-    let baseline = fixtures().join("eval-uplift/baseline-plugin");
+    let baseline = super::fixtures().join("eval-uplift/baseline-plugin");
 
     let (run, seeds) = seeds_run(
-        &fixtures().join("eval-uplift/suites"),
+        &super::fixtures().join("eval-uplift/suites"),
         &["--baseline".as_ref(), baseline.as_os_str()],
     )?;
 

@@ -48,10 +48,10 @@ pub(crate) fn make_executable(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
 
-/// Elsewhere a file's mode does not decide whether it runs.
+/// Elsewhere a file's mode does not decide whether it runs, so the file need only exist.
 #[cfg(not(unix))]
-pub(crate) fn make_executable(_path: &Path) -> io::Result<()> {
-    Ok(())
+pub(crate) fn make_executable(path: &Path) -> io::Result<()> {
+    fs::metadata(path).map(drop)
 }
 
 #[cfg(test)]
