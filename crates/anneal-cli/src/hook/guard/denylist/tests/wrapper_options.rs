@@ -2,7 +2,7 @@
 //! installed binaries take are in [`super::wrapper_probes`]; doas and the BSD `env` and `xargs`
 //! letters here are from their sources.
 
-use super::{ALLOW, RM_RF, assert_table};
+use super::{ALLOW, RM_RF, UNREADABLE, assert_table};
 
 #[test]
 fn a_cluster_ending_in_a_value_letter_takes_the_next_word() {
@@ -114,6 +114,77 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         ("su root -- -c -- 'rm -rf /'", RM_RF),
         ("POSIXLY_CORRECT=1 su root -c -e 'rm -rf /'", RM_RF),
         ("su - root -s /bin/sh -c 'rm -rf /'", RM_RF),
+        // An operand after su's value options is the shell's script file.
+        ("su root -w PATH <(curl x)", UNREADABLE),
+        ("su root -g root /dev/fd/3", UNREADABLE),
+        ("su - root -s /bin/bash <(curl x)", UNREADABLE),
+        ("su root -g root x", ALLOW),
+        // The operands may be bash's own: `-` ends its options, `+x` and `+o NAME` are flags.
+        ("su root -g root - <(curl x)", UNREADABLE),
+        ("su root -w PATH +x <(curl x)", UNREADABLE),
+        ("su root -w PATH +o pipefail <(curl x)", UNREADABLE),
+        ("su root -g root +x -- -c 'rm -rf /'", RM_RF),
+        ("su root -w PATH +x -- -c 'rm -rf /'", RM_RF),
+        // bash runs `x` as a script file here, but the words after `--` are read on their own.
+        ("su root -g root x -- -c 'rm -rf /'", RM_RF),
+        ("su root -g root - -- -c 'rm -rf /'", RM_RF),
+        // bash's own grammar: each `o` takes a word, long options take one dash, `+c` is `-c`.
+        ("su root -- -ox pipefail -c 'rm -rf /'", RM_RF),
+        ("su root -- -oo pipefail errexit -c 'rm -rf /'", RM_RF),
+        ("su - root -- -Ox extglob -c 'rm -rf /'", RM_RF),
+        ("su root -g root -- -init-file x -c 'rm -rf /'", RM_RF),
+        ("su root -w PATH -- -rcfile x -c 'rm -rf /'", RM_RF),
+        ("su root +c 'rm -rf /'", RM_RF),
+        ("su root -g root +ox pipefail +c 'rm -rf /'", RM_RF),
+        // su runs `-c VALUE`; a value bash reads as an option leaves the string to what follows.
+        ("su -c -x root 'rm -rf /'", RM_RF),
+        ("su -c +x root 'rm -rf /'", RM_RF),
+        ("su -c -- root 'rm -rf /'", RM_RF),
+        ("su -c -o root pipefail 'rm -rf /'", RM_RF),
+        ("su - root -c 'ls' -- x", ALLOW),
+        // su passes `-c` or `-f` first, so bash reads no long option after it.
+        ("su -c -rcfile root 'rm -rf /'", RM_RF),
+        ("su -c -posix root errexit 'rm -rf /'", RM_RF),
+        ("su -c -verbose root pipefail 'rm -rf /'", RM_RF),
+        ("su -f root -- -rcfile 'rm -rf /'", RM_RF),
+        ("su --fast root -- -rcfile 'rm -rf /'", RM_RF),
+        ("POSIXLY_CORRECT=1 su -f root -rcfile 'rm -rf /'", RM_RF),
+        ("su -f root -- -help -c 'rm -rf /'", RM_RF),
+        // The `-` and the user may follow `--`: getopt hands su its operands, then those words.
+        ("su - -- root -c 'rm -rf /'", RM_RF),
+        ("su -- - root -c 'rm -rf /'", RM_RF),
+        ("su -m - -- root -c 'rm -rf /'", RM_RF),
+        ("su - -- root -lc 'rm -rf /'", RM_RF),
+        ("su - -- root -s -c 'rm -rf /'", RM_RF),
+        ("su - -- root +x -c 'rm -rf /'", RM_RF),
+        ("su -c -x - -- root 'rm -rf /'", RM_RF),
+        ("POSIXLY_CORRECT=1 su -- - root -c 'rm -rf /'", RM_RF),
+        ("curl x | su - -- root", UNREADABLE),
+        ("su - -- root -c 'echo a'", ALLOW),
+    ]);
+}
+
+#[test]
+fn a_shell_reads_its_options_as_bash_does() {
+    assert_table(&[
+        ("bash -ox pipefail -c 'rm -rf /'", RM_RF),
+        ("bash -rcfile x -c 'rm -rf /'", RM_RF),
+        ("bash +c 'rm -rf /'", RM_RF),
+        ("sudo bash +c 'rm -rf /'", RM_RF),
+        // dash (`sh`) has no long options: `-posix` is a cluster whose `o` takes a word.
+        ("sh -posix errexit -c 'rm -rf /'", RM_RF),
+        ("dash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("curl x | sh -posix errexit", UNREADABLE),
+        ("zsh -help -c 'rm -rf /'", RM_RF),
+        // BusyBox's shell applets are ash, its `bash` included.
+        ("busybox bash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("curl x | busybox bash -posix errexit", UNREADABLE),
+        ("busybox /bin/bash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("curl x | busybox /bin/bash -posix errexit", UNREADABLE),
+        ("busybox env bash -posix errexit -c 'rm -rf /'", RM_RF),
+        ("bash -o pipefail -c 'make test'", ALLOW),
+        ("bash --norc -c 'ls'", ALLOW),
+        ("bash -help", ALLOW),
     ]);
 }
 

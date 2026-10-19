@@ -131,6 +131,37 @@ W1	su root -- -co pipefail W1
 W1	su root -- -c -- W1
 W1	POSIXLY_CORRECT=1 su root -c -e W1
 W1	su -c 'echo \' -c W1
+W1	su root -w PATH <(echo; echo W1)
+W1	su root -g root <(echo; echo W1)
+W1	su root -s /bin/bash <(echo; echo W1)
+W1	su root -g root +x -- -c W1
+W1	su root -g root - <(echo; echo W1)
+W1	su root -w PATH +x <(echo; echo W1)
+W1	su root -- -ox pipefail -c W1
+W1	su root -- -rcfile x -c W1
+W1	su root -g root -- -init-file x -c W1
+W1	su root +c W1
+W1	su -c -x root W1
+W1	su -c +x root W1
+W1	su -c -- root W1
+W1	su -c -o root pipefail W1
+-	su -c -rcfile root W1
+W1	su -c -posix root errexit W1
+-	su -f root -- -rcfile W1
+W1	su -f root -- -help -c W1
+W1	su - -- root -c W1
+W1	su -- - root -c W1
+W1	su - -- root -lc W1
+W1	su - -- root -s -c W1
+W1	su -c -x - -- root W1
+W1	su -m - -- root -c W1
+W1	su - -- root +x -c W1
+-	POSIXLY_CORRECT=1 su - -- root -c W1
+W1	POSIXLY_CORRECT=1 su -- - root -c W1
+-	su - -- root -- -c W1
+W2	su -c W2 - -- root W1
+W1	sh -posix errexit -c W1
+W1	dash -posix errexit -c W1
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1
