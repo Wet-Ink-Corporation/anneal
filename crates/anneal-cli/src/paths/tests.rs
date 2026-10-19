@@ -273,3 +273,13 @@ fn only_not_a_git_repository_classifies_as_outside_git() {
         );
     }
 }
+
+#[test]
+fn the_git_timeout_names_a_duration_under_a_second() {
+    // The preconditions budget hands git less than a second; whole seconds rounded it to 0.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_millis(500),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 500ms");
+}
