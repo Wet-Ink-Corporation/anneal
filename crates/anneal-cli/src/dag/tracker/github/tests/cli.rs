@@ -28,6 +28,29 @@ fn output_one_byte_under_the_cap_is_kept_and_at_the_cap_is_too_large() {
 }
 
 #[test]
+fn the_gh_timeout_names_a_duration_under_a_second_in_whole_milliseconds() {
+    use std::time::Duration;
+
+    let short = GhError::Timeout {
+        endpoint: "repos/o/r/issues".to_owned(),
+        timeout: Duration::from_millis(500),
+    };
+    let left_over = GhError::Timeout {
+        endpoint: "graphql".to_owned(),
+        timeout: Duration::from_nanos(1_987_654_321),
+    };
+
+    assert_eq!(
+        short.to_string(),
+        "gh api repos/o/r/issues did not answer within 500ms"
+    );
+    assert_eq!(
+        left_over.to_string(),
+        "gh api graphql did not answer within 1.987s"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 #[cfg_attr(miri, ignore = "spawns a process")]
 fn a_gh_that_never_answers_is_killed_at_the_timeout() -> Result<(), Box<dyn std::error::Error>> {
