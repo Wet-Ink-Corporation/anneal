@@ -1,5 +1,8 @@
 //! Wrappers that run a command string or read a script: shells, `sudo -s`, `env -S`, `su`,
-//! `script`, `trap`, `watch`, `flock -c`, and `find`'s actions.
+//! `script`, `trap`, `watch`, `flock -c`, and `find`'s actions. A shell's own arguments are
+//! read in [`mod@shell`].
+
+mod shell;
 
 use std::borrow::Cow;
 
@@ -8,8 +11,6 @@ use super::tables::{ENV, FLOCK, SCRIPT, SU, SU_TO_USER, SUDO, WATCH};
 use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
-
-const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
 
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
@@ -175,13 +176,13 @@ fn bodies(read: Read<'_>) -> Option<Run<'_>> {
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let read = SU.parse(words);
     let after_dashes = read.rest;
-    let permuted = bodies(read).unwrap_or_else(|| shell_run("su", after_dashes));
+    let permuted = bodies(read).unwrap_or_else(|| shell::run("su", after_dashes));
     let to_user = SU_TO_USER.parse(words);
     let user = match to_user.rest {
         [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => tail,
         rest => rest,
     };
-    let posix = bodies(to_user).unwrap_or_else(|| shell_run("su", skip_one(user)));
+    let posix = bodies(to_user).unwrap_or_else(|| shell::run("su", skip_one(user)));
     Peel::Done(Run::either([permuted, posix]))
 }
 
@@ -201,49 +202,10 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 }
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
-/// a script read from stdin.
+/// a script read from stdin; every reading of an argument that may be options
+/// ([`shell::run`]).
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, words))
-}
-
-/// What the shell `name` runs, given the arguments `words` ([`shell`]).
-fn shell_run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
-    let mut rest = words;
-    let (mut command_string, mut from_stdin) = (false, false);
-    while let [first, tail @ ..] = rest {
-        let text = first.text.as_str();
-        if text == "--version" || text == "--help" {
-            return Run::Nothing;
-        }
-        if text == "--" || text == "-" {
-            rest = tail;
-            break;
-        }
-        let option = reads_as_written(first) && (text.starts_with('-') || text.starts_with('+'));
-        if !option {
-            break;
-        }
-        let long = text.starts_with("--");
-        let short = !long && text.starts_with('-');
-        command_string |= short && text.contains('c');
-        from_stdin |= short && text.contains('s');
-        let takes_value = if long {
-            SHELL_VALUES.contains(&text)
-        } else {
-            text.ends_with(['o', 'O'])
-        };
-        rest = if takes_value { skip_one(tail) } else { tail };
-    }
-    if command_string {
-        return rest.first().map_or(Run::Nothing, |string| {
-            Run::Script(Cow::Borrowed(&string.text))
-        });
-    }
-    // With `-s` the operands are arguments and the script is stdin.
-    match rest.first().filter(|_| !from_stdin) {
-        None => Run::StdinScript(name),
-        Some(script) => script_file(name, script),
-    }
+    Peel::Done(shell::run(name, words))
 }
 
 /// The paths through which a script file is standard input.

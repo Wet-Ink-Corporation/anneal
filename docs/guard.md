@@ -241,7 +241,8 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | `case` | a pattern's `)` does not close an enclosing `$( )` or `${x:-$( )}`; every unquoted `case` word is counted (bash also opens one after `time -p`, `function f` or `coproc`), and `esac` in command position |
 | Substitutions: `$( )`, backticks, `<( )`, `>( )`, `$(( ))`, `${x:-$(...)}` | the inner commands are checked; the word holding one is dynamic; a process substitution is a word (a pipe's path) |
 | Heredocs | the body is data and the reading command's stdin; with an unquoted delimiter its substitutions are checked |
-| `bash -c`, `sh -c`, `zsh -c`, `dash`, `ksh`, `mksh`, `ash` (also `-lc`, `-o opt -c`) | the string is lexed and checked, up to 8 levels deep and 4 MiB in total |
+| `bash -c`, `sh -c`, `zsh -c`, `dash`, `ksh`, `mksh`, `ash` (also `-lc`, `-o opt -c`, `+c`) | the string is lexed and checked, up to 8 levels deep and 4 MiB in total. A `+` cluster sets `c` and `s` as a `-` one does (`bash +c '...'`, bash 5 and dash) |
+| A shell argument known only at run time that may be options: `bash $o 'rm -rf /'` (`o=-c`), `bash "$y"-c 'rm -rf /'` (`y` unset), `bash "$o" -e '...'`, `bash "$o" pipefail -c '...'` (`o=-o`), `bash -c "$x" 'rm -rf /'` (`x=-e`) | a variable or substitution whose value may start an option cluster (`$o`, `"$y"-c`, `-"$y"c`, `+$x`; not `"$d"/run.sh` or `"$s".sh`) is read both ways: as the script path or string it is when its value is no option, and as options that may hold `c` or `s`, take the next word as a value or end the options. Every word each reading may run as the `-c` string is checked as a script, and a reading that may take its script from stdin checks stdin; so `bash "$o" 'echo ('` is denied as unreadable, and `cat x \| bash "$script"` too, since `script=-s` reads the pipe (#129). `env`, `sudo`, `su` and unlisted wrappers reach the same reader. `bash "$script" --verbose` and `bash -c "$cmd"` stay allowed |
 | A shell reading its script from stdin: `bash <<'EOF'`, `sh -s`, `bash <<< '...'`, `echo '...' \| sh`, `bash /dev/stdin`, `sudo -s`, `su`, `script` | the script is checked when it is static: a heredoc whose delimiter is quoted (or whose body has no substitution), a literal here-string, or what `echo` or `printf` with literal arguments (no `\` escape, no `%` directive) pipes in. Any other stdin (`curl ... \| sh`, `cat x \| bash`, `bash <<< "$S"`) is denied |
 | A script from a process substitution or descriptor: `bash <(curl ...)`, `source <(...)`, `bash /dev/fd/3`, `bash < <(...)` | denied |
 | `eval`, `alias NAME=VALUE`, `trap '...' SIG`, `su -c`, `script -c`, `watch`, `flock -c`, `env -S '...'` | the string is lexed and checked (`eval` and `watch` join their arguments) |
@@ -268,10 +269,14 @@ it cannot model instead of modelling every shell feature, and it does not try to
   one. So a split can put `-rf` in an `rm` operand of its own (`rm x$b /home/x` with
   `b=' -rf'`, `rm $F` with `F='-rf /home'`, `set -- a -rf; rm x"$@" /home/x`,
   `f() { rm x"$@" /home/x; }; f a -rf`), and an expansion that is empty can vanish and move a
-  later word into a checked place (`bash -c $x 'rm -rf /'`, `caffeinate bash $x -c 'rm -rf /'`,
-  `cp x .claude/settings.json $x`, `bash {-xc,$x} 'rm -rf /'` with `x` unset). These are
+  later word into a checked place (`cp x .claude/settings.json $x` with `x` unset). These are
   allowed, because judging every such word as possibly several would also deny everyday
-  commands such as `rm -f $f` and `rm -f $dir/x /y`;
+  commands such as `rm -f $f` and `rm -f $dir/x /y`. Among a shell's arguments the vanishing
+  word is covered by reading it as possible options (#129: `bash -c $x 'rm -rf /'`,
+  `caffeinate bash $x -c 'rm -rf /'` and `bash {-xc,$x} 'rm -rf /'` are denied), but a split
+  into several words is not (`bash $x` with `x='-c rm\ -rf\ /'` is read as one word);
+- a bracket expression that may match only `+` before a shell's option letters
+  (`bash [+]c '...'` in a directory holding a file named `+c`): it is read as a script path;
 - a quoted expansion in `git push` that holds a force flag: `git push "$branch"` with
   `branch=--force` (or `-f`) is allowed, since denying it would deny every
   `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A glob that may

@@ -83,6 +83,20 @@ fn emptied(word: &Word) -> Option<Word> {
 /// expansion, `"$@"` or `"${a[@]}"` may split into several words, one of them `-rf` (`x$b` with
 /// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a documented limit (#128).
 pub(super) fn may_start_option_cluster(word: &Word) -> bool {
+    may_start_cluster(word, &['-'])
+}
+
+/// Whether one of `word`'s values may be a shell's option cluster: as
+/// [`may_start_option_cluster`], with a written `+` starting one too, since bash and dash read
+/// `+c` and `+s` as `-c` and `-s` (`bash +$x 'rm -rf /'` with `x=c`).
+pub(super) fn may_start_shell_options(word: &Word) -> bool {
+    may_start_cluster(word, &['-', '+'])
+}
+
+/// Whether one of `word`'s values may be an option cluster whose first written character is
+/// one of `signs`. A bracket expression first counts only when it may match `-`, so a plain
+/// set naming `+` alone (`[+]c`, a file named `+c`) is not read as a sign.
+fn may_start_cluster(word: &Word, signs: &[char]) -> bool {
     if word.is_literal() {
         return false;
     }
@@ -92,7 +106,9 @@ pub(super) fn may_start_option_cluster(word: &Word) -> bool {
             Part::Any => true,
             // Past the first part, a set may match a letter or a digit.
             Part::Set { dash } => dash || !first,
-            Part::Written(c) => c == '-' || (!first && c.is_ascii_alphanumeric()),
+            Part::Written(c) => {
+                c == '-' || (first && signs.contains(&c)) || (!first && c.is_ascii_alphanumeric())
+            }
         };
         if !fits {
             return false;
