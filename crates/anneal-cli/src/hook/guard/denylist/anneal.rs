@@ -299,7 +299,9 @@ impl Count {
 /// field-splits (`$x`, `$*`, `${x[*]}`, `$(cmd)`), or a quoted one whose source text holds an
 /// `@`, which may expand to one word per element: `"$@"`, `"${x[@]}"`, `"${!prefix@}"`, and
 /// `$@` nested in another expansion (`"${x:-$@}"`, `"${x-"$@"}"`). A quoted `@` that gives one
-/// word (`"${x@Q}"`) is counted too, which only denies more.
+/// word (`"${x@Q}"`) is counted too: in [`Count`] such a word may supply any number of
+/// operands, and in [`Halves`] it is no value on its own, except right after a literal
+/// `--actor`, where any word that may be `human` is the value.
 fn may_be_several(word: &Word) -> bool {
     word.expansions.iter().any(|expansion| {
         !expansion.quoted

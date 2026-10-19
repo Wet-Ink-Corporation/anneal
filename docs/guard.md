@@ -277,7 +277,8 @@ human actor across the whole call, each anywhere: a literal `--actor` (or an ass
 `a[2]=--actor`), and one word that may be `human` as `--actor "$who"` is judged above
 (`human`, `"$who"`, `"${H:-human}"`, `"$(echo human)"`, or an assignment of one, `a[3]=human`;
 a word that may become several words, such as `"$@"`, stands for words written elsewhere and is
-not one); a word whose written start is `--actor=` and that may be `--actor=human`
+not one, except right after a literal `--actor`, where clap reads it as the value:
+`--actor $WHO`, `--actor "${WHO@L}"`); a word whose written start is `--actor=` and that may be `--actor=human`
 (`"--actor=${H:-human}"`) is both. A call holding both halves and such an anneal call is
 denied whichever comes first, in any simple command at any nesting (a nested `bash -c` string
 included): `anneal "$@" --actor human`,
@@ -409,7 +410,11 @@ it cannot model instead of modelling every shell feature, and it does not try to
   `anneal decide label "$@"`): any `--actor` and any word that may be `human` in the same Bash
   call deny it, related or not, so `echo --actor human; anneal "$@"` and
   `set -- "$id" yes --actor model; anneal decide label "$@"` (`"$id"` may be `human`) are
-  false denials, accepted (#62); split such a command into separate Bash calls;
+  false denials, accepted (#62); split such a command into separate Bash calls. The other
+  side of it: beside such a call, only a literal `--actor` (or one word whose written start
+  is `--actor=`) is the flag half, so a flag known only at run time is missed. Beside
+  `v() { anneal decide label "$@"; }`, `v d1 yes "$F" human`, `v d1 yes --act$x human`,
+  `v d1 yes "$W"` (with `W=--actor=human`) and `v d1 yes --ac* human` are allowed;
 - program names in another letter case: only anneal's name is matched ignoring ASCII case
   (`ANNEAL`, `anneal.EXE`). Every other program is matched as written (a lowercase `.exe`
   dropped), so on a case-insensitive file system (APFS, NTFS) `RM -rf /`, `Git push -f` or

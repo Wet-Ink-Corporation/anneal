@@ -328,7 +328,42 @@ fn a_human_actor_known_only_at_run_time_reaching_an_unread_call_is_denied() {
             "v() { anneal decide label --via \"$@\"; }; v mod d1 yes --actor \"$(echo human)\"",
             HUMAN_ONLY,
         ),
+        ("anneal \"$@\" --actor $WHO", HUMAN_ONLY),
+        (
+            "f() { anneal \"$@\"; }; f verdict set --actor $WHO",
+            HUMAN_ONLY,
+        ),
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --actor $(cat who.txt)",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --actor $WHO; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "a=(d1 yes --actor $WHO); anneal decide label \"${a[@]}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "bash -c 'anneal decide label \"$@\"' _ d1 yes --actor $WHO",
+            HUMAN_ONLY,
+        ),
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --actor \"${WHO@L}\"",
+            HUMAN_ONLY,
+        ),
     ]);
+}
+
+#[test]
+fn a_flag_half_that_is_not_a_literal_actor_is_the_documented_limit() {
+    // docs/guard.md, Limits: only a literal `--actor` is the flag half beside an unread call.
+    // A later change that denies this row is an intended flip.
+    assert_table(&[(
+        "v() { anneal decide label \"$@\"; }; v d1 yes \"$F\" human",
+        ALLOW,
+    )]);
 }
 
 #[test]
@@ -351,6 +386,7 @@ fn a_model_actor_or_no_actor_beside_an_unread_call_stays_allowed() {
         ("anneal decide label \"$@\"", ALLOW),
         ("anneal decide label \"$id\" yes", ALLOW),
         ("anneal decide label d1 yes --actor model", ALLOW),
+        ("anneal decide label $ID yes --actor model", ALLOW),
         (
             "set -- d1 yes --actor model; anneal decide label \"$@\"",
             ALLOW,

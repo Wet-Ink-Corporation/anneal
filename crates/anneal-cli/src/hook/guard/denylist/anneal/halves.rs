@@ -9,7 +9,7 @@ use super::{ACTOR, HUMAN, PATTERN, braces, may_be, may_be_several, written_start
 /// literal `--actor`; and the value, one word that may be `human` ([`may_be`]: `human`,
 /// `"$who"`, `"${H:-human}"`, `"$(echo human)"`), a word that may become several words
 /// ([`may_be_several`]: `"$@"`, `$SUB`) excepted, since it stands for words written
-/// elsewhere. A word whose written start reaches `--actor=` and that may be `--actor=human`
+/// elsewhere, unless it comes right after a literal `--actor` (`--actor $WHO`). A word whose written start reaches `--actor=` and that may be `--actor=human`
 /// (`--actor=human`, `"--actor=${H:-human}"`) is both. The value of an assignment
 /// (`a[2]=--actor`, `a[3]=human`) is read as such a word too.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -21,15 +21,26 @@ pub(in crate::hook::guard::denylist) struct Halves {
 }
 
 impl Halves {
-    /// The halves `words` hold.
+    /// The halves `words` hold. A word right after a literal `--actor` is its value as clap
+    /// reads it, so there it is the value half whenever it may be `human`, even when it may
+    /// become several words (`--actor $WHO`, `--actor "${WHO@L}"`).
     pub(super) fn of(words: &[Word]) -> Self {
-        words.iter().fold(Self::default(), |halves, word| {
-            let whole = may_be_human_actor(word);
-            halves.union(Self {
-                flag: whole || is_actor_flag(word),
-                value: whole || may_be_human(word),
-            })
-        })
+        let (halves, _) =
+            words
+                .iter()
+                .fold((Self::default(), false), |(halves, after_flag), word| {
+                    let assigned = assigned(word);
+                    let whole = may_be_human_actor(word);
+                    let flag = is_actor_flag(word, assigned.as_ref());
+                    let value = (after_flag && may_be(word, HUMAN))
+                        || may_be_human(word, assigned.as_ref());
+                    let word_halves = Self {
+                        flag: whole || flag,
+                        value: whole || value,
+                    };
+                    (halves.union(word_halves), flag)
+                });
+        halves
     }
 
     /// The halves either holds.
@@ -46,16 +57,18 @@ impl Halves {
     }
 }
 
-/// Whether `word` is a literal `--actor`, or assigns one (`a[2]=--actor`).
-fn is_actor_flag(word: &Word) -> bool {
+/// Whether `word` is a literal `--actor`, or assigns one (`a[2]=--actor`); `assigned` is
+/// [`assigned`] of `word`.
+fn is_actor_flag(word: &Word, assigned: Option<&Assigned<'_>>) -> bool {
     (braces::reads_as_written(word) && word.text == ACTOR)
-        || assigned(word).is_some_and(|value| value.whole && value.written == ACTOR)
+        || assigned.is_some_and(|value| value.whole && value.written == ACTOR)
 }
 
-/// Whether `word`, one word, may be `human`, or assigns a value that may be.
-fn may_be_human(word: &Word) -> bool {
+/// Whether `word`, one word, may be `human`, or assigns a value that may be; `assigned` is
+/// [`assigned`] of `word`.
+fn may_be_human(word: &Word, assigned: Option<&Assigned<'_>>) -> bool {
     (!may_be_several(word) && may_be(word, HUMAN))
-        || assigned(word).is_some_and(|value| value.may_be(HUMAN))
+        || assigned.is_some_and(|value| value.may_be(HUMAN))
 }
 
 /// Whether `word`'s written start reaches `--actor=` and the word may be `--actor=human`.
