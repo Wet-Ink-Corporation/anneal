@@ -252,12 +252,51 @@ fn a_pattern_that_may_expand_to_an_option_in_an_option_slot_is_denied() {
         ("sudo -u @(root) -[s] 'rm -rf /'", UNREADABLE),
         ("timeout -[s] KILL 5 echo", UNREADABLE),
         ("xargs -[I] x echo", UNREADABLE),
-        // #147: a pattern where a wrapper reads an option that runs a string.
+        // A pattern where a wrapper reads an option that runs a string.
         ("bash @(-c) 'rm -rf /'", UNREADABLE),
         ("bash ?c 'rm -rf /'", UNREADABLE),
         ("env -S@(rm -rf ~)", UNREADABLE),
         ("env --split-string=@(x)", UNREADABLE),
         ("env -S'rm -rf /'*", UNREADABLE),
+    ]);
+}
+
+/// Issue #165, review round 1: the option part is judged whatever value is attached to it, a
+/// shell's `+` signs an option as `-` does, and su hands its words after `--` to the user's
+/// shell.
+#[test]
+fn an_attached_value_a_plus_sign_or_su_s_dashes_do_not_hide_the_option() {
+    assert_table(&[
+        // Beside a directory named `-Srm -rf `, the trailing `/` matches it.
+        ("env -[S]'rm -rf /'", UNREADABLE),
+        ("env -[S]'rm -rf ${HOME}'", UNREADABLE),
+        ("env -@(S)'rm -rf ${HOME}'", UNREADABLE),
+        ("su -[c]'rm -rf ~'", UNREADABLE),
+        ("su root -[c]'rm -rf ~'", UNREADABLE),
+        ("script -[c]'rm -rf ~'", UNREADABLE),
+        ("bash +[c] 'rm -rf /'", UNREADABLE),
+        ("bash [+]c 'rm -rf /'", UNREADABLE),
+        ("bash +@(c) 'rm -rf /'", UNREADABLE),
+        ("sh +[c] 'rm -rf /'", UNREADABLE),
+        ("bash -o errexit +[c] 'rm -rf /'", UNREADABLE),
+        ("sudo bash +[c] 'rm -rf /'", UNREADABLE),
+        ("su root +[c] 'rm -rf /'", UNREADABLE),
+        ("su root -- -[c] 'rm -rf /'", UNREADABLE),
+        ("su -- root -[c] 'rm -rf /'", UNREADABLE),
+        ("su - -- root -@(c) 'rm -rf /'", UNREADABLE),
+        ("su root -- +[c] 'rm -rf /'", UNREADABLE),
+    ]);
+}
+
+/// Issue #165, review round 1: after a shell's command string come its operands (`$0` and the
+/// rest), which it reads as no options.
+#[test]
+fn the_operands_after_a_shell_s_command_string_are_no_slots() {
+    assert_table(&[
+        ("sh -c 'echo \"$@\"' *", ALLOW),
+        ("bash -c 'echo hi' *", ALLOW),
+        ("bash -xc 'echo hi' x -*", ALLOW),
+        ("bash -c -x 'echo hi' *", ALLOW),
     ]);
 }
 
@@ -279,8 +318,7 @@ fn a_pattern_outside_an_option_slot_is_read_as_before() {
         ("xargs -I{} echo {}", ALLOW),
         ("sudo -u ~root ls", ALLOW),
         ("nice [ -f x ]", ALLOW),
-        // An unmatched glob stays as written, and no file name holds a `/`.
-        ("env -[S]'rm -rf /'", ALLOW),
+        ("bash [ab]*.sh", ALLOW),
     ]);
 }
 

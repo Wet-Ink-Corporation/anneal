@@ -83,7 +83,7 @@ pub(super) fn may_start_option_cluster(word: &Word) -> bool {
         let fits = match part {
             Part::Any => true,
             // Past the first part, a set may match a letter or a digit.
-            Part::Set { dash } => dash || !first,
+            Part::Set { dash, .. } => dash || !first,
             Part::Written(c) => c == '-' || (!first && c.is_ascii_alphanumeric()),
         };
         if !fits {
@@ -94,13 +94,44 @@ pub(super) fn may_start_option_cluster(word: &Word) -> bool {
     !first
 }
 
+/// Whether `word`, not literal, may expand to an option of a program that reads options
+/// signed with one of `signs` (`-`, and for a shell `+`): its first part may be such a sign
+/// (written, any text, or a bracket expression that may match it), and its second part, if
+/// any, may be an option letter (any text, a bracket expression, an ASCII letter or digit, or
+/// `-`), whatever follows: an attached value is not judged (`-[S]'rm -rf ~'`).
+pub(super) fn may_start_option(word: &Word, signs: &[char]) -> bool {
+    if word.is_literal() {
+        return false;
+    }
+    let mut parts = parts(word);
+    let signed = match parts.next() {
+        Some(Part::Any) => true,
+        Some(Part::Set { dash, plus }) => {
+            (dash && signs.contains(&'-')) || (plus && signs.contains(&'+'))
+        }
+        Some(Part::Written(c)) => signs.contains(&c),
+        None => false,
+    };
+    signed
+        && parts.next().is_none_or(|part| match part {
+            Part::Any | Part::Set { .. } => true,
+            Part::Written(c) => c == '-' || c.is_ascii_alphanumeric(),
+        })
+}
+
+/// A bracket expression that may match `-` and `+`.
+const ANY_SIGN: Part = Part::Set {
+    dash: true,
+    plus: true,
+};
+
 /// A part of a word as the shell expands it, for [`may_start_option_cluster`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     /// An expansion, `?` or `*`: any text, a `-` included.
     Any,
-    /// A bracket expression: one character, and whether it may be `-`.
-    Set { dash: bool },
+    /// A bracket expression: one character, and whether it may be `-` and `+`.
+    Set { dash: bool, plus: bool },
     /// A character as written.
     Written(char),
 }
@@ -240,6 +271,8 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
     }
     // A negated set, or one with a class or an expansion, may match `-` without naming it.
     let mut dash = negated;
+    // The same for `+`, which a shell reads as an option's sign too (`+c` is `-c`).
+    let mut plus = negated;
     let mut ahead = expansions;
     // The kind (`:`, `=` or `.`) of the class being read, if any.
     let mut class = None;
@@ -256,6 +289,7 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
             && expansion.range.start == at
         {
             dash = true;
+            plus = true;
             ahead = rest;
             // A range that ends where it starts (which the lexer never makes) still moves on.
             at = expansion.range.end.max(at.saturating_add(1));
@@ -264,7 +298,7 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
         let Some(&byte) = bytes.get(at) else {
             // A class that never closes is no class: its `[` is a member and the set closes at
             // the first `]` after it. What it holds is not read again, so it may be `-`.
-            return fallback.map(|close| (close, Part::Set { dash: true }));
+            return fallback.map(|close| (close, ANY_SIGN));
         };
         let next = at.saturating_add(1);
         if class.is_some() && byte == b']' {
@@ -277,14 +311,19 @@ fn bracket(text: &str, from: usize, expansions: &[Expansion]) -> Option<(usize, 
                 next.saturating_add(1)
             }
             // Inside a class, every other byte (`]` and `-` included) is part of its name.
-            (None, b']', _) => return Some((next, Part::Set { dash })),
+            (None, b']', _) => return Some((next, Part::Set { dash, plus })),
             (None, b'[', Some(&kind @ (b':' | b'=' | b'.'))) => {
                 dash = true;
+                plus = true;
                 class = Some(kind);
                 next.saturating_add(1)
             }
             (None, b'-', _) => {
                 dash = true;
+                next
+            }
+            (None, b'+', _) => {
+                plus = true;
                 next
             }
             _ => next,

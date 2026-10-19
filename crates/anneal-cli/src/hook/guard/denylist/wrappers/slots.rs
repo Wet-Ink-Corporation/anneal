@@ -2,7 +2,7 @@
 //! runs `bash -c` when a file named `-c` is in the directory, so which option such a word is
 //! cannot be read from the command. Variables stay the word-splitting limit of #128.
 
-use super::{Peel, Word, braces, readings};
+use super::{Peel, SHELLS, Word, braces, readings};
 
 /// Wrappers that read no options of their own, or whose words are patterns of their own
 /// (`find -name *.rs`).
@@ -10,17 +10,22 @@ const READS_NO_OPTIONS: [&str; 9] = [
     "function", "busybox", "coproc", "eval", "alias", "source", ".", "trap", "find",
 ];
 
-/// Wrappers that read their options anywhere before a `--` (`su root -c cmd`).
-const PERMUTE: [&str; 2] = ["su", "script"];
+/// The signs a shell reads options with: `+c` is `-c`.
+const SHELL_SIGNS: &[char] = &['-', '+'];
+
+/// The sign every other wrapper reads options with.
+const DASH: &[char] = &['-'];
 
 /// The first word of `rest`, the arguments of the wrapper `name` that `peeled` removed, that
 /// stands where the wrapper reads an option and is a pattern that may expand to one.
 ///
 /// The slots are every word the wrapper took before the command it wraps, and that command's
 /// first word, which the wrapper took for a program only because the pattern did not read as
-/// an option. A wrapper that runs a string or a script itself (a shell, `su`, `env -S`) has
-/// its slots read from its words: all of them before a `--` for one that permutes, else its
-/// leading options and the word after each, up to its first operand.
+/// an option. A wrapper that runs a string or a script itself has its slots read from its
+/// words: for `su`, which permutes and hands its words after the user, `--` included, to the
+/// user's shell, every word, signed as a shell signs them; for `script`, every word before a
+/// `--`; for a shell or `env -S`, its leading options, the word after each and the first
+/// operand, a shell's `-c` string ending them.
 pub(super) fn unsure_option<'a>(
     name: &str,
     rest: &'a [Word],
@@ -35,57 +40,52 @@ pub(super) fn unsure_option<'a>(
             let before = rest
                 .split_at_checked(taken)
                 .map_or(rest, |(before, _)| before);
-            before.iter().chain(inner.first()).find(|word| unsure(word))
+            before
+                .iter()
+                .chain(inner.first())
+                .find(|word| unsure(word, DASH))
         }
-        Peel::Done(_) if PERMUTE.contains(&name) => rest
+        Peel::Done(_) if name == "su" => rest.iter().find(|word| unsure(word, SHELL_SIGNS)),
+        Peel::Done(_) if name == "script" => rest
             .iter()
             .take_while(|word| !ends_options(word))
-            .find(|word| unsure(word)),
-        Peel::Done(_) => leading(rest),
+            .find(|word| unsure(word, DASH)),
+        Peel::Done(_) if SHELLS.contains(&name) => leading(rest, SHELL_SIGNS),
+        Peel::Done(_) => leading(rest, DASH),
         Peel::Program => None,
     }
 }
 
 /// The first unsure word among `words`' leading options, each option's next word (which may
-/// be its value) and the first operand.
-fn leading(words: &[Word]) -> Option<&Word> {
+/// be its value) and the first operand. After a short cluster holding `c`, the first word that
+/// is no option is a shell's command string, and what follows it are operands (`$0` and the
+/// rest), not options.
+fn leading<'a>(words: &'a [Word], signs: &[char]) -> Option<&'a Word> {
     let mut value_may_follow = false;
+    let mut string_pending = false;
     for word in words {
-        if unsure(word) {
+        if unsure(word, signs) {
             return Some(word);
         }
-        if ends_options(word) {
+        let option = word.text.starts_with(signs);
+        if ends_options(word) || !(option || value_may_follow) || (string_pending && !option) {
             return None;
         }
-        let option = word.text.starts_with('-');
-        if !(option || value_may_follow) {
-            return None;
-        }
+        string_pending |= option && !word.text.starts_with("--") && word.text.contains('c');
         value_may_follow = option;
     }
     None
 }
 
-/// Whether `word` holds an unquoted pattern character and may expand to an option cluster, or
-/// is an option written out whose name or value goes on as a pattern (`-S'rm -rf /'*`,
-/// `--split-string=@(x)`); a word brace expansion made that reads as written (`-c` from
-/// `{-c,x}`) is exactly its text.
-fn unsure(word: &Word) -> bool {
+/// Whether `word` holds an unquoted glob or group (a brace or `~` alone, as in `-I{}`, is
+/// none) and may expand to an option signed with one of `signs`, whatever value is attached
+/// (`-[c]`, `@(--)login`, `-S@(rm -rf ~)`, `-[S]'rm -rf ~'`); a word brace expansion made
+/// that reads as written (`-c` from `{-c,x}`) is exactly its text.
+fn unsure(word: &Word, signs: &[char]) -> bool {
     word.has_pattern()
+        && word.text.contains(['*', '?', '[', '('])
         && !braces::reads_as_written(word)
-        && (readings::may_start_option_cluster(word) || written_option(&word.text))
-}
-
-/// Whether `text` starts with a written `-` and a letter, digit or second `-` (an expansion's
-/// source text starts with `$` or a backtick, and a glob with `?`, `*`, `[` or a group's
-/// opener) and holds a glob or a group: a brace or `~` alone (`-I{}`) is no glob.
-fn written_option(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next() == Some('-')
-        && chars
-            .next()
-            .is_some_and(|c| c == '-' || c.is_ascii_alphanumeric())
-        && text.contains(['*', '?', '[', '('])
+        && readings::may_start_option(word, signs)
 }
 
 /// Whether `word` is a literal `--`.
