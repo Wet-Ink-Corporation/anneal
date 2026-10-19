@@ -3,6 +3,8 @@
 //! the evaluator is a missing program, or on unix a fake `claude` script that answers every
 //! batch from its arguments.
 
+mod fixtures;
+
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -233,11 +235,20 @@ while [ $# -gt 0 ]; do
     --max-cost-usd) budget=$2; shift ;;
     --runs) runs=$2; shift ;;
     --allow-tools) tools=$2; shift ;;
+    --scaffold|--no-scaffold) scaffold=$1 ;;
   esac
   shift
 done
 name=$(basename "$target")
 echo "$name $evaldir $budget $runs $tools" >> "$FAKE_CLAUDE_LOG"
+if [ -n "${FAKE_SEEDS_LOG:-}" ]; then
+  placed=none
+  for bin in "$target"/libexec/*/anneal "$target"/libexec/*/anneal.exe; do
+    if [ -x "$bin" ] && cmp -s "$bin" "$FAKE_ANNEAL"; then placed=$(basename "$(dirname "$bin")"); fi
+  done
+  scripts=$(find "$target/$evaldir" -name scaffold.sh | wc -l | tr -d ' ')
+  echo "$name $scaffold scripts=$scripts anneal=$placed" >> "$FAKE_SEEDS_LOG"
+fi
 if [ -n "${FAKE_FAILS:-}" ]; then echo 'Error: not logged in' >&2; exit 1; fi
 if [ "$name" = baseline ]; then listed=fixture-baseline; else listed=fixture; fi
 if [ "$name" = plugin ] || [ -n "${FAKE_BASE_PASSES:-}" ]; then passed=true; else passed=false; fi

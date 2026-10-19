@@ -30,6 +30,7 @@ fn case(skill: &str, suite: SuiteKind, slug: &str, behaviour: Behaviour) -> Case
         slug: slug.to_owned(),
         file: format!("{skill}/{}/{slug}.json", suite.dir()),
         body: parse(text.as_bytes()).expect("valid"),
+        fixture: None,
     }
 }
 

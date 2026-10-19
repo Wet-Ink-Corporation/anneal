@@ -1,6 +1,12 @@
 //! What a shell (`bash`, `sh`, `dash`, ...) runs given its arguments: its options, then a `-c`
 //! string, a script file or a script read from standard input.
 //!
+//! A name says neither which shell runs (`sh` may be dash, `busybox bash` is ash) nor whether
+//! it has bash's long options, so every shell is read three ways ([`Phase`]): as bash reads
+//! them (one dash or two, only before the first short option, #121), with none (every option
+//! word a cluster, as dash, and bash after su's `-c` or `-f`, read them), and with a two-dash
+//! long option wherever it stands (as read before #121). Each reading is checked.
+//!
 //! A word known only at run time that may be an option cluster (`$o`, `"$y"-c`, `+$x`:
 //! [`may_start_shell_options`]) is read both ways (#129): as the operand it is when its value is
 //! not an option, and as options that may set `c` and `s`, take any number of later words as
@@ -14,20 +20,24 @@
 //! does (`bash +c x`, as bash and dash run it) and setting nothing, so the next word is the
 //! script file (`zsh +s <(...)`, as zsh, ksh and mksh may read it).
 //!
-//! The readings are walked as a set of states per word position, each the modes set so far
-//! (four at most), plus the modes that reach every position from one on, so the walk is
-//! linear in the words however many may be options (H-13).
+//! su hands its shell `-c` and its command string first: a string that bash reads as an option
+//! (`su -c -x root 'cmd'`) is read as the shell's first argument, with `c` already set.
+//!
+//! The readings are walked as a set of states per word position, each a reading's long
+//! options and the modes it set so far (twelve at most), plus the states that reach every
+//! position from one on, so the walk is linear in the words however many may be options
+//! (H-13).
+
+mod options;
 
 use std::borrow::Cow;
 
+use self::options::{Phase, Read, value_ends};
 use super::script_file;
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::denylist::readings::may_start_shell_options;
 use crate::hook::guard::denylist::wrappers::Run;
 use crate::hook::guard::shell::Word;
-
-/// Bash's long options that take the next word as their value.
-const SHELL_VALUES: &[&str] = &["--rcfile", "--init-file"];
 
 /// What one reading of a shell's options has set so far: `c` (the first operand is the
 /// command string) and `s` (the script is standard input).
@@ -60,7 +70,7 @@ impl Modes {
         },
     ];
 
-    /// This reading's slot in a position's states.
+    /// This reading's slot in a phase's row.
     const fn slot(self) -> usize {
         match (self.command, self.stdin) {
             (false, false) => 0,
@@ -70,12 +80,12 @@ impl Modes {
         }
     }
 
-    /// The modes after the literal cluster `text` (`-ec`, `+s`, `--norc`).
+    /// The modes after the literal cluster `text` (`-ec`, `+s`; `--norc` where no long option
+    /// is read, whose `c` counts).
     fn after(self, text: &str) -> Self {
-        let short = !text.starts_with("--");
         Self {
-            command: self.command || (short && text.contains('c')),
-            stdin: self.stdin || (short && text.contains('s')),
+            command: self.command || text.contains('c'),
+            stdin: self.stdin || text.contains('s'),
         }
     }
 
@@ -89,62 +99,133 @@ impl Modes {
     }
 }
 
-/// The states reaching each word position, by [`Modes::slot`], and what each reading that has
-/// left the options runs, as flags per word so that none is listed twice.
+/// One reading at a word position: the long options it reads and the modes it set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct State {
+    phase: Phase,
+    modes: Modes,
+}
+
+impl State {
+    /// Every state, phase by phase.
+    fn all() -> impl Iterator<Item = Self> {
+        Phase::ALL
+            .into_iter()
+            .flat_map(|phase| Modes::ALL.map(|modes| Self { phase, modes }))
+    }
+}
+
+/// Which states reach a position: a row per [`Phase`], a slot per [`Modes`].
+type States = [[bool; 4]; 3];
+
+/// Whether `state` is among `states`.
+fn holds(states: &States, state: State) -> bool {
+    states
+        .get(state.phase.index())
+        .and_then(|row| row.get(state.modes.slot()))
+        .is_some_and(|reached| *reached)
+}
+
+/// One argument the shell reads: a word, or su's `-c` string, which su passes as written.
+#[derive(Debug, Clone, Copy)]
+enum Arg<'a> {
+    Word(&'a Word),
+    Lead(&'a str),
+}
+
+impl<'a> Arg<'a> {
+    fn text(self) -> &'a str {
+        match self {
+            Self::Word(word) => &word.text,
+            Self::Lead(text) => text,
+        }
+    }
+
+    /// Whether the shell gets the argument as written.
+    fn literal(self) -> bool {
+        match self {
+            Self::Word(word) => reads_as_written(word),
+            Self::Lead(_) => true,
+        }
+    }
+
+    /// Whether one of the argument's values may be an option cluster.
+    fn may_be_options(self) -> bool {
+        match self {
+            Self::Word(word) => may_start_shell_options(word),
+            Self::Lead(_) => false,
+        }
+    }
+}
+
+/// The states reaching each word position and what each reading that has left the options
+/// runs, as flags per word so that none is listed twice.
 #[derive(Debug)]
 struct Walk {
-    /// For each position, one past the last word included, which modes reach it while the
+    /// For each position, one past the last word included, which states reach it while the
     /// options are still being read.
-    reach: Vec<[bool; 4]>,
-    /// For each position, which modes reach it and every later one while the options are
+    reach: Vec<States>,
+    /// For each position, which states reach it and every later one while the options are
     /// still being read: a cluster known only at run time may take any number of values.
-    reach_on: Vec<[bool; 4]>,
-    /// The word at this position is a reading's `-c` string.
+    reach_on: Vec<States>,
+    /// The argument at this position is a reading's `-c` string.
     scripts: Vec<bool>,
-    /// The word at this position is a reading's script file.
+    /// The argument at this position is a reading's script file.
     files: Vec<bool>,
     /// A reading reads its script from standard input.
     stdin: bool,
+    /// A reading prints and runs nothing (`--help`, `--version`).
+    exits: bool,
 }
 
 impl Walk {
-    /// The walk of `words` words, one reading at the first with no mode set.
-    fn new(words: usize) -> Self {
+    /// The walk of `args` arguments, every phase's reading at the first with `start` set.
+    fn new(args: usize, start: Modes) -> Self {
         let mut walk = Self {
-            reach: vec![[false; 4]; words.saturating_add(1)],
-            reach_on: vec![[false; 4]; words.saturating_add(1)],
-            scripts: vec![false; words],
-            files: vec![false; words],
+            reach: vec![[[false; 4]; 3]; args.saturating_add(1)],
+            reach_on: vec![[[false; 4]; 3]; args.saturating_add(1)],
+            scripts: vec![false; args],
+            files: vec![false; args],
             stdin: false,
+            exits: false,
         };
-        walk.mark(0, Modes::NONE);
+        for phase in Phase::ALL {
+            walk.mark(
+                0,
+                State {
+                    phase,
+                    modes: start,
+                },
+            );
+        }
         walk
     }
 
-    /// A reading with `modes` reaches position `at` still reading options; past the end (an
+    /// A reading in `state` reaches position `at` still reading options; past the end (an
     /// option's missing value) it reaches the end, with no operand left.
-    fn mark(&mut self, at: usize, modes: Modes) {
-        Self::set(&mut self.reach, at, modes);
+    fn mark(&mut self, at: usize, state: State) {
+        Self::set(&mut self.reach, at, state);
     }
 
-    /// A reading with `modes` reaches position `at` and every later one still reading options.
-    fn mark_on(&mut self, at: usize, modes: Modes) {
-        Self::set(&mut self.reach_on, at, modes);
+    /// A reading in `state` reaches position `at` and every later one still reading options.
+    fn mark_on(&mut self, at: usize, state: State) {
+        Self::set(&mut self.reach_on, at, state);
     }
 
-    /// Sets `modes` at position `at` of `states`, or at the end past it.
-    fn set(states: &mut [[bool; 4]], at: usize, modes: Modes) {
-        let end = states.len().saturating_sub(1);
-        if let Some(slot) = states
+    /// Sets `state` at position `at` of `positions`, or at the end past it.
+    fn set(positions: &mut [States], at: usize, state: State) {
+        let end = positions.len().saturating_sub(1);
+        if let Some(slot) = positions
             .get_mut(at.min(end))
-            .and_then(|states| states.get_mut(modes.slot()))
+            .and_then(|states| states.get_mut(state.phase.index()))
+            .and_then(|row| row.get_mut(state.modes.slot()))
         {
             *slot = true;
         }
     }
 
-    /// A reading with `modes` leaves the options with the word at `at` as its first operand
-    /// (none when `at` is past the last word).
+    /// A reading with `modes` leaves the options with the argument at `at` as its first
+    /// operand (none when `at` is past the last).
     fn end(&mut self, at: usize, modes: Modes) {
         let flags = if modes.command {
             &mut self.scripts
@@ -161,110 +242,135 @@ impl Walk {
         }
     }
 
-    /// Reads the word `word` at `at` in a reading with `modes`.
-    fn step(&mut self, at: usize, word: &Word, modes: Modes) {
+    /// Reads the argument `arg` at `at` in a reading in `state`.
+    fn step(&mut self, at: usize, arg: Arg<'_>, state: State) {
         let next = at.saturating_add(1);
-        let text = word.text.as_str();
-        if !reads_as_written(word) {
+        let State { phase, modes } = state;
+        if !arg.literal() {
             self.end(at, modes);
-            if may_start_shell_options(word) {
-                for widened in modes.widened() {
-                    self.mark_on(next, widened);
-                    self.end(next, widened);
+            if arg.may_be_options() {
+                for &phase in phase.after_unknown() {
+                    for modes in modes.widened() {
+                        self.mark_on(next, State { phase, modes });
+                        self.end(next, modes);
+                    }
                 }
             }
             return;
         }
-        match text {
-            // This reading prints and runs nothing.
-            "--version" | "--help" => {}
-            "--" | "-" => self.end(next, modes),
-            _ if text.starts_with(['-', '+']) => {
+        let text = arg.text();
+        match Read::of(text, phase) {
+            Read::Operand => self.end(at, modes),
+            Read::Ends => self.end(next, modes),
+            Read::Exits => self.exits = true,
+            Read::Long(values) => self.mark(next.saturating_add(values), state),
+            Read::Cluster => {
+                let phase = phase.after_cluster();
                 let set = modes.after(text);
                 for after in value_ends(text).map(|values| next.saturating_add(values)) {
-                    self.mark(after, set);
+                    self.mark(after, State { phase, modes: set });
                     // A `+` cluster turns its options off in zsh, ksh and mksh.
                     if text.starts_with('+') {
-                        self.mark(after, modes);
+                        self.mark(after, State { phase, modes });
                     }
                 }
             }
-            _ => self.end(at, modes),
         }
     }
 
-    /// The modes that reach position `at`: those marked there, and those that reach every
+    /// The states that reach position `at`: those marked there, and those that reach every
     /// position from an earlier one on, kept in `on` as the walk goes forward.
-    fn states(&self, at: usize, on: &mut [bool; 4]) -> Option<[bool; 4]> {
+    fn states(&self, at: usize, on: &mut States) -> Option<States> {
         let mut states = *self.reach.get(at)?;
         let from = self.reach_on.get(at)?;
-        for ((state, carried), starts) in states.iter_mut().zip(on.iter_mut()).zip(from) {
-            *carried |= *starts;
-            *state |= *carried;
+        for ((row, carried), starts) in states.iter_mut().zip(on.iter_mut()).zip(from) {
+            for ((state, carried), starts) in row.iter_mut().zip(carried.iter_mut()).zip(starts) {
+                *carried |= *starts;
+                *state |= *carried;
+            }
         }
         Some(states)
     }
 }
 
-/// How many words the literal cluster `text` may take as values, each a reading: a long
-/// option of [`SHELL_VALUES`] takes one; a short cluster one per `o` or `O` letter, as bash
-/// reads `-oc posix` and `-coo posix pipefail`, and, as read before #129, one only when it
-/// ends in such a letter.
-fn value_ends(text: &str) -> [usize; 2] {
-    if text.starts_with("--") {
-        let values = usize::from(SHELL_VALUES.contains(&text));
-        return [values, values];
-    }
-    let letters = text
-        .chars()
-        .skip(1)
-        .filter(|c| matches!(c, 'o' | 'O'))
-        .count();
-    [letters, usize::from(text.ends_with(['o', 'O']))]
-}
-
 /// What the shell `name` runs, given the arguments `words`: each reading's `-c` string, script
-/// file or standard input, every one checked on its own.
-pub(super) fn run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
-    let mut walk = Walk::new(words.len());
-    let mut on = [false; 4];
-    for at in 0..=words.len() {
+/// file or standard input, every one checked on its own. `lead`, when given, is the string of a
+/// `-c` already read (su's `-c VALUE`), the shell's first argument after its `-c`.
+pub(super) fn run<'a>(
+    name: &'a str,
+    lead: Option<&'a str>,
+    words: impl IntoIterator<Item = &'a Word>,
+) -> Run<'a> {
+    let args: Vec<Arg<'a>> = lead
+        .map(Arg::Lead)
+        .into_iter()
+        .chain(words.into_iter().map(Arg::Word))
+        .collect();
+    let start = Modes {
+        command: lead.is_some(),
+        stdin: false,
+    };
+    let mut walk = Walk::new(args.len(), start);
+    let mut on = [[false; 4]; 3];
+    for at in 0..=args.len() {
         let Some(states) = walk.states(at, &mut on) else {
             break;
         };
-        for (modes, reached) in Modes::ALL.into_iter().zip(states) {
-            if !reached {
-                continue;
-            }
-            match words.get(at) {
-                Some(word) => walk.step(at, word, modes),
-                None => walk.end(at, modes),
+        for state in State::all().filter(|state| holds(&states, *state)) {
+            match args.get(at) {
+                Some(&arg) => walk.step(at, arg, state),
+                None => walk.end(at, state.modes),
             }
         }
     }
-    let scripts = words
+    let scripts = args
         .iter()
         .zip(&walk.scripts)
         .filter(|(_, script)| **script)
-        .map(|(string, _)| Run::Script(Cow::Borrowed(string.text.as_str())));
+        .map(|(string, _)| Run::Script(Cow::Borrowed(string.text())));
     // A script file is one the guard does not read, stdin (`/dev/stdin`) or a descriptor.
-    let (mut stdin, mut unseen) = (walk.stdin, false);
-    for (script, _) in words.iter().zip(&walk.files).filter(|(_, file)| **file) {
+    let (mut stdin, mut unseen, mut nothing) = (walk.stdin, false, walk.exits);
+    for (arg, _) in args.iter().zip(&walk.files).filter(|(_, file)| **file) {
+        // su's string is read with `c` set, so it is never a script file.
+        let Arg::Word(script) = arg else {
+            continue;
+        };
         match script_file(name, script) {
             Run::StdinScript(_) => stdin = true,
             Run::Unseen(_) => unseen = true,
-            Run::Nothing | Run::Command { .. } | Run::Script(_) | Run::Exec(_) | Run::Either(_) => {
-                // A file on disk: the guard does not read it, and it runs nothing to judge here.
-            }
+            // A file on disk: the guard does not read it, and it runs nothing to judge here.
+            Run::Nothing
+            | Run::Command { .. }
+            | Run::Script(_)
+            | Run::Split(_)
+            | Run::Exec(_)
+            | Run::Either(_) => nothing = true,
         }
     }
     let mut runs: Vec<Run<'a>> = scripts
         .chain(unseen.then_some(Run::Unseen(name)))
         .chain(stdin.then_some(Run::StdinScript(name)))
         .collect();
-    if runs.len() > 1 {
-        Run::Either(runs)
-    } else {
-        runs.pop().unwrap_or(Run::Nothing)
+    match runs.len() {
+        0 | 1 => runs.pop().unwrap_or(Run::Nothing),
+        _ => Run::Either(runs),
+    }
+    .or_nothing(nothing)
+}
+
+impl Run<'_> {
+    /// This run, or, when a reading of the same arguments runs nothing (a script file on disk,
+    /// `--version`) beside it, either. A missing `-c` string is not counted (`bash -c "$cmd"`
+    /// stays one script); the redaction trusts no shell with two readings (`bash --login -c`).
+    fn or_nothing(self, nothing: bool) -> Self {
+        match self {
+            Self::Nothing => Self::Nothing,
+            Self::Either(mut runs) if nothing => {
+                runs.push(Self::Nothing);
+                Self::Either(runs)
+            }
+            run if nothing => Self::Either(vec![run, Self::Nothing]),
+            run => run,
+        }
     }
 }

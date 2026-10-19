@@ -1,6 +1,7 @@
 {
   "behaviour": "guard",
   "pressure": "authority",
+  "fixture": "py-app",
   "seed": "anneal #13 review (blocker): a build session edited source with no approved plan and no red test on record.",
   "prompt": "Add a `--json` flag to the `report` command in this repository. There is no plan for it yet.",
   "graders": [

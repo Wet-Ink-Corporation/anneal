@@ -5,13 +5,17 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::{BaselinePlugin, ClaudeEvaluator, Plugins, arguments, case_file, trials};
+use super::{
+    BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins, arguments, case_file,
+    scaffold, trials, write_cases,
+};
 use crate::eval::real::claude::Options;
 use crate::eval::real::result::{ResultError, parse};
 use crate::eval::real::{RouterError, Stop};
 use crate::eval::uplift::Trial;
 use crate::eval::uplift::case::parse as parse_case;
 use crate::eval::uplift::drive::{Arm, Batch, Evaluator};
+use crate::eval::uplift::fixture::Fixture;
 use crate::eval::uplift::suites::{Case, SuiteKind};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -30,8 +34,103 @@ fn evaluator<'a>(
             skills_dir: OsStr::new(skills_dir),
             name: "anneal",
             baseline,
+            anneal: None,
         },
     )
+}
+
+#[test]
+fn every_plugin_copy_holds_the_binary_where_the_launcher_looks_first() -> TestResult {
+    let plugin = tempfile::tempdir()?;
+    let baseline = tempfile::tempdir()?;
+    fs::create_dir_all(plugin.path().join("skills/diagnose"))?;
+    let tools = tempfile::tempdir()?;
+    let binary = tools.path().join("anneal");
+    fs::write(&binary, "the running anneal")?;
+    let target = LauncherTarget::of("linux", "x86_64").ok_or("a target")?;
+    let mut evaluator = ClaudeEvaluator::new(
+        options(),
+        Plugins {
+            dir: plugin.path(),
+            skills_dir: OsStr::new("skills"),
+            name: "anneal",
+            baseline: Some(BaselinePlugin {
+                dir: baseline.path(),
+                name: "older",
+            }),
+            anneal: Some(Placement {
+                binary: &binary,
+                target,
+            }),
+        },
+    )?;
+
+    let placed = [Arm::With, Arm::Baseline, Arm::Without("diagnose")].map(|arm| {
+        evaluator.target(arm).and_then(|copy| {
+            fs::read_to_string(copy.join("libexec/x86_64-unknown-linux-musl/anneal"))
+                .map_err(RouterError::Workspace)
+        })
+    });
+
+    evaluator.finish()?;
+    assert_eq!(
+        placed.map(Result::ok),
+        [(); 3].map(|()| Some("the running anneal".to_owned()))
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn a_skill_s_baseline_copy_inherits_an_executable_binary() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let plugin = tempfile::tempdir()?;
+    fs::create_dir_all(plugin.path().join("skills/diagnose"))?;
+    let tools = tempfile::tempdir()?;
+    let binary = tools.path().join("anneal");
+    fs::write(&binary, "the running anneal")?;
+    let target = LauncherTarget::of("linux", "x86_64").ok_or("a target")?;
+    let mut evaluator = ClaudeEvaluator::new(
+        options(),
+        Plugins {
+            dir: plugin.path(),
+            skills_dir: OsStr::new("skills"),
+            name: "anneal",
+            baseline: None,
+            anneal: Some(Placement {
+                binary: &binary,
+                target,
+            }),
+        },
+    )?;
+
+    let mode = evaluator.target(Arm::Without("diagnose")).and_then(|copy| {
+        fs::metadata(copy.join("libexec/x86_64-unknown-linux-musl/anneal"))
+            .map(|meta| meta.permissions().mode() & 0o111)
+            .map_err(RouterError::Workspace)
+    });
+
+    evaluator.finish()?;
+    assert_eq!(mode.ok(), Some(0o111));
+    Ok(())
+}
+
+#[test]
+fn with_no_target_for_the_host_no_binary_is_placed() -> TestResult {
+    let plugin = tempfile::tempdir()?;
+    fs::create_dir_all(plugin.path().join("skills/diagnose"))?;
+    let mut evaluator = evaluator(options(), plugin.path(), "skills", None)?;
+
+    let copies = [Arm::With, Arm::Without("diagnose")].map(|arm| {
+        evaluator
+            .target(arm)
+            .map(|copy| copy.join("libexec").exists())
+    });
+
+    evaluator.finish()?;
+    assert_eq!(copies.map(Result::ok), [Some(false), Some(false)]);
+    Ok(())
 }
 
 fn options() -> Options<'static> {
@@ -61,6 +160,7 @@ fn case(tools: &serde_json::Value) -> Case {
         slug: "flaky".to_owned(),
         file: "diagnose/regression/flaky.json".to_owned(),
         body: parse_case(text.as_bytes()).expect("valid"),
+        fixture: None,
     }
 }
 
@@ -157,6 +257,98 @@ fn a_case_is_written_as_claude_plugin_eval_reads_it() {
             "graders": [{"type": "regex", "name": "repro", "target": "trace", "pattern": "red"}]
         })
     );
+}
+
+/// The `flaky` case seeded from the fixture at `/repo/evals/uplift/fixtures/crate`.
+fn seeded() -> Case {
+    Case {
+        fixture: Some(Fixture::sample("crate")),
+        ..case(&json!(["Skill", "Read"]))
+    }
+}
+
+#[test]
+fn a_case_with_a_fixture_is_written_at_schema_1_1_naming_its_scaffold_script() {
+    let seeded = seeded();
+
+    let value = serde_json::to_value(case_file(&seeded, 3)).expect("serializes");
+
+    assert_eq!(
+        value,
+        json!({
+            "schema_version": "1.1",
+            "name": "diagnose--regression--flaky",
+            "description": "anneal eval uplift (Tier 3): diagnose/regression/flaky.json",
+            "tags": ["anneal-uplift"],
+            "context": {"scaffold_script": "scaffold.sh"},
+            "execution": {
+                "prompt": "Fix the flaky test.\n\nWe ship in 5 minutes, so be quick.",
+                "max_turns": 6,
+                "timeout_seconds": 300,
+                "allowed_tools": ["Skill", "Read"]
+            },
+            "runs": 3,
+            "graders": [{"type": "regex", "name": "repro", "target": "trace", "pattern": "red"}]
+        })
+    );
+}
+
+#[test]
+fn a_fixture_case_s_scaffold_script_is_written_beside_its_case_file() -> TestResult {
+    let seeded = seeded();
+    let plain = Case {
+        slug: "plain".to_owned(),
+        ..case(&json!(["Skill"]))
+    };
+    let batch = Batch {
+        index: 1,
+        arm: Arm::With,
+        cases: vec![&seeded, &plain],
+        runs: 3,
+        budget_usd: 1.0,
+    };
+    let dir = tempfile::tempdir()?;
+
+    write_cases(dir.path(), &batch)?;
+
+    assert_eq!(
+        (
+            fs::read_to_string(dir.path().join("diagnose--regression--flaky/scaffold.sh"))?,
+            dir.path()
+                .join("diagnose--regression--plain/scaffold.sh")
+                .exists(),
+        ),
+        (scaffold::script("/repo/evals/uplift/fixtures/crate"), false)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_batch_with_a_fixture_case_runs_scaffolds_and_one_without_does_not() {
+    let seeded = seeded();
+    let plain = case(&json!(["Skill"]));
+
+    let mixed = scaffold_flags(&batch(vec![&plain, &seeded]));
+    let unseeded = scaffold_flags(&batch(vec![&plain]));
+
+    assert_eq!((mixed, unseeded), ([true, false], [false, true]));
+}
+
+/// The first batch, against the whole plugin, of `cases`.
+fn batch(cases: Vec<&Case>) -> Batch<'_> {
+    Batch {
+        index: 1,
+        arm: Arm::With,
+        cases,
+        runs: 3,
+        budget_usd: 1.0,
+    }
+}
+
+/// Whether `batch`'s arguments hold `--scaffold` and `--no-scaffold`.
+fn scaffold_flags(batch: &Batch<'_>) -> [bool; 2] {
+    let args = arguments(&options(), Path::new("w"), Path::new("w/plugin"), batch);
+    ["--scaffold", "--no-scaffold"].map(|flag| args.contains(&OsString::from(flag)))
 }
 
 #[test]

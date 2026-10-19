@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Use when a change needs a pull request, review verdict, merge, schema migration or rollout, even if it looks safe; decide GO or NO-GO only with a rollback ready. Do NOT use for proving work done or passing (use `verify`) or a failure with an unknown cause (use `diagnose`).
+description: Use when a change needs a pull request, review verdict or depth, merge, schema migration, rollout, canary or rollback, even if it looks safe; decide GO or NO-GO only with a rollback ready. Do NOT use for proving work done or passing (use `verify`) or a failure with an unknown cause (use `diagnose`).
 ---
 
 # Ship

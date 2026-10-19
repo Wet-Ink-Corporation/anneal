@@ -15,5 +15,6 @@
       "name": "judge",
       "criteria": "The reply ranks several hypotheses (the turn limit too low for loading a skill and answering, the error counted as no trial, a hook adding turns), each with an observation that would rule it out, and tests one at a time rather than raising limits blindly."
     }
-  ]
+  ],
+  "fixture": "anneal-repo"
 }
