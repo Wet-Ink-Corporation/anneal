@@ -429,7 +429,10 @@ fn a_stop_already_continued_by_a_stop_hook_is_left_alone() -> TestResult {
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_debug_leftover_blocks_even_without_a_claim() -> TestResult {
     let session = Session::new()?;
-    std::fs::write(session.root().join("probe.py"), "print('[DEBUG-a1] x')\n")?;
+    std::fs::write(
+        session.root().join("probe.py"),
+        format!("print('[{}-a1] x')\n", "DEBUG"),
+    )?;
 
     let reason = session
         .stop("Still looking.")?

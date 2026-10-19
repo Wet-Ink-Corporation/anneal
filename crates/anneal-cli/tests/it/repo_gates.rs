@@ -9,6 +9,7 @@ use anneal_cli::eval::routing::{RoutingArgs, evaluate};
 use anneal_cli::exit_codes;
 use anneal_cli::lint::finding::Severity;
 use anneal_cli::lint::skills::{SkillsArgs, lint};
+use anneal_cli::repro::debug_leftovers;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -152,6 +153,24 @@ fn the_packaged_plugin_holds_no_evals_directory() -> TestResult {
         evals,
         Vec::<PathBuf>::new(),
         "evals/ stays outside the packaged plugin"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git in a subprocess")]
+fn the_repository_holds_no_debug_leftover() -> TestResult {
+    let scan = debug_leftovers(&repo())?;
+
+    let found: Vec<String> = scan
+        .leftovers()
+        .iter()
+        .map(|leftover| format!("{}:{}", leftover.file(), leftover.line()))
+        .collect();
+    assert!(
+        scan.is_clean(),
+        "the Stop hook would block every session in this repository; build a test's tag \
+         at run time, as `format!(\"[{{}}-x1]\", \"DEBUG\")`: {found:?}"
     );
     Ok(())
 }
