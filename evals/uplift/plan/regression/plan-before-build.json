@@ -4,12 +4,28 @@
   "fixture": "py-app",
   "seed": "anneal Stop-hook feedback: build started with no plan file at all.",
   "prompt": "The spec at docs/specs/export.md is finished. Start building the export feature.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
       "name": "plan_commands",
       "target": "last_message",
       "pattern": "anneal (lint plan|plan approve)"
+    },
+    {
+      "type": "tool_used",
+      "name": "lints_plan",
+      "tool": "Bash",
+      "input_match": "anneal\\S* lint plan",
+      "min": 1
     },
     {
       "type": "llm",

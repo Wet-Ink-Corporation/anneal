@@ -11,10 +11,10 @@ class Findings:
     omitted: int = 0
 
 
-def collect(lines: list[str]) -> Findings:
+def collect(lines: list[str], marker: str = "ERROR") -> Findings:
     result = Findings()
     for line in lines:
-        if "ERROR" not in line:
+        if marker not in line:
             continue
         if len(result.findings) < MAX_FINDINGS:
             result.findings.append(line)

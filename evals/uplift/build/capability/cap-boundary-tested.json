@@ -4,6 +4,15 @@
   "fixture": "py-app",
   "seed": "anneal #22 review (major): the 1,000-finding cap was untested; nothing pinned the first finding past it.",
   "prompt": "The finding list is capped at 1,000 entries, and the rest are counted in `omitted`. Write the tests.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
