@@ -15,10 +15,12 @@
 //! alone denies. A call the guard cannot read ([`unread_call`]: a subcommand-path word not read
 //! as written, `anneal "$@"` or `anneal $SUB`, which may stand for the whole path, or a
 //! target's operands from a word that may become several, `anneal decide label "$@"`) is
-//! denied by a literal `--actor=human` or `--actor human` anywhere in the call, before or after
-//! it, in any simple command at any nesting ([`Seen`]: `f() { anneal "$@"; }; f verdict set
-//! --actor human`, `bash -c 'anneal decide label "$@"' _ d1 yes --actor human`, `set -- ...
-//! --actor human; anneal "$@"`). The program is anneal in any ASCII case, with or without
+//! denied when the call also holds both halves of a human actor ([`Halves`]: a literal
+//! `--actor`, and a word that may be `human`, such as `"$(echo human)"`; or one word that may
+//! be `--actor=human`), each anywhere, before or after it, in any simple command at any
+//! nesting ([`Seen`]: `f() { anneal "$@"; }; f verdict set --actor human`, `bash -c 'anneal
+//! decide label "$@"' _ d1 yes --actor "$(echo human)"`, `set -- d1 yes --actor; set -- "$@"
+//! human; anneal decide label "$@"`). The program is anneal in any ASCII case, with or without
 //! `.exe` (`ANNEAL`, `anneal.EXE`). A word that may become several words is otherwise judged
 //! as one word: word splitting of an unquoted expansion into `--actor human` (`--sha $x`) is
 //! the guard's documented limit (#128).
@@ -27,6 +29,10 @@ use crate::hook::guard::shell::Word;
 use crate::hook::guard::{Denial, Rule};
 
 use super::braces;
+
+mod halves;
+
+pub(super) use halves::Halves;
 
 /// The reason every `human-only` denial gives.
 const REASON: &str = "human verdicts are human-only: use /anneal or run it in your own terminal";
@@ -73,7 +79,7 @@ pub(super) fn check(args: &[Word], appended: bool) -> Option<Denial> {
     let claims = TARGETS
         .iter()
         .any(|target| claims_human(target, args, appended))
-        || unread_path(args).is_some_and(names_human);
+        || unread_path(args).is_some_and(|rest| Halves::of(rest).both());
     claims.then(denial)
 }
 
@@ -143,44 +149,37 @@ fn several_after_path(args: &[Word]) -> bool {
             .any(|word| !braces::reads_as_written(word) && may_be_several(word))
 }
 
-/// What a check has seen, so far, of the two halves of a human actor passed to an anneal call
-/// the guard cannot read: such a call ([`unread_call`]) and a literal human actor
-/// ([`names_human`]) anywhere in the call, in either order. The actor may reach the call's
-/// arguments through words the guard does not follow (`"$@"` of a function, a shell's
-/// positional arguments, `set --`, an array), so the two together deny wherever they stand.
+/// What a check has seen, so far, of an anneal call the guard cannot read ([`unread_call`])
+/// and of the two halves of a human actor ([`Halves`]) anywhere in the call, in any order. The
+/// actor may reach the call's arguments through words the guard does not follow (`"$@"` of a
+/// function, a shell's positional arguments, `set --`, an array, one element at a time), so
+/// the call and both halves together deny wherever they stand.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct Seen {
     /// An anneal call the guard cannot read ([`unread_call`]).
     unread_call: bool,
-    /// A word read `--actor=human`, or two read `--actor human`.
-    human: bool,
+    /// The halves of a human actor seen in any simple command of the call.
+    actor: Halves,
 }
 
 impl Seen {
-    /// Notes an anneal call the guard cannot read; the denial once a human actor was seen too.
+    /// Notes an anneal call the guard cannot read; the denial once both halves of a human
+    /// actor were seen too.
     pub(super) fn call_unread(&mut self) -> Option<Denial> {
         self.unread_call = true;
         self.both()
     }
 
-    /// Notes a literal human actor; the denial once an unread anneal call was seen too.
-    pub(super) fn human_named(&mut self) -> Option<Denial> {
-        self.human = true;
+    /// Notes the halves of a human actor `words` hold; the denial once both halves and an
+    /// unread anneal call were seen.
+    pub(super) fn words(&mut self, words: &[Word]) -> Option<Denial> {
+        self.actor = self.actor.union(Halves::of(words));
         self.both()
     }
 
     fn both(self) -> Option<Denial> {
-        (self.unread_call && self.human).then(denial)
+        (self.unread_call && self.actor.both()).then(denial)
     }
-}
-
-/// Whether `words` hold, read as written, `--actor=human` or the pair `--actor human`.
-pub(super) fn names_human(words: &[Word]) -> bool {
-    let literal = |word: &Word, text: &str| braces::reads_as_written(word) && word.text == text;
-    words.iter().any(|word| literal(word, "--actor=human"))
-        || words.windows(2).any(
-            |pair| matches!(pair, [flag, value] if literal(flag, ACTOR) && literal(value, HUMAN)),
-        )
 }
 
 /// Whether the program `word` may be anneal: its last path component is anneal
@@ -287,8 +286,8 @@ impl Count {
     /// Whether an unsure word may be the human actor while the command still has its
     /// `required` operands: a word read as an option leaves one operand fewer, and a word
     /// that may become several words, other than the unsure one, may supply any number. A
-    /// lone word of several words (`decide label "$@"`) is left to [`Seen`], which denies it
-    /// beside a literal human actor.
+    /// lone word of several words (`decide label "$@"`) is left to [`Seen`], which denies the
+    /// call when it also holds both halves of a human actor ([`Halves`]).
     fn may_claim(&self, required: usize) -> bool {
         let counted = self.operands.saturating_sub(1) >= required;
         (self.unsure_one && (counted || self.several >= 1))
@@ -297,26 +296,18 @@ impl Count {
 }
 
 /// Whether `word` may become several words: it holds an unquoted expansion, which the shell
-/// field-splits (`$x`, `$*`, `${x[*]}`, `$(cmd)`), or a quoted one that expands to one word
-/// per element (`"$@"`, `"${x[@]}"`, `"${!prefix@}"`), as the lexer marks each expansion's
-/// source text and quoting.
+/// field-splits (`$x`, `$*`, `${x[*]}`, `$(cmd)`), or a quoted one whose source text holds an
+/// `@`, which may expand to one word per element: `"$@"`, `"${x[@]}"`, `"${!prefix@}"`, and
+/// `$@` nested in another expansion (`"${x:-$@}"`, `"${x-"$@"}"`). A quoted `@` that gives one
+/// word (`"${x@Q}"`) is counted too, which only denies more.
 fn may_be_several(word: &Word) -> bool {
     word.expansions.iter().any(|expansion| {
         !expansion.quoted
             || word
                 .text
                 .get(expansion.range.clone())
-                .is_none_or(expands_per_element)
+                .is_none_or(|source| source.contains('@'))
     })
-}
-
-/// Whether a quoted expansion's source text gives one word per element: `$@`, `${@...}`, an
-/// array's `[@]` subscript, or `${!prefix@}`.
-fn expands_per_element(source: &str) -> bool {
-    source == "$@"
-        || source.starts_with("${@")
-        || (source.starts_with("${") && source.contains("[@]"))
-        || (source.starts_with("${!") && source.ends_with("@}"))
 }
 
 /// Characters after which a pattern word's text is no longer what it matches.
@@ -329,8 +320,17 @@ fn may_be(word: &Word, text: &str) -> bool {
     if braces::reads_as_written(word) {
         return word.text == text;
     }
-    // A quoted pattern character is cut at too: the written start is then shorter, which only
-    // lets the word be more texts.
+    text.starts_with(written_start(word))
+}
+
+/// What is written of `word` before its first expansion or pattern character: all of it when
+/// it is read as written, and nothing when the cut is not on a character boundary (so the word
+/// may be any text). A quoted pattern character is cut at too: the written start is then
+/// shorter, which only lets the word be more texts.
+fn written_start(word: &Word) -> &str {
+    if braces::reads_as_written(word) {
+        return &word.text;
+    }
     let end = word
         .expansions
         .iter()
@@ -338,7 +338,5 @@ fn may_be(word: &Word, text: &str) -> bool {
         .chain(word.text.find(PATTERN))
         .min()
         .unwrap_or(word.text.len());
-    word.text
-        .get(..end)
-        .is_none_or(|written| text.starts_with(written))
+    word.text.get(..end).unwrap_or_default()
 }

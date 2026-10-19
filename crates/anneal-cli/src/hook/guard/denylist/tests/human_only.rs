@@ -278,6 +278,87 @@ fn a_literal_human_actor_with_operands_known_only_at_run_time_is_denied() {
             HUMAN_ONLY,
         ),
         ("anneal decide label $ARGS \"$flag\"", HUMAN_ONLY),
+        (
+            "set -- d1 yes --actor human; anneal decide label \"${x:-$@}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --actor human; anneal decide label \"${x-\"$@\"}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --actor human; anneal decide label \"${x:+$@}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "f() { anneal decide label \"${x:-$@}\"; }; f d1 yes --actor human",
+            HUMAN_ONLY,
+        ),
+    ]);
+}
+
+#[test]
+fn a_human_actor_known_only_at_run_time_reaching_an_unread_call_is_denied() {
+    assert_table(&[
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --actor \"$(echo human)\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --actor \"${H:-human}\"; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes \"--actor=${H:-human}\"; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "a=(d1 yes --actor \"$(echo human)\"); anneal decide label \"${a[@]}\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "bash -c 'anneal decide label \"$@\"' _ d1 yes --actor \"$(echo human)\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "f() { anneal \"$@\"; }; f verdict set --actor \"$(echo human)\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "v() { anneal decide label --via \"$@\"; }; v mod d1 yes --actor \"$(echo human)\"",
+            HUMAN_ONLY,
+        ),
+    ]);
+}
+
+#[test]
+fn the_flag_and_the_human_value_split_across_commands_of_one_call_are_denied() {
+    assert_table(&[
+        (
+            "set -- d1 yes --actor; set -- \"$@\" human; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "a[0]=d1; a[1]=yes; a[2]=--actor; a[3]=human; anneal decide label \"${a[@]}\"",
+            HUMAN_ONLY,
+        ),
+    ]);
+}
+
+#[test]
+fn a_model_actor_or_no_actor_beside_an_unread_call_stays_allowed() {
+    assert_table(&[
+        ("anneal decide label \"$@\"", ALLOW),
+        ("anneal decide label \"$id\" yes", ALLOW),
+        ("anneal decide label d1 yes --actor model", ALLOW),
+        (
+            "set -- d1 yes --actor model; anneal decide label \"$@\"",
+            ALLOW,
+        ),
+        (
+            "set -- d1 yes --actor model; anneal decide label \"${x:-$@}\"",
+            ALLOW,
+        ),
     ]);
 }
 

@@ -85,9 +85,9 @@ pub(super) struct Checker<'c> {
     argument_depth: usize,
     /// Whether the command, so far, has an anneal call the guard cannot read
     /// ([`anneal::unread_call`]: `anneal "$@"`, as in a function body, or `anneal decide label
-    /// "$@"`) and a literal `--actor human` in any simple command: together, in either order,
-    /// they deny (`f() { anneal "$@"; }; f verdict set --actor human`, `set -- d1 yes --actor
-    /// human; anneal decide label "$@"`).
+    /// "$@"`) and the two halves of a human actor in any simple command ([`anneal::Halves`]):
+    /// together, in any order, they deny (`f() { anneal "$@"; }; f verdict set --actor human`,
+    /// `set -- d1 yes --actor; set -- "$@" human; anneal decide label "$@"`).
     anneal_seen: anneal::Seen,
 }
 
@@ -372,30 +372,29 @@ impl<'c> Checker<'c> {
         }
     }
 
-    /// The `human-only` denial once one simple command's words (`words`, its variables put
-    /// in) hold a literal human actor and the command has, before or after, an anneal call
-    /// whose subcommand path is unread ([`anneal::Seen`]); notes the actor. Every simple
+    /// The `human-only` denial once the command, so far, holds both halves of a human actor
+    /// ([`anneal::Halves`]) and an anneal call the guard cannot read ([`anneal::Seen`]); notes
+    /// the halves one simple command's words (`words`, its variables put in) hold. Every simple
     /// command of the call passes here: a shell's positional arguments, `set --` operands, the
-    /// words of an array assignment (listed as a command of their own) and, through
-    /// [`Checker::text`], a nested `bash -c` string. Only the guard applies it.
+    /// words of an array assignment (listed as a command of their own), an assignment of one
+    /// element and, through [`Checker::text`], a nested `bash -c` string. Only the guard
+    /// applies it.
     fn note_human_actor(&mut self, words: &[Word]) -> Option<Denial> {
-        if self.entries != Entries::Denylist || !anneal::names_human(words) {
+        if self.entries != Entries::Denylist {
             return None;
         }
-        self.anneal_seen.human_named()
+        self.anneal_seen.words(words)
     }
 
     /// The `human-only` denial once a reading of a program's arguments (`args`, unwrapped and
-    /// brace-expanded) holds a literal human actor, or is an anneal call the guard cannot read
-    /// ([`anneal::unread_call`]), and the other half was seen in the command ([`anneal::Seen`]); notes
-    /// what it holds. Only the guard applies it.
+    /// brace-expanded) completes, with what the command held before, both halves of a human
+    /// actor and an anneal call the guard cannot read ([`anneal::unread_call`],
+    /// [`anneal::Seen`]); notes what it holds. Only the guard applies it.
     fn anneal_arguments(&mut self, program: Program<'_>, args: &[Word]) -> Option<Denial> {
         if self.entries != Entries::Denylist {
             return None;
         }
-        if anneal::names_human(args)
-            && let Some(denial) = self.anneal_seen.human_named()
-        {
+        if let Some(denial) = self.anneal_seen.words(args) {
             return Some(denial);
         }
         let runs_anneal = match program {
