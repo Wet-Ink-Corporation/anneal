@@ -64,15 +64,27 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     if let Some(split) = read.named('S', "split-string").next() {
         // `-S` as the last word splits nothing: an empty script.
         let script = split.value.unwrap_or("");
-        if split.after.is_empty() {
-            return Peel::Done(Run::Split(Cow::Borrowed(script)));
-        }
-        // env reads no group in its string, but the shell read the words after it, groups
-        // included; joined as text, the two are read both ways and either denial denies.
-        let joined = format!("{script} {}", join(split.after));
+        // env splits its string with no group read, and keeps each word after it whole (that
+        // reading quotes them); a program it runs may still be a shell reading groups, and the
+        // shell read the words after it, groups included (that reading joins them as text).
+        // Either denial denies.
+        let quoted = split
+            .after
+            .iter()
+            .fold(script.to_owned(), |mut text, word| {
+                text.push_str(" '");
+                text.push_str(&word.text.replace('\'', r"'\''"));
+                text.push('\'');
+                text
+            });
+        let joined = if split.after.is_empty() {
+            Cow::Borrowed(script)
+        } else {
+            Cow::Owned(format!("{script} {}", join(split.after)))
+        };
         return Peel::Done(Run::either([
-            Run::Split(Cow::Owned(joined.clone())),
-            Run::Script(Cow::Owned(joined)),
+            Run::Split(Cow::Owned(quoted)),
+            Run::Script(joined),
         ]));
     }
     match read.rest {

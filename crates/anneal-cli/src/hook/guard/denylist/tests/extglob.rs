@@ -129,6 +129,15 @@ fn an_env_split_string_reads_no_group() {
         ("env -S 'tee' .clau?(de)/settings.json", CONFIG),
         // A cost, as before: the words are joined to the string as text, their quotes gone.
         ("env -S 'rm' '@(-rf)' /home", RM_RF),
+        // A string that runs shell text, as the shell or env may read it.
+        ("env -S 'watch rm @(-rf) /home'", RM_RF),
+        ("env -S 'sudo watch -n 1 rm @(-rf) /home'", RM_RF),
+        ("env -S 'watch tee .clau@(de)/settings.json'", CONFIG),
+        // env keeps each word after its string whole.
+        ("env -S bash -c 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c' 'rm -rf /'", RM_RF),
+        ("env -S 'sh -c' 'git push -f origin main'", FORCE_PUSH),
+        ("env -S 'bash -c' 'echo '\\''a b'\\''; rm -rf /'", RM_RF),
     ]);
 }
 

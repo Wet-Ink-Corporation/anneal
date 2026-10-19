@@ -77,7 +77,8 @@ pub(super) enum Run<'a> {
     Exec(Vec<&'a [Word]>),
     /// Each a reading of what the wrapper may run, every one checked on its own: `su` and
     /// `script` with several `-c` strings (each a separate word, never joined into one text),
-    /// and `su`'s arguments as its shell may read them.
+    /// `su`'s arguments as its shell may read them, and `env -S`'s string as env splits it and
+    /// as shell text.
     Either(Vec<Run<'a>>),
 }
 
