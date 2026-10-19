@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 
 use super::{Behaviour, Fault, Pressure, Tool, parse};
+use crate::eval::uplift::fixture::FixtureName;
 
 /// A valid case with one deterministic grader and one llm grader, as JSON.
 fn valid() -> Value {
@@ -189,4 +190,56 @@ fn only_bash_write_and_edit_need_an_operator_grant() {
     .collect();
 
     assert_eq!(gated, [Tool::Write, Tool::Edit, Tool::Bash]);
+}
+
+#[test]
+fn a_case_names_its_fixture_by_a_plain_name() {
+    let mut value = valid();
+    value["fixture"] = json!("rust-crate_1.2");
+
+    let case = read(&value).expect("valid");
+
+    assert_eq!(
+        case.fixture.as_ref().map(FixtureName::as_str),
+        Some("rust-crate_1.2")
+    );
+}
+
+#[test]
+fn a_case_without_a_fixture_has_none() {
+    let case = read(&valid()).expect("valid");
+
+    assert_eq!(case.fixture, None);
+}
+
+#[test]
+fn a_fixture_name_with_a_separator_a_dot_start_or_outside_the_alphabet_is_refused() {
+    let long = "a".repeat(65);
+    let bad = [
+        "",
+        "..",
+        ".",
+        ".hidden",
+        "a/b",
+        "a\\b",
+        "../x",
+        "a b",
+        "é",
+        long.as_str(),
+    ];
+
+    let faults: Vec<Option<Fault>> = bad
+        .iter()
+        .map(|name| {
+            let mut value = valid();
+            value["fixture"] = json!(name);
+            read(&value).err()
+        })
+        .collect();
+
+    let expected: Vec<Option<Fault>> = bad
+        .iter()
+        .map(|name| Some(Fault::Fixture((*name).to_owned())))
+        .collect();
+    assert_eq!(faults, expected);
 }

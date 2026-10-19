@@ -10,6 +10,8 @@
 //! are two runs, not `claude plugin eval`'s own with-without ablation, which would strip the
 //! whole plugin and its hooks.
 
+mod libexec;
+mod scaffold;
 mod trials;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,10 +30,14 @@ use crate::eval::real::claude::{Invocation, Invoked, Options, budget_arg, invoke
 use crate::eval::real::result;
 use crate::eval::real::workspace::{Limits, Workspace, copy_tree};
 use crate::eval::real::{RouterError, Stop};
+pub(crate) use libexec::{LauncherTarget, Placement};
 pub(crate) use trials::trials;
 
-/// The case schema version this writes (Claude Code reads up to 1.x).
+/// The case schema version this writes for a case without a fixture (Claude Code reads up to
+/// 1.x).
 const SCHEMA_VERSION: &str = "1.0";
+/// The case schema version a `context` block needs.
+const SCHEMA_VERSION_CONTEXT: &str = "1.1";
 
 /// A baseline plugin given with `--baseline`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +59,9 @@ pub(crate) struct Plugins<'a> {
     pub(crate) name: &'a str,
     /// The `--baseline` plugin, if given.
     pub(crate) baseline: Option<BaselinePlugin<'a>>,
+    /// The `anneal` binary every copy gets, or `None` when the launcher knows no target for
+    /// this host.
+    pub(crate) anneal: Option<Placement<'a>>,
 }
 
 /// The [`Evaluator`] that runs `claude plugin eval` in a temporary workspace.
@@ -68,17 +77,22 @@ pub(crate) struct ClaudeEvaluator<'a> {
 
 impl<'a> ClaudeEvaluator<'a> {
     /// An evaluator over a fresh copy of `plugins`' plugin, and of its baseline plugin if
-    /// given, neither holding an eval directory. The time limit starts now, before the
-    /// copies, so `--timeout` bounds the whole run.
+    /// given, neither holding an eval directory and each holding `plugins.anneal`'s binary if
+    /// given. The time limit starts now, before the copies, so `--timeout` bounds the whole
+    /// run.
     ///
     /// # Errors
-    /// [`RouterError::Workspace`] when the workspace cannot be made or a plugin copied (the
-    /// workspace is removed again).
+    /// [`RouterError::Workspace`] when the workspace cannot be made, a plugin copied or the
+    /// binary placed (the workspace is removed again).
     pub(crate) fn new(options: Options<'a>, plugins: Plugins<'a>) -> Result<Self, RouterError> {
         let started = Instant::now();
         let workspace =
             Workspace::create_for("uplift", plugins.dir).map_err(RouterError::Workspace)?;
-        if let Err(error) = prepare(&workspace, plugins.baseline.map(|base| base.dir)) {
+        if let Err(error) = prepare(
+            &workspace,
+            plugins.baseline.map(|base| base.dir),
+            plugins.anneal,
+        ) {
             return Err(match workspace.finish() {
                 Ok(()) => RouterError::Workspace(error),
                 Err(removing) => RouterError::Cleanup {
@@ -135,6 +149,8 @@ impl<'a> ClaudeEvaluator<'a> {
                 }
                 let copy = self.workspace.root().join(format!("without-{skill}"));
                 if !copy.exists() {
+                    // Copied from the plugin copy, it holds the `anneal` binary `prepare` put
+                    // there.
                     copy_tree(&self.workspace.plugin(), &copy, Limits::PLUGIN)
                         .and_then(|()| fs::remove_dir_all(copy.join(self.skills_dir).join(skill)))
                         .and_then(|()| remove_eval_dirs(&copy))
@@ -207,15 +223,27 @@ fn eval_dir(index: u32) -> String {
 
 /// Leaves the fresh `workspace`'s plugin copy, and a copy of the baseline plugin at
 /// `baseline` if given, holding the plugins and no eval directory, so no batch runs cases
-/// nobody selected.
-fn prepare(workspace: &Workspace, baseline: Option<&Path>) -> io::Result<()> {
-    remove_eval_dirs(&workspace.plugin())?;
+/// nobody selected, and the `anneal` binary if given.
+fn prepare(
+    workspace: &Workspace,
+    baseline: Option<&Path>,
+    anneal: Option<Placement<'_>>,
+) -> io::Result<()> {
+    let plugin = workspace.plugin();
+    remove_eval_dirs(&plugin)?;
+    place(anneal, &plugin)?;
     if let Some(dir) = baseline {
         let copy = workspace.root().join("baseline");
         copy_tree(dir, &copy, Limits::PLUGIN)?;
         remove_eval_dirs(&copy)?;
+        place(anneal, &copy)?;
     }
     Ok(())
+}
+
+/// Places `anneal`'s binary, if given, in the plugin copy at `copy`.
+fn place(anneal: Option<Placement<'_>>, copy: &Path) -> io::Result<()> {
+    anneal.map_or(Ok(()), |placement| placement.place_in(copy))
 }
 
 /// Removes from the plugin copy at `copy` any eval directory: one a source plugin already
@@ -235,7 +263,8 @@ fn remove_eval_dirs(copy: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes each case of `batch` to `<dir>/<case>/case.yaml`, as JSON.
+/// Writes each case of `batch` to `<dir>/<case>/case.yaml`, as JSON, with the scaffold script
+/// beside it ([`scaffold::SCRIPT_FILE`]) for a case seeded from a fixture.
 fn write_cases(dir: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
     for case in &batch.cases {
         let case_dir = dir.join(case.name());
@@ -243,13 +272,17 @@ fn write_cases(dir: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
         let text = serde_json::to_vec_pretty(&case_file(case, batch.runs))
             .map_err(|error| RouterError::Workspace(io::Error::other(error)))?;
         fs::write(case_dir.join("case.yaml"), text).map_err(RouterError::Workspace)?;
+        if let Some(fixture) = &case.fixture {
+            scaffold::write(&case_dir, &fixture.dir).map_err(RouterError::Workspace)?;
+        }
     }
     Ok(())
 }
 
 /// The arguments of `claude` for `batch` against the plugin copy `target` in the workspace at
 /// `root`: single-arm, no case failing the exit code, at most its budget, the gated tools its
-/// cases name granted, nothing published, no scaffold scripts.
+/// cases name granted, nothing published, and scaffold scripts run only when one of its cases
+/// is seeded from a fixture.
 pub(crate) fn arguments(
     options: &Options<'_>,
     root: &Path,
@@ -286,9 +319,15 @@ pub(crate) fn arguments(
         args.push("--allow-tools".into());
         args.extend(gated.into_iter().map(|tool| tool.name().into()));
     }
+    let seeded = batch.cases.iter().any(|case| case.fixture.is_some());
     args.extend([
         "--no-publish".into(),
-        "--no-scaffold".into(),
+        if seeded {
+            "--scaffold"
+        } else {
+            "--no-scaffold"
+        }
+        .into(),
         "--concurrency".into(),
         options.concurrency.to_string().into(),
     ]);
@@ -308,9 +347,17 @@ pub(crate) struct CaseFile<'a> {
     name: String,
     description: String,
     tags: [&'static str; 1],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<Context>,
     execution: Execution<'a>,
     runs: u32,
     graders: &'a [Grader],
+}
+
+/// What a run starts with besides the prompt: a seeded case's scaffold script.
+#[derive(Debug, Serialize)]
+struct Context {
+    scaffold_script: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -321,13 +368,22 @@ struct Execution<'a> {
     allowed_tools: &'a [Tool],
 }
 
-/// `case` as `claude plugin eval` reads it, run `runs` times.
+/// `case` as `claude plugin eval` reads it, run `runs` times; a case seeded from a fixture
+/// names its scaffold script, which needs schema 1.1.
 pub(crate) fn case_file(case: &Case, runs: u32) -> CaseFile<'_> {
+    let context = case.fixture.as_ref().map(|_| Context {
+        scaffold_script: scaffold::SCRIPT_FILE,
+    });
     CaseFile {
-        schema_version: SCHEMA_VERSION,
+        schema_version: if context.is_some() {
+            SCHEMA_VERSION_CONTEXT
+        } else {
+            SCHEMA_VERSION
+        },
         name: case.name(),
         description: format!("anneal eval uplift (Tier 3): {}", case.file),
         tags: ["anneal-uplift"],
+        context,
         execution: Execution {
             prompt: &case.body.prompt,
             max_turns: case.body.max_turns,

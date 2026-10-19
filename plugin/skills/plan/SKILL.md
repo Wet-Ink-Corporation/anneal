@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Use when a spec is ready, even if the work seems obvious; split it into tasks, each with its files, one test command and its blockers, then get the plan approved. Do NOT use for writing the spec (use `spec`), a new or vague request (use `grill`) or building an approved task (use `build`).
+description: Use when a spec is ready, even if the work seems obvious; split it into tasks, each with its files, one test command and which tasks block it, then get the plan approved. Do NOT use for writing the spec (use `spec`), a new or vague request (use `grill`) or building an approved task (use `build`).
 ---
 
 # Plan

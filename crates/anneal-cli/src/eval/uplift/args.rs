@@ -64,6 +64,32 @@ pub struct UpliftArgs {
         value_parser = BoolishValueParser::new().map(GatedTools::from_flag)
     )]
     pub gated_tools: GatedTools,
+    /// Let cases seed their runs' workspace from a fixture with a scaffold script, which runs
+    /// outside the eval sandbox with your rights; without it a run whose selected cases name a
+    /// fixture is refused before anything runs
+    #[arg(
+        long = "allow-scaffolds",
+        action = ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new().map(Scaffolds::from_flag)
+    )]
+    pub scaffolds: Scaffolds,
+}
+
+/// Whether a run may run the scaffold scripts that seed its cases' fixtures
+/// (`--allow-scaffolds`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scaffolds {
+    /// Refuse a run whose selected cases name a fixture.
+    Refuse,
+    /// Run them, as `--allow-scaffolds` asks.
+    Allow,
+}
+
+impl Scaffolds {
+    /// [`Self::Allow`] when the flag was given.
+    const fn from_flag(given: bool) -> Self {
+        if given { Self::Allow } else { Self::Refuse }
+    }
 }
 
 /// Whether a run may grant the gated tools its cases name (`--allow-gated-tools`).
@@ -107,6 +133,8 @@ pub(crate) struct Settings<'a> {
     pub(crate) skills_dir: &'a OsStr,
     /// Whether the selected cases may be granted the gated tools they name.
     pub(crate) gated_tools: GatedTools,
+    /// Whether the selected cases' scaffold scripts may run.
+    pub(crate) scaffolds: Scaffolds,
 }
 
 impl UpliftArgs {
@@ -122,6 +150,7 @@ impl UpliftArgs {
             ("--trust-plugin", self.trust_plugin),
             ("--changed-since", self.changed_since.is_some()),
             ("--allow-gated-tools", self.gated_tools == GatedTools::Allow),
+            ("--allow-scaffolds", self.scaffolds == Scaffolds::Allow),
         ]
         .into_iter()
         .find_map(|(flag, given)| given.then_some(flag))
@@ -180,6 +209,7 @@ impl UpliftArgs {
             changed_since: self.changed_since.as_deref(),
             baseline: self.baseline.as_deref(),
             gated_tools: self.gated_tools,
+            scaffolds: self.scaffolds,
         }))
     }
 }
@@ -188,7 +218,7 @@ impl UpliftArgs {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{GatedTools, Mode, UpliftArgs};
+    use super::{GatedTools, Mode, Scaffolds, UpliftArgs};
     use crate::error::CliError;
 
     fn args() -> UpliftArgs {
@@ -206,6 +236,7 @@ mod tests {
             trust_plugin: false,
             changed_since: None,
             gated_tools: GatedTools::Refuse,
+            scaffolds: Scaffolds::Refuse,
         }
     }
 
@@ -318,6 +349,41 @@ mod tests {
                         && allowed.gated_tools == GatedTools::Allow
             ),
             "{modes:?}"
+        );
+    }
+
+    #[test]
+    fn a_run_refuses_scaffolds_unless_allow_scaffolds_is_given() {
+        let refused = args();
+        let allowed = UpliftArgs {
+            scaffolds: Scaffolds::Allow,
+            ..args()
+        };
+
+        let modes = (refused.mode(), allowed.mode());
+
+        assert!(
+            matches!(
+                &modes,
+                (Ok(Mode::Run(refused)), Ok(Mode::Run(allowed)))
+                    if refused.scaffolds == Scaffolds::Refuse
+                        && allowed.scaffolds == Scaffolds::Allow
+            ),
+            "{modes:?}"
+        );
+    }
+
+    #[test]
+    fn allow_scaffolds_with_check_is_a_usage_error() {
+        let args = UpliftArgs {
+            check: true,
+            scaffolds: Scaffolds::Allow,
+            ..args()
+        };
+
+        assert_eq!(
+            reason(args.mode()),
+            Some("--check runs nothing, so --allow-scaffolds does not apply".to_owned())
         );
     }
 
