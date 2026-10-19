@@ -42,8 +42,12 @@ pub enum GhError {
         #[source]
         source: io::Error,
     },
-    /// `gh` did not answer in time and was killed.
-    #[error("gh api {endpoint} did not answer within {}s", timeout.as_secs())]
+    /// `gh` did not answer in time and was killed, or it exited but a process it started
+    /// still held its output pipes at the deadline.
+    ///
+    /// The limit is shown cut to whole milliseconds as `Duration` debugs it (`500ms`, `30s`,
+    /// `1.5s`), as [`crate::paths::PathError::GitTimeout`] shows git's.
+    #[error("gh api {endpoint} did not answer within {:?}", process::whole_millis(*timeout))]
     Timeout {
         /// The endpoint asked for.
         endpoint: String,
