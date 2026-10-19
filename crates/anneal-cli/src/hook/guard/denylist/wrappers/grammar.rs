@@ -434,5 +434,20 @@ mod tests {
                 texts(&["-b", "w"])
             )
         );
+        let operands: Vec<&str> = read
+            .operands
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect();
+        assert_eq!(operands, ["y", "z"]);
+    }
+
+    #[test]
+    fn options_read_in_order_skip_no_operands() {
+        let words = words("-a y -b x");
+
+        let read = STOP.parse(&words);
+
+        assert!(read.operands.is_empty(), "{:?}", read.operands);
     }
 }

@@ -181,31 +181,41 @@ fn login_dash(word: &Word) -> bool {
 
 /// `su [options] [USER] [ARG...]`: its `-c` strings or, without one, its arguments after the
 /// user as the user's shell reads them (a shell reading stdin when there are none). getopt
-/// permutes su's options and operands, handing the operands after the user, then the words
-/// after `--`, to the shell; an operand there never starts with `-`, so the shell runs it as a
-/// script file. With `POSIXLY_CORRECT` set getopt stops at the user and hands the shell every
-/// word after it. Both readings are checked.
+/// permutes su's options and operands, handing the shell its operands after the user (which
+/// may be `-` or bash's `+x`, `+o NAME`), then the words after `--`. With `POSIXLY_CORRECT`
+/// set getopt stops at the user and hands the shell every word after it. Each reading is
+/// checked, and so are the words after `--` on their own.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
     let Read {
         options,
         rest: after_dashes,
         operands,
     } = SU.parse(words);
-    let mut shell_operands = operands
-        .into_iter()
-        .skip_while(|word| login_dash(word))
-        .skip(1);
-    let permuted = bodies(options).unwrap_or_else(|| match shell_operands.next() {
-        Some(script) => script_file("su", script),
-        None => shell_run("su", after_dashes),
-    });
     let to_user = SU_TO_USER.parse(words);
     let user = match to_user.rest {
         [dash, tail @ ..] if login_dash(dash) => tail,
         rest => rest,
     };
-    let posix = bodies(to_user.options).unwrap_or_else(|| shell_run("su", skip_one(user)));
+    let posix = bodies(to_user.options).unwrap_or_else(|| shell_run("su", &all(skip_one(user))));
+    let Some(permuted) = bodies(options) else {
+        let argv: Vec<&Word> = operands
+            .into_iter()
+            .skip_while(|word| login_dash(word))
+            .skip(1)
+            .chain(after_dashes)
+            .collect();
+        return Peel::Done(Run::either([
+            shell_run("su", &argv),
+            shell_run("su", &all(after_dashes)),
+            posix,
+        ]));
+    };
     Peel::Done(Run::either([permuted, posix]))
+}
+
+/// Each of `words`, by reference.
+fn all(words: &[Word]) -> Vec<&Word> {
+    words.iter().collect()
 }
 
 /// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
@@ -226,11 +236,11 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
 /// a script read from stdin.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, words))
+    Peel::Done(shell_run(name, &all(words)))
 }
 
 /// What the shell `name` runs, given the arguments `words` ([`shell`]).
-fn shell_run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
+fn shell_run<'a>(name: &'a str, words: &[&'a Word]) -> Run<'a> {
     let mut rest = words;
     let (mut command_string, mut from_stdin) = (false, false);
     while let [first, tail @ ..] = rest {
@@ -255,7 +265,10 @@ fn shell_run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
         } else {
             text.ends_with(['o', 'O'])
         };
-        rest = if takes_value { skip_one(tail) } else { tail };
+        rest = match tail {
+            [_, after @ ..] if takes_value => after,
+            _ => tail,
+        };
     }
     if command_string {
         return rest.first().map_or(Run::Nothing, |string| {

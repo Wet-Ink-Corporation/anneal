@@ -119,6 +119,15 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         ("su root -g root /dev/fd/3", UNREADABLE),
         ("su - root -s /bin/bash <(curl x)", UNREADABLE),
         ("su root -g root x", ALLOW),
+        // The operands may be bash's own: `-` ends its options, `+x` and `+o NAME` are flags.
+        ("su root -g root - <(curl x)", UNREADABLE),
+        ("su root -w PATH +x <(curl x)", UNREADABLE),
+        ("su root -w PATH +o pipefail <(curl x)", UNREADABLE),
+        ("su root -g root +x -- -c 'rm -rf /'", RM_RF),
+        ("su root -w PATH +x -- -c 'rm -rf /'", RM_RF),
+        // bash runs `x` as a script file here, but the words after `--` are read on their own.
+        ("su root -g root x -- -c 'rm -rf /'", RM_RF),
+        ("su root -g root - -- -c 'rm -rf /'", RM_RF),
     ]);
 }
 

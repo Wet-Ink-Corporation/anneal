@@ -13,8 +13,8 @@ observation differs from the table, and `probe.sh > probes.txt.new` regenerates 
 diff before replacing the table). Run it as root in a container: `sudo` and `su` need it.
 
 `denylist::tests::wrapper_probes` holds the guard to the table: for every row that ran, the
-walk (`denylist::wrappers::unwrap`) must make that word the program of a simple command, in
-itself or in the shell text it runs, or find a script known only at run time (a process
-substitution, which the guard denies). A `-` row asserts nothing (the binary refused the command or its policy did, so any
-reading is safe). doas and the BSD `env` and `xargs`, read from their sources, are in
-`denylist::tests::wrapper_options`.
+walk (`denylist::wrappers::unwrap`) of the row's wrapper must make that word the program of a
+simple command, in itself or in the shell text it runs, or find a script known only at run
+time (a process substitution, which the guard denies). A `-` row asserts nothing (the binary
+refused the command or its policy did, so any reading is safe). doas and the BSD `env` and
+`xargs`, read from their sources, are in `denylist::tests::wrapper_options`.

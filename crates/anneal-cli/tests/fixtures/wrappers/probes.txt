@@ -134,6 +134,9 @@ W1	su -c 'echo \' -c W1
 W1	su root -w PATH <(echo; echo W1)
 W1	su root -g root <(echo; echo W1)
 W1	su root -s /bin/bash <(echo; echo W1)
+W1	su root -g root +x -- -c W1
+W1	su root -g root - <(echo; echo W1)
+W1	su root -w PATH +x <(echo; echo W1)
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1

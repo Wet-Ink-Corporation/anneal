@@ -20,17 +20,27 @@ fn ran() -> Vec<(&'static str, &'static str)> {
 /// Whether the walk reads `command` to run the word `observed`: as the program of one of its
 /// simple commands, or of one in the shell text it runs.
 fn walk_runs(command: &str, observed: &str) -> Result<(), String> {
-    // A process substitution's commands are simple commands of their own.
+    // A process substitution's commands are simple commands of their own: only the row's
+    // wrapper, its first word that is no assignment, is walked.
+    let wrapper = command
+        .split_whitespace()
+        .find(|word| !word.contains('='))
+        .ok_or("no wrapper")?;
     let commands = shell::parse(command).map_err(|error| format!("{error:?}"))?;
-    let walked: Vec<Run<'_>> = commands
-        .iter()
-        .map(|simple| unwrap(&simple.words))
-        .collect();
-    walked
-        .iter()
-        .any(|run| runs(run, observed))
+    let mut rows = commands.iter().filter(|simple| {
+        simple
+            .words
+            .iter()
+            .find(|word| !word.text.contains('='))
+            .is_some_and(|word| word.text == wrapper)
+    });
+    let (Some(simple), None) = (rows.next(), rows.next()) else {
+        return Err(format!("not one simple command runs {wrapper}"));
+    };
+    let run = unwrap(&simple.words);
+    runs(&run, observed)
         .then_some(())
-        .ok_or_else(|| format!("the walk runs {walked:?}"))
+        .ok_or_else(|| format!("the walk runs {run:?}"))
 }
 
 /// Whether `run` has `observed` as a program, in itself or in the shell text it runs, or runs
