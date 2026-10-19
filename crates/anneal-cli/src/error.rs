@@ -28,6 +28,7 @@ use crate::perf::PerfError;
 use crate::pr_diff::PrError;
 use crate::repro::ReproError;
 use crate::rollout::RolloutError;
+use crate::snapshot::SnapshotError;
 use crate::task::TaskError;
 use crate::verify::VerifyError;
 use crate::watch::WatchError;
@@ -120,6 +121,9 @@ pub enum CliError {
     /// `anneal brief build` could not read its range or write its files.
     #[error(transparent)]
     Brief(#[from] BriefError),
+    /// `anneal snapshot write` refused its input or could not save the snapshot.
+    #[error(transparent)]
+    Snapshot(#[from] SnapshotError),
     /// `anneal round start` lost every try to other tickets' rounds.
     #[error(
         "round start: other tickets' rounds kept starting during {attempts} tries; run it again"
@@ -194,6 +198,7 @@ impl CliError {
             Self::Perf(error) => error.code(),
             Self::Migrate(error) => error.code(),
             Self::Brief(error) => error.code(),
+            Self::Snapshot(error) => error.code(),
             Self::Output(_) => exit_codes::OUTPUT,
         }
     }
