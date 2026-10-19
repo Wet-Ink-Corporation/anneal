@@ -103,12 +103,14 @@ cargo install --path crates/anneal-cli            # the developer path: anneal o
 ./scripts/build-plugin-bins.sh                    # release binaries into plugin/libexec/<target>/
 ./scripts/test-launcher.sh target/debug/anneal    # launcher smoke test
 claude plugin validate --strict .                 # marketplace and plugin manifests
+tsc -p plugin && claude plugin test plugin         # the mod: type check and tests (no model call)
 ```
 
 Layout:
 
 - `crates/anneal-cli/`: the `anneal` binary.
-- `plugin/`: the plugin as installed (`skills/`, `hooks/`, `playbooks/`, `libexec/`). Only this directory is packaged.
+- `plugin/`: the plugin as installed (`skills/`, `hooks/` with the settings hooks and the cockpit mod, `types/` and `tests/` for the mod, `playbooks/`, `libexec/`). Only this directory is packaged. See `docs/mods.md`.
+- `mod-types/`: a minimal hand-written declaration of the mods API the cockpit uses, for `tsc -p plugin` (not packaged).
 - `evals/`: skill evaluation suites (not packaged).
 - `scripts/`: build, release and check scripts.
 

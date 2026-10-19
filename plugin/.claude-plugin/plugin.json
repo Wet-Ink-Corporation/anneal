@@ -7,6 +7,8 @@
   "repository": "https://github.com/Wet-Ink-Corporation/anneal",
   "license": "MIT OR Apache-2.0",
   "keywords": ["sdlc", "gates", "hooks", "tdd", "review"],
+  "hooks": "./hooks/cockpit.json",
+  "types": "./types/index.d.ts",
   "userConfig": {
     "cf_account_id": {
       "type": "string",
