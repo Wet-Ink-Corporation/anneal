@@ -42,6 +42,11 @@ fn runs(run: &Run<'_>, observed: &str) -> bool {
                 .iter()
                 .any(|simple| runs(&unwrap(&simple.words), observed))
         }),
+        Run::Split(text) => shell::parse_without_extglob(text).is_ok_and(|commands| {
+            commands
+                .iter()
+                .any(|simple| runs(&unwrap(&simple.words), observed))
+        }),
         Run::Either(readings) => readings.iter().any(|reading| runs(reading, observed)),
         _ => false,
     }

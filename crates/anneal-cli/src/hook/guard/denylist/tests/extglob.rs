@@ -109,6 +109,115 @@ fn a_backtick_inside_a_group_is_unreadable() {
     ]);
 }
 
+/// `env -S` splits its string itself and knows no extended glob, so a group there is no word
+/// of its own: `@(rm -rf ~)` is `@(rm`, `-rf` and `~)`, or a file of that name run as a command.
+#[test]
+fn an_env_split_string_reads_no_group() {
+    assert_table(&[
+        ("env -S @(rm -rf ~)", RM_RF),
+        ("env -S '@(rm -rf ~)'", RM_RF),
+        ("env --split-string='x@(rm -rf ~)'", RM_RF),
+        ("env -S '@(git push -f origin main)'", FORCE_PUSH),
+        ("env -S '@(echo x > .claude/settings.json)'", CONFIG),
+        ("env -S 'bash -c \"rm @(-rf) /home\"'", RM_RF),
+        // The words after the string are the shell's, which reads their groups.
+        ("env -S rm @(-rf) /home", RM_RF),
+        ("env -S 'rm' @(-rf) /home", RM_RF),
+        ("env -S 'rm -f' x @(-rf) /home", RM_RF),
+        ("env -S rm ?(-rf) /home", RM_RF),
+        ("env -S tee .clau@(de)/settings.json", CONFIG),
+        ("env -S 'tee' .clau?(de)/settings.json", CONFIG),
+        // A cost, as before: the words are joined to the string as text, their quotes gone.
+        ("env -S 'rm' '@(-rf)' /home", RM_RF),
+        // A string that runs shell text, as the shell or env may read it.
+        ("env -S 'watch rm @(-rf) /home'", RM_RF),
+        ("env -S 'sudo watch -n 1 rm @(-rf) /home'", RM_RF),
+        ("env -S 'watch tee .clau@(de)/settings.json'", CONFIG),
+        // env keeps each word after its string whole.
+        ("env -S bash -c 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c' 'rm -rf /'", RM_RF),
+        ("env -S 'sh -c' 'git push -f origin main'", FORCE_PUSH),
+        ("env -S 'bash -c' 'echo '\\''a b'\\''; rm -rf /'", RM_RF),
+        ("env -S '' bash -c 'rm -rf /'", RM_RF),
+        // An empty word is a script of its own: bash runs nothing and `rm -rf /` is its `$0`.
+        ("env -S 'bash -c' '' 'rm -rf /'", ALLOW),
+    ]);
+}
+
+/// env's own escapes in its string: `\_` separates words, and `\c` or an unquoted `#` starting
+/// a word ends the string, so the words after it follow what came before.
+#[test]
+fn an_env_split_string_is_read_with_env_s_escapes() {
+    assert_table(&[
+        ("env -S 'bash -c #' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c #x y' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c \\c' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c\\c' 'rm -rf /'", RM_RF),
+        ("env -S 'sh -c \\_' 'rm -rf /'", RM_RF),
+        ("env -S 'rm\\_-rf\\_/'", RM_RF),
+        ("env -S 'git\\_push\\_-f\\_origin\\_main'", FORCE_PUSH),
+        ("env -S 'tee\\_.claude/settings.json'", CONFIG),
+        ("env -S 'sh -c\\_#' 'rm -rf /'", RM_RF),
+        // `\t`, `\n`, `\r`, `\f` and `\v` are the control characters, kept in their word.
+        ("env -S 'sh -c rm\\t-rf\\t/'", RM_RF),
+        ("env -S 'sh -c git\\tpush\\t-f\\torigin\\tmain'", FORCE_PUSH),
+        ("env -S 'bash -c \"echo x\\nrm -rf /\"'", RM_RF),
+        ("env -S 'sh -c echo\\nrm\\t-rf\\t/'", RM_RF),
+        // A raw LF, CR, VT or FF separates words: env runs one command.
+        ("env -S $'rm\\n-rf\\n/'", RM_RF),
+        ("env -S 'git push\n-f origin main'", FORCE_PUSH),
+        ("env -S $'rm\\r-rf\\r/'", RM_RF),
+        ("env -S $'rm\\v-rf\\f/'", RM_RF),
+        // env reads no operator: `;`, `|`, `&`, `<`, `>`, `(` and `)` are word characters.
+        ("env -S 'rm -rf ; /home'", RM_RF),
+        ("env -S 'rm -rf ;' /home", RM_RF),
+        ("env -S 'rm -rf -- ; /home'", RM_RF),
+        ("env -S 'sudo rm -rf ; /home'", RM_RF),
+        ("env -S 'rm -rf | /home'", RM_RF),
+        ("env -S 'rm -rf && /home'", RM_RF),
+        ("env -S 'rm -rf || /home'", RM_RF),
+        ("env -S 'rm -rf > /home'", RM_RF),
+        ("env -S 'rm -rf <> /home'", RM_RF),
+        ("env -S 'rm -rf & ${HOME}'", RM_RF),
+        ("env -S 'rm -rf ;# /home'", RM_RF),
+        ("env -S 'rm -rf (x) /home'", RM_RF),
+        ("env -S 'git push origin ; -f main'", FORCE_PUSH),
+        // Nor a substitution: a backtick is a character of its word, quoted or not.
+        ("env -S 'git push ` -f ` origin main'", FORCE_PUSH),
+        ("env -S 'git push \"`\" -f \"`\" origin main'", FORCE_PUSH),
+        // env reads the words it split as its own arguments, options and a nested `-S` included.
+        ("env -S '-S \"rm -rf /\"'", RM_RF),
+        ("env -S '-S rm\\_-rf\\_/'", RM_RF),
+        ("env -S '-i -S rm\\_-rf\\_/'", RM_RF),
+        ("env -S '--split-string=rm\\_-rf\\_/'", RM_RF),
+        ("env -S '-S\"rm -rf /\"'", RM_RF),
+        ("env -S '-S\"git push -f origin main\"'", FORCE_PUSH),
+        ("env -S '-u X -S \"rm -rf /\"'", RM_RF),
+        ("env -S '-i' rm -rf /", RM_RF),
+        // A Unicode blank is no separator for env: the `#` after it is text.
+        ("env -S 'rm\\_-rf\\_\u{a0}#\\_/'", RM_RF),
+        // Quoted, or inside a word, a `#` is text.
+        ("env -S 'echo a#b' x", ALLOW),
+        ("env -S \"echo '#' x\"", ALLOW),
+    ]);
+}
+
+/// A group in a wrapper's value, or in the shell text a wrapper runs, is read as it is outside.
+#[test]
+fn a_group_in_a_wrapper_s_value_is_read_as_a_pattern() {
+    assert_table(&[
+        ("bash -c 'rm @(-rf) /home'", RM_RF),
+        ("su -c 'rm @(-rf) /home'", RM_RF),
+        ("script -c 'rm @(-rf) /home' /dev/null", RM_RF),
+        ("flock /tmp/l -c 'rm @(-rf) /home'", RM_RF),
+        ("watch 'rm @(-rf) /home'", RM_RF),
+        ("eval 'rm @(-rf) /home'", RM_RF),
+        ("sudo -u @(root) rm -rf /", RM_RF),
+        ("timeout @(5) rm -rf /", RM_RF),
+        ("sudo r@(m) -rf /", RM_RF),
+    ]);
+}
+
 #[test]
 fn an_extglob_target_is_a_pattern_for_rm_rf_and_the_config_entries() {
     assert_table(&[
