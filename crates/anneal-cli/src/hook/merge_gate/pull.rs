@@ -213,7 +213,7 @@ pub(super) fn check_repo(
 /// The `<host>/<owner>/<repo>` (no port, user or `.git` in any case; read by [`full_name`]'s
 /// rule, as `--repo` is) of a remote URL:
 /// `scheme://[user@]host[:port]/owner/repo[.git]` or scp-like `[user@]host:owner/repo[.git]`.
-pub(super) fn origin_repo(url: &str) -> Option<String> {
+pub(crate) fn origin_repo(url: &str) -> Option<String> {
     let url = url.trim();
     let (authority, path) = match url.split_once("://") {
         Some((_, rest)) => rest.split_once('/')?,

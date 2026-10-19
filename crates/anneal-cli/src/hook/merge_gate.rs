@@ -39,6 +39,8 @@
 mod canonical;
 mod pull;
 
+pub(crate) use pull::origin_repo;
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -108,7 +110,7 @@ pub(crate) enum Check {
 
 impl Check {
     /// The check's id, as in the `gate_blocked` point.
-    const fn id(self) -> &'static str {
+    pub(crate) const fn id(self) -> &'static str {
         match self {
             Self::BadInput => "bad-input",
             Self::Unreadable => "unreadable",
@@ -142,6 +144,11 @@ impl Denial {
             check,
             reason: format!("merge-gate: {reason}"),
         }
+    }
+
+    /// The check that denied.
+    pub(crate) const fn check(&self) -> Check {
+        self.check
     }
 
     /// The id of the check that denied, as in the `gate_blocked` point.

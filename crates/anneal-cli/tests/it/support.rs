@@ -76,7 +76,9 @@ fn is_temporary(cwd: &Path) -> bool {
 /// to `~/.anneal`. A test that needs either sets it again. `ANNEAL_CLEF_URL` is
 /// `http://127.0.0.1:0`, which every platform refuses at once, so a test that configures an
 /// account finds Clef unreachable and never reaches the network; [`with_fake_clef`] gives a URL
-/// that answers.
+/// that answers. `GH_TOKEN`, `GITHUB_TOKEN` and `ANNEAL_GITHUB_API` are removed too, so
+/// `verdict set` never posts a commit status to GitHub; [`with_fake_http`] gives a test a fake
+/// to post to.
 pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
     command
@@ -89,6 +91,9 @@ pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
         .env_remove("CLAUDE_PLUGIN_OPTION_CLEF_MODE")
         .env_remove("CLAUDE_PLUGIN_ROOT")
         .env_remove("WEIGHIN_BIN")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("ANNEAL_GITHUB_API")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")
@@ -119,21 +124,33 @@ impl Served {
 /// `ANNEAL_CLEF_URL`; the fake answers one request with `200 OK` and `body`. Returns what
 /// `client` returned and the request the fake read (empty when no request came).
 pub(crate) fn with_fake_clef<T>(body: &str, client: impl FnOnce(&str) -> T) -> (T, Served) {
+    with_fake_http("200 OK", body, |base| client(&format!("{base}/accounts")))
+}
+
+/// Runs `client` with the base URL (`http://127.0.0.1:<port>`) of a fake HTTP server on a
+/// loopback port, which answers one request with `status` (such as `201 Created`) and the JSON
+/// `body`. Returns what `client` returned and the request the fake read (empty when no request
+/// came). The server runs on a scoped thread joined before this returns.
+pub(crate) fn with_fake_http<T>(
+    status: &str,
+    body: &str,
+    client: impl FnOnce(&str) -> T,
+) -> (T, Served) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let addr = listener.local_addr().expect("its address");
     let response = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
     );
     std::thread::scope(|scope| {
         let server = std::thread::Builder::new()
-            .name("fake-clef".to_owned())
+            .name("fake-http".to_owned())
             .spawn_scoped(scope, || serve_one(&listener, response.as_bytes()))
             .expect("a server thread");
-        let result = client(&format!("http://{addr}/accounts"));
+        let result = client(&format!("http://{addr}"));
         // Unblocks `accept` if the binary never connected; otherwise it waits in the backlog.
         TcpStream::connect(addr).expect("a dummy connection");
-        (result, server.join().expect("the fake Clef"))
+        (result, server.join().expect("the fake server"))
     })
 }
 
