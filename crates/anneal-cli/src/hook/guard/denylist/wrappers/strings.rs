@@ -90,7 +90,8 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
 const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
 
 /// `script` as shell text that splits as `env -S` splits it (GNU coreutils 9.4):
-/// - outside quotes, a CR, VT or FF separates words, as a blank does;
+/// - outside quotes, a LF (which the shell reads as a separator of commands), CR, VT or FF
+///   separates words, as a blank does;
 /// - outside single quotes, `\_` is a blank (a separator outside quotes, a space inside double
 ///   quotes), `\t`, `\n`, `\r`, `\f` and `\v` are those characters kept in their word, and `\c`
 ///   ends the string, as an unquoted `#` starting a word does;
@@ -99,7 +100,7 @@ const ENV_BLANKS: [char; 6] = [' ', '\t', '\n', '\r', '\u{b}', '\u{c}'];
 ///
 /// The other escapes (`\\`, `\"`, `\$`, `\#` unquoted) read as the shell reads them.
 fn split_by_env(script: &str) -> Cow<'_, str> {
-    if !script.contains(['\\', '#', '\r', '\u{b}', '\u{c}']) {
+    if !script.contains(['\\', '#', '\n', '\r', '\u{b}', '\u{c}']) {
         return Cow::Borrowed(script);
     }
     let mut text = String::with_capacity(script.len());
@@ -114,6 +115,8 @@ fn split_by_env(script: &str) -> Cow<'_, str> {
             },
             (_, '\\') => match (chars.next(), quote) {
                 (Some('_'), _) => text.push(' '),
+                // Inside double quotes env refuses `\c` and runs nothing; the quote left open
+                // there makes the reading unparseable, which only denies.
                 (Some('c'), _) => break,
                 (Some(next @ ('t' | 'n' | 'r' | 'f' | 'v')), _) => {
                     let control = match next {
@@ -138,7 +141,7 @@ fn split_by_env(script: &str) -> Cow<'_, str> {
                 }
                 (None, _) => text.push(c),
             },
-            (None, '\r' | '\u{b}' | '\u{c}') => text.push(' '),
+            (None, '\n' | '\r' | '\u{b}' | '\u{c}') => text.push(' '),
             (None, '#') if text.is_empty() || text.ends_with(ENV_BLANKS) => break,
             (None, '\'' | '"') => {
                 quote = Some(c);
@@ -417,19 +420,20 @@ mod tests {
             (r#"a "b\_c""#, &["a", "b c"]),
             (r"a '\_'", &["a", r"\_"]),
             ("a\rb\u{b}c", &["a", "b", "c"]),
+            ("a\nb \"c\nd\"", &["a", "b", "c\nd"]),
             ("a\u{a0}#b", &["a\u{a0}#b"]),
         ];
         let wrong: Vec<String> = table
             .iter()
             .filter_map(|(string, expected)| {
                 let read = split_by_env(string);
-                let words: Vec<String> = shell::parse_without_extglob(&read)
+                // env runs one command: its words are one simple command's.
+                let words: Vec<Vec<String>> = shell::parse_without_extglob(&read)
                     .expect("the string lexes")
                     .into_iter()
-                    .flat_map(|command| command.words)
-                    .map(|word| word.text)
+                    .map(|command| command.words.into_iter().map(|word| word.text).collect())
                     .collect();
-                (words != *expected).then(|| format!("{string:?} lexed as {words:?}"))
+                (words != [expected.to_vec()]).then(|| format!("{string:?} lexed as {words:?}"))
             })
             .collect();
         assert!(wrong.is_empty(), "misread:\n{}", wrong.join("\n"));

@@ -163,7 +163,9 @@ fn an_env_split_string_is_read_with_env_s_escapes() {
         ("env -S 'sh -c git\\tpush\\t-f\\torigin\\tmain'", FORCE_PUSH),
         ("env -S 'bash -c \"echo x\\nrm -rf /\"'", RM_RF),
         ("env -S 'sh -c echo\\nrm\\t-rf\\t/'", RM_RF),
-        // A raw CR, VT or FF separates words.
+        // A raw LF, CR, VT or FF separates words: env runs one command.
+        ("env -S $'rm\\n-rf\\n/'", RM_RF),
+        ("env -S 'git push\n-f origin main'", FORCE_PUSH),
         ("env -S $'rm\\r-rf\\r/'", RM_RF),
         ("env -S $'rm\\v-rf\\f/'", RM_RF),
         // A Unicode blank is no separator for env: the `#` after it is text.
