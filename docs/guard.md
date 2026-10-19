@@ -299,6 +299,11 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - a variable where a shell or wrapper reads an option (`bash $o 'rm -rf /'` with `o=-c`):
   word splitting is the documented limit above (#128), and only globs and extended globs
   there are judged as possible options (#165);
+- a glob that matches nothing under `nullglob` vanishes and moves a later word into an option
+  slot (`shopt -s nullglob; bash [z] -c 'rm -rf /'`), since a pattern that cannot start an
+  option ends the slots (#170);
+- a `find` action written as a pattern (`find . ?exec rm -rf / \;` beside a file named
+  `-exec`): `find` has no option slots, so `find -name *.rs` stays allowed (#171);
 - long options a shell has only in some builds: bash's `--wordexp` and `--protected` (with
   `WORDEXP_OPTION`) are read as short-option clusters, as other builds read them;
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
