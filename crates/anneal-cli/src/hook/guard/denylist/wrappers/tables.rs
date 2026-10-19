@@ -9,10 +9,11 @@ use super::grammar::{
 
 /// `sudo` 1.9.15p5 (`+Aa:BbC:c:D:Eeg:Hh::iKklNnPp:R:r:SsT:t:U:u:Vv`, from the binary) with
 /// `doas` (opendoas 6.8.2 `+C:Lnsu:`, from the binary; OpenBSD's adds `a:`). Linux sudo
-/// refuses `-a` and `-c`, BSD builds take a value with each. `-h` alone takes the next word as
-/// a host, and then sudo runs nothing without `-l`, which only lists.
+/// refuses `-a` and `-c`, BSD builds take a value with each. `-h` is read as taking a value:
+/// sudo takes the next word as a host unless it starts with `-`, and runs the command when
+/// that host is the local one; followed by an option, `-h` asks for help and runs nothing.
 pub(super) const SUDO: Grammar = Grammar {
-    short: "Aa:BbC:c:D:Eeg:Hh::iKkLlNnPp:R:r:SsT:t:U:u:Vv",
+    short: "Aa:BbC:c:D:Eeg:Hh:iKkLlNnPp:R:r:SsT:t:U:u:Vv",
     long: &[
         ("askpass", No),
         ("background", No),
@@ -46,11 +47,13 @@ pub(super) const SUDO: Grammar = Grammar {
     order: Stop,
 };
 
-/// `env`: GNU coreutils 9.4 (`+C:iS:u:v0`, from the binary) with FreeBSD's
-/// (`-0C:iL:P:S:U:u:v`, from the source). GNU env refuses `-L`, `-P` and `-U`.
+/// `env`: GNU coreutils 9.4 (`+C:iS:u:v0`, from the binary) and master's `-a` (`+a:C:iS:u:v0`,
+/// from the source) with FreeBSD's (`-0C:iL:P:S:U:u:v`, from the source). GNU env refuses
+/// `-L`, `-P` and `-U`. FreeBSD's `-` is an option of its own, so it reads `--C` as `-C`.
 pub(super) const ENV: Grammar = Grammar {
-    short: "0C:iL:P:S:U:u:v",
+    short: "-0a:C:iL:P:S:U:u:v",
     long: &[
+        ("argv0", Required),
         ("block-signal", Optional),
         ("chdir", Required),
         ("debug", No),
@@ -60,6 +63,7 @@ pub(super) const ENV: Grammar = Grammar {
         ("ignore-signal", Optional),
         ("list-signal-handling", No),
         ("null", No),
+        ("quoting-style", Required),
         ("split-string", Required),
         ("unset", Required),
         ("version", No),
@@ -95,9 +99,10 @@ pub(super) const XARGS: Grammar = Grammar {
     order: Stop,
 };
 
-/// `watch`, procps-ng 4.0.4 (`+bCced::ghq:n:prtwvx`, from the binary).
+/// `watch`: procps-ng 4.0.4 (`+bCced::ghq:n:prtwvx`, from the binary) with master's `-f` and
+/// `-s` (`+bCcefd::ghq:n:prs:twvx`, from the source).
 pub(super) const WATCH: Grammar = Grammar {
-    short: "bCced::ghq:n:prtwvx",
+    short: "bCced::fghq:n:prs:tvwx",
     long: &[
         ("beep", No),
         ("chgexit", No),
@@ -106,6 +111,7 @@ pub(super) const WATCH: Grammar = Grammar {
         ("equexit", Required),
         ("errexit", No),
         ("exec", No),
+        ("follow", No),
         ("help", No),
         ("interval", Required),
         ("no-color", No),
@@ -113,6 +119,7 @@ pub(super) const WATCH: Grammar = Grammar {
         ("no-title", No),
         ("no-wrap", No),
         ("precise", No),
+        ("shotsdir", Required),
         ("version", No),
     ],
     order: Stop,
@@ -143,35 +150,46 @@ pub(super) const SCRIPT: Grammar = Grammar {
     order: Permute,
 };
 
-/// `su`, util-linux 2.39.3 (`c:fg:G:lmpPs:u:hVw:`, from the binary): options and the user mix,
-/// and the last `-c` (`--command`, `--session-command`) is the one it runs.
+/// `su`: util-linux 2.39.3 (`c:fg:G:lmpPs:u:hVw:`, from the binary) with master's `-T`
+/// (`c:fg:G:lmpPTs:u:hVw:`, from the source). Options and the user mix, and the last `-c`
+/// (`--command`, `--session-command`) is the one it runs.
 pub(super) const SU: Grammar = Grammar {
-    short: "c:fg:G:lmpPs:u:hVw:",
+    short: "c:fg:G:lmpPs:Tu:hVw:",
     long: &[
         ("command", Required),
         ("fast", No),
         ("group", Required),
         ("help", No),
         ("login", No),
+        ("no-pty", No),
         ("preserve-environment", No),
         ("pty", No),
         ("session-command", Required),
         ("shell", Required),
         ("supp-group", Required),
+        ("user", Required),
         ("version", No),
         ("whitelist-environment", Required),
     ],
     order: Permute,
 };
 
-/// `chrt`: util-linux 2.39.3 (`+abdD:fiphmoP:T:rRvV`, from the binary) with 2.42's `-e`
-/// (`+abdD:efiphmoP:T:rRvV`, from the source). Its priority is read apart ([`super::chrt`]).
+/// `su` read up to its user, as getopt reads it with `POSIXLY_CORRECT` set; every word after
+/// the user may then be an argument to the user's shell ([`super::strings::su`]).
+pub(super) const SU_TO_USER: Grammar = Grammar { order: Stop, ..SU };
+
+/// `chrt`: util-linux 2.39.3 (`+abdD:fiphmoP:T:rRvV`, from the binary) with master's
+/// (`+abdD:efiphmoOP:T:rRU:X:GvV`, from the source). Its priority is read apart
+/// ([`super::chrt`]).
 pub(super) const CHRT: Grammar = Grammar {
-    short: "abdD:efhimoP:pRrT:vV",
+    short: "abdD:efGhimOoP:pRrT:U:vVX:",
     long: &[
         ("all-tasks", No),
         ("batch", No),
+        ("clamp-max", Required),
+        ("clamp-min", Required),
         ("deadline", No),
+        ("deadline-overrun", No),
         ("ext", No),
         ("fifo", No),
         ("help", No),
@@ -179,6 +197,7 @@ pub(super) const CHRT: Grammar = Grammar {
         ("max", No),
         ("other", No),
         ("pid", No),
+        ("reclaim-grub", No),
         ("reset-on-fork", No),
         ("rr", No),
         ("sched-deadline", Required),
@@ -203,9 +222,10 @@ pub(super) const TASKSET: Grammar = Grammar {
     order: Stop,
 };
 
-/// `timeout`, GNU coreutils 9.4 (`+k:s:v`, from the binary).
+/// `timeout`: GNU coreutils 9.4 (`+k:s:v`, from the binary) with master's `-f` and `-p`
+/// (`+fk:ps:v`, from the source).
 pub(super) const TIMEOUT: Grammar = Grammar {
-    short: "k:s:v",
+    short: "fk:ps:v",
     long: &[
         ("foreground", No),
         ("help", No),

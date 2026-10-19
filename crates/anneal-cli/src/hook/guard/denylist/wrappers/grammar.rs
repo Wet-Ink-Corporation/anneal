@@ -5,10 +5,13 @@
 //! or abbreviated to a unique prefix. Each wrapper's table is checked against the real binaries
 //! by `tests/fixtures/wrappers/probes.txt`.
 //!
-//! A letter or long option a table does not hold is read as a flag: the wrapper refuses it and
-//! runs nothing, so any reading of what follows is safe. Where implementations differ (GNU and
-//! BSD `env` and `xargs`, `sudo` and `doas`) a table holds their union; none of them reads a
-//! letter as a flag that another reads as taking a value.
+//! A letter or long option a table does not hold is read as a flag: the versions the tables
+//! name refuse it and run nothing, so any reading of what follows is safe for them. A later
+//! version that adds a value option is a gap until its table learns it. Where implementations
+//! differ (GNU and BSD `env` and `xargs`, `sudo` and `doas`, released and upstream versions) a
+//! table holds their union; none of them reads a letter as a flag that another reads as taking
+//! a value. A table that holds `-` as a letter (BSD `env`) reads a `--X` word that names none
+//! of its long options as a cluster, as BSD getopt does.
 
 use super::{is_option, skip_one};
 use crate::hook::guard::shell::Word;
@@ -158,8 +161,8 @@ impl Grammar {
                 }
             }
             rest = match first.text.strip_prefix("--") {
-                Some(long) => self.long_word(long, tail, &mut options),
-                None => self.cluster(first.text.get(1..).unwrap_or_default(), tail, &mut options),
+                Some(long) if !self.dash_cluster(long) => self.long_word(long, tail, &mut options),
+                _ => self.cluster(first.text.get(1..).unwrap_or_default(), tail, &mut options),
             };
         }
         let rest = match self.order {
@@ -167,6 +170,13 @@ impl Grammar {
             Order::Permute => &[],
         };
         Read { options, rest }
+    }
+
+    /// Whether the word `--long` is read as the letter `-` clustered with others: the table holds
+    /// `-` as a letter and `long` names none of its long options.
+    fn dash_cluster(&self, long: &str) -> bool {
+        let written = long.split_once('=').map_or(long, |(name, _)| name);
+        self.short_arg('-').is_some() && self.long_option(written).is_none()
     }
 
     /// Reads the long option `long` (`name` or `name=value`), followed by `tail`; returns the

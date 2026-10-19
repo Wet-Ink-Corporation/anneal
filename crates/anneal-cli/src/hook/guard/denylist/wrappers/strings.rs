@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use super::grammar::{Grammar, Name, Read};
-use super::tables::{ENV, FLOCK, SCRIPT, SU, SUDO, WATCH};
+use super::tables::{ENV, FLOCK, SCRIPT, SU, SU_TO_USER, SUDO, WATCH};
 use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
 use crate::hook::guard::shell::Word;
@@ -141,13 +141,10 @@ fn su_login(words: &[Word]) -> bool {
 }
 
 /// The command strings of `read`'s `-c` (`--command`, and for `su` `--session-command`)
-/// options: the last one runs, the earlier ones are read too. One body is the word or part of
-/// a word it was written in; several are joined by newlines. Without one, `wrapper` runs a
-/// shell reading stdin; with only a `-c` missing its string, nothing.
-fn bodies<'a>(read: &Read<'a>, wrapper: &'static str) -> Peel<'a> {
-    let options: Vec<Option<&'a str>> = read
-        .options
-        .iter()
+/// options, in order; `None` for one missing its string.
+fn commands(read: Read<'_>) -> impl Iterator<Item = Option<&str>> {
+    read.options
+        .into_iter()
         .filter(|option| {
             matches!(
                 option.name,
@@ -155,25 +152,60 @@ fn bodies<'a>(read: &Read<'a>, wrapper: &'static str) -> Peel<'a> {
             )
         })
         .map(|option| option.value)
-        .collect();
-    if options.is_empty() {
-        return Peel::Done(Run::StdinScript(wrapper));
+}
+
+/// The command strings the user's shell may read from `su`'s words after its user. `su` hands
+/// its operands after the user (after `--` too) to the shell, and with `POSIXLY_CORRECT` set
+/// every word after the user, so each short cluster holding `c` among them is read as the
+/// shell reads it: taking the next word as its command string.
+fn shell_commands(words: &[Word]) -> impl Iterator<Item = Option<&str>> {
+    let after_user = skip_one(SU_TO_USER.parse(words).rest);
+    after_user
+        .iter()
+        .enumerate()
+        .filter(|(_, word)| {
+            is_option(word) && !word.text.starts_with("--") && word.text.contains('c')
+        })
+        .map(|(at, _)| {
+            after_user
+                .get(at.saturating_add(1))
+                .map(|string| string.text.as_str())
+        })
+}
+
+/// The command strings `commands` names: the last one runs, the earlier ones are read too. One
+/// body is the word or part of a word it was written in; several are joined by newlines.
+/// Without one, `wrapper` runs a shell reading stdin; with only a `-c` missing its string,
+/// nothing.
+fn bodies<'a>(
+    commands: impl IntoIterator<Item = Option<&'a str>>,
+    wrapper: &'static str,
+) -> Peel<'a> {
+    let mut any = false;
+    let mut found: Vec<&'a str> = Vec::new();
+    for command in commands {
+        any = true;
+        if let Some(body) = command.filter(|body| !found.contains(body)) {
+            found.push(body);
+        }
     }
-    match options.into_iter().flatten().collect::<Vec<_>>().as_slice() {
-        [] => Peel::Done(Run::Nothing),
+    match found.as_slice() {
+        [] if any => Peel::Done(Run::Nothing),
+        [] => Peel::Done(Run::StdinScript(wrapper)),
         [body] => Peel::Done(Run::Script(Cow::Borrowed(body))),
         several => Peel::Done(Run::Script(Cow::Owned(several.join("\n")))),
     }
 }
 
-/// `su [options] [USER]`: its `-c` strings, or, without one, a shell reading stdin.
+/// `su [options] [USER] [ARG...]`: its `-c` strings and those its arguments give the user's
+/// shell, or, without one, a shell reading stdin.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
-    bodies(&SU.parse(words), "su")
+    bodies(commands(SU.parse(words)).chain(shell_commands(words)), "su")
 }
 
 /// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
 pub(super) fn script(words: &[Word]) -> Peel<'_> {
-    bodies(&SCRIPT.parse(words), "script")
+    bodies(commands(SCRIPT.parse(words)), "script")
 }
 
 /// `watch [options] command...`: the words joined are run by `sh -c`.

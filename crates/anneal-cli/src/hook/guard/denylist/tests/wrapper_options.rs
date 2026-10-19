@@ -95,6 +95,40 @@ fn every_command_string_of_su_and_script_is_read() {
 }
 
 #[test]
+fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
+    assert_table(&[
+        ("su root -- -c 'rm -rf /'", RM_RF),
+        ("su -- root -c 'rm -rf /'", RM_RF),
+        ("su - root -- -c 'rm -rf /'", RM_RF),
+        ("su -l root -- -c 'rm -rf /'", RM_RF),
+        ("su root --login -- -c 'rm -rf /'", RM_RF),
+        ("su root -s /bin/bash -- -c 'rm -rf /'", RM_RF),
+        ("su root -- -lc 'rm -rf /'", RM_RF),
+        // With POSIXLY_CORRECT, su stops at the user and hands `-s -c ...` to the shell.
+        ("POSIXLY_CORRECT=1 su root -s -c 'rm -rf /'", RM_RF),
+        ("su root -- -c 'echo a'", ALLOW),
+    ]);
+}
+
+#[test]
+fn options_added_after_the_probed_versions_take_their_values() {
+    assert_table(&[
+        // sudo takes the word after `-h` as a host and runs the command on the local host.
+        ("sudo -h echo rm -rf /", RM_RF),
+        ("H=echo; sudo -h $H rm -rf /", RM_RF),
+        // coreutils 9.5's `env -a`, procps-ng 4.0.6's `watch -s`, util-linux's `chrt -U`/`-X`.
+        ("env -a echo rm -rf /", RM_RF),
+        ("env --argv0 echo rm -rf /", RM_RF),
+        ("watch -s echo rm -rf /", RM_RF),
+        ("chrt -U echo rm -rf /", RM_RF),
+        ("chrt --clamp-max echo rm -rf /", RM_RF),
+        // FreeBSD's env reads `--C` as `-` then `-C`, which takes the next word.
+        ("env --C echo rm -rf /", RM_RF),
+        ("env --S 'rm -rf /'", RM_RF),
+    ]);
+}
+
+#[test]
 fn long_options_take_their_value_written_out_or_abbreviated() {
     assert_table(&[
         ("sudo --us echo rm -rf /", RM_RF),

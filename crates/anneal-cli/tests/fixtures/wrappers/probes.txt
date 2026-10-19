@@ -15,7 +15,7 @@ W1	sudo -g root W1
 -	sudo -R / W1
 -	sudo -c x W1
 -	sudo -a x W1
--	sudo -h W1 W2
+# No sudo -h row: `sudo -h HOST W1` runs W1 when HOST is this machine's name.
 W1	sudo -E W1
 W1	sudo --preserve-env W1
 W1	sudo --preserve-env=PATH W1
@@ -120,6 +120,12 @@ W1	su --session-command=W1
 W1	su -s /bin/sh -c W1
 W1	su -fc W1
 -	su -gc W1
+W1	su root -- -c W1
+W1	su -- root -c W1
+W1	su -l root -- -c W1
+W1	su root -- -lc W1
+W1	POSIXLY_CORRECT=1 su root -s -c W1
+W1	su root -s /bin/sh -- -c W1
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1
