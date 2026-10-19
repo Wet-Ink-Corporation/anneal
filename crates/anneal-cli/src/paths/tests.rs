@@ -283,3 +283,13 @@ fn the_git_timeout_names_a_duration_under_a_second() {
 
     assert_eq!(error.to_string(), "git did not answer within 500ms");
 }
+
+#[test]
+fn the_git_timeout_is_named_in_whole_milliseconds() {
+    // What is left of a deadline is rarely a round number.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_nanos(1_987_654_321),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 1.987s");
+}

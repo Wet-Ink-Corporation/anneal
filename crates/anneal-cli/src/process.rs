@@ -32,12 +32,16 @@ pub(crate) enum WaitError {
 ///
 /// The output is complete only once every holder of the pipes' write ends has closed them, so
 /// a child that exits while a grandchild it started still holds its stdout or stderr is a
-/// timeout too, at the deadline. Either way this returns within `timeout` plus about 100 ms:
-/// after a kill the threads get that long to see the pipes close and are joined; one a
-/// grandchild still blocks is left to end on its own, holding only its pipe end and at most
-/// `cap` bytes, until that grandchild closes the pipe or exits, or this process exits. Only the
-/// child is killed, not its descendants: std cannot kill a process group without `unsafe`.
-/// With nothing piped (as for `task done`'s test command) there are no threads, and a timeout
+/// timeout too, at the deadline (a child that exits just before it still gets about 100 ms for
+/// its pipes to close). Either way this returns within `timeout` plus about 100 ms: after a
+/// kill the threads get that long to see the pipes close, and those that finish are joined;
+/// one a grandchild still blocks has its handle dropped and is left to end on its own, holding
+/// only its pipe end and at most `cap` bytes, until that grandchild closes the pipe or exits,
+/// or this process exits. Only the child is killed, not its descendants: std cannot kill a
+/// process group without `unsafe`. Nothing caps these threads across calls: a caller that
+/// loops, such as `watch` polling `gh` (16 MiB cap) for up to 1800 s, can leave one set per
+/// timed-out call, each bounded as above, until its grandchildren exit or anneal does. With
+/// nothing piped (as for `task done`'s test command) there are no threads, and a timeout
 /// returns once the child itself is killed and reaped.
 pub(crate) fn wait_with_deadline(
     child: &mut Child,
@@ -60,8 +64,9 @@ pub(crate) struct Limits {
 /// As [`wait_with_deadline`], first handing `input` to the child's piped stdin on a named
 /// thread (`<label>-stdin`) that closes the pipe when done, so the child sees the end of its
 /// input and a child that never reads cannot block the caller. A child that exits without
-/// reading it all is no error: its exit status says how it went. The writer is joined, or left
-/// to end on its own past the timeout, as the readers are.
+/// reading it all is no error: its exit status says how it went. The writer is joined when it
+/// finishes in time, else its handle is dropped and it is left to end on its own, as the
+/// readers are.
 pub(crate) fn wait_with_input(
     child: &mut Child,
     input: &[u8],
@@ -94,8 +99,9 @@ fn wait_piped(
         }
     };
     // The child exited, but a grandchild may still hold its pipes: wait no longer than the
-    // deadline for them to close.
-    let left = timeout.saturating_sub(started.elapsed());
+    // deadline for them to close, and at least the grace, so a child that exits just before
+    // the deadline is not a timeout while its readers drain what it wrote last.
+    let left = timeout.saturating_sub(started.elapsed()).max(ABANDON_GRACE);
     if !poll_until(left, || workers.are_finished()) {
         workers.abandon();
         return Err(WaitError::Timeout);
@@ -340,7 +346,9 @@ mod tests {
     #[cfg(unix)]
     fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_joined() {
         // `exec` leaves no shell holding the pipes; 2 MiB is far past any pipe buffer, so the
-        // writer blocks until the kill closes the read end.
+        // writer blocks until the kill closes the read end. (The name predates #132: the writer
+        // is now joined only when it finishes within the grace after the kill, as it does here,
+        // and abandoned otherwise.)
         let mut child = Command::new("sh")
             .args(["-c", "exec sleep 30"])
             .stdin(Stdio::piped())

@@ -210,10 +210,9 @@ Limits:
   killed `anneal floor-guard`, anything `check_fast` starts) can outlive it and keep running;
   std has no portable process-group kill (as for `anneal task done`, `docs/task.md`).
 - On Windows a child's handles are inherited by the processes it starts. A killed
-  `anneal floor-guard` can leave a `git` call holding its output pipe, and the hook waits for
-  that git to exit on its own (nothing bounds it once floor-guard is killed), so it can run
-  past its 15 s timeout;
-  Claude Code then drops its output and carries on (it fails open). A process `check_fast`
+  `anneal floor-guard` can leave a `git` call holding its output pipe. The hook stops reading
+  that pipe at the deadline (its reader thread is abandoned) and still returns within the
+  deadline plus about 100 ms, while that git lives on until it exits by itself. A process `check_fast`
   leaves running keeps the log file open, so removing it fails: that is a note, and the file
   stays in the temporary directory. On unix the log is removed and the hook returns as soon as
   `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).
