@@ -4,7 +4,7 @@
 // and `anneal calibrate` envelopes as the CLI prints them (docs/status.md, docs/calibrate.md).
 
 import { expect, mock, test } from 'claude-code/testing'
-import type { CommandRunInput, On, ProcessRunResult } from 'claude-code'
+import type { CommandRunInput, On, ProcessRunResult, StateRead, ValueOrDeny } from 'claude-code'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 /** The surfaces the band and pane are drawn on, one loop over both. */
@@ -127,7 +127,18 @@ type Host = {
   calibrateRuns: (readonly string[])[]
   calibrateTimeouts: (number | undefined)[]
   calibrate: { next: Answer }
+  /** The launcher (`anneal`, `anneal.cmd`) of every `process.run`, in order, started or not. */
+  launched: string[]
+  /** Launchers that cannot start (a spawn error) or that start and time out; the rest run. */
+  launchers: Record<string, 'ENOENT' | 'EACCES' | 'timeout'>
+  /** Runs wait for these before answering, with the answer chosen when they were called. */
+  hold: { status?: Promise<void>; calibrate?: Promise<void> }
+  /** Host calls refused while set. */
+  refuse: { panes?: string }
 }
+
+/** What a test answers for `$.state.get` of a key in place of the store; absent passes through. */
+type StateAnswer = (key: string) => ValueOrDeny<StateRead<unknown>> | undefined
 
 /** Each test starts its clock far from the last, as the module's pacing outlives a test. */
 let epoch = 0
@@ -135,10 +146,17 @@ let epoch = 0
 const host = (
   on: On,
   first: Answer,
-  options: { surfaces?: readonly string[]; calibrate?: Answer } = {},
+  options: {
+    surfaces?: readonly string[]
+    calibrate?: Answer
+    /** A clock of the test's own in place of `mock.clock`. */
+    clock?: (on: On) => MockClock
+    /** Stands in for the store's answers to `$.state.get`. */
+    state?: StateAnswer
+  } = {},
 ): Host => {
   epoch += 1_000_000
-  const clock = mock.clock(on, { now: epoch })
+  const clock = options.clock === undefined ? mock.clock(on, { now: epoch }) : options.clock(on)
   const state: Host = {
     clock,
     runs: [],
@@ -149,11 +167,20 @@ const host = (
     calibrateRuns: [],
     calibrateTimeouts: [],
     calibrate: { next: options.calibrate ?? { exitCode: 2, stdout: '', stderr: 'ERROR no calibrate answer\n' } },
+    launched: [],
+    launchers: {},
+    hold: {},
+    refuse: {},
+  }
+  const answerState = options.state
+  if (answerState !== undefined) {
+    on('state.get', async (_$, e, next) => answerState(e.key) ?? next(e))
   }
   on('session.surfaces', async () => ({ value: (options.surfaces ?? ['terminal']) as never }))
-  on('ui.panes', async () => ({
+  on('ui.panes', async () =>
+    state.refuse.panes !== undefined ? { deny: state.refuse.panes } : {
     value: state.opened.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })),
-  }))
+  })
   on('ui.open', async (_$, e) => {
     state.opened.push(e.id)
     return { value: { isPlaced: true } }
@@ -173,10 +200,16 @@ const host = (
     return Box({ key: 'engine' })
   })
   on('process.run', async (_$, e) => {
+    const launcher = String(e.argv[0]).split('/').pop() ?? ''
+    state.launched.push(launcher)
+    const fault = state.launchers[launcher]
+    if (fault === 'timeout') return { deny: `timed out after ${e.init?.timeoutMs} ms` }
+    if (fault !== undefined) return { deny: `spawn ${launcher} ${fault}` }
     if (e.argv[1] === 'calibrate') {
       state.calibrateRuns.push(e.argv)
       state.calibrateTimeouts.push(e.init?.timeoutMs)
       const answer = state.calibrate.next
+      await state.hold.calibrate
       if (answer === 'timeout') return { deny: 'timed out after 10000 ms' }
 
       return { value: ran(answer.exitCode, answer.stdout, answer.stderr) }
@@ -184,6 +217,7 @@ const host = (
     state.runs.push(e.argv)
     state.timeouts.push(e.init?.timeoutMs)
     const answer = state.answer.next
+    await state.hold.status
     if (answer === 'timeout') return { deny: 'timed out after 2000 ms' }
 
     return { value: ran(answer.exitCode, answer.stdout, answer.stderr) }
@@ -890,4 +924,342 @@ test('/anneal calibration takes only refresh: there is no apply', async ($, on) 
   expect(answer.text).toBe('usage: /anneal calibration [refresh]')
   expect(state.calibrateRuns.length).toBe(0)
   expect(state.opened).toEqual([])
+})
+
+// ---- Review fixes: launchers, failures, shapes, whole rows ---------------------------------------
+
+/** A real-time pause, for a test whose clock is its own and has no `settle` of the engine's. */
+declare const setTimeout: (callback: () => void, ms: number) => unknown
+
+/** A promise and the call that settles it, to hold a run until the test lets it answer. */
+const gate = (): { readonly promise: Promise<void>; readonly open: () => void } => {
+  let open = (): void => undefined
+  const promise = new Promise<void>(resolve => {
+    open = resolve
+  })
+  return { promise, open }
+}
+
+/**
+ * A clock of the test's own: `clock.now` refused while `refusals.now` is above 0, and every
+ * `clock.after` firing at once.
+ */
+const ownClock =
+  (refusals: { now: number }) =>
+  (on: On): MockClock => {
+    let now = epoch
+    on('clock.now', async () => {
+      if (refusals.now > 0) {
+        refusals.now -= 1
+        return { deny: 'the clock is unavailable' }
+      }
+      return { value: now }
+    })
+    on('clock.after', async () => ({ value: undefined }))
+    const settle = async (): Promise<void> => {
+      for (let pass = 0; pass < 5; pass += 1) await new Promise<void>(resolve => setTimeout(resolve, 5))
+    }
+    return {
+      now: () => now,
+      advance: async ms => {
+        now += ms
+        await settle()
+      },
+      settle,
+    }
+  }
+
+/**
+ * Makes `anneal` the launcher the cockpit tries first, whatever an earlier test left: with
+ * `anneal.cmd` unable to start, a run starts only through `anneal`. The calls it made are then
+ * forgotten.
+ */
+const primeLaunchers = async ($: Engine, state: Host): Promise<void> => {
+  state.launchers = { 'anneal.cmd': 'ENOENT' }
+  await $.command.run(ANNEAL)
+  state.launchers = {}
+  state.launched.length = 0
+  state.runs.length = 0
+  state.timeouts.length = 0
+}
+
+const MID_BUILD_BAND = 'anneal · build · plan ✓ a1b2c3 · task 3/7 · ctx 58%'
+
+test('a launcher that cannot start passes the run to the next, which is then run first', async ($, on) => {
+  const state = host(on, MID_BUILD, { surfaces: [] })
+  await primeLaunchers($, state)
+  state.launchers = { anneal: 'ENOENT' }
+  await refreshed($, state)
+  expect(state.launched).toEqual(['anneal', 'anneal.cmd'])
+  const ui = await band($, 'terminal')
+  expect((await ui.find({ key: 'band' }))?.text).toBe(MID_BUILD_BAND)
+  await ui.unmount()
+  await refreshed($, state)
+  expect(state.launched).toEqual(['anneal', 'anneal.cmd', 'anneal.cmd'])
+  expect(state.runs.length).toBe(2)
+})
+
+test('a launcher that cannot start (EACCES) passes the text form to the next', async ($, on) => {
+  const state = host(on, { exitCode: 0, stdout: 'phase: build\n' }, { surfaces: [] })
+  await primeLaunchers($, state)
+  state.launchers = { anneal: 'EACCES' }
+  expect((await $.command.run(ANNEAL)).text).toBe('phase: build')
+  expect(state.launched).toEqual(['anneal', 'anneal.cmd'])
+})
+
+test('a run that times out is not retried through the other launcher, and the timeout is the reason', async ($, on) => {
+  const state = host(on, MID_BUILD, { surfaces: [] })
+  await primeLaunchers($, state)
+  state.launchers = { anneal: 'timeout' }
+  expect((await $.command.run(ANNEAL)).text).toBe('anneal status unavailable (anneal: $.process.run: timed out after 10000 ms).')
+  expect(state.launched).toEqual(['anneal'])
+  await refreshed($, state)
+  expect(state.launched).toEqual(['anneal', 'anneal'])
+  expect(state.runs.length).toBe(0)
+  const ui = await pane($, 'terminal')
+  expect((await ui.find({ key: 'note' }))?.text).toBe(
+    'anneal status unavailable: anneal: $.process.run: timed out after 2000 ms',
+  )
+  await ui.unmount()
+  const shown = await band($, 'terminal')
+  expect((await shown.find({ key: 'band' }))?.text).toBe('anneal · status unavailable')
+  await shown.unmount()
+})
+
+test('no launcher starts: /anneal says anneal status is not built yet, with each start error', async ($, on) => {
+  const state = host(on, MID_BUILD, { surfaces: [] })
+  await primeLaunchers($, state)
+  state.launchers = { anneal: 'ENOENT', 'anneal.cmd': 'EACCES' }
+  expect((await $.command.run(ANNEAL)).text).toBe(
+    'anneal status is not built yet (anneal: $.process.run: spawn anneal ENOENT; anneal: $.process.run: spawn anneal.cmd EACCES).',
+  )
+  expect(state.launched).toEqual(['anneal', 'anneal.cmd'])
+})
+
+test('an anneal status that runs and fails is unavailable, not unbuilt, in the text form', async ($, on) => {
+  host(on, { exitCode: 70, stdout: '', stderr: 'ERROR the ledger cannot be read\n' }, { surfaces: [] })
+  expect((await $.command.run(ANNEAL)).text).toBe('anneal status unavailable (ERROR the ledger cannot be read).')
+})
+
+test('a clock the host refuses leaves nothing scheduled, so the next ask refreshes', async ($, on) => {
+  const refusals = { now: 1 }
+  const state = host(on, MID_BUILD, { clock: ownClock(refusals) })
+  await turnComplete($)
+  await state.clock.settle()
+  expect(refusals.now).toBe(0)
+  expect(state.runs.length).toBe(0)
+  expect(state.logged).toEqual(['anneal cockpit: refresh not scheduled: anneal: $.clock.now: the clock is unavailable'])
+  await state.clock.advance(1_000)
+  await turnComplete($)
+  await state.clock.settle()
+  expect(state.runs.length).toBe(1)
+  const ui = await band($, 'terminal')
+  expect((await ui.find({ key: 'band' }))?.text).toBe(MID_BUILD_BAND)
+  await ui.unmount()
+})
+
+test('a refresh the host refuses records why as the reading, and the next refresh reads again', async ($, on) => {
+  const state = host(on, MID_BUILD)
+  state.refuse.panes = 'the pane list is unavailable'
+  await refreshed($, state)
+  expect(state.runs.length).toBe(0)
+  expect(state.logged).toEqual(['anneal cockpit: refresh failed: anneal: $.ui.panes: the pane list is unavailable'])
+  const ui = await pane($, 'terminal')
+  expect((await ui.find({ key: 'note' }))?.text).toBe(
+    'anneal status unavailable: anneal: $.ui.panes: the pane list is unavailable',
+  )
+  await ui.unmount()
+  state.refuse.panes = undefined
+  await refreshed($, state)
+  expect(state.runs.length).toBe(1)
+  const shown = await band($, 'terminal')
+  expect((await shown.find({ key: 'band' }))?.text).toBe(MID_BUILD_BAND)
+  await shown.unmount()
+})
+
+test('a calibration refresh the host refuses records why, and the next refresh runs', async ($, on) => {
+  const refusals = { calibration: 1 }
+  const state = host(on, MID_BUILD, {
+    calibrate: CAL_PARTIAL,
+    state: key => {
+      if (key !== 'calibration' || refusals.calibration === 0) return undefined
+      refusals.calibration -= 1
+      return { deny: 'the store is unavailable' }
+    },
+  })
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe(
+    'anneal: calibration refresh failed (anneal: $.state.get: the store is unavailable).',
+  )
+  expect(state.calibrateRuns.length).toBe(0)
+  expect(state.logged).toEqual(['anneal cockpit: calibration refresh failed: anneal: $.state.get: the store is unavailable'])
+  const ui = await calibrationPane($, 'terminal')
+  expect((await ui.find({ key: 'cal-note' }))?.text).toBe(
+    'anneal calibrate unavailable: anneal: $.state.get: the store is unavailable',
+  )
+  await ui.unmount()
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refreshed.')
+  expect(state.calibrateRuns.length).toBe(1)
+})
+
+test('a status section whose fields are not the types the cockpit reads is dropped and named', async ($, on) => {
+  const state = host(on, {
+    exitCode: 0,
+    stdout: envelope({
+      ...MID_BUILD_DATA,
+      phase: { mode: 7 },
+      tasks: { done: '3', total: 7 },
+      gates: [{ id: 'guard.rm' }],
+      context: { percent: '58' },
+      ledger_tail: 'oops',
+    }),
+  })
+  await refreshed($, state)
+  for (const surface of SURFACES) {
+    const ui = await band($, surface)
+    expect((await ui.find({ key: 'band' }))?.text).toBe('anneal · plan ✓ a1b2c3')
+    await ui.unmount()
+    const opened = await pane($, surface)
+    expect((await opened.find({ key: 'status-unreadable' }))?.text).toBe(
+      'Unreadable sections, not drawn: phase, tasks, gates, context, ledger_tail',
+    )
+    expect((await opened.find({ key: 'gates-none' }))?.text).toBe('not read')
+    expect((await opened.find({ key: 'tasks' }))?.text).toBe('none')
+    expect((await opened.find({ key: 'ledger-none' }))?.text).toBe('No events.')
+    expect((await opened.find({ key: 'plan' }))?.text).toBe('docs/plan.md: approved a1b2c3, approved 2026-10-19T10:00:02Z')
+    await opened.unmount()
+  }
+})
+
+test('a well-typed status names no section as unreadable', async ($, on) => {
+  const state = host(on, MID_BUILD)
+  await refreshed($, state)
+  const ui = await pane($, 'terminal')
+  expect(await ui.find({ key: 'status-unreadable' })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('a stored reading that cannot be drawn shows status unreadable, not a blank band', async ($, on) => {
+  host(on, MID_BUILD, {
+    state: key =>
+      key === 'reading' ? { value: { value: { kind: 'read', status: { schema: 1, phase: null, gates: 'x' } }, version: 1 } } : undefined,
+  })
+  for (const surface of SURFACES) {
+    const ui = await band($, surface)
+    expect((await ui.find({ key: 'band' }))?.text).toBe('anneal · status unreadable')
+    await ui.unmount()
+    const opened = await pane($, surface)
+    expect((await opened.find({ key: 'note' }))?.text).toBe('anneal status unreadable')
+    await opened.unmount()
+  }
+})
+
+test('a calibration point whose fields are not the types the dashboard reads is dropped and counted', async ($, on) => {
+  const state = host(on, MID_BUILD, {
+    calibrate: calibrateEnvelope(points({ 'D1:noul': WORKED_D1, 'D2:noul': base => ({ ...base, n: 'none' }) })),
+  })
+  await openCalibration($, state)
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    expect(await ui.find({ key: 'cal:D2' })).toBe(undefined)
+    expect((await ui.find({ key: 'cal-dropped' }))?.text).toBe('1 point not drawn: not the shape this dashboard reads')
+    expect((await ui.find({ key: 'cal:D1' }))?.text).toBe('▸ D1 shadow █░░░░░░░░░ 5/50 · short of labels')
+    expect((await ui.find({ key: 'cal:D3' }))?.text).toBe('▸ D3 unknown ░░░░░░░░░░ 0/50 · short of labels')
+    await ui.unmount()
+  }
+})
+
+test('a stored calibration that cannot be drawn says calibrate unreadable, in the pane and as text', async ($, on) => {
+  const bad = { kind: 'read', calibration: { points: [{ point: 'D1', verdict: 'stay-shadow', questions: [null] }] } }
+  const state = host(on, MID_BUILD, {
+    surfaces: [],
+    state: key => (key === 'calibration' ? { value: { value: bad, version: 1 } } : undefined),
+  })
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    expect((await ui.find({ key: 'cal-note' }))?.text).toBe('anneal calibrate unreadable')
+    await ui.unmount()
+  }
+  expect((await $.command.run(CALIBRATION)).text).toBe('anneal calibrate unreadable.')
+  expect(state.calibrateRuns.length).toBe(1)
+})
+
+test('whole rows: a selected point, after a refresh, after a failed refresh, and a hollow bin', async ($, on) => {
+  const state = host(on, CAL_STATUS, { calibrate: CAL_READY })
+  await openCalibration($, state)
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    await ui.press({ key: 'cal:D1' })
+    expect((await ui.find({ key: 'cal:D1' }))?.text).toBe('▾ D1 shadow █░░░░░░░░░ 5/50 · short of labels')
+    await ui.press({ key: 'cal:D1' })
+    await ui.press({ key: 'cal:D5' })
+    expect((await ui.find({ key: 'cal-bin:D5:score:5' }))?.text).toBe(
+      '  [0.5, 0.6) 3 decisions · predicted 0.55 · observed 0.667 · hollow',
+    )
+    await ui.press({ key: 'cal:D5' })
+    await ui.unmount()
+  }
+})
+
+test('whole rows: D1 after /anneal calibration refresh, then after a refresh that fails', async ($, on) => {
+  const state = host(on, MID_BUILD, { calibrate: CAL_EMPTY })
+  await openCalibration($, state)
+  state.calibrate.next = CAL_PARTIAL
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refreshed.')
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    expect((await ui.find({ key: 'cal:D1' }))?.text).toBe('▸ D1 shadow █░░░░░░░░░ 5/50 · short of labels')
+    await ui.unmount()
+  }
+  state.calibrate.next = { exitCode: 70, stdout: '', stderr: 'ERROR the decision log cannot be read\n' }
+  await $.command.run(CALIBRATION_REFRESH)
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    expect((await ui.find({ key: 'cal:D1' }))?.text).toBe('▸ D1 shadow █░░░░░░░░░ 5/50 · short of labels')
+    expect((await ui.find({ key: 'cal-stats:D1' }))?.text).toBe('   Brier 0.2885 · ask 33% · threshold 0.4 → 0.3')
+    await ui.unmount()
+  }
+})
+
+test('an ask while anneal calibrate runs is absorbed: one run, and its result is the one stored', async ($, on) => {
+  const state = host(on, MID_BUILD, { calibrate: CAL_PARTIAL })
+  const held = gate()
+  state.hold.calibrate = held.promise
+  await openCalibration($, state)
+  expect(state.calibrateRuns.length).toBe(1)
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refresh failed (no run finished).')
+  expect(state.calibrateRuns.length).toBe(1)
+  held.open()
+  await state.clock.settle()
+  expect(state.calibrateRuns.length).toBe(1)
+  for (const surface of SURFACES) {
+    const ui = await calibrationPane($, surface)
+    expect((await ui.find({ key: 'cal:D1' }))?.text).toBe('▸ D1 shadow █░░░░░░░░░ 5/50 · short of labels')
+    expect((await ui.find({ key: 'cal-stats:D1' }))?.text).toBe('   Brier 0.2885 · ask 33% · threshold 0.4 → 0.3')
+    await ui.unmount()
+  }
+  expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refreshed.')
+  expect(state.calibrateRuns.length).toBe(2)
+})
+
+test('asks while a status refresh runs fold into exactly one more run, whose reading is kept', async ($, on) => {
+  const state = host(on, MID_BUILD)
+  const held = gate()
+  state.hold.status = held.promise
+  await refreshed($, state)
+  expect(state.runs.length).toBe(1)
+  state.answer.next = BLOCKED
+  await refreshed($, state)
+  await refreshed($, state)
+  expect(state.runs.length).toBe(1)
+  held.open()
+  await state.clock.settle()
+  await state.clock.advance(1_000)
+  expect(state.runs.length).toBe(2)
+  await state.clock.advance(5_000)
+  expect(state.runs.length).toBe(2)
+  const ui = await band($, 'terminal')
+  expect((await ui.find({ key: 'band' }))?.text).toBe(
+    'anneal · build · plan ✓ a1b2c3 · task 3/7 · 1 gate open · ctx 58% · guard.rm: rm -rf outside the worktree',
+  )
+  await ui.unmount()
 })

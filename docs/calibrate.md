@@ -197,6 +197,7 @@ Question {
   subject        string              the rule's subject, e.g. "destructive_or_irreversible"
   n              integer             answered decisions
   labelled       integer             answered decisions with a usable label
+  labelled_via_mod integer           of labelled, those whose last label came via: mod
   unanswered     integer
   unusable_labels integer
   brier          number | null       null with no labelled decision

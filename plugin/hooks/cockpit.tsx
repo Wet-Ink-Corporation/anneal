@@ -59,8 +59,16 @@ const CALIBRATION_FIELDS = [...BAND_FIELDS, 'clef'] as const
 const DOCK_COLUMNS = 56
 const INLINE_ROWS = 18
 
-/** What `/anneal` answers when the CLI cannot give its text form. */
+/** What `/anneal` answers when there is no `anneal status` to run: no launcher starts, or the CLI has no such command. */
 export const NOT_BUILT = 'anneal status is not built yet'
+
+/** What `/anneal` answers when `anneal status` started but gave no text: a timeout, cut output or an error. */
+export const UNAVAILABLE = 'anneal status unavailable'
+
+/** What the band, the pane and the calibration show for a reading they cannot draw from. */
+export const UNREADABLE_BAND = 'anneal · status unreadable'
+export const UNREADABLE_PANE = 'anneal status unreadable'
+export const UNREADABLE_CALIBRATION = 'anneal calibrate unreadable'
 
 const reading = { plugin: 'anneal', key: 'reading' } as const
 const expanded = { plugin: 'anneal', key: 'expanded' } as const
@@ -75,20 +83,46 @@ const launchers = (root: string): readonly string[] => [
 ]
 
 /**
- * The launcher that started, once one has: from then on only it is run, so a run that times out
- * is not retried through the other launcher. `null` until one starts.
+ * The launcher that started, once one has: from then on it is run first, and the other only
+ * when it cannot start, so a run that times out is never retried through the other launcher.
+ * `null` until one starts.
  */
 let launcherIndex: number | null = null
 
 /** What one run of the CLI came to: its exit and output, or why there is none to read. */
 type Ran =
   | { readonly isRun: true; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
-  | { readonly isRun: false; readonly reason: string }
+  | {
+      readonly isRun: false
+      readonly reason: string
+      /** Whether a launcher started: false when none could (no CLI here), true for a timeout or cut output. */
+      readonly hasStarted: boolean
+    }
+
+/** The errors of a command that could not start: not there, not executable, not a program. */
+const START_FAILURE = /\b(ENOENT|EACCES|ENOEXEC|EPERM|ENOTDIR)\b|\b(cannot|could not|failed to) start\b/i
 
 /**
- * Runs `anneal <args>` through the first launcher that starts. A rejection is a launcher that
- * could not start, or a run that outlasted `timeoutMs`; the next launcher is tried only until one
- * has started once.
+ * Whether `$.process.run` rejected because the command could not start, rather than because it
+ * outlasted its timeout or the host refused it for another reason. The API names no error codes
+ * (it "rejects when it cannot start or outlasts `timeoutMs`"), so the spawn error's code or its
+ * message decides; anything else counts as started and is not retried.
+ */
+const isStartFailure = (error: unknown): boolean => {
+  const code: unknown = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+  if (typeof code === 'string' && START_FAILURE.test(code)) return true
+
+  return START_FAILURE.test(error instanceof Error ? error.message : String(error))
+}
+
+/** The text of a rejection, for a reason shown to the person. */
+const errorText = (error: unknown): string =>
+  error instanceof Error && error.message !== '' ? error.message : String(error)
+
+/**
+ * Runs `anneal <args>`: the launcher that started before, else each in order. Only a launcher
+ * that cannot start passes the run on to the next; a timeout, or any other rejection, is the
+ * run's answer, with its own reason. When none starts the reason is each one's start error.
  */
 const runAnneal = async (
   $: EngineInterface,
@@ -96,22 +130,32 @@ const runAnneal = async (
   timeoutMs: number,
 ): Promise<Ran> => {
   const all = launchers($.plugin.root)
-  const tried = launcherIndex === null ? all : all.slice(launcherIndex, launcherIndex + 1)
-  const offset = launcherIndex ?? 0
-  let reason = 'no anneal launcher could start'
-  for (const [index, launcher] of tried.entries()) {
+  const order = all.map((_, index) => index)
+  const tried = launcherIndex === null ? order : [launcherIndex, ...order.filter(index => index !== launcherIndex)]
+  const startErrors: string[] = []
+  for (const index of tried) {
+    const launcher = all[index]
+    if (launcher === undefined) continue
     try {
       const ran = await $.process.run([launcher, ...args], { timeoutMs })
-      launcherIndex = offset + index
-      if (ran.isStdoutTruncated) return { isRun: false, reason: 'its output was cut short' }
+      launcherIndex = index
+      if (ran.isStdoutTruncated) return { isRun: false, reason: 'its output was cut short', hasStarted: true }
 
       return { isRun: true, exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
     } catch (error) {
-      reason = error instanceof Error && error.message !== '' ? error.message : reason
+      if (!isStartFailure(error)) {
+        launcherIndex = index
+        return { isRun: false, reason: errorText(error), hasStarted: true }
+      }
+      startErrors.push(errorText(error))
     }
   }
 
-  return { isRun: false, reason }
+  return {
+    isRun: false,
+    reason: startErrors.length === 0 ? 'no anneal launcher could start' : startErrors.join('; '),
+    hasStarted: false,
+  }
 }
 
 /** The first non-empty line of `text`, trimmed. */
@@ -121,28 +165,125 @@ const firstLine = (text: string): string | undefined =>
     .find(line => line.trim() !== '')
     ?.trim()
 
+type Fields = Readonly<Record<string, unknown>>
+
+const isObject = (value: unknown): value is Fields =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+const isString = (value: unknown): value is string => typeof value === 'string'
+const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+const isNumberOrNull = (value: unknown): boolean => value === null || isNumber(value)
+const isStringOrNull = (value: unknown): boolean => value === null || isString(value)
+/** Whether `value` is absent or passes `check`. */
+const isOptional = (value: unknown, check: (value: unknown) => boolean): boolean => value === undefined || check(value)
+const isListOf = (value: unknown, check: (value: unknown) => boolean): boolean =>
+  Array.isArray(value) && value.every(entry => check(entry))
+
+const isGate = (value: unknown): boolean =>
+  isObject(value) &&
+  isString(value.id) &&
+  isString(value.kind) &&
+  isString(value.reason) &&
+  isNumber(value.event) &&
+  isString(value.ts)
+
+const isLedgerEntry = (value: unknown): boolean =>
+  isObject(value) && isNumber(value.event) && isString(value.type) && isString(value.summary) && isString(value.ts)
+
+/**
+ * Each section the band and pane draw, and the shape of it they read (docs/status.md). A
+ * section that does not match is dropped from the reading rather than drawn from.
+ */
+const STATUS_SECTIONS: readonly (readonly [keyof AnnealStatus, (value: unknown) => boolean])[] = [
+  ['phase', value => isObject(value) && isString(value.mode)],
+  [
+    'plan',
+    value =>
+      isObject(value) &&
+      isString(value.id) &&
+      isString(value.status) &&
+      isOptional(value.hash, isString) &&
+      isOptional(value.approved, approved => isObject(approved) && isString(approved.hash) && isString(approved.ts)),
+  ],
+  [
+    'tasks',
+    value =>
+      isObject(value) &&
+      isNumber(value.done) &&
+      isNumber(value.total) &&
+      isOptional(value.next, next => isObject(next) && isString(next.id) && isString(next.title)),
+  ],
+  ['gates', value => isListOf(value, isGate)],
+  [
+    'verdict',
+    value =>
+      isObject(value) &&
+      isString(value.outcome) &&
+      isOptional(value.pr, isNumber) &&
+      isOptional(
+        value.verdict,
+        verdict => isObject(verdict) && isString(verdict.verdict) && isOptional(verdict.fresh, isString),
+      ),
+  ],
+  [
+    'clef',
+    value =>
+      isObject(value) &&
+      isListOf(
+        value.points,
+        point =>
+          isObject(point) &&
+          isString(point.point) &&
+          isString(point.mode) &&
+          isNumber(point.answered) &&
+          isOptional(point.configured_mode, isString),
+      ),
+  ],
+  ['context', value => isObject(value) && isOptional(value.percent, isNumberOrNull)],
+  ['ledger_tail', value => isListOf(value, isLedgerEntry)],
+]
+
+/**
+ * The sections of a schema 1 status document whose fields have the types the cockpit reads,
+ * and the names of those present that do not (dropped, so nothing draws from them).
+ */
+export const readStatusDocument = (
+  data: Fields,
+): { readonly status: AnnealStatus; readonly unreadable: readonly string[] } => {
+  const kept: Record<string, unknown> = { schema: 1 }
+  const unreadable: string[] = []
+  for (const [section, check] of STATUS_SECTIONS) {
+    const value = data[section]
+    if (value === undefined) continue
+    if (check(value)) kept[section] = value
+    else unreadable.push(section)
+  }
+
+  // Every section kept passed its check above, so `kept` has the shape `AnnealStatus` names.
+  return { status: kept as AnnealStatus, unreadable }
+}
+
 /** The status document inside `anneal status --json`'s envelope, when it is a schema 1 one. */
 export const readEnvelope = (
   text: string,
-): { readonly status: AnnealStatus; readonly findings: readonly string[] } | null => {
+): {
+  readonly status: AnnealStatus
+  readonly unreadable: readonly string[]
+  readonly findings: readonly string[]
+} | null => {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
     return null
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-  const { data, findings } = parsed as { data?: unknown; findings?: unknown }
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return null
-  if ((data as { schema?: unknown }).schema !== 1) return null
+  if (!isObject(parsed)) return null
+  const { data, findings } = parsed
+  if (!isObject(data) || data.schema !== 1) return null
   const keys = Array.isArray(findings)
-    ? findings.flatMap(finding => {
-        const key: unknown = (finding as { key?: unknown } | null)?.key
-        return typeof key === 'string' ? [key] : []
-      })
+    ? findings.flatMap(finding => (isObject(finding) && isString(finding.key) ? [finding.key] : []))
     : []
 
-  return { status: data as AnnealStatus, findings: keys }
+  return { ...readStatusDocument(data), findings: keys }
 }
 
 /** One refresh's reading of the CLI; `store` decides whether a failure replaces anything. */
@@ -151,7 +292,11 @@ const readStatus = async ($: EngineInterface, fields: readonly string[]): Promis
   const ran = await runAnneal($, args, REFRESH_TIMEOUT_MS)
   if (!ran.isRun) return { kind: 'unavailable', reason: ran.reason }
   const envelope = readEnvelope(ran.stdout)
-  if (ran.exitCode === 0 && envelope !== null) return { kind: 'read', status: envelope.status }
+  if (ran.exitCode === 0 && envelope !== null) {
+    return envelope.unreadable.length === 0
+      ? { kind: 'read', status: envelope.status }
+      : { kind: 'read', status: envelope.status, unreadable: envelope.unreadable }
+  }
   if (ran.exitCode === 2 && envelope?.findings.includes('status/no-ledger') === true) {
     return { kind: 'absent' }
   }
@@ -181,7 +326,10 @@ let isScheduled = false
 let isRunning = false
 let isAskedAgain = false
 
-/** One refresh: the sections the band needs, the pane's too while the pane is open. */
+/**
+ * One refresh: the sections the band needs, the pane's too while the pane is open. It rejects
+ * when the host refuses a call it needs; its caller records that as the reading's reason.
+ */
 const refreshNow = async ($: EngineInterface): Promise<void> => {
   isScheduled = false
   if (isRunning) {
@@ -190,35 +338,59 @@ const refreshNow = async ($: EngineInterface): Promise<void> => {
   }
   isRunning = true
   try {
-    lastStartedAt = await $.clock.now()
-    const panes = new Set((await $.ui.panes()).map(pane => pane.id))
-    const fields = panes.has(PANE) ? PANE_FIELDS : panes.has(CALIBRATION_PANE) ? CALIBRATION_FIELDS : BAND_FIELDS
-    await store($, await readStatus($, fields))
-  } catch (error) {
-    // The host refused a call the refresh needs: the last reading stays on screen, the next
-    // refresh tries again, and the transcript is left alone.
-    $.ui.log(`anneal cockpit: refresh failed: ${String(error)}`, { to: 'debug' })
+    try {
+      lastStartedAt = await $.clock.now()
+      const panes = new Set((await $.ui.panes()).map(pane => pane.id))
+      const fields = panes.has(PANE) ? PANE_FIELDS : panes.has(CALIBRATION_PANE) ? CALIBRATION_FIELDS : BAND_FIELDS
+      await store($, await readStatus($, fields))
+    } finally {
+      isRunning = false
+    }
   } finally {
-    isRunning = false
+    // An ask made while this one ran is answered whether or not this one failed.
+    if (isAskedAgain) {
+      isAskedAgain = false
+      await refresh($)
+    }
   }
-  if (isAskedAgain) {
-    isAskedAgain = false
-    await refresh($)
+}
+
+/**
+ * Records why a refresh failed: the host refused a call it needs. The reason goes to the debug
+ * log and becomes the reading's (a good reading stays, as `store` keeps it); the transcript is
+ * left alone, and the next refresh tries again.
+ */
+const refreshFailed = async ($: EngineInterface, error: unknown): Promise<void> => {
+  const reason = errorText(error)
+  $.ui.log(`anneal cockpit: refresh failed: ${reason}`, { to: 'debug' })
+  try {
+    await store($, { kind: 'unavailable', reason })
+  } catch (stored) {
+    $.ui.log(`anneal cockpit: the refresh's failure was not recorded: ${errorText(stored)}`, { to: 'debug' })
   }
 }
 
 /**
  * Asks for a refresh: now when the last one started a second or more ago, else one second after
- * it. Asks made while one waits fold into it.
+ * it. Asks made while one waits fold into it. It never rejects: a clock the host refuses leaves
+ * nothing scheduled, so the next ask tries again.
  */
 export const refresh = async ($: EngineInterface): Promise<void> => {
   if (isScheduled) return
   isScheduled = true
-  const now = await $.clock.now()
-  const wait = Math.max(0, lastStartedAt + REFRESH_INTERVAL_MS - now)
-  $.clock.after(wait, () => {
-    void refreshNow($)
-  })
+  let isTimerSet = false
+  try {
+    const now = await $.clock.now()
+    const wait = Math.max(0, lastStartedAt + REFRESH_INTERVAL_MS - now)
+    $.clock.after(wait, () => {
+      refreshNow($).catch(error => refreshFailed($, error))
+    })
+    isTimerSet = true
+  } catch (error) {
+    $.ui.log(`anneal cockpit: refresh not scheduled: ${errorText(error)}`, { to: 'debug' })
+  } finally {
+    if (!isTimerSet) isScheduled = false
+  }
 }
 
 /** `text` cut to `columns` characters, an ellipsis at the end when it was cut. */
@@ -278,12 +450,14 @@ export const bandLine = (status: AnnealStatus): { readonly text: string; readonl
  */
 export const statusText = async ($: EngineInterface): Promise<string> => {
   const ran = await runAnneal($, ['status'], TEXT_TIMEOUT_MS)
-  if (!ran.isRun) return `${NOT_BUILT} (${ran.reason}).`
+  if (!ran.isRun) return `${ran.hasStarted ? UNAVAILABLE : NOT_BUILT} (${ran.reason}).`
   const text = ran.stdout.trim()
   if ((ran.exitCode === 0 || ran.exitCode === 2) && text !== '') return text
   const said = firstLine(ran.stderr) ?? `exit ${ran.exitCode}`
+  // A CLI built before `status` existed rejects it as a usage error; anything else is a failure.
+  const isMissing = ran.exitCode === 2 && /unrecognized subcommand/i.test(said)
 
-  return `${NOT_BUILT} (${said}).`
+  return `${isMissing ? NOT_BUILT : UNAVAILABLE} (${said}).`
 }
 
 // ---- Calibration (#63) --------------------------------------------------------------------------
@@ -316,12 +490,49 @@ const calibration = { plugin: 'anneal', key: 'calibration' } as const
 const selectedPoint = { plugin: 'anneal', key: 'selected_point' } as const
 const calibrationSection = { plugin: 'anneal', key: 'calibration_section' } as const
 
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+const isCalibrationBin = (value: unknown): boolean =>
+  isObject(value) &&
+  isNumber(value.lower) &&
+  isNumber(value.upper) &&
+  isNumber(value.count) &&
+  isNumberOrNull(value.mean_probability) &&
+  isNumberOrNull(value.observed_frequency)
+
+const isCalibrationThreshold = (value: unknown): boolean =>
+  isObject(value) &&
+  isStringOrNull(value.band) &&
+  isNumberOrNull(value.current) &&
+  isNumberOrNull(value.proposed) &&
+  isOptional(value.current_expected_cost, isNumberOrNull) &&
+  isOptional(value.proposed_expected_cost, isNumberOrNull) &&
+  isOptional(value.no_proposal, isStringOrNull)
+
+const isCalibrationQuestion = (value: unknown): boolean =>
+  isObject(value) &&
+  isString(value.question) &&
+  isString(value.subject) &&
+  isNumber(value.n) &&
+  isNumber(value.labelled) &&
+  isOptional(value.labelled_via_mod, isNumber) &&
+  isNumber(value.unanswered) &&
+  isNumber(value.asks) &&
+  isNumberOrNull(value.brier) &&
+  isNumberOrNull(value.ask_rate) &&
+  isListOf(value.bins, isCalibrationBin) &&
+  isCalibrationThreshold(value.threshold) &&
+  isListOf(value.reasons, isString)
+
+/** Whether a point has the fields the rows and diagrams read, each of its questions too. */
+const isCalibrationPoint = (value: unknown): value is AnnealCalibrationPoint =>
+  isObject(value) &&
+  isString(value.point) &&
+  isOptional(value.verdict, isString) &&
+  isListOf(value.questions, isCalibrationQuestion)
 
 /**
  * The points and proposals path of an `anneal calibrate` envelope (docs/calibrate.md, Output),
- * or `null` when the text is not one. Points without a name or a question list are dropped.
+ * or `null` when the text is not one. A point whose fields, or any of whose questions' fields,
+ * do not have the types the dashboard reads is dropped and counted in `dropped`.
  */
 export const readCalibration = (text: string): AnnealCalibration | null => {
   let parsed: unknown
@@ -333,12 +544,15 @@ export const readCalibration = (text: string): AnnealCalibration | null => {
   if (!isObject(parsed) || parsed.command !== 'calibrate') return null
   const data = parsed.data
   if (!isObject(data) || !Array.isArray(data.points)) return null
-  const points = (data.points as readonly unknown[]).filter(
-    (point): point is AnnealCalibrationPoint =>
-      isObject(point) && typeof point.point === 'string' && Array.isArray(point.questions),
-  )
+  const all: readonly unknown[] = data.points
+  const points = all.filter(isCalibrationPoint)
+  const dropped = all.length - points.length
 
-  return typeof data.proposals === 'string' ? { points, proposals: data.proposals } : { points }
+  return {
+    points,
+    ...(isString(data.proposals) ? { proposals: data.proposals } : {}),
+    ...(dropped > 0 ? { dropped } : {}),
+  }
 }
 
 /** One run of `anneal calibrate`, read. */
@@ -354,28 +568,56 @@ const runCalibrate = async ($: EngineInterface): Promise<AnnealCalibrationReadin
 /** Whether a run of `anneal calibrate` is under way; an ask meanwhile starts none. */
 let isCalibrating = false
 
+/** What is stored of `anneal calibrate`, or `unread`. */
+const heldCalibration = async ($: EngineInterface): Promise<AnnealCalibrationReading> =>
+  (await $.state.get(calibration)).value ?? { kind: 'unread' }
+
+/**
+ * A failed calibration refresh, as stored: the last good run with why this one failed, else
+ * `unavailable` with the reason.
+ */
+const calibrationFailure = (current: AnnealCalibrationReading, reason: string): AnnealCalibrationReading =>
+  current.kind === 'read'
+    ? { kind: 'read', calibration: current.calibration, failed: reason }
+    : { kind: 'unavailable', reason }
+
+/**
+ * Records a calibration refresh that failed outside a run (the host refused a call): the reason
+ * goes to the debug log and, where the store can be read, to the reading. Resolves to that
+ * reading.
+ */
+const calibrationFailed = async ($: EngineInterface, error: unknown): Promise<AnnealCalibrationReading> => {
+  const reason = errorText(error)
+  $.ui.log(`anneal cockpit: calibration refresh failed: ${reason}`, { to: 'debug' })
+  try {
+    const current = await heldCalibration($)
+    const kept = calibrationFailure(current, reason)
+    if (JSON.stringify(kept) !== JSON.stringify(current)) await $.state.set(calibration, kept)
+    return kept
+  } catch (stored) {
+    $.ui.log(`anneal cockpit: the calibration failure was not recorded: ${errorText(stored)}`, { to: 'debug' })
+    return { kind: 'unavailable', reason }
+  }
+}
+
 /**
  * Runs `anneal calibrate` and stores what it printed: a failure after a good run keeps that run
- * and says why, and an unchanged result writes nothing. Resolves to what is stored.
+ * and says why, and an unchanged result writes nothing. Resolves to what is stored; a run under
+ * way absorbs the ask and resolves to what is stored now. It never rejects: a host that refuses
+ * a call is recorded as the reason.
  */
 export const refreshCalibration = async ($: EngineInterface): Promise<AnnealCalibrationReading> => {
-  const held = await $.state.get(calibration)
-  const current: AnnealCalibrationReading = held.value ?? { kind: 'unread' }
-  if (isCalibrating) return current
+  if (isCalibrating) return heldCalibration($).catch(error => calibrationFailed($, error))
   isCalibrating = true
   try {
+    const current = await heldCalibration($)
     const next = await runCalibrate($)
-    const kept: AnnealCalibrationReading =
-      next.kind === 'unavailable' && current.kind === 'read'
-        ? { kind: 'read', calibration: current.calibration, failed: next.reason }
-        : next
+    const kept = next.kind === 'unavailable' ? calibrationFailure(current, next.reason) : next
     if (JSON.stringify(kept) !== JSON.stringify(current)) await $.state.set(calibration, kept)
 
     return kept
   } catch (error) {
-    // The host refused a call the run needs: the last reading stays, the next ask tries again.
-    $.ui.log(`anneal cockpit: calibration refresh failed: ${String(error)}`, { to: 'debug' })
-    return current
+    return calibrationFailed($, error)
   } finally {
     isCalibrating = false
   }
@@ -758,6 +1000,12 @@ const calibrationTree = async ($: EngineInterface, e: PaneRender, columns: numbe
       {heading}
       {held.failed !== undefined && row('cal-failed', `Last refresh failed: ${held.failed}`, true)}
       {isEmpty && row('cal-empty', 'No decisions logged yet: every point is short of labels.', true)}
+      {held.calibration.dropped !== undefined &&
+        row(
+          'cal-dropped',
+          `${held.calibration.dropped} point${held.calibration.dropped === 1 ? '' : 's'} not drawn: not the shape this dashboard reads`,
+          true,
+        )}
       {points.map(point => {
         const lines = pointLines(point, modeOf(status, point.point))
         return (
@@ -799,6 +1047,32 @@ const calibrationTree = async ($: EngineInterface, e: PaneRender, columns: numbe
   )
 }
 
+/** The calibration as a section of the cockpit pane, or one line saying it cannot be drawn. */
+const calibrationSectionTree = async ($: EngineInterface, e: PaneRender, columns: number): Promise<RenderElement> => {
+  try {
+    return await calibrationTree($, e, columns)
+  } catch (error) {
+    $.ui.log(`anneal cockpit: calibration not drawn: ${errorText(error)}`, { to: 'debug' })
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box key="cal-note">
+        <Text dimColor wrap="truncate-end">
+          {fit(UNREADABLE_CALIBRATION, columns)}
+        </Text>
+      </Box>
+    )
+  }
+}
+
+/** `calibrationText`, or one line saying the stored run cannot be read. */
+const calibrationTextOrNote = (held: AnnealCalibrationReading, status: AnnealReading): string => {
+  try {
+    return calibrationText(held, status)
+  } catch {
+    return `${UNREADABLE_CALIBRATION}.`
+  }
+}
+
 /** `/anneal calibration [refresh]`. */
 const calibrationCommand = async (
   $: EngineInterface,
@@ -811,7 +1085,7 @@ const calibrationCommand = async (
   const statusNow = async (): Promise<AnnealReading> => (await $.state.get(reading)).value ?? { kind: 'unread' }
   if (isRefresh) {
     const held = await refreshCalibration($)
-    if (surfaces.length === 0) return { text: calibrationText(held, await statusNow()) }
+    if (surfaces.length === 0) return { text: calibrationTextOrNote(held, await statusNow()) }
     if (held.kind === 'read' && held.failed === undefined) return { text: 'anneal: calibration refreshed.' }
     const reason = held.kind === 'read' ? held.failed : held.kind === 'unavailable' ? held.reason : 'no run finished'
 
@@ -826,13 +1100,13 @@ const calibrationCommand = async (
     const opened = await $.ui.open({ id, title: isNarrow ? 'anneal' : 'calibration', ...size })
     if (opened.isPlaced) {
       await refresh($)
-      void refreshCalibration($)
+      void refreshCalibration($).catch(error => calibrationFailed($, error))
       return { text: isNarrow ? 'anneal: calibration shown in the cockpit pane.' : 'anneal: calibration pane opened.' }
     }
     await $.ui.close({ id })
   }
 
-  return { text: calibrationText(await refreshCalibration($), await statusNow()) }
+  return { text: calibrationTextOrNote(await refreshCalibration($), await statusNow()) }
 }
 
 export const register: Register = on => {
@@ -899,7 +1173,15 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const line = bandLine(value.status)
+    // A reading this module did not check (one kept from before a reload) may not have the shape
+    // `bandLine` reads: the band then says so rather than drawing nothing.
+    let line: { readonly text: string; readonly isBlocked: boolean }
+    try {
+      line = bandLine(value.status)
+    } catch (error) {
+      $.ui.log(`anneal cockpit: band not drawn: ${errorText(error)}`, { to: 'debug' })
+      line = { text: UNREADABLE_BAND, isBlocked: false }
+    }
 
     return (
       <Box key="band">
@@ -916,7 +1198,7 @@ export const register: Register = on => {
     const { value = { kind: 'unread' } } = await $.state.get(reading)
     const { value: open = null } = await $.state.get(expanded)
     const { value: isSection = false } = await $.state.get(calibrationSection)
-    const section = isSection ? await calibrationTree($, e, columns) : null
+    const section = isSection ? await calibrationSectionTree($, e, columns) : null
     const row = (key: string, text: string, dim = false) => (
       <Box key={key}>
         <Text dimColor={dim} wrap="truncate-end">
@@ -957,90 +1239,120 @@ export const register: Register = on => {
       )
     }
 
-    const status = value.status
-    const stillOpen = new Set(openGates(status).map(gate => gate.event))
-    const gates = status.gates ?? []
-    const plan = status.plan
-    const tasks = status.tasks
-    const verdict = status.verdict
-    const clef = status.clef
-    const tail = status.ledger_tail ?? []
+    try {
+      return statusTree(value)
+    } catch (error) {
+      $.ui.log(`anneal cockpit: pane not drawn: ${errorText(error)}`, { to: 'debug' })
+      return (
+        <Box flexDirection="column">
+          {row('note', UNREADABLE_PANE, true)}
+          {section}
+        </Box>
+      )
+    }
 
-    return (
-      <Box flexDirection="column">
-        {heading('h-gates', 'Gates')}
-        {status.gates === undefined && row('gates-none', 'not read', true)}
-        {status.gates !== undefined && gates.length === 0 && row('gates-none', 'No gate has blocked.', true)}
-        {gates
-          .slice()
-          .reverse()
-          .map(gate => (
-            <Box key={`gate-box:${gate.event}`} flexDirection="column">
-              <Button
-                key={`gate:${gate.event}`}
-                plain
-                onPress={() => toggle($, gate.event)}
-              >
-                {fit(`${open === gate.event ? '▾' : '▸'} #${gate.event} ${gate.id}`, Math.max(1, columns - 8))}
-                <Text dimColor>{stillOpen.has(gate.event) ? ' open' : ' passed'}</Text>
-              </Button>
-              {open === gate.event && row(`gate-kind:${gate.event}`, `  ${gate.kind} at ${gate.ts}`, true)}
-              {open === gate.event && row(`gate-reason:${gate.event}`, `  ${gate.reason}`)}
-            </Box>
-          ))}
+    function statusTree(value: Extract<AnnealReading, { kind: 'read' }>): RenderElement {
+      const status = value.status
+      const stillOpen = new Set(openGates(status).map(gate => gate.event))
+      const gates = status.gates ?? []
+      const plan = status.plan
+      const tasks = status.tasks
+      const verdict = status.verdict
+      const clef = status.clef
+      const tail = status.ledger_tail ?? []
 
-        {heading('h-plan', 'Plan')}
-        {plan === undefined
-          ? row('plan', 'none (not in build mode)', true)
-          : row(
-              'plan',
-              `${plan.id}: ${plan.status}${plan.hash === undefined ? '' : ` ${shortHash(plan.hash)}`}${
-                plan.approved === undefined ? '' : `, approved ${plan.approved.ts}`
-              }`,
-            )}
+      return (
+        <Box flexDirection="column">
+          {value.unreadable !== undefined &&
+            row('status-unreadable', `Unreadable sections, not drawn: ${value.unreadable.join(', ')}`, true)}
+          {heading('h-gates', 'Gates')}
+          {status.gates === undefined && row('gates-none', 'not read', true)}
+          {status.gates !== undefined && gates.length === 0 && row('gates-none', 'No gate has blocked.', true)}
+          {gates
+            .slice()
+            .reverse()
+            .map(gate => (
+              <Box key={`gate-box:${gate.event}`} flexDirection="column">
+                <Button
+                  key={`gate:${gate.event}`}
+                  plain
+                  onPress={() => toggle($, gate.event)}
+                >
+                  {fit(`${open === gate.event ? '▾' : '▸'} #${gate.event} ${gate.id}`, Math.max(1, columns - 8))}
+                  <Text dimColor>{stillOpen.has(gate.event) ? ' open' : ' passed'}</Text>
+                </Button>
+                {open === gate.event && row(`gate-kind:${gate.event}`, `  ${gate.kind} at ${gate.ts}`, true)}
+                {open === gate.event && row(`gate-reason:${gate.event}`, `  ${gate.reason}`)}
+              </Box>
+            ))}
 
-        {heading('h-tasks', 'Tasks')}
-        {tasks === undefined
-          ? row('tasks', 'none', true)
-          : row(
-              'tasks',
-              `${tasks.done}/${tasks.total} done${tasks.next === undefined ? '' : `, next ${tasks.next.id} ${tasks.next.title}`}`,
-            )}
-
-        {heading('h-verdict', 'Verdict for HEAD')}
-        {verdict === undefined
-          ? row('verdict', 'none', true)
-          : row(
-              'verdict',
-              `${verdict.outcome}${verdict.pr === undefined ? '' : ` (PR #${verdict.pr})`}${
-                verdict.verdict === undefined ? '' : `: ${verdict.verdict.verdict}, fresh ${verdict.verdict.fresh ?? 'unknown'}`
-              }`,
-            )}
-
-        {heading('h-clef', 'Clef')}
-        {clef === undefined
-          ? row('clef', 'none', true)
-          : clef.points.map(point =>
-              row(
-                `clef:${point.point}`,
-                `${point.point} ${point.mode}, ${point.answered} answered${
-                  point.configured_mode === undefined || point.configured_mode === point.mode
-                    ? ''
-                    : ` (configured ${point.configured_mode})`
+          {heading('h-plan', 'Plan')}
+          {plan === undefined
+            ? row('plan', 'none (not in build mode)', true)
+            : row(
+                'plan',
+                `${plan.id}: ${plan.status}${plan.hash === undefined ? '' : ` ${shortHash(plan.hash)}`}${
+                  plan.approved === undefined ? '' : `, approved ${plan.approved.ts}`
                 }`,
-              ),
-            )}
+              )}
 
-        {heading('h-ledger', 'Ledger')}
-        {tail.length === 0 && row('ledger-none', 'No events.', true)}
-        {tail.map(entry => row(`ledger:${entry.event}`, `#${entry.event} ${entry.summary} (${entry.ts})`, true))}
+          {heading('h-tasks', 'Tasks')}
+          {tasks === undefined
+            ? row('tasks', 'none', true)
+            : row(
+                'tasks',
+                `${tasks.done}/${tasks.total} done${tasks.next === undefined ? '' : `, next ${tasks.next.id} ${tasks.next.title}`}`,
+              )}
 
-        {section}
-      </Box>
-    )
+          {heading('h-verdict', 'Verdict for HEAD')}
+          {verdict === undefined
+            ? row('verdict', 'none', true)
+            : row(
+                'verdict',
+                `${verdict.outcome}${verdict.pr === undefined ? '' : ` (PR #${verdict.pr})`}${
+                  verdict.verdict === undefined ? '' : `: ${verdict.verdict.verdict}, fresh ${verdict.verdict.fresh ?? 'unknown'}`
+                }`,
+              )}
+
+          {heading('h-clef', 'Clef')}
+          {clef === undefined
+            ? row('clef', 'none', true)
+            : clef.points.map(point =>
+                row(
+                  `clef:${point.point}`,
+                  `${point.point} ${point.mode}, ${point.answered} answered${
+                    point.configured_mode === undefined || point.configured_mode === point.mode
+                      ? ''
+                      : ` (configured ${point.configured_mode})`
+                  }`,
+                ),
+              )}
+
+          {heading('h-ledger', 'Ledger')}
+          {tail.length === 0 && row('ledger-none', 'No events.', true)}
+          {tail.map(entry => row(`ledger:${entry.event}`, `#${entry.event} ${entry.summary} (${entry.ts})`, true))}
+
+          {section}
+        </Box>
+      )
+    }
   })
 
-  on('ui.render', { component: 'Pane', requestId: CALIBRATION_PANE }, async ($, e) =>
-    calibrationTree($, e, e.props.bodyColumns),
-  )
+  on('ui.render', { component: 'Pane', requestId: CALIBRATION_PANE }, async ($, e) => {
+    try {
+      return await calibrationTree($, e, e.props.bodyColumns)
+    } catch (error) {
+      $.ui.log(`anneal cockpit: calibration not drawn: ${errorText(error)}`, { to: 'debug' })
+      const { Box, Text } = $.ui.resolve(e)
+      return (
+        <Box flexDirection="column">
+          <Box key="cal-note">
+            <Text dimColor wrap="truncate-end">
+              {fit(UNREADABLE_CALIBRATION, e.props.bodyColumns)}
+            </Text>
+          </Box>
+        </Box>
+      )
+    }
+  })
 }

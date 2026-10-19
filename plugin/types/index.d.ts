@@ -112,14 +112,20 @@ export type AnnealStatus = {
  *
  * - `unread`: no refresh has finished yet;
  * - `absent`: `anneal status` exited 2 with its `status/no-ledger` finding (no ledger here);
- * - `read`: the last good status document;
+ * - `read`: the last good status document, without any section whose fields did not have the
+ *   types the cockpit reads (`unreadable` names those);
  * - `unavailable`: the CLI could not be run or printed no status document, and there was no
  *   good reading to keep (a failure after a good reading keeps that reading).
  */
 export type AnnealReading =
   | { readonly kind: 'unread' }
   | { readonly kind: 'absent' }
-  | { readonly kind: 'read'; readonly status: AnnealStatus }
+  | {
+      readonly kind: 'read'
+      readonly status: AnnealStatus
+      /** The sections the CLI printed whose fields did not have the types the cockpit reads; dropped. */
+      readonly unreadable?: readonly string[]
+    }
   | { readonly kind: 'unavailable'; readonly reason: string }
 
 /**
@@ -153,6 +159,8 @@ export type AnnealCalibrationQuestion = {
   readonly subject: string
   readonly n: number
   readonly labelled: number
+  /** Of `labelled`, the decisions whose last label came `via: mod` (the mod's buttons). */
+  readonly labelled_via_mod?: number
   readonly unanswered: number
   readonly unusable_labels: number
   readonly brier: number | null
@@ -176,6 +184,8 @@ export type AnnealCalibration = {
   readonly points: readonly AnnealCalibrationPoint[]
   /** The proposals file the run wrote (`<anneal home>/decisions/proposals.json`). */
   readonly proposals?: string
+  /** How many points the run printed whose fields did not have the types the dashboard reads; dropped. */
+  readonly dropped?: number
 }
 
 /**

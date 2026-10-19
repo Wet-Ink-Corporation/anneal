@@ -352,6 +352,10 @@ declare module 'claude-code' {
     'ui.panes': [Readonly<Record<string, never>>, ValueOrDeny<readonly UiPane[]>]
     'ui.log': [{ text: string; to?: 'transcript' | 'debug' }, ValueOrDeny<void>]
     'command.register': [CommandSpec, ValueOrDeny<{ command: string }>]
+    /** Only a test hooks these, to stand for a host that refuses them. */
+    'state.get': [{ plugin: string; key: string }, ValueOrDeny<StateRead<unknown>>]
+    'clock.now': [Readonly<Record<string, never>>, ValueOrDeny<number>]
+    'clock.after': [{ ms: number }, ValueOrDeny<void>]
   }
 
   export type Next<In, Out> = (e: In) => Promise<Out>
