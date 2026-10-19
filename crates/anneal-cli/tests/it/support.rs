@@ -71,7 +71,8 @@ fn is_temporary(cwd: &Path) -> bool {
 
 /// `anneal` run in `cwd` with `ANNEAL_HOME` at `home`, isolated from the caller's repository,
 /// ledger overrides, Clef configuration and anneal home: the plugin's `CLAUDE_PLUGIN_OPTION_*`
-/// Clef variables, `CLAUDE_PLUGIN_ROOT` (a hook running the tests may set it to another plugin)
+/// Clef variables, `CLAUDE_PLUGIN_ROOT` (a hook running the tests may set it to another plugin),
+/// `CLAUDE_ENV_FILE` (so `hook bootstrap` never appends to a running session's env file)
 /// and `WEIGHIN_BIN` (CI sets it for the weigh-in bridge test) are removed, so no test writes
 /// to `~/.anneal`. A test that needs either sets it again. `ANNEAL_CLEF_URL` is
 /// `http://127.0.0.1:0`, which every platform refuses at once, so a test that configures an
@@ -90,6 +91,7 @@ pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
         .env_remove("CLAUDE_PLUGIN_OPTION_CF_API_TOKEN")
         .env_remove("CLAUDE_PLUGIN_OPTION_CLEF_MODE")
         .env_remove("CLAUDE_PLUGIN_ROOT")
+        .env_remove("CLAUDE_ENV_FILE")
         .env_remove("WEIGHIN_BIN")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")

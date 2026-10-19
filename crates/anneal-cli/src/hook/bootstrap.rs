@@ -5,9 +5,12 @@
 //! worktree's `.continue-here` note when there is one (the `handoff` hook writes it before a
 //! compaction), then a one-time status-line setup hint while no status line saves context
 //! usage, then the live state from the ledger when it changed for this session (volatile,
-//! last). Every failure becomes a one-line note in that context: the hook fails open.
+//! last). With `CLAUDE_ENV_FILE` and `CLAUDE_PLUGIN_ROOT` set it also appends the line that
+//! puts the plugin's `libexec` on PATH for later Bash calls ([`env_file`]). Every failure
+//! becomes a one-line note in that context: the hook fails open.
 
 mod compaction;
+mod env_file;
 pub(crate) mod index;
 mod state;
 
@@ -134,6 +137,7 @@ fn context(
         Err(_) => (None, None),
     };
     let (hint, hint_note) = compaction::statusline_hint(&lookup, &SystemClock::new());
+    let path_note = env_file::export_libexec(&lookup);
     let (state, state_note) = match &cwd {
         Ok(cwd) => fresh_state(input.session_id.as_deref(), cwd, lookup),
         Err(error) => (
@@ -148,7 +152,7 @@ fn context(
         text.push('\n');
         text.push_str(&section);
     }
-    let notes = [input_note, handoff_note, hint_note, state_note];
+    let notes = [input_note, path_note, handoff_note, hint_note, state_note];
     for note in notes.into_iter().flatten() {
         text.push('\n');
         text.push_str(&note);
@@ -243,6 +247,29 @@ mod tests {
                 "\nanneal skipped the live state: reading the working directory: gone\n"
             ),
             "the note last: {context}"
+        );
+    }
+
+    #[test]
+    fn a_session_start_puts_the_plugin_s_libexec_on_path_through_the_env_file() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let env_file = dir.path().join("env.sh");
+        let lookup = |var: &str| match var {
+            "CLAUDE_ENV_FILE" => Some(OsString::from(env_file.as_os_str())),
+            "CLAUDE_PLUGIN_ROOT" => Some(OsString::from("/plugins/anneal")),
+            _ => None,
+        };
+        let env = HookEnv {
+            stdin: &b"{}"[..],
+            current_dir: || Err(io::Error::other("gone")),
+            lookup,
+        };
+
+        run(env, &mut Vec::new()).expect("a Vec accepts every write");
+
+        assert_eq!(
+            std::fs::read_to_string(&env_file).expect("the env file was written"),
+            "export PATH='/plugins/anneal/libexec':\"$PATH\"\n"
         );
     }
 

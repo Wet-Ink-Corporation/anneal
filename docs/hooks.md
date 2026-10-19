@@ -79,10 +79,31 @@ The context is, in order:
    ledger events. The ledger is found as `anneal ledger` finds it (`$ANNEAL_STORE`, else the git
    common dir, else `.anneal/` in the folder). With no ledger file there is no live state, and
    the bootstrap never creates one. A ledger that cannot be read gives a one-line reason instead.
-5. **Notes**, one line each, for anything that failed (unreadable input, no working directory,
-   the sessions file, `.continue-here`, recording the hint).
+5. **Notes**, one line each, for anything that failed (unreadable input, PATH for Bash calls
+   (below), no working directory, the sessions file, `.continue-here`, recording the hint).
 
 An empty (zero-length) ledger file counts as no ledger: opening it would give it the schema.
+
+**PATH for Bash calls.** The skills run `anneal ...` through Bash, and nothing else puts
+`anneal` on PATH. When Claude Code sets both `CLAUDE_ENV_FILE` (the script it sources before
+each later Bash command; it sets it for `SessionStart` hooks) and `CLAUDE_PLUGIN_ROOT`, the
+bootstrap appends one line to that file:
+
+```sh
+export PATH='<CLAUDE_PLUGIN_ROOT>/libexec':"$PATH"
+```
+
+The directory is single-quoted for sh, each `'` in it written `'\''`. The line is appended only
+when no line of the file already equals it, so a resume or `/clear` does not add it again; the
+file is read for that check up to 64 KiB, and a bigger file is appended to without it. A file
+not ending in a newline gets one first. A plugin directory that is not UTF-8, or that holds a
+control character or a `:` (PATH's separator, so a Windows drive path too), is not written: a
+note says so and that `anneal` must be run by its full path. With either variable unset or
+empty nothing is written. A file that cannot be opened or written is a note; the hook still
+exits 0. The directory holds the launcher, which never runs itself through PATH: its PATH
+fallback skips every entry that resolves to its own directory and takes the first `anneal`
+after it, and `anneal.cmd` falls back only to an `anneal.exe`. PowerShell reads only plain
+assignments from the file, so this line does not reach PowerShell commands.
 
 **Time budget.** The entry's `timeout` is 15 s, and when it runs out Claude Code drops the whole
 output, index included. So the live-state lookup is bounded well under it: git may take 2 s to

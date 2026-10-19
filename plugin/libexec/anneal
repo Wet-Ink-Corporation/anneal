@@ -47,10 +47,26 @@ if [ -n "$pick" ]; then
   [ -x "$pick" ] || chmod +x "$pick" 2>/dev/null
   exec "$pick" "$@"
 fi
-# Fall back to an installed anneal, but never to this launcher itself (it may be on PATH).
+# Fall back to an installed anneal, but never to this launcher itself: `hook bootstrap` puts this
+# directory first on PATH for Bash calls, so the search skips every PATH entry that is this
+# directory (compared resolved) and takes the first executable anneal after it. ANNEAL_LAUNCHER
+# stops a second launcher reached that way from searching again.
 if [ -z "${ANNEAL_LAUNCHER:-}" ]; then
-  found=$(command -v anneal 2>/dev/null || true)
-  if [ -n "$found" ] && [ "$found" != "$dir/anneal" ]; then
+  self=$(CDPATH= cd -- "$dir" 2>/dev/null && pwd -P)
+  found=""
+  saved_ifs=$IFS
+  IFS=:
+  set -f
+  for entry in $PATH; do
+    [ -n "$entry" ] || entry=.
+    [ -f "$entry/anneal" ] && [ -x "$entry/anneal" ] || continue
+    [ "$(CDPATH= cd -- "$entry" 2>/dev/null && pwd -P)" != "$self" ] || continue
+    found="$entry/anneal"
+    break
+  done
+  set +f
+  IFS=$saved_ifs
+  if [ -n "$found" ]; then
     ANNEAL_LAUNCHER=1 exec "$found" "$@"
   fi
 fi
