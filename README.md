@@ -63,6 +63,8 @@ With `anneal` on your PATH (`cargo install --path crates/anneal-cli`, and on Win
 
 The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's context window, else 200,000 tokens. Until a status line saves a reading the monitor stays silent, and the session start shows a one-time setup hint. See `docs/handoff.md`.
 
+`anneal status` shows the rest of the state anneal holds for a worktree in at most 12 lines: its mode, the plan's approval, tasks done, gates that blocked, the verdict for `HEAD`, Clef's points, the context reading and the newest ledger events. With `--json` it is one versioned document a UI can render without logic of its own. See `docs/status.md`.
+
 ### Clef (optional)
 
 Clef answers anneal's judgement calls: seven decision points (D1 to D7), such as "is this Bash command destructive?" (the guard) or "is this question a decision for the human?" (`grill`). Each call goes to a model on Cloudflare Workers AI, its probability is checked against the point's thresholds (`plugin/playbooks/clef-thresholds.json`), and the decision is logged under `~/.anneal/decisions/`. Set it in the plugin's options (`userConfig`):

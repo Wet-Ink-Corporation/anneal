@@ -55,6 +55,7 @@ mod rollout;
 mod round;
 mod ship;
 mod spec_tree;
+mod status;
 mod statusline;
 #[cfg(test)]
 mod support;

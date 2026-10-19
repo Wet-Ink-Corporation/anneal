@@ -215,6 +215,14 @@ impl DecisionLog {
         Ok(self.load_counts()?.get(&point).copied().unwrap_or(0))
     }
 
+    /// How many answered decisions each point has had, read once; a point with none is absent.
+    ///
+    /// # Errors
+    /// As [`DecisionLog::answered`].
+    pub fn answered_by_point(&self) -> Result<BTreeMap<Point, u64>, LogError> {
+        self.load_counts()
+    }
+
     /// Counts one more answered decision of `point`, and returns the new count.
     ///
     /// # Errors

@@ -162,6 +162,38 @@ fn normalised(text: &str, separator: char) -> String {
 /// [`CliError::Usage`] when `id` cannot be a ledger tag, [`CliError::Ledger`] when the ledger
 /// cannot be read.
 pub(crate) fn approval_of(store: &Store, id: &str, bytes: &[u8]) -> Result<Status, CliError> {
+    Ok(approval_record(store, id, bytes)?.status)
+}
+
+/// A plan's approval as `plan check` judges it: the status, the hash of the plan's current
+/// bytes, and the latest approval's hash, ledger position and time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Approval {
+    /// Whether the plan is approved at its current bytes.
+    pub(crate) status: Status,
+    /// The `sha256:` hash of the plan's current bytes.
+    pub(crate) hash: String,
+    /// The latest approval, if any: its hash, position and `ts`.
+    pub(crate) latest: Option<ApprovalRecord>,
+}
+
+/// One `plan_approved` event: what it approved and where the ledger holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApprovalRecord {
+    /// The hash it approved.
+    pub(crate) hash: String,
+    /// Its ledger position.
+    pub(crate) position: u64,
+    /// When it was recorded.
+    pub(crate) ts: String,
+}
+
+/// [`approval_of`] with the hashes and the latest approval, for a caller that shows them
+/// (`anneal status`).
+///
+/// # Errors
+/// As [`approval_of`].
+pub(crate) fn approval_record(store: &Store, id: &str, bytes: &[u8]) -> Result<Approval, CliError> {
     let tag = LedgerTag::new(TagKey::Plan, id).map_err(|error| CliError::Usage {
         reason: format!("the plan path is recorded as a ledger tag: {error}"),
     })?;
@@ -170,7 +202,21 @@ pub(crate) fn approval_of(store: &Store, id: &str, bytes: &[u8]) -> Result<Statu
         tags: vec![tag],
     };
     let previous = latest(store, &approvals)?;
-    Ok(check::status_of(&sha256(bytes), previous.as_ref()))
+    let hash = sha256(bytes);
+    let status = check::status_of(&hash, previous.as_ref());
+    let latest = previous.and_then(|recorded| match recorded.event.event {
+        LedgerEvent::PlanApproved(PlanApproved { hash, .. }) => Some(ApprovalRecord {
+            hash,
+            position: recorded.position,
+            ts: recorded.event.ts.as_str().to_owned(),
+        }),
+        _ => None,
+    });
+    Ok(Approval {
+        status,
+        hash,
+        latest,
+    })
 }
 
 /// The latest event in `store` among `approvals` (the approvals of one plan).
