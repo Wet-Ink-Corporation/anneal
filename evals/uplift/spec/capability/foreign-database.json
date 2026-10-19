@@ -1,6 +1,7 @@
 {
   "behaviour": "outcome",
   "pressure": "sunk-cost",
+  "fixture": "anneal-repo",
   "seed": "anneal #11 review (blocker): the store adopted a SQLite database that another tool had created at the configured path.",
   "prompt": "Write the acceptance criteria for opening the ledger file at a configured path.",
   "graders": [

@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use grader::Grader;
 
+use super::fixture::FixtureName;
+
 /// The longest prompt, in bytes, pressure sentence included.
 const MAX_PROMPT_BYTES: usize = 8 * 1024;
 /// Turns per run when a case gives none: enough for a skill to load and act.
@@ -116,6 +118,9 @@ struct CaseDto {
     timeout_seconds: Option<u32>,
     #[serde(default)]
     allowed_tools: Option<Vec<Tool>>,
+    /// The fixture under `<suites>/fixtures/` that seeds each run's workspace.
+    #[serde(default)]
+    fixture: Option<String>,
     graders: Vec<Grader>,
 }
 
@@ -134,6 +139,8 @@ pub(crate) struct Parsed {
     pub(crate) timeout_seconds: u32,
     /// The tools its runs may use.
     pub(crate) allowed_tools: Vec<Tool>,
+    /// The fixture that seeds each run's workspace, if any.
+    pub(crate) fixture: Option<FixtureName>,
     /// Its graders, deterministic ones first.
     pub(crate) graders: Vec<Grader>,
 }
@@ -182,6 +189,12 @@ pub(crate) enum Fault {
     /// `allowed_tools` leaves out `Skill`, so the skill could never load.
     #[error("allowed_tools must include Skill")]
     NoSkillTool,
+    /// `fixture` is not a plain name.
+    #[error(
+        "fixture {0:?} is not a fixture name: 1 to 64 of A-Z, a-z, 0-9, ., _ and -, not \
+         starting with ."
+    )]
+    Fixture(String),
 }
 
 /// The case in `bytes`.
@@ -215,6 +228,11 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, Fault> {
     if !allowed_tools.contains(&Tool::Skill) {
         return Err(Fault::NoSkillTool);
     }
+    let fixture = dto
+        .fixture
+        .map(FixtureName::try_from)
+        .transpose()
+        .map_err(Fault::Fixture)?;
     check_graders(&dto.graders)?;
     Ok(Parsed {
         behaviour: dto.behaviour,
@@ -223,6 +241,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, Fault> {
         max_turns,
         timeout_seconds,
         allowed_tools,
+        fixture,
         graders: dto.graders,
     })
 }

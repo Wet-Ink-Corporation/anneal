@@ -232,6 +232,138 @@ fn a_missing_suites_directory_is_a_usage_error() {
     );
 }
 
+fn fixture_case_json(fixture: &str) -> String {
+    json!({
+        "behaviour": "outcome",
+        "seed": "a real failure",
+        "prompt": "Plan the export feature.",
+        "fixture": fixture,
+        "graders": [{"type": "regex", "name": "tasks", "pattern": "task"}]
+    })
+    .to_string()
+}
+
+#[test]
+fn the_fixtures_directory_is_no_skill_and_a_fixture_case_gets_its_absolute_path() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    write(dir.path(), "fixtures/crate/src/lib.rs", "")?;
+    write(dir.path(), "plan/regression/plain.json", &case_json())?;
+    write(
+        dir.path(),
+        "plan/regression/seeded.json",
+        &fixture_case_json("crate"),
+    )?;
+
+    let suites = read(dir.path(), &skills())?;
+
+    let fixture = std::path::absolute(dir.path().join("fixtures/crate"))?;
+    assert_eq!(
+        (
+            suites.problems,
+            suites
+                .cases
+                .iter()
+                .map(|case| (
+                    case.slug.as_str(),
+                    case.fixture
+                        .as_ref()
+                        .map(|fixture| (fixture.name.as_str(), fixture.dir.as_str())),
+                    case.body.fixture.as_ref(),
+                ))
+                .collect::<Vec<_>>(),
+            suites.coverage,
+        ),
+        (
+            Vec::new(),
+            vec![
+                ("plain", None, None),
+                (
+                    "seeded",
+                    Some(("crate", fixture.to_str().ok_or("UTF-8")?)),
+                    None
+                )
+            ],
+            vec![Coverage {
+                skill: "plan".to_owned(),
+                regression: 2,
+                capability: 0
+            }]
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_case_whose_fixture_cannot_seed_a_run_is_a_problem_and_not_counted() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("fixtures/hollow"))?;
+    write(
+        dir.path(),
+        "plan/regression/absent.json",
+        &fixture_case_json("absent"),
+    )?;
+    write(
+        dir.path(),
+        "plan/regression/hollow.json",
+        &fixture_case_json("hollow"),
+    )?;
+
+    let suites = read(dir.path(), &skills())?;
+
+    let problems: Vec<(&str, &str)> = suites
+        .problems
+        .iter()
+        .map(|problem| (problem.file.as_str(), problem.reason.as_str()))
+        .collect();
+    assert_eq!(
+        (problems, suites.cases.len(), suites.coverage),
+        (
+            vec![
+                (
+                    "plan/regression/absent.json",
+                    "no fixture directory fixtures/absent"
+                ),
+                (
+                    "plan/regression/hollow.json",
+                    "fixtures/hollow holds no file"
+                ),
+            ],
+            0,
+            vec![Coverage {
+                skill: "plan".to_owned(),
+                regression: 0,
+                capability: 0
+            }]
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_skill_named_fixtures_cannot_have_suites() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    write(dir.path(), "fixtures/regression/x.json", &case_json())?;
+
+    let suites = read(dir.path(), &["fixtures".to_owned()])?;
+
+    let problems: Vec<(&str, &str)> = suites
+        .problems
+        .iter()
+        .map(|problem| (problem.file.as_str(), problem.reason.as_str()))
+        .collect();
+    assert_eq!(
+        (problems, suites.cases.len()),
+        (
+            vec![(
+                "fixtures",
+                "`fixtures` holds the case fixtures, so the skill `fixtures` cannot have suites"
+            )],
+            0
+        )
+    );
+    Ok(())
+}
+
 #[test]
 fn suite_kinds_name_their_directories() {
     assert_eq!(
