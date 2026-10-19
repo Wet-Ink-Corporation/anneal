@@ -1,15 +1,19 @@
 //! `anneal plan approve|check`: an approval of a plan that a script can verify.
 //!
 //! `approve` refuses (exit 3, nothing appended, no ledger opened) while `lint plan` has a
-//! finding or the linked spec has any `[NEEDS CLARIFICATION]` marker; otherwise it appends
+//! finding or the linked spec has any `[NEEDS CLARIFICATION]` marker, and (exit 3, nothing
+//! appended, no ledger created) while the design tree the spec's `Tree:` line names has no
+//! `grill_confirmed` with its current hash (`plan::tree`, #77); otherwise it appends
 //! `plan_approved {plan, hash}`, the plan's id and the `sha256:` hash of its bytes, unless the
 //! latest approval already has that hash. `check` compares the plan's hash with the latest
 //! approval: 0 current, 3 never approved, 4 stale. It never creates a ledger. See
 //! `docs/plan.md`.
 
 mod check;
+mod tree;
 
 pub(crate) use check::Status;
+use tree::TreeCheck;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -29,6 +33,7 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
 use crate::lint::plan::{self as plan_lint, PlanFinding};
+use crate::lint::spec::TreeLink;
 use crate::lint::{read_whole, read_whole_bytes, spec};
 use crate::path_text::slashed;
 use crate::paths::{self, StoreSource};
@@ -43,8 +48,9 @@ pub struct PlanArgs {
 /// The `anneal plan` subcommands.
 #[derive(Debug, Subcommand)]
 pub enum PlanAction {
-    /// Record the human's approval of a plan: refused while `lint plan` fails or its spec has
-    /// a [NEEDS CLARIFICATION] marker
+    /// Record the human's approval of a plan: refused while `lint plan` fails, its spec has a
+    /// [NEEDS CLARIFICATION] marker, or the design tree its spec's `Tree:` line names is not
+    /// confirmed at its current hash
     Approve(ApproveArgs),
     /// Check that the plan's bytes are unchanged since its latest approval (its spec is not
     /// compared)
@@ -189,6 +195,9 @@ struct Refused<'a> {
     /// Lint findings dropped at `lint plan`'s cap; present only when some were.
     #[serde(skip_serializing_if = "Option::is_none")]
     omitted: Option<usize>,
+    /// The spec's design tree, when the refusal is about it; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tree: Option<&'a Path>,
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +205,9 @@ struct Approved<'a> {
     plan: &'a str,
     hash: &'a str,
     spec: Option<&'a Path>,
+    /// The spec's confirmed design tree; absent for a spec with no `Tree:` line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tree: Option<&'a Path>,
     appended: bool,
     store: &'a Path,
     source: StoreSource,
@@ -215,10 +227,18 @@ fn approve<O: Write>(
     let event = approval(&plan, args.session.as_deref())?;
     let outcome = plan_lint::examine(&args.file, &plan.bytes);
     let spec_path = outcome.spec.as_deref();
-    if let Some(refusal) = refusal(&outcome)? {
-        return refuse(&plan, spec_path, &refusal, out);
-    }
+    let (spec, link) = match refusal(&outcome)? {
+        Checked::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
+        Checked::Passed { spec, tree } => (spec, tree),
+    };
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
+    let tree = match link {
+        None => None,
+        Some(link) => match tree::check(spec, &link, &location.path)? {
+            TreeCheck::Confirmed(path) => Some(path),
+            TreeCheck::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
+        },
+    };
     let store = Store::open(&location.path)?;
     let previous = latest(&store, &plan.approvals)?;
     let (appended, position) = match record(&store, &event, &plan, previous.as_ref())? {
@@ -230,6 +250,7 @@ fn approve<O: Write>(
         plan: &plan.id,
         hash: &plan.hash,
         spec: spec_path,
+        tree: tree.as_deref(),
         appended,
         store: &location.path,
         source: location.source,
@@ -246,32 +267,62 @@ fn approve<O: Write>(
     )
 }
 
-/// Why an approval is refused: its findings, the spec's marker count when that is why, and
-/// how many lint findings were dropped at the cap, if any.
+/// Why an approval is refused: its findings, the spec's marker count when that is why, how
+/// many lint findings were dropped at the cap, if any, and the spec's design tree when that is
+/// why.
 #[derive(Debug)]
 struct Refusal {
     needs_clarification: Option<usize>,
     findings: Vec<Finding>,
     omitted: Option<usize>,
+    tree: Option<PathBuf>,
 }
 
-/// The refusal for a plan with lint findings, or whose spec has markers; `None` when it may
-/// be approved.
-fn refusal(outcome: &plan_lint::Outcome) -> Result<Option<Refusal>, CliError> {
+impl Refusal {
+    /// The refusal with one finding and nothing else.
+    fn of(finding: Finding) -> Self {
+        Self {
+            needs_clarification: None,
+            findings: vec![finding],
+            omitted: None,
+            tree: None,
+        }
+    }
+}
+
+/// What the checks before the ledger found.
+#[derive(Debug)]
+enum Checked<'o> {
+    /// The approval is refused.
+    Refused(Refusal),
+    /// The plan and its spec pass; the spec at this path links this design tree, if any.
+    Passed {
+        spec: &'o Path,
+        tree: Option<TreeLink>,
+    },
+}
+
+/// The refusal for a plan with lint findings, or whose spec has markers; otherwise the spec
+/// and the design tree it links, which the ledger must show confirmed.
+fn refusal(outcome: &plan_lint::Outcome) -> Result<Checked<'_>, CliError> {
     let report = &outcome.report;
     let findings = &report.findings;
     let Some(spec_path) = outcome.spec.as_deref().filter(|_| findings.is_empty()) else {
         // A plan without a spec link has a lint finding, so this lists at least one.
-        return Ok(Some(Refusal {
+        return Ok(Checked::Refused(Refusal {
             needs_clarification: None,
             findings: findings.iter().map(PlanFinding::to_envelope).collect(),
             omitted: (report.omitted > 0).then_some(report.omitted),
+            tree: None,
         }));
     };
     let spec_text = read_whole(spec_path).map_err(CliError::Plan)?;
     let open = spec::needs_clarification(&spec_text);
     if open == 0 {
-        return Ok(None);
+        return Ok(Checked::Passed {
+            spec: spec_path,
+            tree: spec::tree_link(&spec_text),
+        });
     }
     let finding = Finding::new(
         format!("plan/approve/needs-clarification:{}", spec_path.display()),
@@ -281,24 +332,19 @@ fn refusal(outcome: &plan_lint::Outcome) -> Result<Option<Refusal>, CliError> {
             spec_path.display()
         ),
     );
-    Ok(Some(Refusal {
+    Ok(Checked::Refused(Refusal {
         needs_clarification: Some(open),
-        findings: vec![finding],
-        omitted: None,
+        ..Refusal::of(finding)
     }))
 }
 
 /// The refusal when another approval of the plan landed between reading and appending.
 fn conflict(plan: &PlanBytes) -> Refusal {
-    Refusal {
-        needs_clarification: None,
-        findings: vec![Finding::new(
-            format!("plan/approve/conflict:{}", plan.id),
-            "another approval of this plan was recorded at the same time. fix: run `anneal plan \
-             check`, then approve again if it is not current.",
-        )],
-        omitted: None,
-    }
+    Refusal::of(Finding::new(
+        format!("plan/approve/conflict:{}", plan.id),
+        "another approval of this plan was recorded at the same time. fix: run `anneal plan \
+         check`, then approve again if it is not current.",
+    ))
 }
 
 /// Writes the refusal envelope: exit 3, not approved.
@@ -314,6 +360,7 @@ fn refuse<O: Write>(
         spec,
         needs_clarification: refusal.needs_clarification,
         omitted: refusal.omitted,
+        tree: refusal.tree.as_deref(),
     };
     let envelope = Envelope::new(
         CommandName::Plan,

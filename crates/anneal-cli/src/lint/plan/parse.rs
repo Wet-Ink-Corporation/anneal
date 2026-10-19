@@ -42,6 +42,14 @@ impl Key {
 /// The field `text` sets and its value, trimmed: `Key: value`, optionally a list item, with
 /// the key optionally bold (`**Key:**` or `**Key**:`). Lines with any other key are not fields.
 pub(super) fn field(text: &str) -> Option<(Key, &str)> {
+    let (key, value) = key_value(text)?;
+    Key::parse(key).map(|key| (key, value))
+}
+
+/// The key and value of a `Key: value` line, both trimmed, read as [`field`] reads them
+/// (optionally a list item, the key optionally bold), whatever the key. A spec's `Tree:` line
+/// is read with it, so it is written as a plan's `Spec:` line is.
+pub(crate) fn key_value(text: &str) -> Option<(&str, &str)> {
     let mut rest = text.trim_start();
     if let Some(after) = rest
         .strip_prefix(['-', '*', '+'])
@@ -56,7 +64,7 @@ pub(super) fn field(text: &str) -> Option<(Key, &str)> {
         Some(_) => value.strip_prefix("**").unwrap_or(value),
         None => value,
     };
-    Key::parse(key.trim()).map(|key| (key, value.trim()))
+    Some((key.trim(), value.trim()))
 }
 
 /// The closed backtick spans of `text`, trimmed, without blank ones.
@@ -76,8 +84,9 @@ pub(super) fn code_spans(text: &str) -> Vec<&str> {
 }
 
 /// The path a `Spec:` value names: a markdown link's target, else the first backticked span,
-/// else the value itself. `None` when it names nothing.
-pub(super) fn spec_target(value: &str) -> Option<&str> {
+/// else the value itself. `None` when it names nothing. A spec's `Tree:` value is read the
+/// same way.
+pub(crate) fn spec_target(value: &str) -> Option<&str> {
     let target = if let Some((_, after)) = value.split_once("](") {
         after.split_once(')').map_or(after, |(target, _)| target)
     } else if let Some(span) = code_spans(value).first() {

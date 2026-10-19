@@ -10,7 +10,7 @@
 //! The plan as read ([`Plan`]) is `data.plan` in the envelope, its tasks listed up to
 //! [`MAX_LISTED_TASKS`], and `plugin/playbooks/schemas/plan.schema.json` describes it.
 
-mod parse;
+pub(crate) mod parse;
 mod rules;
 
 use std::fmt::{self, Display, Formatter};
@@ -297,8 +297,8 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
 /// platform's path separator: an absolute `target` as is, otherwise `target` joined to the
 /// plan's directory. Joined, and the directory's separators replaced, with `/` rather than
 /// `Path::join`, so the path shown (and keyed) is the same on every platform; Windows opens
-/// `/`-separated paths too.
-fn spec_path(plan: &str, target: &str, separator: char) -> String {
+/// `/`-separated paths too. A spec's `Tree:` target is resolved against the spec the same way.
+pub(crate) fn spec_path(plan: &str, target: &str, separator: char) -> String {
     let drive = separator == '\\'
         && matches!(target.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
     if drive || target.starts_with(['/', separator]) {
