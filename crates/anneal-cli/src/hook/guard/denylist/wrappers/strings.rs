@@ -76,8 +76,8 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
         };
         return Peel::Done(Run::either([
             Run::Script(joined),
-            Run::Split(followed_by(split_by_env(script), split.after)),
-            Run::Split(followed_by(Cow::Borrowed(script), split.after)),
+            Run::Split(followed_by(as_env_args(&split_by_env(script)), split.after)),
+            Run::Split(followed_by(as_env_args(script), split.after)),
         ]));
     }
     match read.rest {
@@ -165,6 +165,12 @@ fn split_by_env(script: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(text)
+}
+
+/// `split` run by `env` again: env reads the words it split from its string as its own
+/// arguments, options (a nested `-S` among them) and assignments first.
+fn as_env_args(split: &str) -> Cow<'static, str> {
+    Cow::Owned(format!("env {split}"))
 }
 
 /// Pushes `c` single-quoted, so the shell reads it as a character of its word.

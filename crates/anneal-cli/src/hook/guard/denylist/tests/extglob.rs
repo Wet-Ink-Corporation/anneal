@@ -184,7 +184,17 @@ fn an_env_split_string_is_read_with_env_s_escapes() {
         ("env -S 'git push origin ; -f main'", FORCE_PUSH),
         // Nor a substitution: a backtick is a character of its word, quoted or not.
         ("env -S 'git push ` -f ` origin main'", FORCE_PUSH),
-        ("env -S 'git push \"`\" -f \"`\" origin main'", FORCE_PUSH), // A Unicode blank is no separator for env: the `#` after it is text.
+        ("env -S 'git push \"`\" -f \"`\" origin main'", FORCE_PUSH),
+        // env reads the words it split as its own arguments, options and a nested `-S` included.
+        ("env -S '-S \"rm -rf /\"'", RM_RF),
+        ("env -S '-S rm\\_-rf\\_/'", RM_RF),
+        ("env -S '-i -S rm\\_-rf\\_/'", RM_RF),
+        ("env -S '--split-string=rm\\_-rf\\_/'", RM_RF),
+        ("env -S '-S\"rm -rf /\"'", RM_RF),
+        ("env -S '-S\"git push -f origin main\"'", FORCE_PUSH),
+        ("env -S '-u X -S \"rm -rf /\"'", RM_RF),
+        ("env -S '-i' rm -rf /", RM_RF),
+        // A Unicode blank is no separator for env: the `#` after it is text.
         ("env -S 'rm\\_-rf\\_\u{a0}#\\_/'", RM_RF),
         // Quoted, or inside a word, a `#` is text.
         ("env -S 'echo a#b' x", ALLOW),

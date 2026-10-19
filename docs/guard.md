@@ -146,8 +146,9 @@ reads no operator, so `env -S 'rm -rf ; /home'` is denied); outside single quote
 character of its word too, as env runs no substitution; `\t`, `\n`, `\r`, `\f` and `\v` are those characters inside their word;
 inside single quotes `\'` is a quote and `\\` a backslash; and `\c` or an unquoted `#` starting
 a word ends the string, so the words after it follow (`env -S 'bash -c #' 'rm -rf /'`,
-`env -S 'rm\_-rf\_/'` and `env -S 'sh -c rm\t-rf\t/'` are denied). A `${VAR}` env expands is
-read as a variable.
+`env -S 'rm\_-rf\_/'` and `env -S 'sh -c rm\t-rf\t/'` are denied). env then reads the words it
+split as its own arguments, so they are read as env's again (`env -S '-S "rm -rf /"'` and
+`env -S '-i -S rm\_-rf\_/'` are denied). A `${VAR}` env expands is read as a variable.
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an
