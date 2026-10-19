@@ -336,7 +336,12 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         // The words after `--` that are not su's own `-` or user.
         let from = argv.len().saturating_sub(after_dashes.len());
         let tail = argv.split_at_checked(from).map_or(argv, |(_, tail)| tail);
-        shell::run("su", None, tail.iter().copied())
+        // And every word after `--` as the shell's, as #129 read su: su takes its `-` and
+        // user from its operands then, and `su - -- -c 'cmd'` hands the shell `-c 'cmd'`.
+        Run::either([
+            shell::run("su", None, tail.iter().copied()),
+            shell::run("su", None, after_dashes),
+        ])
     });
     let permuted = su_reading(options, argv.iter().copied());
     Peel::Done(Run::either([permuted, posix].into_iter().chain(alone)))

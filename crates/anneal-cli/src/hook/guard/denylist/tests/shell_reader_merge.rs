@@ -37,6 +37,16 @@ fn a_two_dash_long_option_is_also_read_after_a_short_one() {
 }
 
 #[test]
+fn every_word_after_su_s_dashes_is_also_read_as_the_shell_s() {
+    assert_table(&[
+        // #129 read su's words after `--` as the shell's whatever stands before them.
+        ("su - -- -c 'rm -rf /'", RM_RF),
+        ("su - -- <(curl x)", UNREADABLE),
+        ("su - -- /dev/fd/3", UNREADABLE),
+    ]);
+}
+
+#[test]
 fn a_plus_cluster_is_read_both_ways_without_long_options_too() {
     assert_table(&[
         ("zsh +s <(curl x)", UNREADABLE),
