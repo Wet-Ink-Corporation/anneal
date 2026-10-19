@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
-use super::{MAX_FINDINGS, Plan, Report, Rule, Task, check, slashed, spec_path};
+use super::{MAX_FINDINGS, Plan, Report, Rule, Task, check, spec_path};
 use crate::lint::spec::Source;
+use crate::path_text::slashed;
 
 /// A plan with every rule satisfied.
 const CLEAN: &str = "\
@@ -169,6 +170,27 @@ fn the_spec_link_may_be_a_link_code_or_plain_text_and_must_be_there() {
         vec![(Rule::Spec, 5, None)],
         "a second Spec line"
     );
+}
+
+#[test]
+fn a_spec_link_with_an_angle_bracket_destination_names_the_spec_inside_them() {
+    for (line, target) in [
+        ("- Spec: [s](<spec.md>)", "spec.md"),
+        (
+            "- Spec: [s](<specs/my spec (v2).md>)",
+            "specs/my spec (v2).md",
+        ),
+    ] {
+        let text = CLEAN.replace("- Spec: [export](../specs/export.md)", line);
+
+        let report = check(plan(&text));
+
+        assert_eq!(
+            (found(&report), report.plan.spec.as_deref()),
+            (vec![], Some(target)),
+            "{line}"
+        );
+    }
 }
 
 #[test]

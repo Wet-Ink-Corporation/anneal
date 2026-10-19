@@ -7,11 +7,12 @@
 //! ([`arguments`]) and a redirection's target ([`of`]). Whether a word's values may be an option
 //! cluster, whatever its variables hold and its globs match, is [`may_start_option_cluster`]; it
 //! judges each word as one word, so word splitting of an unquoted expansion and `"$@"` (which
-//! may make a separate `-rf` word) is a known gap (#128).
+//! may make a separate `-rf` word) is a documented limit (#128).
 
 use std::borrow::Cow;
+use std::ops::Range;
 
-use crate::hook::guard::shell::{Expansion, Globs, Shape, Word};
+use crate::hook::guard::shell::{EXTGLOB_OPENERS, Expansion, Globs, Shape, Word};
 
 /// `word`'s readings: as written, then with its expansions empty when it has that reading.
 pub(super) fn of(word: &Word) -> impl Iterator<Item = Cow<'_, Word>> {
@@ -62,7 +63,8 @@ fn emptied(word: &Word) -> Option<Word> {
 
 /// Whether one of `word`'s values may be an option cluster (`-rf`): its first part may be a `-`
 /// (an expansion, which may hold one; an unquoted `?`, `*` or bracket expression, which may
-/// match a file named `-rf`; or a written `-`), and every later written character is an ASCII
+/// match a file named `-rf`; an extended glob group, `@(-rf)`, `+(-)`, `!(x)`, `?( )` or `*( )`,
+/// which may match any text; or a written `-`), and every later written character is an ASCII
 /// letter, digit or `-`, which the expansions and globs may join into a cluster. So `"$b"rf`
 /// (`b=-`), `?rf` and `-$x` may be one, and `"$f".txt`, `x"$b"` and `"$d"/x` may not. A bracket
 /// expression may match `-` unless it is a plain set that names none (`[.]`): a negated one
@@ -71,8 +73,7 @@ fn emptied(word: &Word) -> Option<Word> {
 ///
 /// Each expansion is taken as text inside this one word, as a quoted one is. An unquoted
 /// expansion, `"$@"` or `"${a[@]}"` may split into several words, one of them `-rf` (`x$b` with
-/// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a known gap (#128). So are extended
-/// globs (`@(-rf)`, `!(x)`), whose `(` is read as a written character (#128).
+/// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a documented limit (#128).
 pub(super) fn may_start_option_cluster(word: &Word) -> bool {
     if word.is_literal() {
         return false;
@@ -110,6 +111,7 @@ fn parts(word: &Word) -> Parts<'_> {
     Parts {
         text: &word.text,
         expansions: &word.expansions,
+        quotes: &word.quotes,
         globs: word.has_pattern(),
         at: 0,
     }
@@ -120,6 +122,8 @@ fn parts(word: &Word) -> Parts<'_> {
 struct Parts<'a> {
     text: &'a str,
     expansions: &'a [Expansion],
+    /// The quoted parts of the text, which never close an extended glob's group.
+    quotes: &'a [Range<usize>],
     globs: bool,
     at: usize,
 }
@@ -134,6 +138,11 @@ impl Iterator for Parts<'_> {
         {
             self.expansions = rest;
         }
+        while let [quote, rest @ ..] = self.quotes
+            && quote.end <= self.at
+        {
+            self.quotes = rest;
+        }
         if let [expansion, rest @ ..] = self.expansions
             && expansion.range.start == self.at
         {
@@ -144,7 +153,18 @@ impl Iterator for Parts<'_> {
         }
         let c = self.text.get(self.at..)?.chars().next()?;
         let after = self.at.saturating_add(c.len_utf8());
+        let opens_group = self.text.as_bytes().get(after) == Some(&b'(');
         let glob = match c {
+            // An extended glob (`@(-rf)`, `!(x)`) may match any text, a `-` included.
+            _ if self.globs && opens_group && EXTGLOB_OPENERS.contains(&c) => Some((
+                extglob_end(
+                    self.text,
+                    after.saturating_add(1),
+                    self.quotes,
+                    self.expansions,
+                ),
+                Part::Any,
+            )),
             '?' | '*' if self.globs => Some((after, Part::Any)),
             '[' if self.globs => bracket(self.text, after, self.expansions),
             _ => None,
@@ -153,6 +173,52 @@ impl Iterator for Parts<'_> {
         self.at = end;
         Some(part)
     }
+}
+
+/// Just past the `)` that closes the extended glob group whose `(` ends at `from` in `text`,
+/// or the end of the text when none does. A `(` or `)` in a quoted part or an expansion's
+/// source text is not counted; a variable's value, recorded as quoted, is skipped too, which
+/// can only make the group longer and so read more of the word as any text. Each byte is read
+/// once (H-13).
+fn extglob_end(
+    text: &str,
+    from: usize,
+    quotes: &[Range<usize>],
+    expansions: &[Expansion],
+) -> usize {
+    let (mut quotes, mut expansions) = (quotes, expansions);
+    let mut open: usize = 1;
+    let mut at = from;
+    while let Some(&byte) = text.as_bytes().get(at) {
+        while let [quote, rest @ ..] = quotes
+            && quote.end <= at
+        {
+            quotes = rest;
+        }
+        while let [expansion, rest @ ..] = expansions
+            && expansion.range.end <= at
+        {
+            expansions = rest;
+        }
+        let skipped = quotes.first().is_some_and(|quote| quote.start <= at)
+            || expansions
+                .first()
+                .is_some_and(|expansion| expansion.range.start <= at);
+        let next = at.saturating_add(1);
+        match byte {
+            _ if skipped => {}
+            b'(' => open = open.saturating_add(1),
+            b')' => {
+                open = open.saturating_sub(1);
+                if open == 0 {
+                    return next;
+                }
+            }
+            _ => {}
+        }
+        at = next;
+    }
+    text.len()
 }
 
 /// The bracket expression whose `[` ends at `from` in `text`: where it closes (just past its

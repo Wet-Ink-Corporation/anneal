@@ -21,7 +21,7 @@ Turns requirements the human confirmed into a spec a script can check, written i
 
 ## Process
 
-1. **Copy the template.** Copy it to `docs/specs/<topic>.md`. It's working if all seven `##` sections are there.
+1. **Copy the template.** Copy it to `docs/specs/<topic>.md` and set its `Tree:` line to the confirmed design tree, relative to the spec; `plan approve` refuses until that tree's `grill_confirmed` matches. It's working if all seven `##` sections are there.
 2. **Fill from what was confirmed.** Problem, Users and Requirements in the human's words, from the design tree and the conversation, nothing else. It's working if every requirement traces to a confirmed answer.
 3. **Write the criteria.** One list item per observable behaviour, in the EARS form that fits: `WHEN`, `WHILE`, `IF … THEN`, `WHERE`, or ubiquitous. It's working if each criterion could become one test.
 4. **Scope it out.** List what this spec will not do, and why; record each out-of-scope ruling in `.out-of-scope/`. It's working if Out of Scope is not empty.

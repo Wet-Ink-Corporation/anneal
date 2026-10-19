@@ -3,6 +3,10 @@
 <!--
 Copy this file to the spec's place (for example `docs/specs/<feature>.md`), replace every
 <placeholder>, and run `anneal lint spec <file>` until it exits 0. The lint checks:
+- the `Tree:` line under the title names the design tree the grill confirmed (read relative
+  to this spec's directory, as a markdown link is): the file exists and is a valid design
+  tree. `anneal plan approve` refuses until a `grill_confirmed` event carries the tree's
+  current hash, and while the line is still this placeholder;
 - every `##` section below is present (any letter case);
 - every list item under Acceptance criteria is EARS (grammar in docs/spec.md);
 - Out of Scope is not empty;
@@ -13,6 +17,8 @@ Copy this file to the spec's place (for example `docs/specs/<feature>.md`), repl
 Write the spec only from requirements the human confirmed; mark what is still open with
 `[NEEDS CLARIFICATION: <question>]` instead of guessing.
 -->
+
+- Tree: <the design tree file, relative to this spec>
 
 ## Problem
 
