@@ -19,7 +19,9 @@ A plan is markdown. Fenced code blocks and HTML comments are not read, as for sp
 (`docs/spec.md`).
 
 - **Header**: the lines before the first `##` section hold one `Spec:` line naming the spec:
-  a markdown link (`- Spec: [export](../specs/export.md)`), a path in backticks or a plain path.
+  a markdown link (`- Spec: [export](../specs/export.md)`, or `[export](<../specs/export.md>)`
+  with the destination in angle brackets, read as what lies inside them), a path in backticks
+  or a plain path.
   A relative path is read relative to the plan's directory, as a markdown link is; an
   absolute one as written.
 - **Sections**: `## Goal`, `## Tasks` and `## Review focus`, each once (titles in any letter

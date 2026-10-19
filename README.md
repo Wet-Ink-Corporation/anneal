@@ -61,7 +61,7 @@ anneal's context monitor warns at 60% and stops at 75% of the auto-compact windo
 
 With `anneal` on your PATH (`cargo install --path crates/anneal-cli`, and on Windows), the command is just `anneal statusline`. If you keep another status line, have your script pipe its input to `anneal statusline` as well; it prints one line (`anneal ctx 120k/200k 60%`) and saves the reading to `~/.anneal/context-usage.json`.
 
-The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's context window, else 200,000 tokens. Until a status line saves a reading the monitor stays silent, and the session start shows a one-time setup hint. See `docs/handoff.md`.
+The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's context window, else 200,000 tokens. Until a status line saves a reading the monitor stays silent, and the session start shows a one-time setup hint. The status line is the fallback for anneal's TypeScript mod (#57), which saves the same reading through `anneal snapshot write --json` (to `~/.anneal/context-usage-mod.json`); when both save one, the monitor reads the fresher, and while the mod has saved one in the last 10 minutes the setup hint stays away. See `docs/handoff.md`.
 
 `anneal status` shows the rest of the state anneal holds for a worktree in at most 12 lines: its mode, the plan's approval, tasks done, gates that blocked, the verdict for `HEAD`, Clef's points, the context reading and the newest ledger events. With `--json` it is one versioned document a UI can render without logic of its own. See `docs/status.md`.
 

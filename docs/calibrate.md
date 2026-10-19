@@ -29,7 +29,11 @@ follows:
 - A decision with a probability is **answered**; one without (unreachable, timed out, bad
   response) is counted as `unanswered`.
 - A label row attaches to the decision with its `id`. When an id has several labels, the last
-  one read wins.
+  one read wins, with its `via`; every row stays in the log, so the history is kept. Labelling
+  is idempotent per id in that sense: labelling again replaces the label calibrate uses.
+- A label row's `actor` and `via` are optional. Rows without them (every row written before
+  `--actor` and `--via`) read as before, and a `via` this build does not name still reads as a
+  label.
 - Labels whose id is no answered decision in the log are counted in `data.unmatched_labels`.
   That covers an unanswered decision, one rotated out of the log, or a mistyped id.
 - Rows of a question the thresholds no longer define are counted in `data.unreported_rows`.
@@ -55,6 +59,9 @@ Each point lists every question its thresholds define (D3 has `choice` and `scor
 
 - `n`: answered decisions. `labelled`: answered decisions with a usable label. `unanswered`
   and `unusable_labels` are counted separately.
+- `labelled_via_mod`: of `labelled`, the decisions whose winning label has `via: mod` (given
+  with a mod's buttons, `decide label --via mod`), so the mod's labels can be told apart from
+  those typed by hand. 0 for a log without such labels.
 - `brier`: the mean of (p - o)^2 over the labelled decisions (`null` with none).
 - `bins`: 10 equal-width bins [k/10, (k+1)/10), the last closed at 1.0. Each bin gives `lower`,
   `upper`, `count`, `mean_probability` and `observed_frequency` (the fraction of positives).
@@ -155,7 +162,9 @@ With `--point`, `points`, `apply` and `diff` hold that point only.
 
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
-proposed (or "kept (nothing cheaper)"), and the reasons. Then it gives the proposals file and
+proposed (or "kept (nothing cheaper)"), and the reasons. When some of a question's labelled
+decisions were labelled through a mod, its line also gives `via mod N` after `labelled`; for a
+log with no such labels the line is unchanged. Then it gives the proposals file and
 each manual step, then, when a threshold step is listed, the `--apply` command that would write
 it. Errors are one `ERROR` line as for every command (exit 70 for a log,
 thresholds or proposals file that cannot be read or written, or a log file over 16.5 MiB).

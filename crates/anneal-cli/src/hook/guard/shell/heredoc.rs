@@ -11,7 +11,7 @@ impl Lexer {
         for heredoc in mem::take(&mut self.heredocs) {
             let body = self.heredoc_body(&heredoc);
             let word = if heredoc.expands {
-                let mut lexer = Self::new(&body);
+                let mut lexer = Self::new(&body, self.extglob);
                 let mut word = Word::quoted(String::new());
                 lexer.quoted_body(&mut word, None, depth.saturating_add(1))?;
                 word.quotes = Word::all_quoted(&word.text);

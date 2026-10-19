@@ -1,11 +1,13 @@
 //! `anneal hook context-monitor`: warns once at 60% and stops once at 75% of the auto-compact
 //! window, per crossing. It fails open.
 //!
-//! Hooks receive no usage field, so it reads the reading `anneal statusline` saved for the
-//! session in the anneal home (`context-usage.json`). Without one (no status line configured,
-//! or none reported yet for this session) it is silent. The level each session last reached
-//! is kept in `context-monitor.json`, so a threshold fires only when usage rises past it, and
-//! fires again only after usage has fallen below it (after a compaction, say).
+//! Hooks receive no usage field, so it reads the reading saved for the session in the anneal
+//! home: by `anneal statusline` (`context-usage.json`) or for the mod by `anneal snapshot
+//! write` (`context-usage-mod.json`), the fresher of the two (`context::freshest`). Without
+//! one (neither configured, or none reported yet for this session) it is silent. The level
+//! each session last reached is kept in `context-monitor.json`, so a threshold fires only when
+//! usage rises past it, and fires again only after usage has fallen below it (after a
+//! compaction, say).
 //!
 //! It is declared under `PostToolBatch` (once per batch of tool calls) and also answers a
 //! `PostToolUse` input as `PostToolUse`. A warning is `additionalContext`; a stop is
@@ -20,7 +22,7 @@ use serde::Deserialize;
 
 use crate::context::sessions::{SessionFile, SessionsError};
 use crate::context::usage::{self, Level, Window};
-use crate::context::{self, Fired, Snapshot};
+use crate::context::{self, Fired, Saved};
 use crate::error_chain::reason;
 use crate::hook::HookEnv;
 use crate::hook::stop_output::StopOutput;
@@ -103,11 +105,10 @@ fn judge(
         return Ok(None);
     };
     let home = paths::anneal_home_from(lookup).map_err(MonitorError::Home)?;
-    let readings = SessionFile::<Snapshot>::load(
-        &context::in_home(&home, context::USAGE_FILE),
-        context::USAGE_KIND,
-    )?;
-    let Some(snapshot) = readings.get(session).copied() else {
+    let Some(Saved {
+        reading: snapshot, ..
+    }) = context::freshest(&home, session)?
+    else {
         return Ok(None);
     };
     let window = Window {

@@ -269,6 +269,14 @@ A green result proves the ledger and the anneal home's state files were read and
 
 A green result proves the status line was rendered. It does **not** prove that the state it shows is current.
 
+## `anneal snapshot write`
+
+| Code | Meaning |
+|---|---|
+| 0 | snapshot written |
+
+A green result proves the snapshot had the documented shape and ranges and was saved for its session as the mod's. It does **not** prove that the usage it reports is right or current.
+
 ## `anneal hook`
 
 | Code | Meaning |

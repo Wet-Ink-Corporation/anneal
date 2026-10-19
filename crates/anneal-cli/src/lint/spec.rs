@@ -11,6 +11,7 @@
 mod checks;
 mod constitution;
 pub mod ears;
+pub(crate) mod field;
 pub(crate) mod markdown;
 mod tree;
 
@@ -31,7 +32,9 @@ use crate::lint::terms::Glossary;
 use checks::{ACCEPTANCE_CRITERIA, CONSTITUTION_CHECK, OUT_OF_SCOPE, find};
 use constitution::Constitution;
 use markdown::{Document, Line, Section};
-pub use tree::{TreeLink, tree_link, tree_path};
+// `TreeLink` stays public: it is the type of `Report::tree`, a public field.
+pub use tree::TreeLink;
+pub(crate) use tree::{tree_link, tree_path};
 
 /// The most `[NEEDS CLARIFICATION]` markers a spec may hold.
 pub const MAX_CLARIFICATIONS: usize = 3;

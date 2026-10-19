@@ -134,6 +134,21 @@ inside a backtick substitution bash ends the substitution there, not where the g
 A `$[ ]` inside a group is `unparseable` too, since bash skips it whole, parentheses
 included; a line continuation after a `$` inside a group is dropped first, as bash drops it
 (`echo @($\<newline>(rm -rf /))` is judged as `rm -rf /`).
+An `env -S` string is split by env, which reads no group, so no group is read there:
+`env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read. The string
+is also read as shell text, since a program it runs may be a shell or `watch`, and the words
+after it are the shell's, which reads their groups (`env -S 'watch rm @(-rf) /home'` and
+`env -S rm @(-rf) /home` are denied); either reading's denial denies. It is also read as env
+splits it, with each word after the string kept whole (`env -S bash -c 'rm -rf /'` is denied)
+and env's escapes applied, as GNU coreutils 9.4 splits it: `\_`, and outside quotes a LF, CR, VT
+or FF, separate words, and `;`, `&`, `|`, `<`, `>`, `(` and `)` are characters of their word (env
+reads no operator, so `env -S 'rm -rf ; /home'` is denied); outside single quotes a backtick is a
+character of its word too, as env runs no substitution; `\t`, `\n`, `\r`, `\f` and `\v` are those characters inside their word;
+inside single quotes `\'` is a quote and `\\` a backslash; and `\c` or an unquoted `#` starting
+a word ends the string, so the words after it follow (`env -S 'bash -c #' 'rm -rf /'`,
+`env -S 'rm\_-rf\_/'` and `env -S 'sh -c rm\t-rf\t/'` are denied). env then reads the words it
+split as its own arguments, so they are read as env's again (`env -S '-S "rm -rf /"'` and
+`env -S '-i -S rm\_-rf\_/'` are denied). A `${VAR}` env expands is read as a variable.
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an
@@ -277,6 +292,9 @@ it cannot model instead of modelling every shell feature, and it does not try to
   match a file named like the flag is the same gap (`git push ?f origin main`,
   `git push @(-f) origin main`). A variable set
   earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
+- a pattern word where a wrapper reads an option that runs a string: `env -S@(rm -rf ~)`,
+  `env --split-string=@(x)`, `env -S'rm -rf /'*`, `bash @(-c) 'rm -rf /'`, `bash ?c '...'`
+  are read as an unknown program or operand, so the string is not checked (#147);
 - a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
   guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
   readings end the group at different `)` (a `#` comment inside it), a later command can be

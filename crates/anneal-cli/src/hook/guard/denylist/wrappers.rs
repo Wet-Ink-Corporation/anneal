@@ -63,8 +63,11 @@ pub(super) enum Run<'a> {
         /// Whether more arguments are appended at run time.
         appended: bool,
     },
-    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `env -S`, `trap`.
+    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `trap`.
     Script(Cow<'a, str>),
+    /// `env -S`'s string, read in turn as shell text but split by env, which reads no
+    /// extended glob group.
+    Split(Cow<'a, str>),
     /// A shell (named) reading its script from standard input.
     StdinScript(&'a str),
     /// A shell (named) running a script from a process substitution or a file descriptor,
@@ -74,7 +77,8 @@ pub(super) enum Run<'a> {
     Exec(Vec<&'a [Word]>),
     /// Each a reading of what the wrapper may run, every one checked on its own: `su` and
     /// `script` with several `-c` strings (each a separate word, never joined into one text),
-    /// and `su`'s arguments as its shell may read them.
+    /// `su`'s arguments as its shell may read them, and `env -S`'s string as env splits it and
+    /// as shell text.
     Either(Vec<Run<'a>>),
 }
 
@@ -132,6 +136,7 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
             .checked_sub(args.len())
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
+        // Redaction renders a body only where `redact::certain` trusts it.
         Run::Script(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
         Run::Exec(actions) => roles
@@ -146,8 +151,10 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
                         .collect(),
                 })
             }),
-        // Several readings: the redaction trusts none of them.
-        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Either(_) => Layout::Other,
+        // Several readings, or `env -S`'s string as env splits it: the redaction trusts none.
+        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Split(_) | Run::Either(_) => {
+            Layout::Other
+        }
     };
     (layout, roles)
 }

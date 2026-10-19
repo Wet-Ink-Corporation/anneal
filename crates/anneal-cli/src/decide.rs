@@ -7,7 +7,7 @@
 //! usable answer (unreachable, timed out or a bad response; the row is logged and the
 //! envelope names the point's fallback) or the configuration is malformed (nothing is asked
 //! or logged; the envelope names the fallback and the problem). `decide label <id> <outcome>`
-//! appends an outcome row.
+//! appends an outcome row, with `--actor human|model` and `--via mod|bash|terminal` when given.
 //! See `docs/decide.md`.
 //!
 //! - [`point`]: the decision points and question types.
@@ -20,6 +20,7 @@
 //! - [`clock`]: the wall and monotonic clocks, a port.
 //! - [`log`]: the decision log and its counts.
 //! - [`id`]: decision ids and outcome labels.
+//! - [`label`]: label rows, with who gave a label and through what.
 //! - `in_process`: the same call in process, for hooks and `grill classify`.
 //! - `redact`: text made safe to send to Clef, shared by every caller.
 
@@ -29,6 +30,7 @@ pub mod clock;
 pub mod config;
 pub mod id;
 pub(crate) mod in_process;
+pub mod label;
 pub mod log;
 mod output;
 pub mod point;
@@ -57,6 +59,7 @@ use client::{Ask, AskError, Setup};
 use clock::Clock;
 use config::ClefConfig;
 use id::{DecisionId, InvalidLabel, OutcomeLabel};
+use label::{Actor, LabelRow, Source, Via};
 use log::{DecisionLog, LogError};
 use point::{Point, Question};
 use state::{CompactState, StateError};
@@ -106,6 +109,13 @@ pub struct LabelArgs {
     /// What turned out to be right (1 to 64 of A-Z a-z 0-9 _ . : -)
     #[arg(value_name = "OUTCOME")]
     outcome: String,
+    /// Who judged the outcome [default: none recorded, so no source is claimed]
+    #[arg(long, value_enum)]
+    actor: Option<Actor>,
+    /// Through what the label was given (mod: a Claude Code mod's buttons) [default: none
+    /// recorded]
+    #[arg(long, value_enum)]
+    via: Option<Via>,
 }
 
 /// What `anneal decide` reads from outside: the working directory, the environment, the
@@ -296,20 +306,13 @@ pub(crate) fn read_thresholds_text(
     Ok((parsed, Cow::Owned(text)))
 }
 
-/// A label row: `{"kind": "label", "id", "outcome", "ts_ms"}`.
-#[derive(Debug, Serialize)]
-struct LabelRow<'a> {
-    kind: &'static str,
-    id: &'a DecisionId,
-    outcome: &'a OutcomeLabel,
-    ts_ms: u64,
-}
-
 /// `data` of `decide label`.
 #[derive(Debug, Serialize)]
 struct LabelData<'a> {
     id: &'a DecisionId,
     outcome: &'a OutcomeLabel,
+    #[serde(flatten)]
+    source: Source,
     log: &'a Path,
 }
 
@@ -322,17 +325,17 @@ fn label_decision<O: Write>(
     let id: DecisionId = args.id.parse().map_err(DecideError::from)?;
     let outcome: OutcomeLabel = args.outcome.parse().map_err(DecideError::from)?;
     let ts_ms = clock.unix_millis().map_err(DecideError::Clock)?;
-    let row = LabelRow {
-        kind: "label",
-        id: &id,
-        outcome: &outcome,
-        ts_ms,
+    let source = Source {
+        actor: args.actor,
+        via: args.via,
     };
+    let row = LabelRow::new(&id, &outcome, ts_ms, source);
     log.append(&row).map_err(DecideError::from)?;
     let path = log.path();
     let data = LabelData {
         id: &id,
         outcome: &outcome,
+        source,
         log: &path,
     };
     Envelope::new(

@@ -53,6 +53,8 @@ pub enum CommandName {
     Status,
     /// `anneal statusline`
     Statusline,
+    /// `anneal snapshot`: the mod's context-usage snapshot, saved for the context monitor
+    Snapshot,
     /// `anneal hook`: the commands `hooks.json` runs
     Hook,
 }
@@ -81,9 +83,13 @@ const STATUS_DOES_NOT_PROVE: &str = "that the recorded work was done or done wel
     state is still current when it is shown: an absent section had no data, and one that could \
     not be read is a finding";
 
+/// `snapshot`'s claim, out of `CommandName::proves` to keep that function short.
+const SNAPSHOT_PROVES: &str =
+    "the snapshot had the documented shape and ranges and was saved for its session as the mod's";
+
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -108,6 +114,7 @@ impl CommandName {
         Self::Eval,
         Self::Status,
         Self::Statusline,
+        Self::Snapshot,
         Self::Hook,
     ];
 
@@ -139,6 +146,7 @@ impl CommandName {
             Self::Eval => "eval",
             Self::Status => "status",
             Self::Statusline => "statusline",
+            Self::Snapshot => "snapshot",
             Self::Hook => "hook",
         }
     }
@@ -210,6 +218,7 @@ impl CommandName {
             }
             Self::Status => STATUS_PROVES,
             Self::Statusline => "the status line was rendered",
+            Self::Snapshot => SNAPSHOT_PROVES,
             Self::Hook => "the hook ran; anything it could not do is noted in its output",
         }
     }
@@ -267,6 +276,7 @@ impl CommandName {
             Self::Eval => "routing accuracy or behaviour on prompts outside the eval set",
             Self::Status => STATUS_DOES_NOT_PROVE,
             Self::Statusline => "that the state it shows is current",
+            Self::Snapshot => "that the usage it reports is right or current",
             Self::Hook => {
                 "that the hook succeeded: hooks other than guards fail open, so they exit 0 on \
                  failure too; for a guard, that the tool call was allowed"

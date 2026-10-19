@@ -3,7 +3,8 @@
 `anneal decide --point <D1..D7> --question <noul|choice|score> --state <json> [--option <o>]...
 [--thresholds <file>]` asks Clef one question for a decision point, applies the point's
 thresholds to the probability Clef returns, and appends one row to the decision log.
-`anneal decide label <id> <outcome>` attaches an outcome label to a logged decision.
+`anneal decide label <id> <outcome> [--actor human|model] [--via mod|bash|terminal]` attaches an
+outcome label to a logged decision.
 
 The hooks that call it (D1 in the guard, D3 and D6 on prompts, D7 in `grill`) land with #30,
 #31 and #32; this command is the one choke point they share. A hook calls it in process rather
@@ -215,6 +216,15 @@ Without an answer, `probabilities`, `probability`, `threshold` and `action` are 
 `{"kind": "label", "id", "outcome", "ts_ms"}`; the decision's `outcome: null` slot is filled by
 joining on `id`, never by rewriting it. A label's id must have the shape `decide` writes
 (`d<millis>-<pid>-<n>`) but is not looked up; an outcome is 1 to 64 of `A-Z a-z 0-9 _ . : -`.
+
+A label row may also say who gave it and through what, when `decide label` is given them:
+`"actor"` (`--actor human|model`) and `"via"` (`--via mod|bash|terminal`; `mod` is a Claude Code
+mod's one-key buttons, `bash` a model's Bash call, `terminal` a person typing it). Each is left
+off the row when its flag is not given, so a label written without them is exactly the row
+written before they existed and claims no source; nothing defaults to `human`. The labels the
+hooks write themselves (`Prepared::label`, route's D3 labels) carry neither. Labelling an id
+again appends a second row: every row is kept, and `calibrate` takes the last one read
+(`docs/calibrate.md`). A label is written to the decision log only, never to the ledger.
 
 Bounds: a row is at most 8 KiB, its `input` at most 2 KiB of it: a choice has 2 to 32 distinct options, each 1 to 64 of
 `A-Z a-z 0-9 _ . : -` (the outcome-label alphabet, so any option can be a label), none of which

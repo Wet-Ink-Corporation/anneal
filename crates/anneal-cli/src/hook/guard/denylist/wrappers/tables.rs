@@ -9,7 +9,8 @@ use super::grammar::{
 
 /// `sudo` 1.9.15p5 (`+Aa:BbC:c:D:Eeg:Hh::iKklNnPp:R:r:SsT:t:U:u:Vv`, from the binary) with
 /// `doas` (opendoas 6.8.2 `+C:Lnsu:`, from the binary; OpenBSD's adds `a:`). Linux sudo
-/// refuses `-a` and `-c`, BSD builds take a value with each. `-h` is read as taking a value:
+/// refuses `-a` and `-c`, BSD builds take a value with each. `-h` is read as taking a value (`h:`,
+/// where the binary's string has `h::`):
 /// sudo takes the next word as a host unless it starts with `-`, and runs the command when
 /// that host is the local one; followed by an option, `-h` asks for help and runs nothing.
 pub(super) const SUDO: Grammar = Grammar {

@@ -13,7 +13,7 @@ mod check;
 mod tree;
 
 pub(crate) use check::Status;
-use tree::TreeCheck;
+use tree::{Confirmation, Read as TreeRead};
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -273,19 +273,26 @@ fn approve<O: Write>(
     let event = approval(&plan, args.session.as_deref())?;
     let outcome = plan_lint::examine(&args.file, &plan.bytes);
     let spec_path = outcome.spec.as_deref();
-    let (spec, link) = match refusal(&outcome)? {
+    let (spec, link) = match check_lint_and_spec(&outcome)? {
         Checked::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
         Checked::Passed { spec, tree } => (spec, tree),
     };
-    let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
-    let tree = match link {
+    // What the files alone decide is decided before the ledger is located.
+    let linked = match link {
         None => None,
-        Some(link) => match tree::check(spec, &link, &location.path)? {
-            TreeCheck::Confirmed(path) => Some(path),
-            TreeCheck::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
+        Some(link) => match tree::read(spec, &link)? {
+            TreeRead::Tree(linked) => Some(linked),
+            TreeRead::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
         },
     };
-    let store = Store::open(&location.path)?;
+    let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
+    let (store, tree) = match linked {
+        None => (Store::open(&location.path)?, None),
+        Some(linked) => match tree::confirmed(linked, &location.path)? {
+            Confirmation::Confirmed { ledger, path } => (ledger, Some(path)),
+            Confirmation::Refused(refusal) => return refuse(&plan, spec_path, &refusal, out),
+        },
+    };
     let previous = latest(&store, &plan.approvals)?;
     let (appended, position) = match record(&store, &event, &plan, previous.as_ref())? {
         Recording::Already(position) => (false, position),
@@ -348,9 +355,10 @@ enum Checked<'o> {
     },
 }
 
-/// The refusal for a plan with lint findings, or whose spec has markers; otherwise the spec
-/// and the design tree it links, which the ledger must show confirmed.
-fn refusal(outcome: &plan_lint::Outcome) -> Result<Checked<'_>, CliError> {
+/// The checks of the plan's lint findings and its spec's markers: the refusal for a plan with
+/// lint findings, or whose spec has markers; otherwise [`Checked::Passed`] with the spec and
+/// the design tree it links, which the ledger must show confirmed.
+fn check_lint_and_spec(outcome: &plan_lint::Outcome) -> Result<Checked<'_>, CliError> {
     let report = &outcome.report;
     let findings = &report.findings;
     let Some(spec_path) = outcome.spec.as_deref().filter(|_| findings.is_empty()) else {
