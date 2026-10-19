@@ -160,6 +160,11 @@ impl<T> SessionFile<T> {
         self.trim();
     }
 
+    /// The newest session's value: the one set last.
+    pub(crate) fn newest(&self) -> Option<&T> {
+        self.entries.last().map(|entry| &entry.value)
+    }
+
     /// How many sessions the file holds.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {

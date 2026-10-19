@@ -31,8 +31,13 @@ pub enum PathError {
     /// `git` could not be started or waited on.
     #[error("running git")]
     Git(#[source] io::Error),
-    /// `git` did not finish within the timeout and was killed.
-    #[error("git did not answer within {}s", timeout.as_secs())]
+    /// `git` did not finish within the timeout and was killed, or it exited but a process it
+    /// started still held its output pipes at the deadline (that process is not killed).
+    ///
+    /// The limit is shown cut to whole milliseconds as `Duration` debugs it (`500ms`, `1s`,
+    /// `1.5s`): budgets under a second are common, whole seconds would show them as `0s`, and
+    /// a budget left over from a deadline would otherwise print every nanosecond.
+    #[error("git did not answer within {:?}", process::whole_millis(*timeout))]
     GitTimeout {
         /// The limit that was exceeded.
         timeout: Duration,

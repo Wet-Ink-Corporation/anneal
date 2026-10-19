@@ -36,6 +36,16 @@ pub const TIMEOUT: Duration = Duration::from_secs(2);
 /// How many answered decisions a point runs in shadow before `enforce` takes effect.
 pub const AUTO_SHADOW_DECISIONS: u64 = 50;
 
+/// The mode a point configured `configured` runs in with `answered` answered decisions:
+/// `shadow` while a configured `enforce` has fewer than [`AUTO_SHADOW_DECISIONS`], else the
+/// configured one.
+pub(crate) const fn effective_mode(configured: Mode, answered: u64) -> Mode {
+    match configured {
+        Mode::Enforce if answered < AUTO_SHADOW_DECISIONS => Mode::Shadow,
+        other => other,
+    }
+}
+
 /// The Workers AI REST base; the URL is `<base>/<account>/ai/run/<model>`. A loopback
 /// [`ClefConfig::endpoint`] replaces it in tests.
 pub const ACCOUNTS_URL: &str = "https://api.cloudflare.com/client/v4/accounts";
@@ -268,12 +278,10 @@ pub fn ask_recording<'s>(
             });
         }
     };
-    let mode = if configured_mode == Mode::Enforce
-        && setup.log.answered(ask.point)? < AUTO_SHADOW_DECISIONS
-    {
-        Mode::Shadow
-    } else {
-        configured_mode
+    // The count is read only for `enforce`, the one mode it can change.
+    let mode = match configured_mode {
+        Mode::Enforce => effective_mode(configured_mode, setup.log.answered(ask.point)?),
+        other => other,
     };
     let ts_ms = clock.unix_millis().map_err(AskError::Clock)?;
     let call = Call {

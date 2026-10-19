@@ -2,8 +2,8 @@
 
 A spec is written from `plugin/playbooks/spec.template.md`, in the same session as the
 interview that confirmed its requirements, and only from what was confirmed. `anneal lint spec`
-checks what a script can check: the sections, the shape of every acceptance criterion, the
-open questions and the constitution check.
+checks what a script can check: the design tree it came from, the sections, the shape of
+every acceptance criterion, the open questions and the constitution check.
 
 ```text
 anneal lint spec <FILE> [--glossary CONTEXT.md] [--constitution constitution.md]
@@ -22,6 +22,25 @@ there is any (`lint`'s codes, `docs/exit-codes.md`).
 | `needs-clarification` | At most 3 `[NEEDS CLARIFICATION]` markers | the marker that makes four |
 | `constitution` | The constitution check against the constitution (below) | the line at fault, in the spec or in the constitution |
 | `avoided-term` | No term the glossary lists on an `_Avoid_:` line, matched as `lint terms` matches (`docs/define.md`) | the line, one finding per term |
+| `tree` | The header's `Tree:` line (below) is the only one, names a file, and that file is a valid design tree, read as `anneal grill` reads it (`docs/grill.md`) | the `Tree:` line |
+
+## The `Tree:` line
+
+The header, the lines before the first `##` section, holds one `Tree:` line naming the design
+tree the spec was written from (#77), written as a plan's `Spec:` line is (`docs/plan.md`): a
+markdown link (`- Tree: [design tree](../trees/export.json)`), a path in backticks or a plain
+path, the key in any letter case, optionally bold or a list item. A relative path is read
+relative to the spec's directory; an absolute one as written.
+
+- A second `Tree:` line, or one naming nothing, is a `tree` finding; so is a named file that
+  does not exist, cannot be read or is not a valid design tree (the finding names its first
+  problem).
+- A value that is wholly a `<placeholder>`, as the template ships it, is not checked, as no
+  other placeholder is; `plan approve` refuses it.
+- A spec with no `Tree:` line has no `tree` finding, so specs written before #77 still lint
+  clean. `plan approve` checks the confirmation only for a spec that has the line.
+- `lint spec` does not read the ledger: whether the tree was confirmed is `plan approve`'s
+  check (`docs/plan.md`).
 
 ## Inputs
 
@@ -43,6 +62,7 @@ The JSON envelope, `command: "lint spec"`, with `data`:
   "constitution": {"file": "constitution.md", "version": "3", "gates": 3},
   "criteria": 5,
   "needs_clarification": 1,
+  "tree": "docs/trees/export.json",
   "findings": [
     {"key": "lint/spec/ears:docs/specs/export.md:17", "rule": "ears",
      "file": "docs/specs/export.md", "line": 17,
@@ -54,6 +74,8 @@ The JSON envelope, `command: "lint spec"`, with `data`:
 
 - `needs_clarification` is always present: the number of markers, however many. `plan
   approve` (#20) blocks while it is above 0.
+- `tree` is the design tree the `Tree:` line names, resolved against the spec's directory; it
+  is absent when the spec has no `Tree:` line or its value is a placeholder or empty.
 - `glossary` and `constitution` are `null` when none was read; `constitution.version` is
   `null` when the constitution has no version line.
 - Each finding has `rule`, `file`, `line` (0 for the file as a whole), `message`, `fix`, and a

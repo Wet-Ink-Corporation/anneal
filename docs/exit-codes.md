@@ -252,6 +252,15 @@ A green result proves the calibration run completed and was recorded. It does **
 
 A green result proves skill routing accuracy, or each skill's behaviour uplift over its baseline, is at or above its bound on the eval set. It does **not** prove routing accuracy or behaviour on prompts outside the eval set.
 
+## `anneal status`
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 2 | no ledger exists yet; none was created |
+
+A green result proves the ledger and the anneal home's state files were read and folded into the status document as they stood. It does **not** prove that the recorded work was done or done well, or that the state is still current when it is shown: an absent section had no data, and one that could not be read is a finding.
+
 ## `anneal statusline`
 
 | Code | Meaning |

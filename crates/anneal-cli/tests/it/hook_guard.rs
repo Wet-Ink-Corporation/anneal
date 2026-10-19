@@ -348,3 +348,43 @@ fn a_git_that_never_answers_still_gets_the_deny_out_within_the_hook_budget() -> 
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary and a fake git")]
+fn a_git_whose_grandchild_holds_its_output_still_gets_the_deny_out_within_the_hook_budget()
+-> TestResult {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    /// The hook's `timeout` in `hooks.json`: after it, Claude Code blocks without the reason.
+    const HOOK_BUDGET: Duration = Duration::from_secs(5);
+
+    let scratch = Scratch::new()?;
+    let bin = scratch.path().join("bin");
+    fs::create_dir(&bin)?;
+    let git = bin.join("git");
+    // Killing the wrapper leaves its `sleep` holding git's stdout and stderr for 30 s (#132).
+    fs::write(&git, "#!/bin/sh\nsleep 30\nexit 0\n")?;
+    fs::set_permissions(&git, Permissions::from_mode(0o755))?;
+    let mut command = anneal_in(scratch.path());
+    command.env("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+
+    // The one clock read: the budget is wall time by definition.
+    let started = Instant::now();
+    let output = run_guard(command, &scratch.bash("rm -rf /")?)?;
+    let elapsed = started.elapsed();
+
+    let reason = deny_reason(&output)?;
+    assert!(
+        reason.starts_with("ERROR guard rm-rf: ")
+            && reason.contains("git did not answer within 1s"),
+        "denied, naming the limit git was given: {reason}"
+    );
+    assert!(
+        elapsed < HOOK_BUDGET,
+        "the deny arrives within the hook's timeout: {elapsed:?}"
+    );
+    Ok(())
+}

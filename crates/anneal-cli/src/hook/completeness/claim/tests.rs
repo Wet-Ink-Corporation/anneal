@@ -494,3 +494,39 @@ fn known_scope_trade_offs_are_pinned() {
         assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
     }
 }
+
+#[test]
+fn an_irregular_past_verb_finishes_a_condition() {
+    let replies = [
+        ("The crash when the parser hit EOF is fixed", "fixed"),
+        ("The flake that appeared when CI ran is fixed", "fixed"),
+        ("The bug when the cache got cold is resolved", "resolved"),
+        ("When I ran it all tests pass", "all tests pass"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+}
+
+#[test]
+fn a_report_in_a_fronted_after_clause_before_a_plan_still_claims() {
+    // A missed report costs more than a blocked plan, so a claim in a fronted `after` clause
+    // before a plan is not withdrawn. The plain plan shape claims too, an accepted false
+    // positive while #135 part 2 stays open.
+    let replies = [
+        ("After the tests passed, I'll open the PR.", "tests passed"),
+        (
+            "After all tests passed, I'll open the PR.",
+            "all tests passed",
+        ),
+        ("After it succeeded, I'll tag it.", "succeeded"),
+        (
+            "After this all tests pass, I'll open the PR.",
+            "all tests pass",
+        ),
+        ("After that the build passes, we can ship.", "build passes"),
+    ];
+    for (reply, claim) in replies {
+        assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
+    }
+}

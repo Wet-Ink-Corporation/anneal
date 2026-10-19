@@ -210,10 +210,9 @@ Limits:
   killed `anneal floor-guard`, anything `check_fast` starts) can outlive it and keep running;
   std has no portable process-group kill (as for `anneal task done`, `docs/task.md`).
 - On Windows a child's handles are inherited by the processes it starts. A killed
-  `anneal floor-guard` can leave a `git` call holding its output pipe, and the hook waits for
-  that git to exit on its own (nothing bounds it once floor-guard is killed), so it can run
-  past its 15 s timeout;
-  Claude Code then drops its output and carries on (it fails open). A process `check_fast`
+  `anneal floor-guard` can leave a `git` call holding its output pipe. The hook stops reading
+  that pipe at the deadline (its reader thread is abandoned) and still returns within the
+  deadline plus about 100 ms, while that git lives on until it exits by itself. A process `check_fast`
   leaves running keeps the log file open, so removing it fails: that is a note, and the file
   stays in the temporary directory. On unix the log is removed and the hook returns as soon as
   `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).
@@ -296,8 +295,10 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   the clause; not `once more`, `once again` or a clause-final `once`) opens a scope that runs to
   the next `and`, `then` or `now`, to a second `is`, `are`, `was` or `were` ("The panic when
   the file is empty is resolved." claims), through a gerund right after the conditional ("The
-  crash when saving is fixed." claims) or a past-tense verb not after a determiner ("Once the
-  fix landed all tests pass" claims), or to the clause end; for an `it` or
+  crash when saving is fixed." claims) or a past-tense verb not after a determiner (an `-ed`
+  word or a common irregular one such as `ran`, `hit`, `got`, `found`: "Once the fix landed all
+  tests pass" and "The crash when the parser hit EOF is fixed" claim), or to the clause end;
+  for an `it` or
   `everything` claim, `sure`, `ensure`, `verify`, `check`, `whether`, `get`, `keep`, `need` or
   `to` one or two words before it ("make sure everything works"); and a `?` ending the clause
   ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
@@ -306,11 +307,13 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   hyphen between two letters or digits is part of the word, so "half-done" is not `done`; a
   spaced hyphen, `--`, an en dash and an em dash still end a clause. Some false positives
   ("done reading the logs", "here is how it works", "it all works out", "Is it done so I can
-  merge?") and misses ("When I ran it all tests pass" with no comma) are accepted, as are the scope's
-  misreadings ("Merge when lint is clean and all tests pass" and "Ship it when morning checks
-  pass" claim): the block
-  cap bounds them. Clef D4 does not read these words: it judges the status block's sections on
-  its own.
+  merge?", and plans after a clause-opening `after` or `before` such as "After the tests pass,
+  I'll open the PR."; #135) are accepted, as are the scope's misreadings ("Merge when lint is
+  clean and all tests pass", "Ship it when morning checks pass" and "If the build went green
+  I'll merge." claim): the block cap bounds them. A past verb that is neither an `-ed` word nor
+  a listed irregular one does not finish a condition, an accepted miss ("When the tests were
+  rerun everything passed"). Clef D4 does not read these words: it judges the status block's
+  sections on its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in

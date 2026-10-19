@@ -20,8 +20,9 @@
 //! `after` or `before` only when they do not open the clause) opens a scope that runs to the
 //! next `and`, `then` or `now`, to a second copula ("The panic when the file is empty is
 //! resolved"), through a gerund right after the conditional ("The crash when saving is fixed")
-//! or a past-tense verb not after a determiner ("Once the fix landed all tests pass"), or to the
-//! clause end. The scopes of a clause are found in one forward pass, so with the bounded
+//! or a past-tense verb not after a determiner ([`is_past`], irregular ones included: "Once the
+//! fix landed all tests pass", "The crash when the parser hit EOF is fixed"), or to the clause
+//! end. The scopes of a clause are found in one forward pass, so with the bounded
 //! fillers and head-only conjunct chains each claim is matched in time linear in the clause.
 //! The scope is a heuristic: "Merge when lint is clean and all tests pass" claims, and so does
 //! "Ship it when morning checks pass" (`morning` reads as a gerund).
@@ -146,6 +147,13 @@ const COPULAS: [&str; 4] = ["is", "are", "was", "were"];
 const DETERMINERS: [&str; 14] = [
     "the", "a", "an", "all", "any", "some", "every", "this", "that", "these", "those", "its",
     "our", "their",
+];
+
+/// Common irregular past-tense verbs, which finish a condition as an `-ed` word does ("The
+/// crash when the parser hit EOF is fixed").
+const IRREGULAR_PAST: [&str; 19] = [
+    "ran", "hit", "got", "broke", "took", "went", "came", "made", "built", "found", "saw", "threw",
+    "fell", "left", "lost", "sent", "said", "began", "wrote",
 ];
 
 /// Words that make a "works" claim a goal, not a report, one or two words before its subject.
@@ -352,9 +360,11 @@ fn is_gerund(word: &str) -> bool {
     word.len() > 4 && word.ends_with("ing") && !word.ends_with("thing")
 }
 
-/// True when `word` reads as a past tense (`landed`, `bumped`), not `need` or `speed`.
+/// True when `word` reads as a past tense: an `-ed` word (`landed`, `bumped`), not `need` or
+/// `speed`, or one of [`IRREGULAR_PAST`] (`ran`, `hit`).
 fn is_past(word: &str) -> bool {
-    word.len() > 3 && word.ends_with("ed") && !word.ends_with("eed")
+    (word.len() > 3 && word.ends_with("ed") && !word.ends_with("eed"))
+        || IRREGULAR_PAST.contains(&word)
 }
 
 /// True when one of the two words before `start` is a negation.
