@@ -154,58 +154,40 @@ fn commands(read: Read<'_>) -> impl Iterator<Item = Option<&str>> {
         .map(|option| option.value)
 }
 
-/// The command strings the user's shell may read from `su`'s words after its user. `su` hands
-/// its operands after the user (after `--` too) to the shell, and with `POSIXLY_CORRECT` set
-/// every word after the user, so each short cluster holding `c` among them is read as the
-/// shell reads it: taking the next word as its command string.
-fn shell_commands(words: &[Word]) -> impl Iterator<Item = Option<&str>> {
-    let after_user = skip_one(SU_TO_USER.parse(words).rest);
-    after_user
-        .iter()
-        .enumerate()
-        .filter(|(_, word)| {
-            is_option(word) && !word.text.starts_with("--") && word.text.contains('c')
-        })
-        .map(|(at, _)| {
-            after_user
-                .get(at.saturating_add(1))
-                .map(|string| string.text.as_str())
-        })
+/// What the `-c` strings of `read` run: the last one runs, the earlier ones are read too, each
+/// on its own (never joined, where one could swallow the next). `None` without a `-c`; with
+/// only a `-c` missing its string, nothing.
+fn bodies(read: Read<'_>) -> Option<Run<'_>> {
+    let mut commands = commands(read).peekable();
+    commands.peek()?;
+    Some(Run::either(
+        commands
+            .flatten()
+            .map(|body| Run::Script(Cow::Borrowed(body))),
+    ))
 }
 
-/// The command strings `commands` names: the last one runs, the earlier ones are read too. One
-/// body is the word or part of a word it was written in; several are joined by newlines.
-/// Without one, `wrapper` runs a shell reading stdin; with only a `-c` missing its string,
-/// nothing.
-fn bodies<'a>(
-    commands: impl IntoIterator<Item = Option<&'a str>>,
-    wrapper: &'static str,
-) -> Peel<'a> {
-    let mut any = false;
-    let mut found: Vec<&'a str> = Vec::new();
-    for command in commands {
-        any = true;
-        if let Some(body) = command.filter(|body| !found.contains(body)) {
-            found.push(body);
-        }
-    }
-    match found.as_slice() {
-        [] if any => Peel::Done(Run::Nothing),
-        [] => Peel::Done(Run::StdinScript(wrapper)),
-        [body] => Peel::Done(Run::Script(Cow::Borrowed(body))),
-        several => Peel::Done(Run::Script(Cow::Owned(several.join("\n")))),
-    }
-}
-
-/// `su [options] [USER] [ARG...]`: its `-c` strings and those its arguments give the user's
-/// shell, or, without one, a shell reading stdin.
+/// `su [options] [USER] [ARG...]`: its `-c` strings or, without one, its arguments after the
+/// user as the user's shell reads them (a shell reading stdin when there are none). getopt
+/// permutes su's options and operands, handing the operands after the user (and the words
+/// after `--`) to the shell; with `POSIXLY_CORRECT` set it stops at the user and hands the
+/// shell every word after it. Both readings are checked.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
-    bodies(commands(SU.parse(words)).chain(shell_commands(words)), "su")
+    let read = SU.parse(words);
+    let after_dashes = read.rest;
+    let permuted = bodies(read).unwrap_or_else(|| shell_run("su", after_dashes));
+    let to_user = SU_TO_USER.parse(words);
+    let user = match to_user.rest {
+        [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => tail,
+        rest => rest,
+    };
+    let posix = bodies(to_user).unwrap_or_else(|| shell_run("su", skip_one(user)));
+    Peel::Done(Run::either([permuted, posix]))
 }
 
 /// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
 pub(super) fn script(words: &[Word]) -> Peel<'_> {
-    bodies(commands(SCRIPT.parse(words)), "script")
+    Peel::Done(bodies(SCRIPT.parse(words)).unwrap_or(Run::StdinScript("script")))
 }
 
 /// `watch [options] command...`: the words joined are run by `sh -c`.
@@ -221,12 +203,17 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
 /// a script read from stdin.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
+    Peel::Done(shell_run(name, words))
+}
+
+/// What the shell `name` runs, given the arguments `words` ([`shell`]).
+fn shell_run<'a>(name: &'a str, words: &'a [Word]) -> Run<'a> {
     let mut rest = words;
     let (mut command_string, mut from_stdin) = (false, false);
     while let [first, tail @ ..] = rest {
         let text = first.text.as_str();
         if text == "--version" || text == "--help" {
-            return Peel::Done(Run::Nothing);
+            return Run::Nothing;
         }
         if text == "--" || text == "-" {
             rest = tail;
@@ -248,13 +235,13 @@ pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
         rest = if takes_value { skip_one(tail) } else { tail };
     }
     if command_string {
-        return rest.first().map_or(Peel::Done(Run::Nothing), |string| {
-            Peel::Done(Run::Script(Cow::Borrowed(&string.text)))
+        return rest.first().map_or(Run::Nothing, |string| {
+            Run::Script(Cow::Borrowed(&string.text))
         });
     }
     // With `-s` the operands are arguments and the script is stdin.
     match rest.first().filter(|_| !from_stdin) {
-        None => Peel::Done(Run::StdinScript(name)),
+        None => Run::StdinScript(name),
         Some(script) => script_file(name, script),
     }
 }
@@ -264,25 +251,25 @@ const STDIN_PATHS: [&str; 3] = ["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"];
 
 /// `shell` (or `source`) running the script file `script`: stdin when it names it, unseen
 /// when it is a process substitution, else a file the guard does not read.
-fn script_file<'a>(shell: &'a str, script: &Word) -> Peel<'a> {
+fn script_file<'a>(shell: &'a str, script: &Word) -> Run<'a> {
     let path = script.text.as_str();
     let descriptor = path.starts_with("/dev/fd/") || path.starts_with("/proc/");
     if reads_as_written(script) && STDIN_PATHS.contains(&path) {
-        Peel::Done(Run::StdinScript(shell))
+        Run::StdinScript(shell)
     } else if script.is_process_substitution() || descriptor {
-        Peel::Done(Run::Unseen(shell))
+        Run::Unseen(shell)
     } else {
-        Peel::Done(Run::Nothing)
+        Run::Nothing
     }
 }
 
 /// `source FILE` (or `. FILE`).
 pub(super) fn source(words: &[Word]) -> Peel<'_> {
-    skip_options(words, &[])
-        .first()
-        .map_or(Peel::Done(Run::Nothing), |script| {
-            script_file("source", script)
-        })
+    Peel::Done(
+        skip_options(words, &[])
+            .first()
+            .map_or(Run::Nothing, |script| script_file("source", script)),
+    )
 }
 
 /// `alias NAME=VALUE...`: each value is shell text, run where the alias is used.

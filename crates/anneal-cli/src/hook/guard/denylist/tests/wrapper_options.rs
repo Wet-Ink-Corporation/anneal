@@ -107,6 +107,23 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         // With POSIXLY_CORRECT, su stops at the user and hands `-s -c ...` to the shell.
         ("POSIXLY_CORRECT=1 su root -s -c 'rm -rf /'", RM_RF),
         ("su root -- -c 'echo a'", ALLOW),
+        // The shell reads its options to the end, then takes its command string.
+        ("su root -- -c -x 'rm -rf /'", RM_RF),
+        ("su root -- -c -o pipefail 'rm -rf /'", RM_RF),
+        ("su root -- -co pipefail 'rm -rf /'", RM_RF),
+        ("su root -- -c -- 'rm -rf /'", RM_RF),
+        ("POSIXLY_CORRECT=1 su root -c -e 'rm -rf /'", RM_RF),
+        ("su - root -s /bin/sh -c 'rm -rf /'", RM_RF),
+    ]);
+}
+
+#[test]
+fn each_command_string_is_read_on_its_own() {
+    assert_table(&[
+        ("su -c 'echo \\' -c 'rm -rf /'", RM_RF),
+        ("script -c 'echo \\' -c 'rm -rf /'", RM_RF),
+        ("su -c 'cat <<EOF' -c 'rm -rf /'", RM_RF),
+        ("script -qc 'cat <<EOF' -c 'rm -rf /' /dev/null", RM_RF),
     ]);
 }
 

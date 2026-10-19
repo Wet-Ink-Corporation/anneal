@@ -2,7 +2,7 @@
 //! binaries (`probe.sh` replaces each word `W1`..`W9` with a recorder), against what the walk
 //! reads the same words to run.
 
-use crate::hook::guard::denylist::{Layout, layout};
+use crate::hook::guard::denylist::wrappers::{Program, Run, unwrap};
 use crate::hook::guard::shell;
 
 const PROBES: &str = include_str!("../../../../../tests/fixtures/wrappers/probes.txt");
@@ -17,25 +17,33 @@ fn ran() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// Whether the walk reads `command` to run the word `observed`: as its program, or inside the
-/// shell text it runs.
+/// Whether the walk reads `command` to run the word `observed`: as the program of one of its
+/// simple commands, or of one in the shell text it runs.
 fn walk_runs(command: &str, observed: &str) -> Result<(), String> {
     let commands = shell::parse(command).map_err(|error| format!("{error:?}"))?;
     let [simple] = commands.as_slice() else {
         return Err(format!("{} simple commands", commands.len()));
     };
-    let (layout, _) = layout(&simple.words);
-    match &layout {
-        Layout::Program(at) => match simple.words.get(*at) {
-            Some(word) if word.text == observed => Ok(()),
-            word => Err(format!("the program is {word:?}")),
-        },
-        Layout::Script(text) => text
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .any(|word| word == observed)
-            .then_some(())
-            .ok_or_else(|| format!("the script is {text:?}")),
-        other => Err(format!("the layout is {other:?}")),
+    let run = unwrap(&simple.words);
+    runs(&run, observed)
+        .then_some(())
+        .ok_or_else(|| format!("the walk runs {run:?}"))
+}
+
+/// Whether `run` has `observed` as a program, in itself or in the shell text it runs.
+fn runs(run: &Run<'_>, observed: &str) -> bool {
+    match run {
+        Run::Command {
+            program: Program::Named(name),
+            ..
+        } => *name == observed,
+        Run::Script(text) => shell::parse(text).is_ok_and(|commands| {
+            commands
+                .iter()
+                .any(|simple| runs(&unwrap(&simple.words), observed))
+        }),
+        Run::Either(readings) => readings.iter().any(|reading| runs(reading, observed)),
+        _ => false,
     }
 }
 

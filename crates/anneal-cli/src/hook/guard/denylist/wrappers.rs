@@ -72,6 +72,27 @@ pub(super) enum Run<'a> {
     Unseen(&'a str),
     /// The commands `find`'s actions run, each with matches appended.
     Exec(Vec<&'a [Word]>),
+    /// Each a reading of what the wrapper may run, every one checked on its own: `su` and
+    /// `script` with several `-c` strings (each a separate word, never joined into one text),
+    /// and `su`'s arguments as its shell may read them.
+    Either(Vec<Run<'a>>),
+}
+
+impl<'a> Run<'a> {
+    /// `runs` as one run: the only one, or each of them, its duplicates dropped.
+    pub(super) fn either(runs: impl IntoIterator<Item = Run<'a>>) -> Self {
+        let mut distinct: Vec<Run<'a>> = Vec::new();
+        for run in runs {
+            if !distinct.contains(&run) {
+                distinct.push(run);
+            }
+        }
+        if distinct.len() > 1 {
+            Run::Either(distinct)
+        } else {
+            distinct.pop().unwrap_or(Run::Nothing)
+        }
+    }
 }
 
 /// Where [`unwrap`] finds what a simple command runs, by word position: the view the guard's
@@ -125,7 +146,8 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
                         .collect(),
                 })
             }),
-        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) => Layout::Other,
+        // Several readings: the redaction trusts none of them.
+        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Either(_) => Layout::Other,
     };
     (layout, roles)
 }

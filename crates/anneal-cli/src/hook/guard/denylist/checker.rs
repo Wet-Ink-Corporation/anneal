@@ -204,8 +204,14 @@ impl<'c> Checker<'c> {
     /// Checks one reading of a simple command's words: its wrappers removed, what it runs.
     fn unwrapped(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let scope = self.moved_by_wrapper(words, scope);
-        match wrappers::unwrap(words) {
+        self.run(wrappers::unwrap(words), scope)
+    }
+
+    /// Checks what a simple command runs once its wrappers are removed.
+    fn run(&mut self, run: Run<'_>, scope: Scope<'_>) -> Option<Denial> {
+        match run {
             Run::Nothing => None,
+            Run::Either(runs) => runs.into_iter().find_map(|run| self.run(run, scope)),
             Run::Script(text) => self.text(&text, scope.nested()),
             Run::StdinScript(shell) => self.stdin_script(shell, scope),
             Run::Unseen(shell) => Some(unreadable(format!(

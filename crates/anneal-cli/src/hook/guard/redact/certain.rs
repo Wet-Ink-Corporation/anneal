@@ -6,9 +6,9 @@
 //! `denylist::wrappers`); where it differs from the wrapper's own, the word it places as the
 //! program may be an option's value, or a word the wrapper never runs (`chrt -p 10 psql 4242`
 //! reads `psql` as the program). So a wrapper's words are trusted only when they read with
-//! certainty by the tables here ([`readings`]): each an exact flag (or, for a shell, a cluster of its flags), an exact
-//! value option followed by its value (or with it attached, `-n1`, `--user=x`, where the
-//! wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
+//! certainty by the tables here ([`readings`]): each an exact flag (or, for a shell, a cluster
+//! of its flags), an exact value option followed by its value (or with it attached, `-n1`,
+//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
 //! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
 //! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
 //! body. A body counts only when the words after it are what its wrapper's reading lets

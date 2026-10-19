@@ -126,6 +126,11 @@ W1	su -l root -- -c W1
 W1	su root -- -lc W1
 W1	POSIXLY_CORRECT=1 su root -s -c W1
 W1	su root -s /bin/sh -- -c W1
+W1	su root -- -c -x W1
+W1	su root -- -co pipefail W1
+W1	su root -- -c -- W1
+W1	POSIXLY_CORRECT=1 su root -c -e W1
+W1	su -c 'echo \' -c W1
 # chrt.
 W1	chrt -o 0 W1
 -	chrt -o W1
