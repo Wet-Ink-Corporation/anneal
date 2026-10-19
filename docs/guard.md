@@ -281,6 +281,9 @@ it cannot model instead of modelling every shell feature, and it does not try to
   guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
   readings end the group at different `)` (a `#` comment inside it), a later command can be
   missed (main had the same gap, #144);
+- a glob or extglob option word at a shell or wrapper, read as an operand although it may
+  expand to an option when a file of that name exists (`bash -[c] 'rm -rf /'`,
+  `su -@(c) 'rm -rf /'`, `sudo -@(s) ...`; #165);
 - long options a shell has only in some builds: bash's `--wordexp` and `--protected` (with
   `WORDEXP_OPTION`) are read as short-option clusters, as other builds read them;
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
@@ -409,11 +412,11 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   after the priority or mask. Where that differs from the wrapper's own reading, the word the
   walk places as the program may be an option's value. So a wrapper's words are trusted only
   when each reads with certainty by the redaction's own tables (`guard::redact::certain`): an
-  exact flag, an exact value option
-  followed by its value (or with it attached: `-n1`, `--user=root`; a shell takes none
-  attached, so `bash -oerrexit` is uncertain), `--`, then the wrapper's fixed operands
-  (`timeout`'s duration, `taskset`'s mask, `flock`'s file) and, for `sudo` and `env` only,
-  literal assignments, ending exactly where the walk puts the next wrapper, the program or the body.
+  exact flag, an exact value option followed by its value (or with it attached: `-n1`,
+  `--user=root`; a shell takes none attached, so `bash -oerrexit` is uncertain), `--`, then
+  the wrapper's fixed operands (`timeout`'s duration, `taskset`'s mask, `flock`'s file) and,
+  for `sudo` and `env` only, literal assignments, ending exactly where the walk puts the next
+  wrapper, the program or the body.
   A word filling a value or operand slot counts only when it has that slot's strict shape, one
   the wrapper takes whatever the environment (a value it refuses makes it run nothing):
   `timeout`'s duration and `-k` a number with an optional `s`, `m`, `h` or `d`, `-s` one of
