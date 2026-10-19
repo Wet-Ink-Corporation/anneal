@@ -64,11 +64,16 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     if let Some(split) = read.named('S', "split-string").next() {
         // `-S` as the last word splits nothing: an empty script.
         let script = split.value.unwrap_or("");
-        return Peel::Done(Run::Split(if split.after.is_empty() {
-            Cow::Borrowed(script)
-        } else {
-            Cow::Owned(format!("{script} {}", join(split.after)))
-        }));
+        if split.after.is_empty() {
+            return Peel::Done(Run::Split(Cow::Borrowed(script)));
+        }
+        // env reads no group in its string, but the shell read the words after it, groups
+        // included; joined as text, the two are read both ways and either denial denies.
+        let joined = format!("{script} {}", join(split.after));
+        return Peel::Done(Run::either([
+            Run::Split(Cow::Owned(joined.clone())),
+            Run::Script(Cow::Owned(joined)),
+        ]));
     }
     match read.rest {
         [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => Peel::Inner(tail),

@@ -120,6 +120,15 @@ fn an_env_split_string_reads_no_group() {
         ("env -S '@(git push -f origin main)'", FORCE_PUSH),
         ("env -S '@(echo x > .claude/settings.json)'", CONFIG),
         ("env -S 'bash -c \"rm @(-rf) /home\"'", RM_RF),
+        // The words after the string are the shell's, which reads their groups.
+        ("env -S rm @(-rf) /home", RM_RF),
+        ("env -S 'rm' @(-rf) /home", RM_RF),
+        ("env -S 'rm -f' x @(-rf) /home", RM_RF),
+        ("env -S rm ?(-rf) /home", RM_RF),
+        ("env -S tee .clau@(de)/settings.json", CONFIG),
+        ("env -S 'tee' .clau?(de)/settings.json", CONFIG),
+        // A cost, as before: the words are joined to the string as text, their quotes gone.
+        ("env -S 'rm' '@(-rf)' /home", RM_RF),
     ]);
 }
 

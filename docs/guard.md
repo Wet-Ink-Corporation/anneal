@@ -135,7 +135,9 @@ A `$[ ]` inside a group is `unparseable` too, since bash skips it whole, parenth
 included; a line continuation after a `$` inside a group is dropped first, as bash drops it
 (`echo @($\<newline>(rm -rf /))` is judged as `rm -rf /`).
 An `env -S` string is split by env, which reads no group, so no group is read there:
-`env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read.
+`env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read. The
+words after the string are the shell's, which reads their groups, so with such words the
+string is read both ways (`env -S rm @(-rf) /home` is denied).
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an
@@ -279,6 +281,9 @@ it cannot model instead of modelling every shell feature, and it does not try to
   match a file named like the flag is the same gap (`git push ?f origin main`,
   `git push @(-f) origin main`). A variable set
   earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
+- a pattern word where a wrapper reads an option that runs a string: `env -S@(rm -rf ~)`,
+  `env --split-string=@(x)`, `env -S'rm -rf /'*`, `bash @(-c) 'rm -rf /'`, `bash ?c '...'`
+  are read as an unknown program or operand, so the string is not checked (#147);
 - a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
   guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
   readings end the group at different `)` (a `#` comment inside it), a later command can be

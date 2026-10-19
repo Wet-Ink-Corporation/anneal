@@ -37,7 +37,12 @@ fn runs(run: &Run<'_>, observed: &str) -> bool {
             program: Program::Named(name),
             ..
         } => *name == observed,
-        Run::Script(text) | Run::Split(text) => shell::parse(text).is_ok_and(|commands| {
+        Run::Script(text) => shell::parse(text).is_ok_and(|commands| {
+            commands
+                .iter()
+                .any(|simple| runs(&unwrap(&simple.words), observed))
+        }),
+        Run::Split(text) => shell::parse_without_extglob(text).is_ok_and(|commands| {
             commands
                 .iter()
                 .any(|simple| runs(&unwrap(&simple.words), observed))

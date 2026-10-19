@@ -135,6 +135,7 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
             .checked_sub(args.len())
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
+        // Redaction renders a body only where `redact::certain` trusts it, never `env -S`'s.
         Run::Script(text) | Run::Split(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
         Run::Exec(actions) => roles
