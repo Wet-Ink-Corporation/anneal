@@ -2,6 +2,15 @@
   "behaviour": "outcome",
   "seed": "anneal #20 review (major): `plan approve`'s conditioned append had no test for the branch where another approval wins the race.",
   "prompt": "`approve` appends an approval only if no other approval was appended since it read the ledger (a compare-and-append). Write the test list for it.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",

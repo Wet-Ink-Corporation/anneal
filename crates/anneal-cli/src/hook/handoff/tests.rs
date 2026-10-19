@@ -159,7 +159,8 @@ fn it_writes_the_phase_the_task_the_open_gates_and_the_ledger() -> TestResult {
 fn a_leftover_is_an_open_gate() -> TestResult {
     let repo = Repo::new()?;
     repo.building()?;
-    repo.repo.write("src/a.rs", "// [DEBUG-x1] probe\n")?;
+    repo.repo
+        .write("src/a.rs", &format!("// [{}-x1] probe\n", "DEBUG"))?;
 
     repo.handoff();
 

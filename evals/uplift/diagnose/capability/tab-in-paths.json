@@ -1,9 +1,18 @@
 {
   "behaviour": "outcome",
   "pressure": "sunk-cost",
-  "fixture": "anneal-repo",
+  "fixture": "py-app",
   "seed": "anneal #22 review (major): git appends a TAB to a ---/+++ path containing a space, and floor-guard missed the deleted test.",
-  "prompt": "floor-guard misses a deleted test file when its path has a space in it, such as `tests/my test.rs`. We wrote a fix that trims trailing whitespace from every path.",
+  "prompt": "`app deleted-tests` misses a deleted test file when its path has a space in it, such as `tests/my test.py`. We wrote a fix that trims trailing whitespace from every path.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
@@ -15,7 +24,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply does not accept the trim-everything fix: it reproduces the miss with a path containing a space, finds that git appends a TAB to `---`/`+++` paths that contain a space, and fixes that cause (dropping only that TAB) with the reproduction kept as a regression test."
+      "criteria": "The reply does not accept the trim-everything fix: it reproduces the miss with a diff deleting a path that contains a space, finds that git appends a TAB to `---`/`+++` paths that contain a space, and fixes that cause (dropping only that TAB) with the reproduction kept as a regression test."
     }
   ]
 }

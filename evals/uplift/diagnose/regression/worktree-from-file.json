@@ -1,7 +1,17 @@
 {
   "behaviour": "outcome",
+  "fixture": "py-app",
   "seed": "anneal #23 review (blocker, reproduced): the preconditions hook judged an edit by its own cwd's worktree, not the edited file's.",
-  "prompt": "The preconditions hook denies edits in a second git worktree even though that worktree's plan is approved. The hook finds the worktree from the hook process's current directory. Find the cause.",
+  "prompt": "I keep an `app.ini` with `marker = WARN` under `[report]` in /srv/logs, next to the logs. Running `python3 -m app report /srv/logs/today.log` from my home directory still reports only the ERROR lines, never the WARN ones. A colleague says it works for them. Find the cause and fix it.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
@@ -14,14 +24,25 @@
       "type": "regex",
       "name": "file_path",
       "target": "last_message",
-      "pattern": "edited file|file('s)? (own )?(path|worktree)|file_path",
+      "pattern": "log file('s)? (own )?(directory|dir|folder|path)|file('s)? (own )?(directory|dir|path)|dirname|beside the (log )?file|next to the (log )?file",
       "flags": "i"
+    },
+    {
+      "type": "tool_order",
+      "name": "repro_before_edit",
+      "before": {
+        "tool": "Bash",
+        "input_match": "anneal\\S* repro record"
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/"
+      }
     },
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply ranks hypotheses with the leading one being that the worktree is taken from the hook's cwd rather than from the edited file's path, and proposes a reproduction that edits a file in the second worktree from the first."
+      "criteria": "The reply ranks hypotheses with the leading one being that `app.ini` is read from the process's current directory rather than from the directory of the log file being reported, reproduces it by running `report` on a log in another directory from a different working directory, and fixes the config lookup to use the log file's directory."
     }
-  ],
-  "fixture": "anneal-repo"
+  ]
 }
