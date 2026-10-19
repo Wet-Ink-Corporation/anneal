@@ -353,3 +353,34 @@ fn rows_of_a_question_the_thresholds_do_not_define_are_counted_as_unreported() {
 
     assert_eq!(report.unreported_rows, 2, "D1 asks only noul");
 }
+
+#[test]
+fn labelled_via_mod_counts_the_usable_labels_that_came_through_the_mod() {
+    let thresholds = thresholds();
+    let mut rows = hand_rows();
+    // Two usable labels, one unusable label and one label of no decision, all via the mod.
+    for id in ["d1-1-0", "d1-1-3", "d1-1-6", "d9-9-9"] {
+        rows.via_mod.insert(id.to_owned());
+    }
+
+    let report = report(&thresholds, &rows);
+
+    let noul = point_of(&report, Point::D1)
+        .questions
+        .first()
+        .expect("D1 asks noul");
+    assert_eq!((noul.labelled, noul.labelled_via_mod), (5, 2));
+}
+
+#[test]
+fn without_mod_labels_labelled_via_mod_is_zero() {
+    let thresholds = thresholds();
+
+    let report = report(&thresholds, &hand_rows());
+
+    let noul = point_of(&report, Point::D1)
+        .questions
+        .first()
+        .expect("D1 asks noul");
+    assert_eq!((noul.labelled, noul.labelled_via_mod), (5, 0));
+}

@@ -304,6 +304,40 @@ fn label_appends_a_label_row_for_the_id() {
 }
 
 #[test]
+fn label_records_its_actor_and_via_on_the_row_and_in_data() {
+    let endpoint = Endpoint(Ok(json!({})));
+    let words = [
+        "label",
+        "d1760000000000-42-0",
+        "yes",
+        "--actor",
+        "human",
+        "--via",
+        "mod",
+    ];
+
+    let (code, envelope, log) = decide(&words, &[], &endpoint);
+
+    assert_eq!(code.ok(), Some(0));
+    let row: Value = serde_json::from_str(log.trim_end()).expect("one JSON row");
+    assert_eq!(
+        row,
+        json!({
+            "kind": "label",
+            "id": "d1760000000000-42-0",
+            "outcome": "yes",
+            "ts_ms": 1_760_000_000_000_u64,
+            "actor": "human",
+            "via": "mod",
+        })
+    );
+    assert_eq!(
+        (&envelope["data"]["actor"], &envelope["data"]["via"]),
+        (&json!("human"), &json!("mod"))
+    );
+}
+
+#[test]
 fn a_malformed_label_id_is_a_usage_error_and_appends_nothing() {
     let (code, _, log) = decide(&["label", "not-an-id", "x"], &[], &Endpoint(Ok(json!({}))));
 

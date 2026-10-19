@@ -1,5 +1,6 @@
 //! Reading the decision log `anneal decide` writes: every file, oldest first, into the
-//! answered decisions, the unanswered counts and the latest label of each id.
+//! answered decisions, the unanswered counts and the latest label of each id (and whether it
+//! came through a mod).
 //!
 //! Each file is read whole, and must be a regular file (checked by `symlink_metadata` before
 //! it is opened) of at most [`MAX_LOG_FILE_BYTES`]: decide's 16 MiB rotation size plus
@@ -10,7 +11,7 @@
 //! row this build reads, or a probability outside 0..=1, is counted in `skipped_rows`, not
 //! dropped silently and not fatal, since one torn line must not stop calibration.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -19,6 +20,7 @@ use serde::Deserialize;
 
 use crate::baseline::BaselineError;
 use crate::calibrate::CalibrateError;
+use crate::decide::label::Via;
 use crate::decide::log::{DecisionLog, MAX_FILE_BYTES};
 use crate::decide::point::{Point, Question};
 
@@ -62,6 +64,8 @@ pub(crate) struct LogRows {
     pub(crate) unanswered: BTreeMap<(Point, Question), u32>,
     /// The latest outcome label of each decision id.
     pub(crate) labels: HashMap<String, String>,
+    /// The decision ids whose latest label came through a mod (`via: mod`).
+    pub(crate) via_mod: HashSet<String>,
     /// Lines that are not a row this build reads.
     pub(crate) skipped_rows: u32,
 }
@@ -89,6 +93,9 @@ struct DecisionDto {
 struct LabelDto {
     id: String,
     outcome: String,
+    /// Read as text, so a label through something a newer build names still reads; absent on
+    /// rows written before `--via` and on rows written without it.
+    via: Option<String>,
 }
 
 /// Reads every file of `log`, oldest first.
@@ -155,12 +162,22 @@ fn read_into(bytes: &[u8], rows: &mut LogRows) {
         }
         match serde_json::from_slice(line) {
             Ok(RowDto::Decision(decision)) => add_decision(decision, rows),
-            Ok(RowDto::Label(label)) => {
-                rows.labels.insert(label.id, label.outcome);
-            }
+            Ok(RowDto::Label(label)) => add_label(label, rows),
             Err(_not_a_row) => rows.skipped_rows = rows.skipped_rows.saturating_add(1),
         }
     }
+}
+
+/// Records `label` as its id's latest, with where it came from: a later label replaces an
+/// earlier one's outcome and its `via` alike.
+fn add_label(label: LabelDto, rows: &mut LogRows) {
+    if label.via.as_deref() == Some(Via::Mod.as_str()) {
+        // The set and the map each own their copy of the id.
+        rows.via_mod.insert(label.id.clone());
+    } else {
+        rows.via_mod.remove(&label.id);
+    }
+    rows.labels.insert(label.id, label.outcome);
 }
 
 fn add_decision(decision: DecisionDto, rows: &mut LogRows) {
