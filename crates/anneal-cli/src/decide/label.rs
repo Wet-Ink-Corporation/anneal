@@ -1,28 +1,30 @@
-//! Outcome label rows: who gave a label (`--actor`) and through what (`--via`).
+//! Outcome label rows: who gave a label (`--actor`) and through what (`--via`). `plan approve`
+//! and `verdict set` take the same two flags and record them as the ledger's `by` (#62).
 //!
 //! Both are optional and omitted from the row when not given, so a label written without them
 //! is byte for byte the row `decide label` wrote before they existed, and claims nothing about
 //! its source. `calibrate` reads `via` as text, so a value a newer build adds still reads.
 
+use anneal_ledger::event::{self, By};
 use serde::Serialize;
 
 use crate::decide::id::{DecisionId, OutcomeLabel};
 
-/// Who gave a label.
+/// Who gave a label, a plan approval or a verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
-    /// A person judged the outcome.
+    /// A person.
     Human,
-    /// A model judged the outcome.
+    /// A model.
     Model,
 }
 
-/// Through what a label was given.
+/// Through what a label, a plan approval or a verdict was given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Via {
-    /// A Claude Code mod's buttons (the cockpit's one-key labels).
+    /// A Claude Code mod's buttons (the cockpit).
     Mod,
     /// A model's Bash tool call.
     Bash,
@@ -51,6 +53,36 @@ pub(crate) struct Source {
     /// Through what it was given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) via: Option<Via>,
+}
+
+impl Source {
+    /// The ledger's `by` for an approval or a verdict given from this source (`plan approve`,
+    /// `verdict set`, #62); `None` when neither part is known, so nothing is written.
+    pub(crate) fn by(self) -> Option<By> {
+        By::known(
+            self.actor.map(event::Actor::from),
+            self.via.map(event::Via::from),
+        )
+    }
+}
+
+impl From<Actor> for event::Actor {
+    fn from(actor: Actor) -> Self {
+        match actor {
+            Actor::Human => Self::Human,
+            Actor::Model => Self::Model,
+        }
+    }
+}
+
+impl From<Via> for event::Via {
+    fn from(via: Via) -> Self {
+        match via {
+            Via::Mod => Self::Mod,
+            Via::Bash => Self::Bash,
+            Via::Terminal => Self::Terminal,
+        }
+    }
 }
 
 /// A label row: `{"kind": "label", "id", "outcome", "ts_ms"}`, then `actor` and `via` when

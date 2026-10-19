@@ -272,6 +272,7 @@ mod tests {
                 sha: None,
                 patch_id: None,
                 base: None,
+                by: None,
             }),
             "payload read"
         );

@@ -4,10 +4,12 @@
 //! finding or the linked spec has any `[NEEDS CLARIFICATION]` marker, and (exit 3, nothing
 //! appended, no ledger created) while the design tree the spec's `Tree:` line names has no
 //! `grill_confirmed` with its current hash (`plan::tree`, #77); otherwise it appends
-//! `plan_approved {plan, hash}`, the plan's id and the `sha256:` hash of its bytes, unless the
-//! latest approval already has that hash. `check` compares the plan's hash with the latest
-//! approval: 0 current, 3 never approved, 4 stale. It never creates a ledger. See
-//! `docs/plan.md`.
+//! `plan_approved {plan, hash, by?}`, the plan's id, the `sha256:` hash of its bytes and, when
+//! `--actor` or `--via` is given, who approved it and through what (#62), unless the latest
+//! approval already has that hash and that approver. Losing a race to an approval of the same
+//! hash by another approver appends after it; losing one to another hash is a conflict (exit
+//! 3). `check` compares the plan's hash with the latest approval: 0 current, 3 never approved,
+//! 4 stale. It never creates a ledger. See `docs/plan.md`.
 
 mod check;
 mod tree;
@@ -19,7 +21,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
-use anneal_ledger::event::PlanApproved;
+use anneal_ledger::event::{By, PlanApproved};
 use anneal_ledger::{
     Appended, Condition, EventEnvelope, EventKind, Filter, LedgerEvent, LedgerTag, Recorded, Store,
     TagKey, Timestamp,
@@ -29,6 +31,7 @@ use serde::Serialize;
 
 use crate::command::CommandName;
 use crate::content_hash::sha256;
+use crate::decide::label::{Actor, Source, Via};
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
@@ -66,6 +69,12 @@ pub struct ApproveArgs {
     /// The session id to record
     #[arg(long, value_name = "ID")]
     session: Option<String>,
+    /// Who approved the plan [default: none recorded, so no approver is claimed]
+    #[arg(long, value_enum)]
+    actor: Option<Actor>,
+    /// Through what it was approved (mod: a Claude Code mod's buttons) [default: none recorded]
+    #[arg(long, value_enum)]
+    via: Option<Via>,
     /// Use this ledger file instead of the resolved one
     #[arg(long, value_name = "FILE")]
     store: Option<PathBuf>,
@@ -224,12 +233,17 @@ fn latest(store: &Store, approvals: &Filter) -> Result<Option<Recorded>, CliErro
     Ok(store.tail(approvals, 1)?.pop())
 }
 
-/// The hash an approval records; `None` for any other event.
-fn approved_hash(recorded: &Recorded) -> Option<&str> {
-    match &recorded.event.event {
-        LedgerEvent::PlanApproved(PlanApproved { hash, .. }) => Some(hash.as_str()),
+/// The approval `event` is; `None` for any other event.
+const fn approved(event: &EventEnvelope) -> Option<&PlanApproved> {
+    match &event.event {
+        LedgerEvent::PlanApproved(approval) => Some(approval),
         _ => None,
     }
+}
+
+/// The hash an approval records; `None` for any other event.
+fn approved_hash(recorded: &Recorded) -> Option<&str> {
+    approved(&recorded.event).map(|approval| approval.hash.as_str())
 }
 
 #[derive(Debug, Serialize)]
@@ -254,6 +268,9 @@ struct Approved<'a> {
     /// The spec's confirmed design tree; absent for a spec with no `Tree:` line.
     #[serde(skip_serializing_if = "Option::is_none")]
     tree: Option<&'a Path>,
+    /// Who approved it and through what; absent when the approval names neither.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    by: Option<By>,
     appended: bool,
     store: &'a Path,
     source: StoreSource,
@@ -270,7 +287,12 @@ fn approve<O: Write>(
 ) -> Result<Code, CliError> {
     let plan = read(&args.file)?;
     // Built first, so a session id the ledger refuses is a usage error before any ledger opens.
-    let event = approval(&plan, args.session.as_deref())?;
+    let by = Source {
+        actor: args.actor,
+        via: args.via,
+    }
+    .by();
+    let event = approval_by(&plan, args.session.as_deref(), by)?;
     let outcome = plan_lint::examine(&args.file, &plan.bytes);
     let spec_path = outcome.spec.as_deref();
     let (spec, link) = match check_lint_and_spec(&outcome)? {
@@ -304,6 +326,7 @@ fn approve<O: Write>(
         hash: &plan.hash,
         spec: spec_path,
         tree: tree.as_deref(),
+        by,
         appended,
         store: &location.path,
         source: location.source,
@@ -425,12 +448,17 @@ fn refuse<O: Write>(
     emit(&envelope.with_findings(&refusal.findings), out)
 }
 
-/// The `plan_approved` event for `plan`, with the session it names.
-fn approval(plan: &PlanBytes, session: Option<&str>) -> Result<EventEnvelope, CliError> {
+/// The `plan_approved` event for `plan`, with the session it names and who approved it.
+fn approval_by(
+    plan: &PlanBytes,
+    session: Option<&str>,
+    by: Option<By>,
+) -> Result<EventEnvelope, CliError> {
     let event = LedgerEvent::PlanApproved(PlanApproved {
         // The event owns what it records; `plan` is still reported afterwards.
         plan: plan.id.clone(),
         hash: plan.hash.clone(),
+        by,
     });
     let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
     envelope.session_id = session.map(str::to_owned);
@@ -449,38 +477,83 @@ enum Recording {
     Already(u64),
     /// Appended at this position.
     Appended(u64),
-    /// Another approval of the plan, with another hash, landed after `previous`; nothing was
-    /// appended.
+    /// Another approval of the plan, with another hash, landed after `previous` (or approvals
+    /// of the same hash by other approvers kept landing first, [`MAX_APPROVER_RACES`] times);
+    /// nothing was appended.
     Conflict,
+}
+
+/// How many times in a row an approval may lose its race to an approval of the same bytes by
+/// another approver before it gives up as a conflict (H-13).
+const MAX_APPROVER_RACES: usize = 8;
+
+/// What [`record`] needs of the ledger: a conditioned append and the latest approval of a
+/// plan. The [`Store`] in production; a fake in the tests, which reaches the race cap.
+trait ApprovalLedger {
+    /// Appends `event` only when `condition` holds.
+    fn append_if(&self, event: &EventEnvelope, condition: &Condition)
+    -> Result<Appended, CliError>;
+
+    /// The latest event among `approvals`.
+    fn latest(&self, approvals: &Filter) -> Result<Option<Recorded>, CliError>;
+}
+
+impl ApprovalLedger for Store {
+    fn append_if(
+        &self,
+        event: &EventEnvelope,
+        condition: &Condition,
+    ) -> Result<Appended, CliError> {
+        Ok(Self::append_if(self, event, condition)?)
+    }
+
+    fn latest(&self, approvals: &Filter) -> Result<Option<Recorded>, CliError> {
+        latest(self, approvals)
+    }
 }
 
 /// Appends `event`, the approval of `plan`, unless `previous` (the latest approval of `plan`
 /// the caller read) already has its hash, and only if no approval lands after `previous`.
-/// When one did, it is read back: one with the same hash means the plan is already approved,
-/// any other is a conflict.
+/// When one did, it is read back: one with the same hash and approver means the plan is
+/// already approved, and one with another hash is a conflict. An approval counts as the same
+/// only when it also names the same approver (`by`), so a human's approval of content a model
+/// approved is recorded too: when the winner has the same hash but another approver, `event`
+/// is appended after it, under the same condition.
 fn record(
-    store: &Store,
+    store: &impl ApprovalLedger,
     event: &EventEnvelope,
     plan: &PlanBytes,
     previous: Option<&Recorded>,
 ) -> Result<Recording, CliError> {
+    let by = approved(event).and_then(|approval| approval.by);
     let already = |recorded: &Recorded| {
-        (approved_hash(recorded) == Some(plan.hash.as_str()))
+        approved(&recorded.event)
+            .is_some_and(|approval| approval.hash == plan.hash && approval.by == by)
             .then_some(Recording::Already(recorded.position))
     };
     if let Some(done) = previous.and_then(already) {
         return Ok(done);
     }
-    let after = previous.map_or(0, |recorded| recorded.position);
-    // The condition owns its filter; `plan` keeps the filter to read the winner back.
-    let condition = Condition::none_matching(plan.approvals.clone()).after(after);
-    match store.append_if(event, &condition)? {
-        Appended::At(position) => Ok(Recording::Appended(position)),
-        Appended::Conflict => Ok(latest(store, &plan.approvals)?
-            .as_ref()
-            .and_then(already)
-            .unwrap_or(Recording::Conflict)),
+    let mut after = previous.map_or(0, |recorded| recorded.position);
+    for _ in 0..MAX_APPROVER_RACES {
+        // The condition owns its filter; `plan` keeps the filter to read the winner back.
+        let condition = Condition::none_matching(plan.approvals.clone()).after(after);
+        if let Appended::At(position) = store.append_if(event, &condition)? {
+            return Ok(Recording::Appended(position));
+        }
+        let Some(winner) = store.latest(&plan.approvals)? else {
+            return Ok(Recording::Conflict);
+        };
+        if let Some(done) = already(&winner) {
+            return Ok(done);
+        }
+        if approved_hash(&winner) != Some(plan.hash.as_str()) {
+            return Ok(Recording::Conflict);
+        }
+        // The same bytes, approved by another approver: this approval is still news.
+        after = winner.position;
     }
+    Ok(Recording::Conflict)
 }
 
 fn emit<O: Write, D: Serialize>(envelope: &Envelope<'_, D>, out: &mut O) -> Result<Code, CliError> {

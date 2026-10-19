@@ -14,7 +14,8 @@ sensitive. Three pieces carry this (#33):
 
 ```
 anneal verdict set --pr <n> --sha <rev> --level <tests-verified|reviewed|approved>
-                   --source <local|review-plugin|human> [--base <ref>] [--session <id>]
+                   --source <local|review-plugin|human> [--actor human|model]
+                   [--via mod|bash|terminal] [--base <ref>] [--session <id>]
 ```
 
 It resolves `--sha` to a full commit id, takes the base from `--base` (else `origin/main`, else
@@ -28,11 +29,20 @@ It resolves `--sha` to a full commit id, takes the base from `--base` (else `ori
 | `sha` | the full commit id the verdict is for |
 | `patch_id` | `git patch-id --verbatim` of `git diff <base>...<sha>`; `null` for an empty diff |
 | `base` | the base as given or defaulted |
+| `by` | who ran it (`actor`: `human` or `model`) and through what (`via`: `mod`, `bash` or `terminal`), each only when given; absent with neither (#62) |
 
 The review plugin records its outcomes, `changes_requested` and `noise_only`, with
 `anneal ledger append`; `verdict set` records only levels. It writes to the ledger the hook reads
 (no `--store`), and checks `--pr` and `--session` as ledger tags before it opens the ledger, so a
 refused value creates no file. A commit or base that does not resolve is a usage error (2).
+
+`--actor human` is a person's to give: the guard denies a model's Bash call that runs
+`verdict set ... --actor human` (rule `human-only`, `docs/guard.md`), so a human verdict comes
+from the cockpit mod (`--actor human --via mod`) or the person's own terminal; `anneal ledger
+append` refuses a `verdict_set` with a `by` (`docs/ledger.md`). The merge gate
+does not read `by` yet: a human `approved` counts as the review by its `source`, as before.
+Counting it only with `actor: human` would change existing tests' expectations and is open for
+Ryan (#62).
 
 ## Freshness
 

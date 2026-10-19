@@ -49,6 +49,7 @@ fn plan_approved(plan: &str, hash: &str) -> EventEnvelope {
         LedgerEvent::PlanApproved(PlanApproved {
             plan: plan.to_owned(),
             hash: hash.to_owned(),
+            by: None,
         }),
         "s1",
     )

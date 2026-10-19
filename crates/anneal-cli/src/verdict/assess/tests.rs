@@ -15,6 +15,7 @@ fn set(verdict: Verdict, source: VerdictSource, sha: &str, patch_id: &str) -> Ve
         sha: Some(sha.to_owned()),
         patch_id: Some(patch_id.to_owned()),
         base: Some("main".to_owned()),
+        by: None,
     }
 }
 
@@ -116,6 +117,7 @@ fn a_verdict_without_a_commit_is_never_fresh() {
         sha: None,
         patch_id: None,
         base: None,
+        by: None,
     };
 
     assert_eq!(
