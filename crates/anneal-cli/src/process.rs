@@ -7,7 +7,7 @@
 
 use std::io::{self, Read, Write};
 use std::process::{Child, ExitStatus, Output};
-use std::thread::{self, Scope, ScopedJoinHandle};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 /// How often a running child is checked for completion.
@@ -19,25 +19,30 @@ pub(crate) enum WaitError {
     /// Its pipes could not be read, or it could not be waited on or killed.
     #[error("waiting for the process")]
     Io(#[source] io::Error),
-    /// It did not finish within the timeout, and was killed and reaped.
+    /// It, or a process still holding its pipes, did not finish within the timeout. The child
+    /// itself was killed if still running, and reaped.
     #[error("the process did not finish in time")]
     Timeout,
 }
 
-/// Waits for `child`, draining its piped stdout and stderr on named scoped threads
-/// (`<label>-stdout`, `<label>-stderr`) so a chatty child cannot block on a full pipe. Each
-/// stream keeps at most `cap` bytes; the rest is read and dropped. Past `timeout` the child is
-/// killed and reaped, and the error is [`WaitError::Timeout`]. Every reader thread is joined
-/// before this returns.
+/// Waits for `child`, draining its piped stdout and stderr on named threads (`<label>-stdout`,
+/// `<label>-stderr`) so a chatty child cannot block on a full pipe. Each stream keeps at most
+/// `cap` bytes; the rest is read and dropped. Past `timeout` the child is killed and reaped,
+/// and the error is [`WaitError::Timeout`].
 ///
-/// Limit: the readers finish only when every holder of the pipes' write ends has exited. If
-/// killing the child fails, or the child started a grandchild that inherited its stdout or
-/// stderr, joining the readers blocks until those processes exit, past `timeout`. Std offers
-/// no way to abandon a blocked read without detaching the thread (H-13), so this stays a
-/// documented limit: use it only for commands, such as `git rev-parse` or `gh api`, that start
-/// no long-lived processes. The limit does not apply when nothing is piped (as for `task
-/// done`'s test command): there are no readers to join, so a timeout returns once the child
-/// itself is killed and reaped, even if a grandchild lives on.
+/// The output is complete only once every holder of the pipes' write ends has closed them, so
+/// a child that exits while a grandchild it started still holds its stdout or stderr is a
+/// timeout too, at the deadline (a child that exits just before it still gets about 100 ms for
+/// its pipes to close). Either way this returns within `timeout` plus about 100 ms: after a
+/// kill the threads get that long to see the pipes close, and those that finish are joined;
+/// one a grandchild still blocks has its handle dropped and is left to end on its own, holding
+/// only its pipe end and at most `cap` bytes, until that grandchild closes the pipe or exits,
+/// or this process exits. Only the child is killed, not its descendants: std cannot kill a
+/// process group without `unsafe`. Nothing caps these threads across calls: a caller that
+/// loops, such as `watch` polling `gh` (16 MiB cap) for up to 1800 s, can leave one set per
+/// timed-out call, each bounded as above, until its grandchildren exit or anneal does. With
+/// nothing piped (as for `task done`'s test command) there are no threads, and a timeout
+/// returns once the child itself is killed and reaped.
 pub(crate) fn wait_with_deadline(
     child: &mut Child,
     timeout: Duration,
@@ -56,11 +61,12 @@ pub(crate) struct Limits {
     pub(crate) cap: u64,
 }
 
-/// As [`wait_with_deadline`], first handing `input` to the child's piped stdin on a named scoped
+/// As [`wait_with_deadline`], first handing `input` to the child's piped stdin on a named
 /// thread (`<label>-stdin`) that closes the pipe when done, so the child sees the end of its
 /// input and a child that never reads cannot block the caller. A child that exits without
-/// reading it all is no error: its exit status says how it went. The writer is joined before
-/// this returns; past the timeout the killed child's pipe ends the write.
+/// reading it all is no error: its exit status says how it went. The writer is joined when it
+/// finishes in time, else its handle is dropped and it is left to end on its own, as the
+/// readers are.
 pub(crate) fn wait_with_input(
     child: &mut Child,
     input: &[u8],
@@ -78,77 +84,158 @@ fn wait_piped(
     Limits { timeout, cap }: Limits,
     label: &str,
 ) -> Result<Output, WaitError> {
-    let stdin = input.and_then(|_| child.stdin.take());
-    let input = input.unwrap_or_default();
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    thread::scope(|scope| {
-        let writer = match spawn_writer(scope, format!("{label}-stdin"), stdin, input) {
-            Ok(handle) => handle,
-            Err(error) => return Err(kill_after(child, error)),
-        };
-        let out_reader = match spawn_reader(scope, format!("{label}-stdout"), stdout, cap) {
-            Ok(handle) => handle,
-            Err(error) => return Err(kill_after(child, error)),
-        };
-        let err_reader = match spawn_reader(scope, format!("{label}-stderr"), stderr, cap) {
-            Ok(handle) => handle,
-            Err(error) => return Err(kill_after(child, error)),
-        };
-        let status = wait_or_kill(child, timeout)?;
-        join_writer(writer)?;
+    let started = Instant::now();
+    let workers = match Workers::spawn(child, input, cap, label) {
+        Ok(workers) => workers,
+        Err(error) => return Err(kill_after(child, error)),
+    };
+    let status = match wait_or_kill(child, timeout) {
+        Ok(status) => status,
+        Err(error) => {
+            // Killed and reaped: its pipes close now, unless a grandchild holds them too.
+            poll_until(ABANDON_GRACE, || workers.are_finished());
+            workers.abandon();
+            return Err(error);
+        }
+    };
+    // The child exited, but a grandchild may still hold its pipes: wait no longer than the
+    // deadline for them to close, and at least the grace, so a child that exits just before
+    // the deadline is not a timeout while its readers drain what it wrote last.
+    let left = timeout.saturating_sub(started.elapsed()).max(ABANDON_GRACE);
+    if !poll_until(left, || workers.are_finished()) {
+        workers.abandon();
+        return Err(WaitError::Timeout);
+    }
+    workers.join(status)
+}
+
+/// How long the pipe threads of a killed child get to see its pipes close before the wait
+/// returns without them.
+const ABANDON_GRACE: Duration = Duration::from_millis(100);
+
+/// The error when the stdin writer panicked.
+const WRITER_PANICKED: &str = "the input writer thread panicked";
+
+/// The error when an output reader panicked.
+const READER_PANICKED: &str = "an output reader thread panicked";
+
+/// The threads that feed the child's stdin and drain its stdout and stderr.
+struct Workers {
+    writer: Worker<()>,
+    out: Worker<Vec<u8>>,
+    err: Worker<Vec<u8>>,
+}
+
+impl Workers {
+    /// Takes the child's piped streams, `input`'s copy for its stdin (the writer may outlive
+    /// this call, see [`Workers::abandon`], so it cannot borrow), and starts a named thread
+    /// for each. Threads already started when one fails end once the caller kills the child.
+    fn spawn(child: &mut Child, input: Option<&[u8]>, cap: u64, label: &str) -> io::Result<Self> {
+        let stdin = input.and_then(|bytes| Some((child.stdin.take()?, bytes.to_vec())));
+        let writer = Worker::spawn(
+            format!("{label}-stdin"),
+            stdin,
+            write_input,
+            WRITER_PANICKED,
+        )?;
+        let read_out = move |pipe| read_capped(pipe, cap);
+        let stdout = child.stdout.take();
+        let out = Worker::spawn(format!("{label}-stdout"), stdout, read_out, READER_PANICKED)?;
+        let read_err = move |pipe| read_capped(pipe, cap);
+        let stderr = child.stderr.take();
+        let err = Worker::spawn(format!("{label}-stderr"), stderr, read_err, READER_PANICKED)?;
+        Ok(Self { writer, out, err })
+    }
+
+    fn are_finished(&self) -> bool {
+        self.writer.is_finished() && self.out.is_finished() && self.err.is_finished()
+    }
+
+    /// Joins every thread into the child's [`Output`].
+    fn join(self, status: ExitStatus) -> Result<Output, WaitError> {
+        self.writer.join()?;
         Ok(Output {
             status,
-            stdout: join_reader(out_reader)?,
-            stderr: join_reader(err_reader)?,
+            stdout: self.out.join()?,
+            stderr: self.err.join()?,
         })
-    })
+    }
+
+    /// Gives up on the threads, dropping their handles; their results are not wanted. One
+    /// still running is blocked on a pipe whose other end a grandchild of the child inherited:
+    /// std can neither interrupt a blocked read or write nor kill a process group without
+    /// `unsafe`. It holds only that pipe end and at most `cap` bytes of output (or its copy of
+    /// the input), and ends when the grandchild closes the pipe or exits, or when this process
+    /// exits, whichever comes first (H-13).
+    fn abandon(self) {
+        drop(self);
+    }
 }
 
-type Writer<'scope> = ScopedJoinHandle<'scope, io::Result<()>>;
-
-fn spawn_writer<'scope, W: Write + Send + 'scope>(
-    scope: &'scope Scope<'scope, '_>,
-    name: String,
-    pipe: Option<W>,
-    input: &'scope [u8],
-) -> io::Result<Writer<'scope>> {
-    thread::Builder::new()
-        .name(name)
-        .spawn_scoped(scope, move || {
-            let Some(mut pipe) = pipe else {
-                return Ok(());
-            };
-            match pipe.write_all(input) {
-                // The child exited, or closed its stdin, before reading it all.
-                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-                // Dropping the pipe closes it: the child reads the end of its input.
-                written => written,
-            }
-        })
+/// Polls `done` every [`POLL_INTERVAL`] for up to `limit`; whether it became true.
+fn poll_until(limit: Duration, done: impl Fn() -> bool) -> bool {
+    let started = Instant::now();
+    loop {
+        if done() {
+            return true;
+        }
+        if started.elapsed() >= limit {
+            return false;
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
 }
 
-fn join_writer(writer: Writer<'_>) -> Result<(), WaitError> {
-    writer
-        .join()
-        .map_err(|_panicked| WaitError::Io(io::Error::other("the input writer thread panicked")))?
-        .map_err(WaitError::Io)
+/// A named thread that owns one of the child's pipes; none when that stream is not piped.
+struct Worker<T> {
+    handle: Option<JoinHandle<io::Result<T>>>,
+    /// The error's message when the thread panicked.
+    panicked: &'static str,
 }
 
-type Reader<'scope> = ScopedJoinHandle<'scope, io::Result<Vec<u8>>>;
+impl<T: Default + Send + 'static> Worker<T> {
+    fn spawn<P: Send + 'static>(
+        name: String,
+        pipe: Option<P>,
+        work: impl FnOnce(P) -> io::Result<T> + Send + 'static,
+        panicked: &'static str,
+    ) -> io::Result<Self> {
+        let handle = match pipe {
+            Some(pipe) => Some(
+                thread::Builder::new()
+                    .name(name)
+                    .spawn(move || work(pipe))?,
+            ),
+            None => None,
+        };
+        Ok(Self { handle, panicked })
+    }
 
-fn spawn_reader<'scope, R: Read + Send + 'scope>(
-    scope: &'scope Scope<'scope, '_>,
-    name: String,
-    pipe: Option<R>,
-    cap: u64,
-) -> io::Result<Reader<'scope>> {
-    thread::Builder::new()
-        .name(name)
-        .spawn_scoped(scope, move || match pipe {
-            Some(pipe) => read_capped(pipe, cap),
-            None => Ok(Vec::new()),
-        })
+    fn is_finished(&self) -> bool {
+        self.handle.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// The thread's result, or the default when nothing was piped.
+    fn join(self) -> Result<T, WaitError> {
+        let Some(handle) = self.handle else {
+            return Ok(T::default());
+        };
+        let panicked = self.panicked;
+        handle
+            .join()
+            .map_err(|_payload| WaitError::Io(io::Error::other(panicked)))?
+            .map_err(WaitError::Io)
+    }
+}
+
+/// Writes `input` to the child's stdin, then closes it by dropping the pipe, so the child reads
+/// the end of its input.
+fn write_input<W: Write>((mut pipe, input): (W, Vec<u8>)) -> io::Result<()> {
+    match pipe.write_all(&input) {
+        // The child exited, or closed its stdin, before reading it all.
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        written => written,
+    }
 }
 
 /// Reads `pipe` to its end, keeping the first `cap` bytes and discarding the rest, so the
@@ -158,13 +245,6 @@ pub(crate) fn read_capped<R: Read>(mut pipe: R, cap: u64) -> io::Result<Vec<u8>>
     pipe.by_ref().take(cap).read_to_end(&mut kept)?;
     io::copy(&mut pipe, &mut io::sink())?;
     Ok(kept)
-}
-
-fn join_reader(reader: Reader<'_>) -> Result<Vec<u8>, WaitError> {
-    reader
-        .join()
-        .map_err(|_panicked| WaitError::Io(io::Error::other("an output reader thread panicked")))?
-        .map_err(WaitError::Io)
 }
 
 /// Polls `child` until it exits; past `timeout` kills and reaps it. The deadline is checked
@@ -214,7 +294,11 @@ fn kill_after(child: &mut Child, error: io::Error) -> WaitError {
 mod tests {
     use std::process::{Command, Stdio};
     use std::time::Duration;
+    #[cfg(unix)]
+    use std::time::Instant;
 
+    #[cfg(unix)]
+    use super::wait_with_deadline;
     use super::{Limits, wait_with_input};
 
     /// Thirty seconds and 1 KiB of each stream: ample for `git` on any runner.
@@ -262,7 +346,9 @@ mod tests {
     #[cfg(unix)]
     fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_joined() {
         // `exec` leaves no shell holding the pipes; 2 MiB is far past any pipe buffer, so the
-        // writer blocks until the kill closes the read end.
+        // writer blocks until the kill closes the read end. (The name predates #132: the writer
+        // is now joined only when it finishes within the grace after the kill, as it does here,
+        // and abandoned otherwise.)
         let mut child = Command::new("sh")
             .args(["-c", "exec sleep 30"])
             .stdin(Stdio::piped())
@@ -285,5 +371,90 @@ mod tests {
             child.try_wait().expect("waitable").is_some(),
             "the child was reaped"
         );
+    }
+
+    /// The timeout the grandchild tests give their child.
+    #[cfg(unix)]
+    const SHORT: Duration = Duration::from_millis(200);
+
+    /// Well past [`SHORT`] and its margin, well under the grandchild's 30 s.
+    #[cfg(unix)]
+    const BOUND: Duration = Duration::from_secs(5);
+
+    /// `sh -c script` with every stream piped. A script whose last command is not a simple
+    /// command keeps `sh` from exec'ing it, so its `sleep` is a grandchild holding the pipes.
+    #[cfg(unix)]
+    fn piped_sh(script: &str) -> std::process::Child {
+        Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh starts")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "spawns sh")]
+    fn a_grandchild_holding_stdout_does_not_hold_the_wait_past_the_timeout() {
+        let mut child = piped_sh("sleep 30; exit 0");
+
+        // The one clock read: the bound is wall time by definition.
+        let started = Instant::now();
+        let result = wait_with_deadline(&mut child, SHORT, 1024, "sh");
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(super::WaitError::Timeout)),
+            "{result:?}"
+        );
+        assert!(elapsed < BOUND, "returned at the deadline: {elapsed:?}");
+        assert!(
+            child.try_wait().expect("waitable").is_some(),
+            "the child was killed and reaped"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "spawns sh")]
+    fn a_child_that_exits_leaving_a_grandchild_on_its_pipes_times_out_at_the_deadline() {
+        // The child exits at once; the output is not complete while the grandchild can write.
+        let mut child = piped_sh("sleep 30 & exit 0");
+
+        // The one clock read: the bound is wall time by definition.
+        let started = Instant::now();
+        let result = wait_with_deadline(&mut child, SHORT, 1024, "sh");
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(super::WaitError::Timeout)),
+            "{result:?}"
+        );
+        assert!(elapsed < BOUND, "returned at the deadline: {elapsed:?}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore = "spawns sh")]
+    fn a_grandchild_holding_stdin_unread_does_not_hold_the_writer_past_the_timeout() {
+        // 2 MiB is far past any pipe buffer: the writer blocks until every reader end closes.
+        let mut child = piped_sh("sleep 30; exit 0");
+        let limits = Limits {
+            timeout: SHORT,
+            cap: 1024,
+        };
+
+        // The one clock read: the bound is wall time by definition.
+        let started = Instant::now();
+        let result = wait_with_input(&mut child, &vec![b'x'; 2 * 1024 * 1024], limits, "sh");
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Err(super::WaitError::Timeout)),
+            "{result:?}"
+        );
+        assert!(elapsed < BOUND, "returned at the deadline: {elapsed:?}");
     }
 }

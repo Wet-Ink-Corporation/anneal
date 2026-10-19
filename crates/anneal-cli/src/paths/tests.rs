@@ -273,3 +273,23 @@ fn only_not_a_git_repository_classifies_as_outside_git() {
         );
     }
 }
+
+#[test]
+fn the_git_timeout_names_a_duration_under_a_second() {
+    // The preconditions budget hands git less than a second; whole seconds rounded it to 0.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_millis(500),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 500ms");
+}
+
+#[test]
+fn the_git_timeout_is_named_in_whole_milliseconds() {
+    // What is left of a deadline is rarely a round number.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_nanos(1_987_654_321),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 1.987s");
+}
