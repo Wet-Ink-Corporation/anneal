@@ -25,7 +25,7 @@ mod claim;
 mod counter;
 mod edits;
 mod grounded;
-mod playbook;
+pub(crate) mod playbook;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};

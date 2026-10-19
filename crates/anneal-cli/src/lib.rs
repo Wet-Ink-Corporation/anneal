@@ -56,6 +56,9 @@
 //! - [`orchestrate`]: `anneal orchestrate fan-out|park|rule`, the fan-out gate and one-way
 //!   calls parked in weigh-in (through the crate-private `weighin` bridge) or ruled on.
 //! - [`glob`]: repository path globs (`**`, `*`, `?`, ASCII case-insensitive).
+//! - [`status`]: `anneal status`, the ledger and the anneal home folded into one versioned
+//!   document (`schema: 1`) for a UI: phase, plan, tasks, gates, verdict, Clef, context and the
+//!   ledger's tail (`docs/status.md`).
 //! - [`statusline`]: `anneal statusline`, Claude Code's status line, which saves each
 //!   session's context usage for the context-monitor hook.
 //! - [`rollout`]: `anneal rollout decide`, go, hold or rollback from metrics and band tables.
@@ -106,6 +109,7 @@ pub mod rollout;
 pub mod round;
 pub mod rulings;
 pub mod ship;
+pub mod status;
 pub mod statusline;
 pub mod task;
 #[cfg(test)]

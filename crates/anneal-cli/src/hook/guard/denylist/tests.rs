@@ -4,6 +4,7 @@
 //! every denied command in [`forms`].
 
 mod bypasses;
+mod extglob;
 mod forms;
 mod indirection;
 mod merge;

@@ -100,6 +100,8 @@ pub const PLAN_NOT_APPROVED: Code = Code::new(3, "not approved");
 /// `plan approve|check`: the plan was approved but its bytes changed since; only the plan's
 /// bytes are compared, never its spec.
 pub const PLAN_STALE: Code = Code::new(4, "stale: the plan's bytes changed since approval");
+/// `plan`'s codes, in table order.
+const PLAN_CODES: [Code; 3] = [PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE];
 /// `mode build|diagnose|off`: the mode was recorded (a dirty tree is recorded too, with a
 /// finding).
 pub const MODE_RECORDED: Code = Code::new(0, "mode recorded");
@@ -259,6 +261,9 @@ pub const CALIBRATE_REFUSED: Code = Code::new(
     3,
     "--apply: a proposal no longer matches the thresholds file; nothing written",
 );
+/// `status`: no ledger exists yet. The document (or text) is still written, with only the
+/// sections read from the anneal home, and no ledger is created.
+pub const STATUS_NO_LEDGER: Code = Code::new(2, "no ledger exists yet; none was created");
 /// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
 /// failure noted in its output or on stderr.
 pub const HOOK_DONE: Code = Code::new(
@@ -277,10 +282,7 @@ impl CommandCodes {
             CommandName::Ledger => ("", &[OK, LEDGER_SCHEMA_ERROR]),
             CommandName::Grill => ("", &[OK, GRILL_INVALID, GRILL_OPEN]),
             CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED, TASK_NOT_STARTED]),
-            CommandName::Plan => (
-                "approve|check",
-                &[PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE],
-            ),
+            CommandName::Plan => ("approve|check", &PLAN_CODES),
             CommandName::Mode => ("", &[MODE_RECORDED]),
             // No scope: it would widen the help's title column; each meaning names its
             // subcommand instead.
@@ -330,6 +332,7 @@ impl CommandCodes {
             // No scope: `routing|uplift` would widen the help's title column.
             CommandName::Eval => ("", &EVAL_CODES),
             CommandName::Calibrate => ("", &[OK, CALIBRATE_REFUSED]),
+            CommandName::Status => ("", &[OK, STATUS_NO_LEDGER]),
             CommandName::Statusline => ("", &[OK]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };
