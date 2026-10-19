@@ -146,7 +146,8 @@ it before the working directory, `GH_REPO` and `GH_HOST`), pin its head with `--
 <full commit>` (each denial names the command), and needs a fresh `tests_verified`-or-better
 verdict for that head (fresh by commit or by patch id, so a rebase keeps it) and a review verdict
 unless `anneal ship skip-rule` would skip the change; a human `approved` counts as the review
-only while `review.require_plugin` is false. A denial is the guard's deny decision with one
+only while `review.require_plugin` is false and only when its `by.actor` is `human` (recorded
+with `--actor human`; `via` does not matter). A denial is the guard's deny decision with one
 `ERROR merge-gate: ...` line naming what is missing and the `anneal verdict set` command that
 records it, plus a `gate_blocked` event (`point` is `merge-gate.<check>`) in an existing ledger;
 it never creates one. Unreadable input or commands, and a ledger, git or setting it cannot read,

@@ -1,7 +1,7 @@
 //! `anneal hook merge-gate` through the built binary, on scratch pull-request repositories:
 //! denied with no verdict and after a real code change, allowed after a rebase-only change,
-//! the review requirement and the skip-rule, a human approval counting only while
-//! `review.require_plugin` is false, silence for other calls, and failing closed.
+//! the review requirement and the skip-rule, a human approval counting only with a human actor
+//! and while `review.require_plugin` is false, silence for other calls, and failing closed.
 
 use std::process::Output;
 
@@ -152,7 +152,7 @@ fn a_human_approval_counts_as_the_review_only_while_require_plugin_is_false() ->
     let repo = PrRepo::new()?;
     widen(&repo)?;
     repo.set_verdict("tests-verified", "local")?;
-    repo.set_verdict("approved", "human")?;
+    approve_as_human(&repo, &["--actor", "human"])?;
 
     assert_allowed(&repo.merge_pinned("gh pr merge 7")?);
 
@@ -164,6 +164,37 @@ fn a_human_approval_counts_as_the_review_only_while_require_plugin_is_false() ->
     assert!(reason.contains("review-plugin"), "{reason}");
 
     repo.set_verdict("reviewed", "review-plugin")?;
+    assert_allowed(&repo.merge_pinned("gh pr merge 7")?);
+    Ok(())
+}
+
+/// Records a human `approved` for pull request 7 at `HEAD`, adding `by` (`--actor`, `--via`).
+fn approve_as_human(repo: &PrRepo, by: &[&str]) -> TestResult {
+    let mut args = vec![
+        "verdict", "set", "--pr", "7", "--sha", "HEAD", "--level", "approved", "--source", "human",
+    ];
+    args.extend_from_slice(by);
+    repo.envelope(&args, 0)?;
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_human_approval_counts_only_when_its_actor_is_human() -> TestResult {
+    let repo = PrRepo::new()?;
+    widen(&repo)?;
+    repo.set_verdict("tests-verified", "local")?;
+    approve_as_human(&repo, &[])?;
+    approve_as_human(&repo, &["--actor", "model", "--via", "bash"])?;
+
+    let reason = deny_reason(&repo.merge_pinned("gh pr merge 7")?)?;
+    assert!(
+        reason.contains("--source human --actor human`") && reason.contains("own terminal"),
+        "names the command that fixes it: {reason}"
+    );
+    assert_eq!(blocked_points(&repo)?, ["merge-gate.review"]);
+
+    approve_as_human(&repo, &["--actor", "human", "--via", "terminal"])?;
     assert_allowed(&repo.merge_pinned("gh pr merge 7")?);
     Ok(())
 }

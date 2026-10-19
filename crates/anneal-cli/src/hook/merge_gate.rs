@@ -27,8 +27,9 @@
 //! - a fresh `tests_verified`-or-better verdict after the latest fresh `changes_requested`
 //!   (fresh: recorded for the head's commit, or for the same patch id from the same base, so a
 //!   rebase keeps it);
-//! - a review verdict (`verdict::assess`: the review plugin's, or a human `approved` while
-//!   `review.require_plugin` is false), unless the skip-rule skips the change (`ship::skip`).
+//! - a review verdict (`verdict::assess`: the review plugin's, or, while
+//!   `review.require_plugin` is false, a human `approved` whose `by.actor` is `human`), unless
+//!   the skip-rule skips the change (`ship::skip`).
 //!
 //! A denial is Claude Code's deny decision whose reason is one `ERROR` line naming what is
 //! missing and the command that records it, plus a `gate_blocked` event in an existing ledger;
@@ -575,8 +576,9 @@ impl Gate<'_> {
                 .to_owned()
         } else {
             format!(
-                "run the review plugin, or record a human approval: `anneal verdict set --pr \
-                 {pr} --sha {head} --level approved --source human`"
+                "run the review plugin, or record a human approval from your own terminal: \
+                 `anneal verdict set --pr {pr} --sha {head} --level approved --source human \
+                 --actor human` (an approval without --actor human does not count)"
             )
         };
         Some(Denial::new(

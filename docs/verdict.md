@@ -39,11 +39,12 @@ refused value creates no file. A commit or base that does not resolve is a usage
 
 `--actor human` is a person's to give: the guard denies a model's Bash call that runs
 `verdict set ... --actor human` (rule `human-only`, `docs/guard.md`), so a human verdict comes
-from the cockpit mod (`--actor human --via mod`) or the person's own terminal; `anneal ledger
+from the person's own terminal (a cockpit button comes with the mod half of #62); `anneal ledger
 append` refuses a `verdict_set` with a `by` (`docs/ledger.md`). The merge gate
-does not read `by` yet: a human `approved` counts as the review by its `source`, as before.
-Counting it only with `actor: human` would change existing tests' expectations and is open for
-Ryan (#62).
+counts a human `approved` as the review only when its `by.actor` is `human`: one recorded
+without `--actor` (including every one recorded before #62) or with `--actor model` does not
+count, and must be recorded again with `--actor human` from your own terminal. `via` is for
+audit only and never decides (Ryan, weigh-in wi-10f284, #62).
 
 ## The `anneal/verdict` commit status
 
@@ -112,8 +113,10 @@ fresh ones:
 - a `changes_requested` voids the levels and reviews before it;
 - the latest level after it is the tests verdict: `tests_verified` or better;
 - the latest review after it is the review verdict: the review plugin's `reviewed`, `approved`
-  or `noise_only`, or, while `review.require_plugin` is false, a human's `approved` (the interim
-  rule, Ryan, 2026-10-11, until the review plugin exists).
+  or `noise_only`, or, while `review.require_plugin` is false, a human's `approved` whose
+  `by.actor` is `human` (the interim rule, Ryan, 2026-10-11, until the review plugin exists;
+  the actor requirement, Ryan, 2026-10-19, wi-10f284). A human `approved` with no `by`, with a
+  `by` naming only a `via`, or with `actor: model` is no review; `via` does not matter.
 
 ## `anneal verdict valid`
 
@@ -172,8 +175,8 @@ directories and `*` and `?` within one name:
 }
 ```
 
-`review.require_plugin` (default `false`) decides whether a human `approved` counts as the review
-verdict. `ship.sensitive_globs` (at most 256, each at most 256 bytes, relative, `/`-separated)
+`review.require_plugin` (default `false`) decides whether a human `approved` (recorded with
+`--actor human`) counts as the review verdict. `ship.sensitive_globs` (at most 256, each at most 256 bytes, relative, `/`-separated)
 adds globs to the defaults under the category `configured`; it cannot remove one. Unknown keys
 inside `review` and `ship` are refused; other top-level keys (`check_fast`) belong to other
 readers. The file must be a regular file of at most 64 KiB. A file that does not parse is a
@@ -258,7 +261,8 @@ that `verdict set` posts (see above). For the canonical command:
 5. A review verdict must hold, unless the skip-rule skips the change from the base the latest
    verdict recorded (else the default base). Otherwise it denies with `review`, naming the review
    plugin and, while `review.require_plugin` is false, `anneal verdict set ... --level approved
-   --source human`.
+   --source human --actor human`, to be run from your own terminal; a human approval without
+   `--actor human` does not count.
 
 A denial is Claude Code's deny decision whose reason is one `ERROR merge-gate: ...` line, plus a
 `gate_blocked` event (`point` `merge-gate.<check>`, the checks being `shape`, `target`, `repo`, `env`,
@@ -312,5 +316,6 @@ The gate judges what it can see in a Bash command, for an honest agent:
   it to be an ancestor of the judged base would close this, but needs a new `verdict_set` field
   (a registry change); the commit pin still makes gh refuse a head other than the one judged;
 - `.anneal/config.json` is read from the working tree, so an uncommitted edit changes the
-  settings; and anyone can record `--source human` or append a verdict with `anneal ledger
-  append`.
+  settings; and anyone can append a review plugin's verdict with `anneal ledger append`, and
+  anything outside the guard's sight (a script on disk, the ledger file written directly) can
+  record `--source human --actor human`; the guard denies only a model's Bash call that does.
