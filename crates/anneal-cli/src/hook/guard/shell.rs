@@ -89,6 +89,10 @@ pub(crate) enum ParseError {
     /// commands may hold (a `case` pattern's), so where it ends cannot be read reliably.
     #[error("a process substitution inside an extended glob")]
     ProcessInExtglob,
+    /// A word ending in an extended glob opener before an empty `()` where a function's name
+    /// may stand (`f?()`): a definition without `extglob`, a pattern word with it.
+    #[error("a function name or extended glob before an empty `()`")]
+    ExtglobName,
 }
 
 /// Lexes `text` into every simple command it runs, nested ones included.
@@ -322,11 +326,11 @@ impl Lexer {
             }
             '<' | '>' => self.redirect(command, level, true)?,
             _ => {
-                let place = if in_command_position(&command.words) {
-                    Place::Command
-                } else if matches!(command.words.as_slice(), [only] if only.is_bare(&["function"]))
+                let place = if matches!(command.words.as_slice(), [only] if only.is_bare(&["function"]))
                 {
                     Place::Name
+                } else if in_command_position(&command.words) {
+                    Place::Command
                 } else {
                     Place::Argument
                 };
@@ -425,18 +429,30 @@ impl Lexer {
 }
 
 /// Whether a word after `before` stands where bash reads a keyword, so a `!(` there is the `!`
-/// keyword and a subshell: only reserved words come before it, and `time`'s own options
-/// (`-p`, `--`) after a `time`.
+/// keyword and a subshell: only reserved words come before it, `time`'s own options (`-p`,
+/// `--`) after a `time`, and `function NAME {` or `coproc [NAME] {` (a body's first word).
 fn in_command_position(before: &[Word]) -> bool {
     let mut after_time = false;
-    before.iter().all(|word| {
-        let time_option = after_time && word.is_bare(&["-p", "--"]);
-        let reserved = word.is_bare(&RESERVED);
-        if reserved {
+    let mut at = 0_usize;
+    while let Some(word) = before.get(at) {
+        let step = if after_time && word.is_bare(&["-p", "--"]) {
+            1
+        } else if word.is_bare(&RESERVED) {
             after_time = word.text == "time";
-        }
-        reserved || time_option
-    })
+            1
+        } else if word.is_bare(&["function", "coproc"]) {
+            after_time = false;
+            // A name then `{`: the `{` is read next, as a reserved word.
+            let named = before
+                .get(at.saturating_add(2))
+                .is_some_and(|brace| brace.is_bare(&["{"]));
+            if named { 2 } else { 1 }
+        } else {
+            return false;
+        };
+        at = at.saturating_add(step);
+    }
+    true
 }
 
 /// Whether a `(` after `words` (the words of the command it ends) defines a function: some

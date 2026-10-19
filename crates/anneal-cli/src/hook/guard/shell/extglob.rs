@@ -10,14 +10,14 @@ pub(super) enum Place {
     /// reads it without `extglob`.
     Command,
     /// The word after `function`, a function's name: `!(x)` is an extended glob, and an empty
-    /// `()` is the definition's.
+    /// `()` may be the definition's.
     Name,
     /// An argument or a redirection's target: `!(x)` is an extended glob.
     Argument,
 }
 
 impl Place {
-    /// Whether a function's name may stand here, so a `()` after it defines the function.
+    /// Whether a function's name may stand here, so a `()` after it may define the function.
     fn names_function(self) -> bool {
         matches!(self, Self::Command | Self::Name)
     }
@@ -44,39 +44,30 @@ fn opens(word: &Word, place: Place) -> bool {
 }
 
 impl Lexer {
-    /// Whether the `(` at the cursor opens an extended glob's group after `word`. Where a
-    /// function's name may stand, an empty `()` (blanks allowed: `f?( )`) followed by a
-    /// compound command is a definition's, which bash accepts without `extglob`; elsewhere
-    /// `@()` is an empty group, as bash with `extglob` reads `/bin/echo@() hi`.
-    pub(super) fn opens_extglob(&self, word: &Word, place: Place) -> bool {
-        self.peek() == Some('(')
-            && opens(word, place)
-            && !(place.names_function() && self.defines_function())
+    /// Whether the `(` at the cursor opens an extended glob's group after `word`.
+    ///
+    /// # Errors
+    /// [`ParseError::ExtglobName`] for an empty `()` (blanks allowed: `f?( )`) where a
+    /// function's name may stand: bash without `extglob` reads a definition there, and with it
+    /// one pattern word whose later words are its arguments (`/bin/echo@() { hi }` runs
+    /// `echo`), so neither reading can be trusted. Elsewhere `@()` is an empty group.
+    pub(super) fn opens_extglob(&self, word: &Word, place: Place) -> Result<bool, ParseError> {
+        if self.peek() != Some('(') || !opens(word, place) {
+            return Ok(false);
+        }
+        if place.names_function() && self.empty_parens() {
+            return Err(ParseError::ExtglobName);
+        }
+        Ok(true)
     }
 
-    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)` and then a
-    /// compound command, a function's body: `{ `, `(`, or `if`, `for`, `while`, `until`,
-    /// `case`, `select` or `[[` as a word.
-    fn defines_function(&self) -> bool {
-        let blank = |c: &char| matches!(c, ' ' | '\t' | '\n');
-        let mut rest = self
-            .chars
+    /// Whether the `(` at the cursor is followed, past blanks and newlines, by `)`.
+    fn empty_parens(&self) -> bool {
+        self.chars
             .iter()
-            .copied()
             .skip(self.pos.saturating_add(1))
-            .skip_while(blank);
-        if rest.next() != Some(')') {
-            return false;
-        }
-        let body: String = rest
-            .skip_while(blank)
-            .take_while(|c| !blank(c) && *c != ';')
-            .collect();
-        body.starts_with('(')
-            || matches!(
-                body.as_str(),
-                "{" | "if" | "for" | "while" | "until" | "case" | "select" | "[["
-            )
+            .find(|c| !matches!(c, ' ' | '\t' | '\n'))
+            == Some(&')')
     }
 
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with

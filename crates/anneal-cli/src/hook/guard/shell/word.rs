@@ -204,7 +204,7 @@ impl Lexer {
         let mut word = Word::new();
         word.arithmetic = self.in_arithmetic();
         while let Some(c) = self.peek() {
-            if self.opens_extglob(&word, place) {
+            if self.opens_extglob(&word, place)? {
                 self.advance();
                 self.extglob(&mut word, depth)?;
                 continue;

@@ -129,17 +129,29 @@ fn an_empty_group_outside_a_function_name_is_a_pattern() {
     ]);
 }
 
+/// Where a function's name may stand, `f?()` is a definition without `extglob` and one pattern
+/// word with it (`/bin/echo@() { hi }` runs `echo`), so it cannot be read either way.
 #[test]
-fn a_function_named_with_an_opener_character_is_still_a_definition() {
+fn an_opener_before_an_empty_group_where_a_name_stands_is_unreadable() {
     assert_table(&[
-        ("f?() { rm -rf /tmp/x; }; f?", ALLOW),
-        ("f@() { echo ok; }; f@", ALLOW),
-        ("f*() { rm -rf /home; }", RM_RF),
-        ("f+() { git push -f origin main; }", FORCE_PUSH),
-        ("function f?() { echo ok; }; f?", ALLOW),
-        ("function f*() { rm -rf /home; }", RM_RF),
-        ("f?( ) { echo ok; }; f?", ALLOW),
-        ("f?( ) { rm -rf /home; }", RM_RF),
+        ("f?() { rm -rf /tmp/x; }; f?", UNREADABLE),
+        ("f@() { echo ok; }; f@", UNREADABLE),
+        ("function f?() { echo ok; }; f?", UNREADABLE),
+        ("f?( ) { echo ok; }; f?", UNREADABLE),
+        ("f@()\n{ echo ok; }; f@", UNREADABLE),
+        ("/bin/rm@() -rf ~", UNREADABLE),
+        ("rm@( ) -rf /", UNREADABLE),
+        ("git@() push -f origin main", UNREADABLE),
+        ("bash -O extglob -c '/bin/rm@() { -rf ~ }'", UNREADABLE),
+        ("bash -O extglob -c '/bin/rm@() [[ -rf ~ ]]'", UNREADABLE),
+        ("shopt -s extglob\n/bin/rm@() { -rf ~\n}", UNREADABLE),
+        (
+            "shopt -s extglob\n/bin/rm@() if -rf ~\nthen :; fi",
+            UNREADABLE,
+        ),
+        // A name with no opener before it defines a function, as before.
+        ("f() { rm -rf /tmp/x; }; f", ALLOW),
+        ("f() { rm -rf /home; }", RM_RF),
     ]);
 }
 
@@ -152,20 +164,6 @@ fn a_group_in_the_program_word_is_a_pattern_program() {
         ("sudo /bin/r@(m) -rf ~", RM_RF),
         ("/usr/bin/gi@(t) push -f origin main", FORCE_PUSH),
         ("/bin/ec@(h)o hello", ALLOW),
-    ]);
-}
-
-/// An empty `()` is a definition's only when a body follows; otherwise bash with `extglob`
-/// reads one pattern word whose later words are its arguments.
-#[test]
-fn an_empty_group_with_no_body_after_it_is_a_pattern_program() {
-    assert_table(&[
-        ("/bin/rm@() -rf ~", RM_RF),
-        ("rm@( ) -rf /", RM_RF),
-        ("git@() push -f origin main", FORCE_PUSH),
-        ("f@()\n{ echo ok; }; f@", ALLOW),
-        ("f@() ( rm -rf /home )", RM_RF),
-        ("f@() if true; then echo ok; fi", ALLOW),
     ]);
 }
 
@@ -182,6 +180,11 @@ fn a_bang_group_in_command_position_is_still_a_negated_subshell() {
             "if true; then time -p !(echo x > .claude/settings.json); fi",
             CONFIG,
         ),
+        ("function f { !(rm -rf /); }; f", RM_RF),
+        ("coproc { !(rm -rf /); }", RM_RF),
+        ("coproc c { !(rm -rf /); }", RM_RF),
+        ("function f { { !(rm -rf /); }; }; f", RM_RF),
+        ("coproc rm !(x) /home", RM_RF),
         ("[[ $x == @(a|b) ]] && echo y", ALLOW),
         ("[[ $x == !(a) ]] && echo y", ALLOW),
         ("case $x in @(a|b)) rm -rf /;; esac", RM_RF),

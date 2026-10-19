@@ -114,7 +114,8 @@ fn or_unparsed(rendered: Result<String, ParseError>) -> String {
             ParseError::Unclosed { .. }
             | ParseError::TooDeep
             | ParseError::MissingRedirectTarget
-            | ParseError::ProcessInExtglob,
+            | ParseError::ProcessInExtglob
+            | ParseError::ExtglobName,
         ) => UNPARSED.to_owned(),
     }
 }

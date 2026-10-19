@@ -128,12 +128,14 @@ and checks the commands of a `$( )` or backtick substitution inside it. A `<( )`
 inside a group is `unparseable`: bash ends the group at the first `)` that balances it, which
 may be a `case` pattern's inside the substitution, so what runs after it cannot be read
 reliably (`echo @(<(ls))` is denied).
-Two shapes stay as bash reads them without `extglob`: `!(` in command position (after only
-reserved words, and `time`'s `-p` or `--`) is the `!` keyword and a subshell whose commands
-are checked, and an empty `()` (blanks allowed) after a word where a function's name stands
-(command position, or after `function`) is a function definition when a body follows it
-(`f?() { ...; }`). Elsewhere `@()` is an empty group, so `rm @()-rf /home` and
-`/bin/rm@() -rf ~` are denied. A group in the program word may name any program, as `?` and
+A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
+`function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
+keyword and a subshell whose commands are checked. A word ending in an opener before an
+empty `()` (blanks allowed) where a function's name stands (command position, or after
+`function`) is `unparseable`: without `extglob` it defines a function, with it it is one
+pattern word whose later words are its arguments (`/bin/echo@() { hi }` runs `echo`), so
+`f?() { ...; }` and `/bin/rm@() -rf ~` are denied (a cost: name such a function without the
+opener). Elsewhere `@()` is an empty group, so `rm @()-rf /home` is denied. A group in the program word may name any program, as `?` and
 `*` may: `/bin/r@(m) -rf ~` is judged as an unknown program, its arguments checked.
 A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
@@ -265,8 +267,8 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - a quoted expansion in `git push` that holds a force flag: `git push "$branch"` with
   `branch=--force` (or `-f`) is allowed, since denying it would deny every
   `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A glob that may
-match a file named like the flag is the same gap (`git push ?f origin main`,
-`git push @(-f) origin main`). A variable set
+  match a file named like the flag is the same gap (`git push ?f origin main`,
+  `git push @(-f) origin main`). A variable set
   earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
 - a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
   guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
