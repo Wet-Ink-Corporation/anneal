@@ -343,6 +343,7 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         options,
         rest: after_dashes,
         operands,
+        ..
     } = SU.parse(words);
     let to_user = SU_TO_USER.parse(words);
     // su takes a lone `-` first, then the user. Under POSIXLY_CORRECT a `--` after that `-`

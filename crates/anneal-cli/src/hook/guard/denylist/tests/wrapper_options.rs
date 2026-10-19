@@ -340,8 +340,8 @@ fn a_star_may_hold_an_option_and_its_attached_value() {
     ]);
 }
 
-/// Issue #165: a pattern that cannot start an option, or one after the option slots, is read
-/// as before.
+/// Issue #165: a pattern after the `--` that ends a wrapper's options is its command, while a
+/// `--` an option takes as its value ends nothing, so the word after it is still a slot.
 #[test]
 fn a_pattern_after_a_wrapper_s_double_dash_is_its_command_not_an_option() {
     assert_table(&[
@@ -351,6 +351,13 @@ fn a_pattern_after_a_wrapper_s_double_dash_is_its_command_not_an_option() {
         ("sudo -u root -- *.sh", ALLOW),
         ("sudo -- -[s] 'rm -rf /'", ALLOW),
         ("sudo -[u] root -- ls", UNREADABLE),
+        ("sudo -u -- ls", ALLOW),
+        ("sudo -u -- -[s] 'rm -rf /'", UNREADABLE),
+        ("sudo --user -- -[s] 'rm -rf /'", UNREADABLE),
+        ("env -u -- -[S]'rm -rf ~'", UNREADABLE),
+        ("env -C -- -[S]'rm -rf ~'", UNREADABLE),
+        ("xargs -E -- -[s] 'rm -rf /'", UNREADABLE),
+        ("xargs -d -- -[s] 'rm -rf /'", UNREADABLE),
     ]);
 }
 

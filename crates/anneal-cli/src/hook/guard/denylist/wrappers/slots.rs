@@ -4,7 +4,7 @@
 
 use super::grammar::Grammar;
 use super::strings::{ends_options, shell_option_words};
-use super::tables::{ENV, FLOCK, SUDO, WATCH};
+use super::tables::{ENV, FLOCK, IONICE, NICE, STDBUF, SUDO, WATCH, XARGS};
 use super::{Peel, SHELLS, Word, braces, readings};
 
 /// Wrappers that read no options of their own, or whose words are patterns of their own
@@ -62,7 +62,12 @@ pub(super) fn unsure_option<'a>(
         Peel::Program => return None,
         Peel::Inner(inner) | Peel::Appending(inner) => {
             let taken = rest.len().saturating_sub(inner.len());
-            return before_and_first(rest, taken).find(|word| unsure(word, &GETOPT));
+            let slots = if ended_options(name, rest, taken) {
+                taken
+            } else {
+                taken.saturating_add(1)
+            };
+            return rest.iter().take(slots).find(|word| unsure(word, &GETOPT));
         }
         Peel::Done(_) if name == "su" => {
             return rest.iter().find(|word| unsure(word, &SU));
@@ -92,16 +97,28 @@ fn grammar(name: &str) -> Option<&'static Grammar> {
     }
 }
 
-/// The first `taken` words of `words` and the word after them, unless the last of them is a
-/// literal `--`, after which getopt reads no option (`sudo -- *.sh` runs a command).
+/// Whether the wrapper `name` read its first `taken` words of `rest` as its options and a `--`
+/// that ends them, after which it reads no option (`sudo -- *.sh` runs a command). A `--` an
+/// option takes as its value (`sudo -u -- -[s]`) ends nothing, and a wrapper whose grammar
+/// is not known here keeps the word after its options as a slot.
+fn ended_options(name: &str, rest: &[Word], taken: usize) -> bool {
+    let grammar = match name {
+        "sudo" | "doas" => &SUDO,
+        "env" => &ENV,
+        "nice" => &NICE,
+        "stdbuf" => &STDBUF,
+        "ionice" => &IONICE,
+        "xargs" => &XARGS,
+        _ => return false,
+    };
+    let read = grammar.parse(rest);
+    read.ended && rest.len().saturating_sub(read.rest.len()) == taken
+}
+
+/// The first `taken` words of `words` and the word after them.
 fn before_and_first(words: &[Word], taken: usize) -> impl Iterator<Item = &Word> {
     let (before, after) = words.split_at_checked(taken).unwrap_or((words, &[]));
-    let first = if before.last().is_some_and(ends_options) {
-        None
-    } else {
-        after.first()
-    };
-    before.iter().chain(first)
+    before.iter().chain(after.first())
 }
 
 /// Whether `word` holds an unquoted glob or group (a brace or `~` alone, as in `-I{}`, is
