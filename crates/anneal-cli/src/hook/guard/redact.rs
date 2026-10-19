@@ -116,6 +116,7 @@ fn or_unparsed(rendered: Result<String, ParseError>) -> String {
             | ParseError::MissingRedirectTarget
             | ParseError::ProcessInExtglob
             | ParseError::BacktickInExtglob
+            | ParseError::ArithmeticInExtglob
             | ParseError::ExtglobName,
         ) => UNPARSED.to_owned(),
     }

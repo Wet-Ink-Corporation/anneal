@@ -90,6 +90,15 @@ impl Lexer {
         self.chars.get(at).copied()
     }
 
+    /// Moves the cursor past any line continuations.
+    fn skip_continuations(&mut self) {
+        while self.peek() == Some('\\') && self.chars.get(self.pos.saturating_add(1)) == Some(&'\n')
+        {
+            self.advance();
+            self.advance();
+        }
+    }
+
     /// Reads an extended glob's group after its `(` up to the `)` that closes it, as bash with
     /// `extglob` reads it: blanks, `|` and `;` included, quotes and `$( )` substitutions read
     /// as in any word. Without `extglob` bash refuses such a word, so reading it as a pattern
@@ -97,7 +106,8 @@ impl Lexer {
     ///
     /// # Errors
     /// Those of any word, [`ParseError::ProcessInExtglob`] for a `<(` or `>(` inside the
-    /// group, and [`ParseError::BacktickInExtglob`] for a backtick inside it at any depth.
+    /// group, [`ParseError::BacktickInExtglob`] for a backtick inside it at any depth, and
+    /// [`ParseError::ArithmeticInExtglob`] for a `$[` inside it.
     pub(super) fn extglob(&mut self, word: &mut Word, depth: usize) -> Result<(), ParseError> {
         self.groups = self.groups.saturating_add(1);
         let read = self.group(word, depth);
@@ -129,6 +139,15 @@ impl Lexer {
                 // inside the substitution; read either way, the commands differ.
                 '<' | '>' if self.peek_past_continuations() == Some('(') => {
                     return Err(ParseError::ProcessInExtglob);
+                }
+                // Bash drops line continuations before it reads what a `$` opens, and skips a
+                // `$[ ]` whole, its parentheses included, which this reader would count.
+                '$' => {
+                    self.skip_continuations();
+                    if self.peek() == Some('[') {
+                        return Err(ParseError::ArithmeticInExtglob);
+                    }
+                    self.word_char(c, word, depth)?;
                 }
                 _ => self.word_char(c, word, depth)?,
             }

@@ -93,6 +93,10 @@ pub(crate) enum ParseError {
     /// the substitution there, so whether it opens another cannot be read reliably.
     #[error("a backtick inside an extended glob")]
     BacktickInExtglob,
+    /// A `$[` inside an extended glob's group: bash skips it whole, parentheses included, so
+    /// where the group ends cannot be read reliably.
+    #[error("an old arithmetic expression inside an extended glob")]
+    ArithmeticInExtglob,
     /// A word ending in an extended glob opener before an empty `()` where a function's name
     /// may stand (`f?()`): a definition without `extglob`, a pattern word with it.
     #[error("a function name or extended glob before an empty `()`")]

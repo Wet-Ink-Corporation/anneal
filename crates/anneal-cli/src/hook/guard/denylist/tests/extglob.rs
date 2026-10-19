@@ -66,6 +66,29 @@ fn a_process_substitution_inside_a_group_is_unreadable() {
     ]);
 }
 
+/// Bash drops a line continuation before it reads `$(`, `${` or `$[` inside a group too.
+#[test]
+fn a_line_continuation_after_a_dollar_inside_a_group_still_opens_a_substitution() {
+    assert_table(&[
+        ("echo @($\\\n(rm -rf /))", RM_RF),
+        ("echo @(a|$\\\n(rm -rf ~))", RM_RF),
+        ("echo @($\\\n\\\n(git push -f origin main))", FORCE_PUSH),
+        ("echo @($\\\n(echo x > .claude/settings.json))", CONFIG),
+        ("echo @($\\\n(ls))", ALLOW),
+    ]);
+}
+
+/// Bash skips a `$[ ]` inside a group whole, parentheses included, which the lexer does not.
+#[test]
+fn an_old_arithmetic_expression_inside_a_group_is_unreadable() {
+    assert_table(&[
+        ("echo @($[(]) ; rm -rf / ; #)", UNREADABLE),
+        ("echo @($[)]) ; rm -rf / ; #)", UNREADABLE),
+        ("echo @($\\\n[1])", UNREADABLE),
+        ("echo $[(1)] @(a)", ALLOW),
+    ]);
+}
+
 /// Inside a backtick substitution bash ends the substitution at the group's backtick, so a
 /// backtick inside a group, at any depth, is not read as opening another.
 #[test]
