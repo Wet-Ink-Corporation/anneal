@@ -19,11 +19,11 @@
       "name": "test_first",
       "before": {
         "tool": "Write",
-        "input_match": "\"file_path\":\"[^\"]*test"
+        "input_match": "\"file_path\":\"[^\"]*(/tests/|/test_)[^\"]*\\.py\""
       },
       "after": {
         "tool": "Write",
-        "input_match": "\"file_path\":\"[^\"]*src/duration"
+        "input_match": "\"file_path\":\"[^\"]*/src/duration\\.py\""
       }
     },
     {

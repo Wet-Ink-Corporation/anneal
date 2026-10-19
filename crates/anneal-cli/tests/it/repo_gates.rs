@@ -172,5 +172,10 @@ fn the_repository_holds_no_debug_leftover() -> TestResult {
         "the Stop hook would block every session in this repository; build a test's tag \
          at run time, as `format!(\"[{{}}-x1]\", \"DEBUG\")`: {found:?}"
     );
+    assert!(
+        scan.skipped().is_empty() && !scan.over_budget(),
+        "the leftover scan skipped files it could not read whole, so a tag there goes unseen: {:?}",
+        scan.skipped()
+    );
     Ok(())
 }

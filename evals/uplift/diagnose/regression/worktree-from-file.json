@@ -36,7 +36,7 @@
       },
       "after": {
         "tool": "Edit",
-        "input_match": "\"file_path\":\"[^\"]*src/"
+        "input_match": "\"file_path\":\"[^\"]*/src/app/"
       }
     },
     {

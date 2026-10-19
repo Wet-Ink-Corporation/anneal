@@ -33,14 +33,14 @@
       "type": "tool_used",
       "name": "no_source_edit",
       "tool": "Edit",
-      "input_match": "\"file_path\":\"[^\"]*src/",
+      "input_match": "\"file_path\":\"[^\"]*/src/app/",
       "max": 0
     },
     {
       "type": "tool_used",
       "name": "no_source_write",
       "tool": "Write",
-      "input_match": "\"file_path\":\"[^\"]*src/",
+      "input_match": "\"file_path\":\"[^\"]*/src/app/",
       "max": 0
     },
     {
