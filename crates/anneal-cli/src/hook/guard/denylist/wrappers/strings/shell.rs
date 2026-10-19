@@ -131,12 +131,14 @@ fn holds(states: &States, state: State) -> bool {
 enum Arg<'a> {
     Word(&'a Word),
     Lead(&'a str),
+    /// A word read only as what it is when its value is no option ([`option_words`]).
+    Operand(&'a Word),
 }
 
 impl<'a> Arg<'a> {
     fn text(self) -> &'a str {
         match self {
-            Self::Word(word) => &word.text,
+            Self::Word(word) | Self::Operand(word) => &word.text,
             Self::Lead(text) => text,
         }
     }
@@ -144,7 +146,7 @@ impl<'a> Arg<'a> {
     /// Whether the shell gets the argument as written.
     fn literal(self) -> bool {
         match self {
-            Self::Word(word) => reads_as_written(word),
+            Self::Word(word) | Self::Operand(word) => reads_as_written(word),
             Self::Lead(_) => true,
         }
     }
@@ -153,7 +155,7 @@ impl<'a> Arg<'a> {
     fn may_be_options(self) -> bool {
         match self {
             Self::Word(word) => may_start_shell_options(word),
-            Self::Lead(_) => false,
+            Self::Lead(_) | Self::Operand(_) => false,
         }
     }
 }
@@ -301,7 +303,7 @@ pub(super) fn run<'a>(
     lead: Option<&'a str>,
     words: impl IntoIterator<Item = &'a Word>,
 ) -> Run<'a> {
-    let (args, walk, _) = walked(lead, words);
+    let (args, walk, _) = walked(lead, words.into_iter().map(Arg::Word));
     let scripts = args
         .iter()
         .zip(&walk.scripts)
@@ -339,29 +341,24 @@ pub(super) fn run<'a>(
 
 /// How many of the shell's arguments `words` some reading still reads as options: up to and
 /// including the last word a reading reaches while reading them, an option, its value or the
-/// word that ends them (#165). A word known only at run time ends them too: the readings
-/// that take it as options reach every later word, and a pattern there is judged by them
-/// already (#129), so it is not a slot (`bash "$script" *` stays allowed).
+/// word that ends them (#165). A word known only at run time is read here only as the operand
+/// it is when its value is no option, so it ends the options where one stands (`bash "$script"
+/// *` stays allowed) and not where it is an option's value (`bash -o "$o" [+]c '...'` is
+/// judged): the readings that take it as options reach every later word, and a pattern there
+/// is judged by them already (#129).
 pub(super) fn option_words(words: &[Word]) -> usize {
-    let read = walked(None, words).2.map_or(0, |at| at.saturating_add(1));
-    let known = words
-        .iter()
-        .position(|word| !reads_as_written(word))
-        .map_or(words.len(), |at| at.saturating_add(1));
-    read.min(known)
+    walked(None, words.iter().map(Arg::Operand))
+        .2
+        .map_or(0, |at| at.saturating_add(1))
 }
 
-/// The arguments `lead` and `words` and every reading's walk over them, with the last argument
-/// a reading reaches while still reading options.
+/// The arguments `lead` and `words` and every reading's walk over them, with the last argument a reading
+/// reaches while still reading options.
 fn walked<'a>(
     lead: Option<&'a str>,
-    words: impl IntoIterator<Item = &'a Word>,
+    words: impl IntoIterator<Item = Arg<'a>>,
 ) -> (Vec<Arg<'a>>, Walk, Option<usize>) {
-    let args: Vec<Arg<'a>> = lead
-        .map(Arg::Lead)
-        .into_iter()
-        .chain(words.into_iter().map(Arg::Word))
-        .collect();
+    let args: Vec<Arg<'a>> = lead.map(Arg::Lead).into_iter().chain(words).collect();
     let start = Modes {
         command: lead.is_some(),
         stdin: false,
