@@ -5,12 +5,11 @@
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
+use super::field::{key_value, spec_path, spec_target};
 use super::markdown::{Document, Line};
 use super::{Rule, SpecFinding, header};
 use crate::error_chain::reason;
 use crate::grill::{self, tree::DesignTree};
-use crate::lint::plan::parse::{key_value, spec_target};
-use crate::lint::plan::spec_path;
 
 /// The key of the line, matched in any letter case.
 const KEY: &str = "Tree";
@@ -30,16 +29,6 @@ pub enum TreeLink {
         /// The `Tree:` line.
         line: usize,
     },
-}
-
-impl TreeLink {
-    /// The `Tree:` line's number.
-    #[must_use]
-    pub const fn line(&self) -> usize {
-        match self {
-            Self::Named { line, .. } | Self::Unnamed { line } => *line,
-        }
-    }
 }
 
 /// The first `Tree:` line of `header`, and a finding for a second one and for one with an
@@ -90,7 +79,7 @@ pub(super) fn link<'d>(
 /// Its first `Tree:` line, read as `lint spec` reads it; `None` when the spec has no `Tree:`
 /// line. `plan approve` needs the linked tree to be confirmed.
 #[must_use]
-pub fn tree_link(text: &str) -> Option<TreeLink> {
+pub(crate) fn tree_link(text: &str) -> Option<TreeLink> {
     let doc = Document::parse(text);
     let sections = doc.sections();
     link("", header(&doc, &sections)).0
@@ -101,7 +90,7 @@ pub fn tree_link(text: &str) -> Option<TreeLink> {
 /// An absolute `target` as written, otherwise `target` joined to the spec's directory with
 /// `/`, as a plan's `Spec:` line is resolved against the plan.
 #[must_use]
-pub fn tree_path(spec: &str, target: &str) -> PathBuf {
+pub(crate) fn tree_path(spec: &str, target: &str) -> PathBuf {
     PathBuf::from(spec_path(spec, target, MAIN_SEPARATOR))
 }
 

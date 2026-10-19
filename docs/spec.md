@@ -28,8 +28,9 @@ there is any (`lint`'s codes, `docs/exit-codes.md`).
 
 The header, the lines before the first `##` section, holds one `Tree:` line naming the design
 tree the spec was written from (#77), written as a plan's `Spec:` line is (`docs/plan.md`): a
-markdown link (`- Tree: [design tree](../trees/export.json)`), a path in backticks or a plain
-path, the key in any letter case, optionally bold or a list item. A relative path is read
+markdown link (`- Tree: [design tree](../trees/export.json)`, or with the destination in angle
+brackets, `[design tree](<../trees/my tree.json>)`, read as what lies inside them), a path in
+backticks or a plain path, the key in any letter case, optionally bold or a list item. A relative path is read
 relative to the spec's directory; an absolute one as written.
 
 - A second `Tree:` line, or one naming nothing, is a `tree` finding; so is a named file that

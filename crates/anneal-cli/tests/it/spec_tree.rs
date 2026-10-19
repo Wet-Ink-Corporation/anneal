@@ -243,3 +243,111 @@ fn a_tree_line_naming_a_missing_file_refuses_the_approval() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_tree_link_with_an_angle_bracket_destination_lints_clean() -> TestResult {
+    let work = workspace("Tree: [t](<design-tree.json>)")?;
+
+    let (linted, envelope) = anneal(work.path(), &["lint", "spec", SPEC])?;
+
+    assert_eq!(linted.status.code(), Some(0), "clean: {envelope}");
+    assert_eq!(
+        envelope.pointer("/data/tree"),
+        Some(&json!(TREE)),
+        "the destination inside `<` and `>`, not a placeholder"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_tree_link_with_an_angle_bracket_destination_approves_once_confirmed() -> TestResult {
+    let work = workspace("Tree: [t](<design-tree.json>)")?;
+
+    let (refused, envelope) = approve(work.path())?;
+    assert_eq!(
+        (refused.status.code(), keys(&envelope)),
+        (
+            Some(3),
+            vec!["plan/approve/unconfirmed-tree:design-tree.json"]
+        ),
+        "the tree is named but not yet confirmed: {envelope}"
+    );
+    let (confirmed, envelope) = confirm(work.path())?;
+    assert_eq!(confirmed.status.code(), Some(0), "confirmed: {envelope}");
+
+    let (approved, envelope) = approve(work.path())?;
+
+    assert_eq!(approved.status.code(), Some(0), "approved: {envelope}");
+    assert_eq!(
+        envelope.pointer("/data/tree"),
+        Some(&json!(TREE)),
+        "naming the tree"
+    );
+    Ok(())
+}
+
+/// A temporary copy of the dry run with its spec at `docs/specs/spec.md` (its `Tree:` line
+/// `../trees/t.json`), its plan at `docs/plans/plan.md` (its `Spec:` link `../specs/spec.md`)
+/// and its design tree at `docs/trees/t.json`.
+fn nested() -> Result<TempDir, Box<dyn Error>> {
+    let work = workspace("Tree: ../trees/t.json")?;
+    let docs = work.path().join("docs");
+    for dir in ["specs", "plans", "trees"] {
+        fs::create_dir_all(docs.join(dir))?;
+    }
+    fs::rename(work.path().join(SPEC), docs.join("specs").join(SPEC))?;
+    fs::rename(work.path().join(TREE), docs.join("trees").join("t.json"))?;
+    let plan = fs::read_to_string(work.path().join(PLAN))?;
+    let relinked = plan.replacen("](spec.md)", "](../specs/spec.md)", 1);
+    assert_ne!(relinked, plan, "the plan links `spec.md`");
+    fs::write(docs.join("plans").join(PLAN), relinked)?;
+    fs::remove_file(work.path().join(PLAN))?;
+    Ok(work)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_spec_and_plan_in_nested_directories_approve_against_the_resolved_tree() -> TestResult {
+    let work = nested()?;
+    // The spec's path as the plan links it, then the tree's joined to its directory.
+    let resolved = json!("docs/plans/../specs/../trees/t.json");
+    let approve_nested = || {
+        anneal(
+            work.path(),
+            &["plan", "approve", "docs/plans/plan.md", "--store", STORE],
+        )
+    };
+
+    let (refused, envelope) = approve_nested()?;
+    assert_eq!(
+        (refused.status.code(), envelope.pointer("/data/tree")),
+        (Some(3), Some(&resolved)),
+        "refused before the confirmation, naming the resolved tree: {envelope}"
+    );
+    let (confirmed, envelope) = anneal(
+        work.path(),
+        &[
+            "grill",
+            "confirm",
+            "--tree",
+            "docs/trees/t.json",
+            "--quote",
+            QUOTE,
+            "--store",
+            STORE,
+        ],
+    )?;
+    assert_eq!(confirmed.status.code(), Some(0), "confirmed: {envelope}");
+
+    let (approved, envelope) = approve_nested()?;
+
+    assert_eq!(approved.status.code(), Some(0), "approved: {envelope}");
+    assert_eq!(
+        envelope.pointer("/data/tree"),
+        Some(&resolved),
+        "the tree, joined to the spec's directory"
+    );
+    Ok(())
+}
