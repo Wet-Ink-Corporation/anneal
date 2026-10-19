@@ -9,7 +9,9 @@ use super::feed::{Feed, own_feed};
 use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
-use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, readings, rm};
+use super::{
+    Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, anneal, braces, git, readings, rm,
+};
 use crate::hook::guard::shell::{self, ParseError, SimpleCommand, Word};
 use crate::hook::guard::{Denial, Rule};
 
@@ -81,6 +83,12 @@ pub(super) struct Checker<'c> {
     /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
     /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
     argument_depth: usize,
+    /// Whether the command, so far, has an anneal call with a subcommand-path word not read
+    /// as written ([`anneal::unread_path`]: `anneal "$@"`, as in a function body) and a
+    /// literal `--actor human` in any simple command: together, in either order, they deny
+    /// (`f() { anneal "$@"; }; f verdict set --actor human`, `set -- verdict set --actor
+    /// human; anneal "$@"`).
+    anneal_seen: anneal::Seen,
 }
 
 /// The most commands arguments are read as in one check (H-13): each read walks the rest of
@@ -111,6 +119,7 @@ impl<'c> Checker<'c> {
             gh_hides: probe::GhHides::Nothing,
             gh_calls_here: 0,
             argument_depth: 0,
+            anneal_seen: anneal::Seen::default(),
         }
     }
 
@@ -166,6 +175,9 @@ impl<'c> Checker<'c> {
     fn command(&mut self, command: &SimpleCommand, scope: Scope<'_>) -> Option<Denial> {
         let writes = self.variables.substitute(&command.writes);
         let words = self.variables.substitute(&command.words);
+        if let Some(denial) = self.note_human_actor(&words) {
+            return Some(denial);
+        }
         let outer = self.enter_command();
         let denial = writes
             .iter()
@@ -322,6 +334,9 @@ impl<'c> Checker<'c> {
             Err(denial) => return Some(denial),
         };
         let args = expanded.as_ref();
+        if let Some(denial) = self.anneal_arguments(program, args) {
+            return Some(denial);
+        }
         match program {
             Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args, scope),
             Program::Named("git") => {
@@ -338,19 +353,59 @@ impl<'c> Checker<'c> {
             Program::Named("cd") => self.change_directory("cd", Some(args)),
             Program::Named("pushd") => self.change_directory("pushd", Some(args)),
             Program::Named("popd") => self.change_directory("popd", None),
-            Program::Named(name) => {
-                self.entry(|| config::check(name, args, &self.cwd))
-                    .or_else(|| {
-                        wrappers::may_run_arguments(name)
-                            .then(|| self.arguments(args, scope))
-                            .flatten()
-                    })
-            }
+            Program::Named(name) => self
+                .entry(|| {
+                    anneal::is_anneal(name)
+                        .then(|| anneal::check(args, scope.appended))
+                        .flatten()
+                        .or_else(|| config::check(name, args, &self.cwd))
+                })
+                .or_else(|| {
+                    wrappers::may_run_arguments(name)
+                        .then(|| self.arguments(args, scope))
+                        .flatten()
+                }),
             Program::Unknown(word) => {
                 self.note_unseen(probe::RUN_TIME_PROGRAM);
                 self.unknown(word, args, scope)
             }
         }
+    }
+
+    /// The `human-only` denial once one simple command's words (`words`, its variables put
+    /// in) hold a literal human actor and the command has, before or after, an anneal call
+    /// whose subcommand path is unread ([`anneal::Seen`]); notes the actor. Every simple
+    /// command of the call passes here: a shell's positional arguments, `set --` operands, the
+    /// words of an array assignment (listed as a command of their own) and, through
+    /// [`Checker::text`], a nested `bash -c` string. Only the guard applies it.
+    fn note_human_actor(&mut self, words: &[Word]) -> Option<Denial> {
+        if self.entries != Entries::Denylist || !anneal::names_human(words) {
+            return None;
+        }
+        self.anneal_seen.human_named()
+    }
+
+    /// The `human-only` denial once a reading of a program's arguments (`args`, unwrapped and
+    /// brace-expanded) holds a literal human actor, or runs anneal with a subcommand path not
+    /// read as written, and the other half was seen in the command ([`anneal::Seen`]); notes
+    /// what it holds. Only the guard applies it.
+    fn anneal_arguments(&mut self, program: Program<'_>, args: &[Word]) -> Option<Denial> {
+        if self.entries != Entries::Denylist {
+            return None;
+        }
+        if anneal::names_human(args)
+            && let Some(denial) = self.anneal_seen.human_named()
+        {
+            return Some(denial);
+        }
+        let runs_anneal = match program {
+            Program::Named(name) => anneal::is_anneal(name),
+            Program::Unknown(word) => anneal::may_name_anneal(word),
+        };
+        if runs_anneal && anneal::unread_path(args).is_some() {
+            return self.anneal_seen.path_unread();
+        }
+        None
     }
 
     /// Follows `cd` or `pushd <args>`, or `popd` (`None`: back to a directory the guard never
@@ -365,10 +420,15 @@ impl<'c> Checker<'c> {
     }
 
     /// Whether `word` names a program whose arguments are read as a command: one the guard
-    /// checks, a shell or a wrapper, and for the probe also `gh`.
+    /// checks, a shell or a wrapper, for the guard also `anneal` (whose own arguments are still
+    /// read as a command, as `task done -- <cmd>` runs them; in any case, [`anneal::is_anneal`]),
+    /// and for the probe also `gh`.
     fn names_checked(&self, word: &Word) -> bool {
         wrappers::names_checked(word)
-            || (self.entries == Entries::PrMerge && wrappers::names_program(word, "gh"))
+            || match self.entries {
+                Entries::Denylist => wrappers::names_program_where(word, anneal::is_anneal),
+                Entries::PrMerge => wrappers::names_program(word, "gh"),
+            }
     }
 
     /// The arguments of a program the guard does not know, read as a command from each word
@@ -421,6 +481,11 @@ impl<'c> Checker<'c> {
             git::check(args)
                 .or_else(|| rm::check(args, self.context, scope.appended))
                 .or_else(|| config::check("cp", args, &self.cwd))
+                .or_else(|| {
+                    anneal::may_name_anneal(word)
+                        .then(|| anneal::check(args, scope.appended))
+                        .flatten()
+                })
         });
         if by_entry.is_some() {
             return by_entry;

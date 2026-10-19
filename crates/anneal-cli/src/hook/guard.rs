@@ -84,6 +84,8 @@ pub(crate) enum Rule {
     ForceAdd,
     /// A Bash write to lint or hook config.
     ConfigWrite,
+    /// `anneal verdict set` or `anneal decide label` with `--actor human` from a model (#62).
+    HumanOnly,
     /// The command could not be read.
     Unparseable,
     /// The hook input could not be read.
@@ -100,6 +102,7 @@ impl Rule {
             Self::RecursiveForceDelete => "rm-rf",
             Self::ForceAdd => "git-add-force",
             Self::ConfigWrite => "config-write",
+            Self::HumanOnly => "human-only",
             Self::Unparseable => "unparseable",
             Self::BadInput => "bad-input",
             Self::Destructive => "destructive",

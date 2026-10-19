@@ -379,3 +379,92 @@ fn a_missing_plan_is_a_usage_error() -> TestResult {
     }
     Ok(())
 }
+
+/// `plan approve` of [`PLAN`] with `extra` flags.
+fn approve_with(cwd: &Path, extra: &[&str]) -> Result<(Output, Value), Box<dyn Error>> {
+    let args: Vec<&str> = ["plan", "approve", PLAN, "--store", STORE]
+        .into_iter()
+        .chain(extra.iter().copied())
+        .collect();
+    anneal(cwd, &args)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_model_approved_plan_records_actor_model_and_via_bash() -> TestResult {
+    let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+
+    let (output, envelope) = approve_with(work.path(), &["--actor", "model", "--via", "bash"])?;
+
+    assert_eq!(output.status.code(), Some(0), "approved: {envelope}");
+    let by = serde_json::json!({"actor": "model", "via": "bash"});
+    let events = approvals(work.path())?;
+    assert_eq!(
+        (
+            envelope.pointer("/data/by"),
+            events
+                .iter()
+                .map(|event| event.pointer("/event/by"))
+                .collect::<Vec<_>>(),
+        ),
+        (Some(&by), vec![Some(&by)]),
+        "the approver in the envelope and the one event: {envelope}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_human_approving_what_a_model_approved_is_recorded_as_the_latest_approval() -> TestResult {
+    let work = workspace(AGREED_SPEC, CLEAN_PLAN)?;
+    let (model, _) = approve_with(work.path(), &["--actor", "model", "--via", "bash"])?;
+    assert_eq!(model.status.code(), Some(0), "the model's approval");
+
+    let (human, envelope) = approve_with(work.path(), &["--actor", "human", "--via", "mod"])?;
+    let (again, repeated) = approve_with(work.path(), &["--actor", "human", "--via", "mod"])?;
+
+    assert_eq!(
+        (
+            human.status.code(),
+            envelope.pointer("/data/appended"),
+            again.status.code(),
+            repeated.pointer("/data/appended"),
+        ),
+        (
+            Some(0),
+            Some(&Value::Bool(true)),
+            Some(0),
+            Some(&Value::Bool(false))
+        ),
+        "a new approver appends, the same one again does not: {envelope} {repeated}"
+    );
+    let events = approvals(work.path())?;
+    let approvers: Vec<Option<&Value>> = events
+        .iter()
+        .map(|event| event.pointer("/event/by/actor"))
+        .collect();
+    assert_eq!(
+        approvers,
+        [Some(&Value::from("model")), Some(&Value::from("human"))],
+        "the latest approval names the human"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn plan_approve_help_describes_the_actors_without_naming_outcomes() -> TestResult {
+    let dir = tempfile::tempdir()?;
+
+    let output = anneal_in(dir.path())
+        .args(["plan", "approve", "--help"])
+        .output()?;
+    let help = String::from_utf8(output.stdout)?;
+
+    assert_eq!(output.status.code(), Some(0), "{help}");
+    assert!(
+        help.contains("A person") && help.contains("A model") && !help.contains("outcome"),
+        "the actor values read for an approval too: {help}"
+    );
+    Ok(())
+}

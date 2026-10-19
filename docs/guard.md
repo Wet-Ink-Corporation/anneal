@@ -61,7 +61,8 @@ is allowed.
 
 Each entry lists what it denies and the near misses it lets through. The table tests in
 `crates/anneal-cli/src/hook/guard/denylist/tests.rs` and `tests/` beside it hold every row
-below and more; `tests/forms.rs` checks every entry in every wrapping form of the bypass table.
+below and more; `tests/forms.rs` checks every entry in every wrapping form of the bypass table
+(`human-only` in `tests/human_only.rs`, through the same forms).
 
 ### `force-push`: force push to a protected branch
 
@@ -240,6 +241,52 @@ climbing above their start (`cd "$DIR" && echo x > settings.json` is denied). A 
 once, as written: its directory is not read again with its variables empty, which would place
 `cd "$d"/x*` at `/x*` rather than anywhere (`cd "$d"/x* && echo x > settings.json` is denied).
 
+### `human-only`: a human verdict or label from a model (#62)
+
+A Bash call may not run `anneal verdict set` or `anneal decide label` with `--actor human`:
+the guard sees only the model's tool calls, and a human verdict or label is a person's to give,
+from the cockpit mod or their own terminal. The reason is
+`ERROR guard human-only: human verdicts are human-only: use /anneal or run it in your own terminal`.
+`anneal plan approve` stays allowed with any actor (the model may approve a plan, Ryan's
+wi-720468: B), as do `plan check`, `verdict valid` and `--actor model`.
+
+The words are judged as the shell forms them (wrappers, `bash -c`, `eval`, assignments, chains,
+variables and braces, as for every entry), then as clap reads them: the program's last path
+component is `anneal` (or not known before the command runs, as `"$ANNEAL"`); the subcommand
+path is `verdict set` or `decide label`; options may come anywhere after it up to a `--`; a
+value-taking option's value is the next word or follows `=`, so `--sha "$SHA"` is a value and
+never an option; long options are not abbreviated. A word not read as written may be any text
+its written start allows: `--actor "$who"` and a lone `"$flags"` (which may be
+`--actor=human`) are denied, unless the command could then no longer have its required operands
+(`decide label "$id" yes` is allowed: were `"$id"` an option, `label` would lack one).
+Arguments `xargs` appends at run time may be anything, so `cat f | xargs anneal verdict set --pr 7`
+is denied. Each word is judged as one word: an unquoted expansion that word splitting makes
+`--actor human` (`--sha $x` with `x='HEAD --actor human'`) is the documented limit below (#128).
+`verdict set ... --source human` without `--actor` is not denied: the merge gate does not read
+the actor yet (`docs/verdict.md`).
+
+A subcommand-path word not read as written (`anneal "$@"`, `anneal $SUB`, `anneal verdict "$@"`)
+may stand for the whole path, and the words it stands for may be written anywhere in the call:
+a function's arguments, a shell's positional arguments after `-c '...'`, `set --` operands, the
+words of an array assignment. So a call holding both such an anneal call and a word that reads
+exactly `--actor=human`, or a pair that reads `--actor human`, is denied whichever comes first,
+in any simple command at any nesting (a nested `bash -c` string included):
+`anneal "$@" --actor human`, `f() { anneal "$@"; }; f verdict set --pr 7 --actor human`,
+`bash -c 'anneal "$@"' _ verdict set --pr 7 --actor human`,
+`bash -c 'anneal $0 "$@"' verdict set --actor human`,
+`set -- verdict set --pr 7 --actor human; anneal "$@"` and
+`args=(verdict set --pr 7 --actor human); anneal "${args[@]}"`. The guard does not follow which
+words reach `"$@"`, so an unrelated `--actor human` in the same call is denied too (false
+denials accepted: `echo --actor human; anneal "$@"`); split such a command into separate Bash
+calls. A call with only one of the two is not denied by this reading. The program is anneal in any ASCII case and with or without
+`.exe` in any case (`ANNEAL`, `Anneal`, `anneal.EXE`), as a case-insensitive file system finds
+it.
+
+The ledger has no back door for it: `anneal ledger append` refuses a `by` on `plan_approved`
+and `verdict_set` as a usage error and appends nothing (`docs/ledger.md`), so a human verdict
+reaches the ledger only through `verdict set`, where this rule sees it. Writing to the label
+log or the ledger file by other means is a limit below.
+
 ## Bypass handling
 
 The guard is a denylist: defence in depth, not a sandbox. It models the shell features that
@@ -326,7 +373,16 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - a `cp`, `mv` or `ln` destination that is an existing directory not named as one
   (`cp clippy.toml crates/foo`, with no trailing `/`);
 - a write into a protected directory from a working directory inside it that an earlier Bash
-  call moved to (`..` that climbs from inside `hooks/`).
+  call moved to (`..` that climbs from inside `hooks/`);
+- a human label written without `anneal decide label`: a model that appends a row with
+  `"actor": "human"` straight to `~/.anneal/decisions/decisions.jsonl` (`echo '{...}' >>`, a
+  script, another program), or writes the ledger file with `sqlite3`, is not seen by
+  `human-only`, which reads only the anneal commands that record one;
+- program names in another letter case: only anneal's name is matched ignoring ASCII case
+  (`ANNEAL`, `anneal.EXE`). Every other program is matched as written (a lowercase `.exe`
+  dropped), so on a case-insensitive file system (APFS, NTFS) `RM -rf /`, `Git push -f` or
+  `rm.EXE -rf /` runs the program while the guard reads an unknown one and does not apply the
+  `rm` or `git` entry to it.
 
 These are left undecided and go to Clef D1 (below).
 

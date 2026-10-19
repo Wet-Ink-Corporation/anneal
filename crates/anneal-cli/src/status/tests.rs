@@ -142,6 +142,7 @@ fn approve(store: &Store, hash: &str) -> Setup<u64> {
     let event = LedgerEvent::PlanApproved(PlanApproved {
         plan: PLAN.to_owned(),
         hash: hash.to_owned(),
+        by: None,
     });
     append(store, event, None, "2026-10-19T10:00:02Z")
 }
@@ -184,6 +185,7 @@ fn mid_build(fixture: &mut Fixture) -> Setup<String> {
         sha: Some(head.clone()),
         patch_id: None,
         base: Some("main".to_owned()),
+        by: None,
     });
     append(&store, verdict, None, "2026-10-19T10:00:04Z")?;
     home_state(&fixture.home())?;
@@ -396,6 +398,7 @@ fn feature_verdict(fixture: &Fixture) -> Setup<String> {
         sha: Some(head.clone()),
         patch_id,
         base: Some("main".to_owned()),
+        by: None,
     });
     append(&fixture.store()?, verdict, None, "2026-10-19T10:00:01Z")?;
     Ok(head)

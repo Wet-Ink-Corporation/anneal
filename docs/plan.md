@@ -9,7 +9,8 @@ bytes are compared; its spec is not (see below).
 
 ```text
 anneal lint plan <FILE>
-anneal plan approve <FILE> [--session <id>] [--store <ledger>]
+anneal plan approve <FILE> [--actor human|model] [--via mod|bash|terminal] [--session <id>]
+                    [--store <ledger>]
 anneal plan check <FILE> [--store <ledger>]
 ```
 
@@ -109,11 +110,22 @@ kept, leading separators are kept as written, so an absolute path stays absolute
 path keeps its `//`, and the path is not made absolute: approve and check a plan from the
 same directory, normally the repository root). `hash` is `sha256:` and
 the 64 lowercase hex digits of the SHA-256 of the plan's bytes. When the latest approval of the
-plan already has that hash, nothing is appended and `data.appended` is `false`. The append is
-conditioned on no other approval of the plan landing since the one it read. When one did, it
-is read back: with the same hash the plan is already approved (exit 0, `data.appended`
-`false`); with another hash the approval is refused (exit 3, a `plan/approve/conflict:<plan>`
-finding).
+plan already has that hash, nothing is appended and `data.appended` is `false`.
+
+`--actor` (who approved: `human` or `model`) and `--via` (through what: `mod`, the cockpit's
+buttons, `bash`, a model's Bash call, or `terminal`) are recorded as the approval's `by`
+(`{"actor": "model", "via": "bash"}`) and shown in `data.by`; each is optional and none is
+assumed, so an approval without them records no approver, as before (#62). The model may
+approve a plan (Ryan, wi-720468: B), so the guard allows `plan approve` with any actor. An
+approval counts as already recorded only when it also names the same approver, so a human's
+approval of content a model approved is appended and is the latest. `plan check` still
+compares only the hash. The append is conditioned on no other approval of the plan landing
+since the one it read. When one did, it is read back: with the same hash and approver the plan
+is already approved (exit 0, `data.appended` `false`); with the same hash but another approver
+(or none) this approval is still news and is appended after it, under the same condition, up
+to 8 times in a row; with another hash the approval is refused (exit 3, a
+`plan/approve/conflict:<plan>` finding: run `plan check`, then approve again if it is not
+current). Losing the race to the same hash 8 times in a row is refused the same way.
 
 ## `anneal plan check`
 

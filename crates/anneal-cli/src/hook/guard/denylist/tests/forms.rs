@@ -24,7 +24,7 @@ fn single_quote(text: &str) -> String {
 type Form = (&'static str, fn(&str) -> String);
 
 /// The ways a command can be wrapped, quoted or hidden.
-fn forms() -> Vec<Form> {
+pub(super) fn forms() -> Vec<Form> {
     let mut forms = shell_forms();
     forms.extend(wrapper_forms());
     forms
@@ -106,7 +106,7 @@ fn wrapper_forms() -> Vec<Form> {
 /// re-splits a quoted command (`eval bash -c 'x y'` runs `bash -c x` with `y` as `$0`), when
 /// backticks would nest unescaped, or when a pipe ends `find -exec`'s command and leaves the
 /// shell a file operand (`find . -exec echo 'x' | sh \;` runs the file `;`).
-fn still_runs(outer: &str, inner: &str) -> bool {
+pub(super) fn still_runs(outer: &str, inner: &str) -> bool {
     match outer {
         "eval bare" => !inner.contains(['\'', '"']),
         "backticks" => !inner.contains('`'),
