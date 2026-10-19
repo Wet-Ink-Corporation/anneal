@@ -160,6 +160,81 @@ stdout carries the envelope (`docs/exit-codes.md` conventions, exit 0). Its `dat
 
 With `--point`, `points`, `apply` and `diff` hold that point only.
 
+There is no `--json` flag: stdout always carries the envelope, and the human summary goes to
+stderr. A reader that wants JSON (the cockpit's calibration dashboard, `docs/mods.md`) runs
+`anneal calibrate` and reads stdout; `anneal calibrate --json` is a usage error (exit 2).
+
+### The `data` schema
+
+The envelope is `{ok, command: "calibrate", data, findings, proves, does_not_prove}`
+(`docs/exit-codes.md`). Fields are only added, never renamed or removed, without a change
+recorded here, so a reader ignores fields it does not know. `data` is:
+
+```text
+data {
+  log            string              the live decision log
+  files          [string]            the log files read, oldest first
+  proposals      string              the proposals file this run wrote
+  thresholds     string | null       the thresholds file read; null for the built-in copy
+  costs          {false_accept: 5, needless: 1}
+  skipped_rows   integer             lines that are no row this build reads
+  unmatched_labels integer           labels whose id is no answered decision
+  unreported_rows  integer           rows of a question the thresholds no longer define
+  points         [Point]             D1 to D7 in order (one with --point)
+  apply          [Step]              the manual steps (see below)
+  diff           [{pointer: string, line: integer, before: string, after: string}]
+  diff_error     string              present only when a step does not apply to the text
+}
+
+Point {
+  point          "D1" .. "D7"
+  verdict        "stay-shadow" | "eligible-to-enforce"
+  questions      [Question]          one per question the point's thresholds define
+}
+
+Question {
+  question       "noul" | "choice" | "score"
+  subject        string              the rule's subject, e.g. "destructive_or_irreversible"
+  n              integer             answered decisions
+  labelled       integer             answered decisions with a usable label
+  unanswered     integer
+  unusable_labels integer
+  brier          number | null       null with no labelled decision
+  bins           [Bin]               always 10, in order
+  asks           integer
+  ask_rate       number | null       asks / n; null when n is 0
+  threshold      Threshold
+  verdict        "stay-shadow" | "eligible-to-enforce"
+  reasons        ["too_few_labelled" | "brier_above_bound" | "ask_rate_at_or_above_bound"]
+}
+
+Bin {
+  lower, upper   number              [lower, upper); the last bin is closed at 1.0
+  count          integer             labelled decisions in the bin
+  mean_probability   number | null   null when count is 0
+  observed_frequency number | null   null when count is 0
+}
+
+Threshold {
+  band           string | null       the lowest band's action; null without bands
+  pointer        string | null       its at_least as a JSON pointer into the thresholds file
+  current        number | null
+  ceiling        number | null       the next band's at_least
+  false_accept   "below_threshold" | "at_or_above_threshold"
+  current_expected_cost  number | null
+  proposed       number | null       equal to current when nothing is cheaper
+  proposed_expected_cost number | null
+  no_proposal    "no_bands" | "no_labels" | null
+}
+
+Step = {kind: "threshold", point, question, file: string | null, pointer, from, to}
+     | {kind: "mode", point, user_config: "clef_mode", env: "CLAUDE_PLUGIN_OPTION_CLEF_MODE",
+        value: "Dn=enforce"}
+```
+
+The envelope carries no point's Clef mode (`off`, `shadow` or `enforce`): that is `anneal
+status --json`'s `clef` section (`docs/status.md`).
+
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
 proposed (or "kept (nothing cheaper)"), and the reasons. When some of a question's labelled
