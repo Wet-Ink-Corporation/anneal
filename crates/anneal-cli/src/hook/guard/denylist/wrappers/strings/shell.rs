@@ -339,9 +339,16 @@ pub(super) fn run<'a>(
 
 /// How many of the shell's arguments `words` some reading still reads as options: up to and
 /// including the last word a reading reaches while reading them, an option, its value or the
-/// word that ends them (#165).
+/// word that ends them (#165). A word known only at run time ends them too: the readings
+/// that take it as options reach every later word, and a pattern there is judged by them
+/// already (#129), so it is not a slot (`bash "$script" *` stays allowed).
 pub(super) fn option_words(words: &[Word]) -> usize {
-    walked(None, words).2.map_or(0, |at| at.saturating_add(1))
+    let read = walked(None, words).2.map_or(0, |at| at.saturating_add(1));
+    let known = words
+        .iter()
+        .position(|word| !reads_as_written(word))
+        .map_or(words.len(), |at| at.saturating_add(1));
+    read.min(known)
 }
 
 /// The arguments `lead` and `words` and every reading's walk over them, with the last argument
