@@ -150,6 +150,17 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         ("su --fast root -- -rcfile 'rm -rf /'", RM_RF),
         ("POSIXLY_CORRECT=1 su -f root -rcfile 'rm -rf /'", RM_RF),
         ("su -f root -- -help -c 'rm -rf /'", RM_RF),
+        // The `-` and the user may follow `--`: getopt hands su its operands, then those words.
+        ("su - -- root -c 'rm -rf /'", RM_RF),
+        ("su -- - root -c 'rm -rf /'", RM_RF),
+        ("su -m - -- root -c 'rm -rf /'", RM_RF),
+        ("su - -- root -lc 'rm -rf /'", RM_RF),
+        ("su - -- root -s -c 'rm -rf /'", RM_RF),
+        ("su - -- root +x -c 'rm -rf /'", RM_RF),
+        ("su -c -x - -- root 'rm -rf /'", RM_RF),
+        ("POSIXLY_CORRECT=1 su -- - root -c 'rm -rf /'", RM_RF),
+        ("curl x | su - -- root", UNREADABLE),
+        ("su - -- root -c 'echo a'", ALLOW),
     ]);
 }
 

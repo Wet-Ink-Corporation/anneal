@@ -214,8 +214,8 @@ fn login_dash(word: &Word) -> bool {
 
 /// `su [options] [USER] [ARG...]`: the user's shell runs `-c` and su's last `-c` string, if
 /// any, then su's arguments after the user, read as bash reads them. getopt permutes su's
-/// options and operands, handing the shell its operands after the user (which may be `-` or
-/// bash's `+x`, `+o NAME`), then the words after `--`; with `POSIXLY_CORRECT` set it stops at
+/// options and operands, then reads its `-` and user from its operands followed by the words
+/// after `--` and hands the shell the rest (which may be `-` or bash's `+x`, `+o NAME`); with `POSIXLY_CORRECT` set it stops at
 /// the user and hands the shell every word after it. Each reading is checked, every `-c`
 /// string, and, without a `-c`, the words after `--` on their own.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
@@ -225,19 +225,35 @@ pub(super) fn su(words: &[Word]) -> Peel<'_> {
         operands,
     } = SU.parse(words);
     let to_user = SU_TO_USER.parse(words);
+    // su takes a lone `-` first, then the user. Under POSIXLY_CORRECT a `--` after that `-`
+    // is the user, and su finds no such user; it is read as ending su's options instead.
     let user = match to_user.rest {
+        [dash, ends, tail @ ..] if login_dash(dash) && ends_options(ends) => tail,
         [dash, tail @ ..] if login_dash(dash) => tail,
         rest => rest,
     };
     let posix = su_reading(to_user.options, skip_one(user));
-    let alone = (!options.iter().any(is_command)).then(|| shell_run("su", None, after_dashes));
-    let argv = operands
-        .into_iter()
-        .skip_while(|word| login_dash(word))
-        .skip(1)
-        .chain(after_dashes);
-    let permuted = su_reading(options, argv);
+    // getopt hands su its permuted operands, then the words after `--`: the user may be
+    // either.
+    let positional: Vec<&Word> = operands.into_iter().chain(after_dashes).collect();
+    let user = match positional.as_slice() {
+        [dash, rest @ ..] if login_dash(dash) => rest,
+        rest => rest,
+    };
+    let argv = user.split_first().map_or(user, |(_, argv)| argv);
+    let alone = (!options.iter().any(is_command)).then(|| {
+        // The words after `--` that are not su's own `-` or user.
+        let from = argv.len().saturating_sub(after_dashes.len());
+        let tail = argv.split_at_checked(from).map_or(argv, |(_, tail)| tail);
+        shell_run("su", None, tail.iter().copied())
+    });
+    let permuted = su_reading(options, argv.iter().copied());
     Peel::Done(Run::either([permuted, posix].into_iter().chain(alone)))
+}
+
+/// Whether `word` is a literal `--`.
+fn ends_options(word: &Word) -> bool {
+    word.text == "--" && reads_as_written(word)
 }
 
 /// One reading of `su`: its options, and `argv`, the words it hands the user's shell after its
@@ -276,9 +292,14 @@ pub(super) fn watch(words: &[Word]) -> Peel<'_> {
 }
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,
-/// a script read from stdin.
+/// a script read from stdin. bash run by name reads its long options; any other shell is also
+/// read without them too ([`shell_run`]), as dash (often `sh`) reads its options.
 pub(super) fn shell<'a>(name: &'a str, words: &'a [Word]) -> Peel<'a> {
-    Peel::Done(shell_run(name, None, words))
+    Peel::Done(if name == "bash" {
+        shell_read(name, None, words.iter(), ShellPhase::Long)
+    } else {
+        shell_run(name, None, words)
+    })
 }
 
 /// What one word of a shell's arguments is to the shell ([`ShellOptions::read`]).

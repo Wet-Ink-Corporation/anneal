@@ -149,6 +149,17 @@ W1	su -c -o root pipefail W1
 W1	su -c -posix root errexit W1
 -	su -f root -- -rcfile W1
 W1	su -f root -- -help -c W1
+W1	su - -- root -c W1
+W1	su -- - root -c W1
+W1	su - -- root -lc W1
+W1	su - -- root -s -c W1
+W1	su -c -x - -- root W1
+W1	su -m - -- root -c W1
+W1	su - -- root +x -c W1
+-	POSIXLY_CORRECT=1 su - -- root -c W1
+W1	POSIXLY_CORRECT=1 su -- - root -c W1
+-	su - -- root -- -c W1
+W2	su -c W2 - -- root W1
 W1	sh -posix errexit -c W1
 W1	dash -posix errexit -c W1
 # chrt.
