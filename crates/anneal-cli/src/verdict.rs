@@ -1,10 +1,11 @@
 //! `anneal verdict set|valid`: review verdicts per pull request, in the ledger.
 //!
 //! `set --pr <n> --sha <rev> --level <tests-verified|reviewed|approved> --source
-//! <local|review-plugin|human> [--base <ref>] [--session <id>]` appends one `verdict_set` with
-//! the full commit `--sha` names, the base (`--base`, else `origin/main`, else `main`) and the
-//! `git patch-id --verbatim` of `git diff <base>...<sha>`. It has no `--store`: the verdict goes
-//! to the ledger the merge gate reads.
+//! <local|review-plugin|human> [--actor human|model] [--via mod|bash|terminal] [--base <ref>]
+//! [--session <id>]` appends one `verdict_set` with the full commit `--sha` names, the base
+//! (`--base`, else `origin/main`, else `main`), the `git patch-id --verbatim` of
+//! `git diff <base>...<sha>` and, when given, who ran it and through what (`by`, #62). It has
+//! no `--store`: the verdict goes to the ledger the merge gate reads.
 //!
 //! `valid --pr <n> [--head <rev>] [--base <ref>]` judges the pull request's verdicts against
 //! `--head` (default `HEAD`) as `assess` describes: exit 0 when its latest fresh verdict is a
@@ -29,6 +30,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::command::CommandName;
+use crate::decide::label::{self, Actor, Via};
 use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::existing_ledger::{self, LedgerError};
@@ -73,6 +75,13 @@ pub struct SetArgs {
     /// Who sets the verdict
     #[arg(long, value_enum)]
     source: Source,
+    /// Who runs this command [default: none recorded, so no one is claimed]; the guard denies a
+    /// model's `--actor human`
+    #[arg(long, value_enum)]
+    actor: Option<Actor>,
+    /// Through what it is run (mod: a Claude Code mod's buttons) [default: none recorded]
+    #[arg(long, value_enum)]
+    via: Option<Via>,
     /// The base the patch id is taken from [default: origin/main, else main]
     #[arg(long, value_name = "REF")]
     base: Option<String>,
@@ -211,6 +220,11 @@ fn run_set<O: Write>(
         sha: Some(sha),
         patch_id,
         base: Some(base),
+        by: label::Source {
+            actor: args.actor,
+            via: args.via,
+        }
+        .by(),
     });
     let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
     envelope.session_id.clone_from(&args.session);

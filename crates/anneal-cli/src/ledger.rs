@@ -2,15 +2,18 @@
 //!
 //! The ledger itself (event registry, envelope, SQLite store) is the `anneal-ledger` crate;
 //! this module parses the command line, resolves the store ([`paths::ledger_store`]) and
-//! writes the result. A bad event exits 2 with an envelope and nothing is written.
+//! writes the result. A bad event exits 2 with an envelope and nothing is written. A `by` on
+//! `plan_approved` or `verdict_set` is a usage error (2, nothing on stdout, nothing written):
+//! `plan approve` and `verdict set` write it.
 
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use anneal_ledger::event::{PlanApproved, VerdictSet};
 use anneal_ledger::{
-    EventEnvelope, EventKind, Filter, LedgerTag, REGISTRY_VERSION, Recorded, Store, StoreError,
-    TagError, TagKey, Timestamp,
+    EventEnvelope, EventKind, Filter, LedgerEvent, LedgerTag, REGISTRY_VERSION, Recorded, Store,
+    StoreError, TagError, TagKey, Timestamp,
 };
 use clap::{Args, Subcommand};
 use serde::Serialize;
@@ -154,6 +157,7 @@ fn append<O: Write>(
         Ok(event) => event,
         Err(schema) => return schema_error(SUBCOMMAND, &schema, out),
     };
+    refuse_a_claimed_giver(&event.event)?;
     let location = locate()?;
     let position = Store::open(&location.path)?.append(&event)?;
     let data = Appended {
@@ -185,6 +189,28 @@ fn parse_event(
         fill(fields, "ts", || Ok(Value::from(Timestamp::now()?.as_str())))?;
     }
     Ok(EventEnvelope::from_value(&value))
+}
+
+/// Refuses a `by` on `plan_approved` or `verdict_set` (#62): who gave an approval or a verdict
+/// is recorded only by their writers, `plan approve` and `verdict set`. For `verdict_set` that
+/// is where the guard's `human-only` rule sees the actor, so a raw append cannot claim a human
+/// verdict; `plan approve` is allowed with any actor (wi-720468), so for `plan_approved` the
+/// refusal only keeps one writer of `by`.
+fn refuse_a_claimed_giver(event: &LedgerEvent) -> Result<(), CliError> {
+    let (kind, writer) = match event {
+        LedgerEvent::PlanApproved(PlanApproved { by: Some(_), .. }) => {
+            (EventKind::PlanApproved, "plan approve")
+        }
+        LedgerEvent::VerdictSet(VerdictSet { by: Some(_), .. }) => {
+            (EventKind::VerdictSet, "verdict set")
+        }
+        _ => return Ok(()),
+    };
+    Err(CliError::Usage {
+        reason: format!(
+            "ledger append does not write a `by` on {kind}: use `anneal {writer} --actor/--via`"
+        ),
+    })
 }
 
 /// Sets `key` to `make()` when it is absent or `null`.

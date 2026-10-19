@@ -414,6 +414,15 @@ pub(super) fn names_program(word: &Word, name: &str) -> bool {
     program(word) == Program::Named(name)
 }
 
+/// Whether `word` names a program whose name (its last path component, a lowercase `.exe`
+/// removed) `matches`.
+pub(super) fn names_program_where(word: &Word, matches: impl FnOnce(&str) -> bool) -> bool {
+    match program(word) {
+        Program::Named(name) => matches(name),
+        Program::Unknown(_) => false,
+    }
+}
+
 /// Whether `name`, a program that is not a wrapper the guard unwraps, may run its arguments as
 /// a command: it is not one the guard checks, nor one that only prints or searches them.
 pub(super) fn may_run_arguments(name: &str) -> bool {
