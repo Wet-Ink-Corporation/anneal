@@ -73,3 +73,5 @@ become checks):
    Paths are sized from the working directory, so the same tickets estimate differently from
    another directory. Candidate rule for the plan skill: name only files the ticket touches in
    backticks; or a `files:` list that, when present, replaces the body scan.
+   #68 took the `files:` rule: a ticket that lists `files:` is sized by them alone; the body
+   is scanned only when it lists none.

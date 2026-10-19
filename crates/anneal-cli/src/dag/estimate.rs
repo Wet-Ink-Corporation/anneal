@@ -1,13 +1,14 @@
 //! The per-ticket token estimate: a deterministic heuristic of how much context a ticket needs.
 //!
-//! `tokens = ceil(body characters / 4) + the cost of each named file`, where a named file is
-//! one the tracker lists (markdown `files:`, as written) or a backticked path in the body
-//! (`` `src/a.rs` ``, a `:line` suffix dropped; not a glob, a `/command` or a dotted identifier
-//! such as `grill.confirmed`). A file costs `ceil(size / 4)` tokens, at most
-//! [`MAX_FILE_TOKENS`], when it is a regular file under the root (relative, no `..`, not a
-//! symlink, and its canonical path inside the canonical root, so a symlinked directory cannot
-//! lead out); any other named file costs [`UNKNOWN_FILE_TOKENS`]. At most [`MAX_FILES`] files
-//! are counted, and the sum saturates. Files are only sized, never read. See `docs/dag.md`.
+//! `tokens = ceil(body characters / 4) + the cost of each named file`, where the named files
+//! are the ones the tracker lists (markdown `files:`, as written) or, for a ticket that lists
+//! none, the backticked paths in its body (`` `src/a.rs` ``, a `:line` suffix dropped; not a
+//! glob, a `/command` or a dotted identifier such as `grill.confirmed`). A file costs
+//! `ceil(size / 4)` tokens, at most [`MAX_FILE_TOKENS`], when it is a regular file under the
+//! root (relative, no `..`, not a symlink, and its canonical path inside the canonical root, so
+//! a symlinked directory cannot lead out); any other named file costs [`UNKNOWN_FILE_TOKENS`].
+//! At most [`MAX_FILES`] files are counted, and the sum saturates. Files are only sized, never
+//! read. See `docs/dag.md`.
 
 use std::fs;
 use std::path::{Component, Path};
@@ -81,12 +82,21 @@ pub fn estimate(ticket: &Ticket, root: &Path) -> Estimate {
     }
 }
 
-/// The files `ticket` names: its listed files, then backticked paths in its body, each once,
-/// at most [`MAX_FILES`].
+/// The files `ticket` names, each once, at most [`MAX_FILES`]: its listed files when it has
+/// any, so a path its body mentions only for context is not counted (#68), else the
+/// backticked paths in its body.
 fn named_files(ticket: &Ticket) -> Vec<&str> {
-    let listed = ticket.files.iter().map(String::as_str);
+    if ticket.files.is_empty() {
+        once_each(body_paths(&ticket.body))
+    } else {
+        once_each(ticket.files.iter().map(String::as_str))
+    }
+}
+
+/// `paths` in order without repeats, at most [`MAX_FILES`].
+fn once_each<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
     let mut named: Vec<&str> = Vec::new();
-    for path in listed.chain(body_paths(&ticket.body)) {
+    for path in paths {
         if named.len() == MAX_FILES {
             break;
         }
