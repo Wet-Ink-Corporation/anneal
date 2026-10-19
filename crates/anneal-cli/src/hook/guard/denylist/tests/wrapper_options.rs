@@ -2,7 +2,7 @@
 //! installed binaries take are in [`super::wrapper_probes`]; doas and the BSD `env` and `xargs`
 //! letters here are from their sources.
 
-use super::{ALLOW, RM_RF, assert_table};
+use super::{ALLOW, RM_RF, UNREADABLE, assert_table};
 
 #[test]
 fn a_cluster_ending_in_a_value_letter_takes_the_next_word() {
@@ -114,6 +114,11 @@ fn su_arguments_after_the_user_are_read_as_the_users_shell_reads_them() {
         ("su root -- -c -- 'rm -rf /'", RM_RF),
         ("POSIXLY_CORRECT=1 su root -c -e 'rm -rf /'", RM_RF),
         ("su - root -s /bin/sh -c 'rm -rf /'", RM_RF),
+        // An operand after su's value options is the shell's script file.
+        ("su root -w PATH <(curl x)", UNREADABLE),
+        ("su root -g root /dev/fd/3", UNREADABLE),
+        ("su - root -s /bin/bash <(curl x)", UNREADABLE),
+        ("su root -g root x", ALLOW),
     ]);
 }
 

@@ -79,6 +79,8 @@ pub(super) struct Read<'a> {
     /// Where the options stopped: the first operand on, for [`Order::Stop`] (a `--` that ends
     /// them dropped); the words after `--`, or none, for [`Order::Permute`].
     pub(super) rest: &'a [Word],
+    /// The operands read past for [`Order::Permute`], in order; none for [`Order::Stop`].
+    pub(super) operands: Vec<&'a Word>,
 }
 
 impl<'a> Read<'a> {
@@ -143,18 +145,27 @@ impl Grammar {
     /// Reads the options of `words`.
     pub(super) fn parse<'a>(&self, words: &'a [Word]) -> Read<'a> {
         let mut options = Vec::new();
+        let mut operands = Vec::new();
         let mut rest = words;
         while let [first, tail @ ..] = rest {
             if first.text == "--" {
                 return Read {
                     options,
                     rest: tail,
+                    operands,
                 };
             }
             if !is_option(first) {
                 match self.order {
-                    Order::Stop => return Read { options, rest },
+                    Order::Stop => {
+                        return Read {
+                            options,
+                            rest,
+                            operands,
+                        };
+                    }
                     Order::Permute => {
+                        operands.push(first);
                         rest = tail;
                         continue;
                     }
@@ -169,7 +180,11 @@ impl Grammar {
             Order::Stop => rest,
             Order::Permute => &[],
         };
-        Read { options, rest }
+        Read {
+            options,
+            rest,
+            operands,
+        }
     }
 
     /// Whether the word `--long` is read as the letter `-` clustered with others: the table holds

@@ -20,19 +20,25 @@ fn ran() -> Vec<(&'static str, &'static str)> {
 /// Whether the walk reads `command` to run the word `observed`: as the program of one of its
 /// simple commands, or of one in the shell text it runs.
 fn walk_runs(command: &str, observed: &str) -> Result<(), String> {
+    // A process substitution's commands are simple commands of their own.
     let commands = shell::parse(command).map_err(|error| format!("{error:?}"))?;
-    let [simple] = commands.as_slice() else {
-        return Err(format!("{} simple commands", commands.len()));
-    };
-    let run = unwrap(&simple.words);
-    runs(&run, observed)
+    let walked: Vec<Run<'_>> = commands
+        .iter()
+        .map(|simple| unwrap(&simple.words))
+        .collect();
+    walked
+        .iter()
+        .any(|run| runs(run, observed))
         .then_some(())
-        .ok_or_else(|| format!("the walk runs {run:?}"))
+        .ok_or_else(|| format!("the walk runs {walked:?}"))
 }
 
-/// Whether `run` has `observed` as a program, in itself or in the shell text it runs.
+/// Whether `run` has `observed` as a program, in itself or in the shell text it runs, or runs
+/// a script known only at run time (a process substitution), which the guard denies whatever
+/// it holds.
 fn runs(run: &Run<'_>, observed: &str) -> bool {
     match run {
+        Run::Unseen(_) => true,
         Run::Command {
             program: Program::Named(name),
             ..

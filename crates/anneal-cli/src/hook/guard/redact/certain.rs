@@ -8,8 +8,8 @@
 //! reads `psql` as the program). So a wrapper's words are trusted only when they read with
 //! certainty by the tables here ([`readings`]): each an exact flag (or, for a shell, a cluster
 //! of its flags), an exact value option followed by its value (or with it attached, `-n1`,
-//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
-//! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
+//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for
+//! `sudo` and `env`, literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
 //! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
 //! body. A body counts only when the words after it are what its wrapper's reading lets
 //! follow ([`after::After`]), each literal and not starting with `-` (`su` and `script`

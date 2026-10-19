@@ -80,7 +80,7 @@ pub(super) enum Run<'a> {
 
 impl<'a> Run<'a> {
     /// `runs` as one run: the only one, or each of them, its duplicates dropped.
-    pub(super) fn either(runs: impl IntoIterator<Item = Run<'a>>) -> Self {
+    fn either(runs: impl IntoIterator<Item = Run<'a>>) -> Self {
         let mut distinct: Vec<Run<'a>> = Vec::new();
         for run in runs {
             if !distinct.contains(&run) {

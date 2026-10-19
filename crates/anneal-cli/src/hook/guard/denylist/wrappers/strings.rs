@@ -2,8 +2,9 @@
 //! `script`, `trap`, `watch`, `flock -c`, and `find`'s actions.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
-use super::grammar::{Grammar, Name, Read};
+use super::grammar::{Grammar, Name, Parsed, Read};
 use super::tables::{ENV, FLOCK, SCRIPT, SU, SU_TO_USER, SUDO, WATCH};
 use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
@@ -140,10 +141,10 @@ fn su_login(words: &[Word]) -> bool {
             .any(|word| word.text == "-" && reads_as_written(word))
 }
 
-/// The command strings of `read`'s `-c` (`--command`, and for `su` `--session-command`)
-/// options, in order; `None` for one missing its string.
-fn commands(read: Read<'_>) -> impl Iterator<Item = Option<&str>> {
-    read.options
+/// The command strings of the `-c` (`--command`, and for `su` `--session-command`) options
+/// among `options`, in order; `None` for one missing its string.
+fn commands(options: Vec<Parsed<'_>>) -> impl Iterator<Item = Option<&str>> {
+    options
         .into_iter()
         .filter(|option| {
             matches!(
@@ -154,40 +155,62 @@ fn commands(read: Read<'_>) -> impl Iterator<Item = Option<&str>> {
         .map(|option| option.value)
 }
 
-/// What the `-c` strings of `read` run: the last one runs, the earlier ones are read too, each
-/// on its own (never joined, where one could swallow the next). `None` without a `-c`; with
-/// only a `-c` missing its string, nothing.
-fn bodies(read: Read<'_>) -> Option<Run<'_>> {
-    let mut commands = commands(read).peekable();
+/// What the `-c` strings among `options` run: the last one runs, the earlier ones are read
+/// too, each on its own (never joined, where one could swallow the next) and each distinct
+/// string once. `None` without a `-c`; with only a `-c` missing its string, nothing.
+fn bodies(options: Vec<Parsed<'_>>) -> Option<Run<'_>> {
+    let mut commands = commands(options).peekable();
     commands.peek()?;
-    Some(Run::either(
-        commands
-            .flatten()
-            .map(|body| Run::Script(Cow::Borrowed(body))),
-    ))
+    let mut seen = HashSet::new();
+    let mut runs: Vec<Run<'_>> = commands
+        .flatten()
+        .filter(|body| seen.insert(*body))
+        .map(|body| Run::Script(Cow::Borrowed(body)))
+        .collect();
+    Some(if runs.len() > 1 {
+        Run::Either(runs)
+    } else {
+        runs.pop().unwrap_or(Run::Nothing)
+    })
+}
+
+/// Whether `word` is su's lone `-` (`--login`'s old spelling) before its user.
+fn login_dash(word: &Word) -> bool {
+    word.text == "-" && reads_as_written(word)
 }
 
 /// `su [options] [USER] [ARG...]`: its `-c` strings or, without one, its arguments after the
 /// user as the user's shell reads them (a shell reading stdin when there are none). getopt
-/// permutes su's options and operands, handing the operands after the user (and the words
-/// after `--`) to the shell; with `POSIXLY_CORRECT` set it stops at the user and hands the
-/// shell every word after it. Both readings are checked.
+/// permutes su's options and operands, handing the operands after the user, then the words
+/// after `--`, to the shell; an operand there never starts with `-`, so the shell runs it as a
+/// script file. With `POSIXLY_CORRECT` set getopt stops at the user and hands the shell every
+/// word after it. Both readings are checked.
 pub(super) fn su(words: &[Word]) -> Peel<'_> {
-    let read = SU.parse(words);
-    let after_dashes = read.rest;
-    let permuted = bodies(read).unwrap_or_else(|| shell_run("su", after_dashes));
+    let Read {
+        options,
+        rest: after_dashes,
+        operands,
+    } = SU.parse(words);
+    let mut shell_operands = operands
+        .into_iter()
+        .skip_while(|word| login_dash(word))
+        .skip(1);
+    let permuted = bodies(options).unwrap_or_else(|| match shell_operands.next() {
+        Some(script) => script_file("su", script),
+        None => shell_run("su", after_dashes),
+    });
     let to_user = SU_TO_USER.parse(words);
     let user = match to_user.rest {
-        [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => tail,
+        [dash, tail @ ..] if login_dash(dash) => tail,
         rest => rest,
     };
-    let posix = bodies(to_user).unwrap_or_else(|| shell_run("su", skip_one(user)));
+    let posix = bodies(to_user.options).unwrap_or_else(|| shell_run("su", skip_one(user)));
     Peel::Done(Run::either([permuted, posix]))
 }
 
 /// `script [options] [FILE]`: its `-c` strings, or, without one, a shell reading stdin.
 pub(super) fn script(words: &[Word]) -> Peel<'_> {
-    Peel::Done(bodies(SCRIPT.parse(words)).unwrap_or(Run::StdinScript("script")))
+    Peel::Done(bodies(SCRIPT.parse(words).options).unwrap_or(Run::StdinScript("script")))
 }
 
 /// `watch [options] command...`: the words joined are run by `sh -c`.
