@@ -138,6 +138,29 @@ fn an_env_split_string_reads_no_group() {
         ("env -S 'bash -c' 'rm -rf /'", RM_RF),
         ("env -S 'sh -c' 'git push -f origin main'", FORCE_PUSH),
         ("env -S 'bash -c' 'echo '\\''a b'\\''; rm -rf /'", RM_RF),
+        ("env -S '' bash -c 'rm -rf /'", RM_RF),
+        // An empty word is a script of its own: bash runs nothing and `rm -rf /` is its `$0`.
+        ("env -S 'bash -c' '' 'rm -rf /'", ALLOW),
+    ]);
+}
+
+/// env's own escapes in its string: `\_` separates words, and `\c` or an unquoted `#` starting
+/// a word ends the string, so the words after it follow what came before.
+#[test]
+fn an_env_split_string_is_read_with_env_s_escapes() {
+    assert_table(&[
+        ("env -S 'bash -c #' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c #x y' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c \\c' 'rm -rf /'", RM_RF),
+        ("env -S 'bash -c\\c' 'rm -rf /'", RM_RF),
+        ("env -S 'sh -c \\_' 'rm -rf /'", RM_RF),
+        ("env -S 'rm\\_-rf\\_/'", RM_RF),
+        ("env -S 'git\\_push\\_-f\\_origin\\_main'", FORCE_PUSH),
+        ("env -S 'tee\\_.claude/settings.json'", CONFIG),
+        ("env -S 'sh -c\\_#' 'rm -rf /'", RM_RF),
+        // Quoted, or inside a word, a `#` is text.
+        ("env -S 'echo a#b' x", ALLOW),
+        ("env -S \"echo '#' x\"", ALLOW),
     ]);
 }
 

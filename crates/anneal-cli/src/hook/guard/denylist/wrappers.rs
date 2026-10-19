@@ -136,8 +136,8 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
             .checked_sub(args.len())
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
-        // Redaction renders a body only where `redact::certain` trusts it, never `env -S`'s.
-        Run::Script(text) | Run::Split(text) => Layout::Script(text),
+        // Redaction renders a body only where `redact::certain` trusts it.
+        Run::Script(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
         Run::Exec(actions) => roles
             .iter()
@@ -151,8 +151,10 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
                         .collect(),
                 })
             }),
-        // Several readings: the redaction trusts none of them.
-        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Either(_) => Layout::Other,
+        // Several readings, or `env -S`'s string as env splits it: the redaction trusts none.
+        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Split(_) | Run::Either(_) => {
+            Layout::Other
+        }
     };
     (layout, roles)
 }

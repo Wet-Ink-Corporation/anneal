@@ -138,8 +138,12 @@ An `env -S` string is split by env, which reads no group, so no group is read th
 `env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read. The string
 is also read as shell text, since a program it runs may be a shell or `watch`, and the words
 after it are the shell's, which reads their groups (`env -S 'watch rm @(-rf) /home'` and
-`env -S rm @(-rf) /home` are denied); either reading's denial denies. As env splits it, each
-word after the string stays whole (`env -S bash -c 'rm -rf /'` is denied).
+`env -S rm @(-rf) /home` are denied); either reading's denial denies. It is also read as env
+splits it, with each word after the string kept whole (`env -S bash -c 'rm -rf /'` is denied)
+and env's escapes applied: `\_` separates words, and `\c` or an unquoted `#` starting a word
+ends the string, so the words after it follow (`env -S 'bash -c #' 'rm -rf /'` and
+`env -S 'rm\_-rf\_/'` are denied). Inside single quotes env also reads `\\` and `\'`, which the
+guard reads as the shell does, or refuses; a `${VAR}` env expands is read as a variable.
 A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
 `function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
 keyword and a subshell whose commands are checked. A word ending in an opener before an

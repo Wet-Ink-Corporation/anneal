@@ -64,33 +64,83 @@ pub(super) fn env(words: &[Word]) -> Peel<'_> {
     if let Some(split) = read.named('S', "split-string").next() {
         // `-S` as the last word splits nothing: an empty script.
         let script = split.value.unwrap_or("");
-        // env splits its string with no group read, and keeps each word after it whole (that
-        // reading quotes them); a program it runs may still be a shell reading groups, and the
-        // shell read the words after it, groups included (that reading joins them as text).
-        // Either denial denies.
-        let quoted = split
-            .after
-            .iter()
-            .fold(script.to_owned(), |mut text, word| {
-                text.push_str(" '");
-                text.push_str(&word.text.replace('\'', r"'\''"));
-                text.push('\'');
-                text
-            });
+        // The shell read the words after the string, groups included: that reading joins them
+        // to it as text, as before. env splits its string itself, with its own escapes and no
+        // group read, and keeps each word after it whole: those readings quote them, with the
+        // string as env reads it and, in case env reads it otherwise, as written. Either
+        // denial denies.
         let joined = if split.after.is_empty() {
             Cow::Borrowed(script)
         } else {
             Cow::Owned(format!("{script} {}", join(split.after)))
         };
         return Peel::Done(Run::either([
-            Run::Split(Cow::Owned(quoted)),
             Run::Script(joined),
+            Run::Split(followed_by(split_by_env(script), split.after)),
+            Run::Split(followed_by(Cow::Borrowed(script), split.after)),
         ]));
     }
     match read.rest {
         [dash, tail @ ..] if dash.text == "-" && reads_as_written(dash) => Peel::Inner(tail),
         rest => Peel::Inner(rest),
     }
+}
+
+/// `script` as shell text that splits as `env -S` splits it: `\_` outside single quotes is a
+/// blank (a separator outside quotes, a space inside double quotes), and `\c` outside single
+/// quotes or an unquoted `#` starting a word ends the string. The escapes env shares with the
+/// shell (`\\`, `\'`, `\"`, `\$`, `\#`) are left for the lexer; inside single quotes env also
+/// reads `\\` and `\'`, which the lexer then reads otherwise or refuses.
+fn split_by_env(script: &str) -> Cow<'_, str> {
+    if !script.contains(['\\', '#']) {
+        return Cow::Borrowed(script);
+    }
+    let mut text = String::with_capacity(script.len());
+    let mut quote = None;
+    let mut chars = script.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some('\''), '\\') => {
+                text.push(c);
+                if let Some(next) = chars.next_if(|next| matches!(next, '\\' | '\'')) {
+                    text.push(next);
+                }
+            }
+            (_, '\\') => match chars.next() {
+                Some('_') => text.push(' '),
+                Some('c') => break,
+                Some(next) => {
+                    text.push(c);
+                    text.push(next);
+                }
+                None => text.push(c),
+            },
+            (None, '#') if text.is_empty() || text.ends_with(char::is_whitespace) => break,
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                text.push(c);
+            }
+            (Some(open), _) if c == open => {
+                quote = None;
+                text.push(c);
+            }
+            _ => text.push(c),
+        }
+    }
+    Cow::Owned(text)
+}
+
+/// `script` followed by each word of `after`, single-quoted whole.
+fn followed_by<'a>(script: Cow<'a, str>, after: &[Word]) -> Cow<'a, str> {
+    if after.is_empty() {
+        return script;
+    }
+    Cow::Owned(after.iter().fold(script.into_owned(), |mut text, word| {
+        text.push_str(" '");
+        text.push_str(&word.text.replace('\'', r"'\''"));
+        text.push('\'');
+        text
+    }))
 }
 
 /// A long option's value (`None` when it is missing) and the words after it.
