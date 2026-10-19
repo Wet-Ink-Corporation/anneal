@@ -4,6 +4,7 @@
 //! actions are read in [`strings`].
 
 mod grammar;
+mod slots;
 mod strings;
 mod tables;
 
@@ -11,7 +12,7 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::ptr;
 
-use super::braces;
+use super::{braces, readings};
 use crate::hook::guard::shell::{Shape, Word};
 
 /// Words that may start a simple command before its program.
@@ -80,6 +81,14 @@ pub(super) enum Run<'a> {
     /// `su`'s arguments as its shell may read them, and `env -S`'s string as env splits it and
     /// as shell text.
     Either(Vec<Run<'a>>),
+    /// A wrapper (named) with a pattern where it reads an option, which may expand to one
+    /// (`bash -[c] ...`), so what it runs is not known (#165).
+    UnsureOption {
+        /// The wrapper.
+        wrapper: &'a str,
+        /// The pattern word.
+        word: &'a Word,
+    },
 }
 
 impl<'a> Run<'a> {
@@ -152,9 +161,12 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
                 })
             }),
         // Several readings, or `env -S`'s string as env splits it: the redaction trusts none.
-        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) | Run::Split(_) | Run::Either(_) => {
-            Layout::Other
-        }
+        Run::Nothing
+        | Run::StdinScript(_)
+        | Run::Unseen(_)
+        | Run::Split(_)
+        | Run::Either(_)
+        | Run::UnsureOption { .. } => Layout::Other,
     };
     (layout, roles)
 }
@@ -238,7 +250,22 @@ enum Peel<'a> {
 }
 
 /// Strips keywords, assignments and wrappers from `words`.
+///
+/// A pattern where a wrapper reads an option, which may expand to one (#165), is read both
+/// ways: as the walk reads it (an operand or a value), checked first so its own denial names
+/// what it runs, and as an option, which is not known ([`Run::UnsureOption`]).
 pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
+    let mut unsure = Vec::new();
+    let run = walk_wrappers(words, &mut unsure);
+    if unsure.is_empty() {
+        run
+    } else {
+        Run::either([run].into_iter().chain(unsure))
+    }
+}
+
+/// [`unwrap`]'s walk, collecting each wrapper's pattern option word in `unsure`.
+fn walk_wrappers<'a>(words: &'a [Word], unsure: &mut Vec<Run<'a>>) -> Run<'a> {
     let mut words = skip_prefix(words);
     let mut appended = false;
     loop {
@@ -250,6 +277,11 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
             Program::Named(name) => peel(name, rest),
             Program::Unknown(_) => Peel::Program,
         };
+        if let Program::Named(wrapper) = program
+            && let Some(word) = slots::unsure_option(wrapper, rest, &peeled)
+        {
+            unsure.push(Run::UnsureOption { wrapper, word });
+        }
         words = match peeled {
             Peel::Inner(inner) => skip_prefix(inner),
             Peel::Appending(inner) => {

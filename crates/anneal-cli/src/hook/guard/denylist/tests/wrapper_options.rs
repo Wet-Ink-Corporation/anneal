@@ -230,6 +230,60 @@ fn long_options_take_their_value_written_out_or_abbreviated() {
     ]);
 }
 
+/// Issue #165: a glob or extglob in a shell's or wrapper's option slot may expand to an
+/// option (`-[c]` to `-c` beside a file named `-c`), so the option it may be cannot be read.
+#[test]
+fn a_pattern_that_may_expand_to_an_option_in_an_option_slot_is_denied() {
+    assert_table(&[
+        ("bash -[c] 'rm -rf /'", UNREADABLE),
+        ("bash -@(c) 'rm -rf /'", UNREADABLE),
+        ("bash -o errexit -? 'rm -rf /'", UNREADABLE),
+        ("bash @(--)login -c 'echo a'", UNREADABLE),
+        ("sh -* 'rm -rf /'", UNREADABLE),
+        ("su -@(c) 'rm -rf /'", UNREADABLE),
+        ("su root -[c] 'rm -rf /'", UNREADABLE),
+        ("script -@(c) 'rm -rf /' /dev/null", UNREADABLE),
+        ("flock /tmp/l -@(c) 'rm -rf /'", UNREADABLE),
+        ("env -@(S) 'rm -rf /'", UNREADABLE),
+        ("sudo -@(s) 'rm -rf /'", UNREADABLE),
+        ("sudo -u root -[s] 'rm -rf /'", UNREADABLE),
+        // Read as an operand too, so the denial names what that reading runs.
+        ("nice -[n] 5 rm -rf /", RM_RF),
+        ("sudo -u @(root) -[s] 'rm -rf /'", UNREADABLE),
+        ("timeout -[s] KILL 5 echo", UNREADABLE),
+        ("xargs -[I] x echo", UNREADABLE),
+        // #147: a pattern where a wrapper reads an option that runs a string.
+        ("bash @(-c) 'rm -rf /'", UNREADABLE),
+        ("bash ?c 'rm -rf /'", UNREADABLE),
+        ("env -S@(rm -rf ~)", UNREADABLE),
+        ("env --split-string=@(x)", UNREADABLE),
+        ("env -S'rm -rf /'*", UNREADABLE),
+    ]);
+}
+
+/// Issue #165: a pattern that cannot start an option, or one after the option slots, is read
+/// as before.
+#[test]
+fn a_pattern_outside_an_option_slot_is_read_as_before() {
+    assert_table(&[
+        ("bash run.sh *", ALLOW),
+        ("bash ./x-*.sh", ALLOW),
+        ("bash *.sh", ALLOW),
+        ("sudo rm -f *.o", ALLOW),
+        ("sudo -u root ls -[a]", ALLOW),
+        ("timeout 5 ls *", ALLOW),
+        ("xargs -n1 ls *", ALLOW),
+        ("find . -name *.rs -print", ALLOW),
+        ("env -i ls *", ALLOW),
+        ("sudo [ -f x ]", ALLOW),
+        ("xargs -I{} echo {}", ALLOW),
+        ("sudo -u ~root ls", ALLOW),
+        ("nice [ -f x ]", ALLOW),
+        // An unmatched glob stays as written, and no file name holds a `/`.
+        ("env -[S]'rm -rf /'", ALLOW),
+    ]);
+}
+
 #[test]
 fn ordinary_wrapped_commands_stay_allowed() {
     assert_table(&[

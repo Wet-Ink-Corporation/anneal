@@ -229,6 +229,11 @@ impl<'c> Checker<'c> {
                 "{shell} runs a script from a process substitution, known only at run time; \
                  pass the script as text the guard can read, as in bash -c '...'"
             ))),
+            Run::UnsureOption { wrapper, word } => Some(unreadable(format!(
+                "{wrapper} reads its options where {} stands, a pattern that may expand to \
+                 one; write the option out",
+                word.text
+            ))),
             Run::Exec(actions) => actions.into_iter().find_map(|action| {
                 let appended = Scope {
                     appended: true,
