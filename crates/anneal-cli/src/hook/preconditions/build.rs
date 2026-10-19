@@ -3,8 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anneal_ledger::event::GrillConfirmed;
-use anneal_ledger::{EventKind, Filter, LedgerEvent, Recorded, Store};
+use anneal_ledger::Store;
 
 use super::{Check, Denial, unjudged};
 use crate::content_hash::sha256;
@@ -16,10 +15,6 @@ use crate::lint::spec::{self as spec_lint, DEFAULT_CONSTITUTION, DEFAULT_GLOSSAR
 use crate::mode::BuildMode;
 use crate::mode::scope::{self, PathKind};
 use crate::plan::{self, Status};
-
-/// How many of the latest `grill_confirmed` events are searched for the tree's hash (H-13):
-/// the ledger is shared by every worktree, and a confirmation older than this many is stale.
-const RECENT_CONFIRMATIONS: usize = 256;
 
 /// Whether an edit of `relative` (relative to the worktree root) in build mode entered with
 /// `build` is gated: it is source, not a test, the plan or tree, scratch or a document.
@@ -137,14 +132,9 @@ fn grill_check(store: &Store, root: &Path, tree: &str) -> Option<Denial> {
             ));
         }
     };
-    let hash = sha256(&bytes);
-    let confirmations = Filter {
-        types: vec![EventKind::GrillConfirmed],
-        tags: Vec::new(),
-    };
-    match store.tail(&confirmations, RECENT_CONFIRMATIONS) {
-        Ok(recent) if recent.iter().any(|recorded| confirms(recorded, &hash)) => None,
-        Ok(_) => Some(Denial::new(
+    match grill::is_confirmed(store, &sha256(&bytes)) {
+        Ok(true) => None,
+        Ok(false) => Some(Denial::new(
             Check::Grill,
             format!(
                 "build mode: the design tree {tree} is not confirmed at its current content; \
@@ -153,15 +143,6 @@ fn grill_check(store: &Store, root: &Path, tree: &str) -> Option<Denial> {
         )),
         Err(error) => Some(unjudged("the ledger cannot be read", &error)),
     }
-}
-
-/// Whether `recorded` confirms a design tree whose hash is `hash`.
-fn confirms(recorded: &Recorded, hash: &str) -> bool {
-    matches!(
-        &recorded.event.event,
-        LedgerEvent::GrillConfirmed(GrillConfirmed { hash: Some(confirmed), .. })
-            if confirmed == hash
-    )
 }
 
 /// The clean precondition: the working tree was clean when build mode was entered.

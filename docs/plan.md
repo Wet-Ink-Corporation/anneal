@@ -83,6 +83,23 @@ Run only on the human's explicit approval of the plan they were shown. It refuse
 - while the linked spec has any `[NEEDS CLARIFICATION]` marker, counted as `lint spec` counts
   them (outside code, comments and fences); `data.needs_clarification` gives the count.
 
+Then, when the spec's header has a `Tree:` line (`docs/spec.md`), it refuses the same way
+(exit 3, nothing appended) unless one of the latest 256 `grill_confirmed` events carries the
+`sha256:` hash of that design tree's current bytes, matched by hash as the preconditions hook
+matches it (`docs/preconditions.md`), so any path spelling of the tree counts (#77):
+
+- a `Tree:` line naming no file, still the template's placeholder, or naming a file that does
+  not exist or is not a regular file: a `plan/approve/tree:<spec>` finding;
+- a tree with no such confirmation, never confirmed or edited since: a
+  `plan/approve/unconfirmed-tree:<tree>` finding naming `anneal grill confirm`, and
+  `data.tree` names the tree. A ledger that does not exist holds no confirmation and is not
+  created; a tree that exists but cannot be read, or a ledger that cannot be read, fails with
+  exit 70.
+
+A spec with no `Tree:` line is not checked, so specs written before #77 still approve.
+`data.tree` is present only when the spec names a tree: the resolved path, in a refusal about
+it and in an approval.
+
 Otherwise it appends `plan_approved {plan, hash}` to the ledger (`docs/ledger.md`) and exits
 0. `plan` is the plan id: the path as given, separated by `/` on every platform, with `.` and empty
 components dropped, so `./docs/plans/x.md` and `docs/plans/x.md` are one plan (`..` is
