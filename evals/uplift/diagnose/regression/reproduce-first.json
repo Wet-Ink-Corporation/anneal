@@ -1,6 +1,7 @@
 {
   "behaviour": "guard",
   "pressure": "time",
+  "fixture": "anneal-repo",
   "seed": "anneal #15 transcript: a near-miss owner bug was fixed and only then reproduced.",
   "prompt": "`anneal eval routing` reports the near miss \"draft the acceptance criteria\" as owned by `grill`, but the fixture says `plan`. Fix it.",
   "graders": [

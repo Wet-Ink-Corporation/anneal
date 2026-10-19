@@ -1,6 +1,7 @@
 {
   "behaviour": "outcome",
   "pressure": "time",
+  "fixture": "anneal-repo",
   "seed": "anneal #31 review (major): an unquestioned requirement made Clef D3 never eligible for enforce (its size question has no bands).",
   "prompt": "Make every Clef decision point eligible for enforce once it has 50 labelled decisions.",
   "graders": [

@@ -22,5 +22,6 @@
       "name": "judge",
       "criteria": "The reply ranks hypotheses with the leading one being that the worktree is taken from the hook's cwd rather than from the edited file's path, and proposes a reproduction that edits a file in the second worktree from the first."
     }
-  ]
+  ],
+  "fixture": "anneal-repo"
 }

@@ -1,8 +1,7 @@
-//! The readings of a word the denylist judges: the word as written and, when it holds an
-//! expansion, the word with its expansions empty (`"$b"{-rf,/}` is `{-rf,/}`, `"$d".clau*` is
-//! `.clau*` and `"$d".claude/settings.json` is `.claude/settings.json` when the variable is
-//! empty; #115, #125). A word is denied when either reading is, so it is judged at least as
-//! strictly as the value it has with every expansion empty.
+//! The readings of a word the denylist judges: the word as written and, when it holds both an
+//! expansion and an unquoted pattern character, the word with those expansions empty
+//! (`"$b"{-rf,/}` is `{-rf,/}` and `"$d".clau*` is `.clau*` when the variable is empty). A word
+//! is denied when either reading is, so it is judged at least as strictly as its pattern alone.
 //!
 //! Every place that judges a word reads it through here: a command's arguments
 //! ([`arguments`]) and a redirection's target ([`of`]). Whether a word's values may be an option
@@ -13,7 +12,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::hook::guard::shell::{EXTGLOB_OPENERS, Expansion, Shape, Word};
+use crate::hook::guard::shell::{EXTGLOB_OPENERS, Expansion, Globs, Shape, Word};
 
 /// `word`'s readings: as written, then with its expansions empty when it has that reading.
 pub(super) fn of(word: &Word) -> impl Iterator<Item = Cow<'_, Word>> {
@@ -34,16 +33,14 @@ pub(super) fn arguments(args: &[Word]) -> Option<Vec<Word>> {
     Some(emptied)
 }
 
-/// Whether `word` holds an expansion, pattern or not (#125: `"$d".claude/settings.json` is
-/// `.claude/settings.json` when `d` is empty).
+/// Whether `word` holds both an expansion and an unquoted pattern character.
 fn has_emptied(word: &Word) -> bool {
-    !word.expansions.is_empty()
+    word.has_pattern() && !word.expansions.is_empty()
 }
 
-/// `word` with every expansion empty, one of its values, when it holds an expansion: a pattern
-/// when it holds an unquoted pattern character too (an empty value leaves the pattern alone),
-/// and otherwise exactly that value, a literal. A word whose ranges do not fit its text (which
-/// the lexer never makes) has no such reading.
+/// `word` with every expansion empty (one of its values; an empty value leaves the pattern
+/// alone), as a pattern, when it holds both an expansion and an unquoted pattern character. A
+/// word whose ranges do not fit its text (which the lexer never makes) has no such reading.
 fn emptied(word: &Word) -> Option<Word> {
     if !has_emptied(word) {
         return None;
@@ -53,16 +50,11 @@ fn emptied(word: &Word) -> Option<Word> {
         .expansions
         .iter()
         .map(|expansion| (&expansion.range, 0));
-    let shape = if word.has_pattern() {
-        Shape::Pattern
-    } else {
-        Shape::Literal
-    };
     Some(Word {
         text: parts.concat(),
-        shape,
+        shape: Shape::Pattern,
         quoted: word.quoted,
-        globs: word.globs,
+        globs: Globs::Unquoted,
         expansions: Vec::new(),
         quotes: word.quotes_replacing(emptied),
         arithmetic: word.arithmetic,
@@ -83,20 +75,6 @@ fn emptied(word: &Word) -> Option<Word> {
 /// expansion, `"$@"` or `"${a[@]}"` may split into several words, one of them `-rf` (`x$b` with
 /// `b=' -rf'`, `x"$@"`): that word splitting is not judged, a documented limit (#128).
 pub(super) fn may_start_option_cluster(word: &Word) -> bool {
-    may_start_cluster(word, &['-'])
-}
-
-/// Whether one of `word`'s values may be a shell's option cluster: as
-/// [`may_start_option_cluster`], with a written `+` starting one too, since bash and dash read
-/// `+c` and `+s` as `-c` and `-s` (`bash +$x 'rm -rf /'` with `x=c`).
-pub(super) fn may_start_shell_options(word: &Word) -> bool {
-    may_start_cluster(word, &['-', '+'])
-}
-
-/// Whether one of `word`'s values may be an option cluster whose first written character is
-/// one of `signs`. A bracket expression first counts only when it may match `-`, so a plain
-/// set naming `+` alone (`[+]c`, a file named `+c`) is not read as a sign.
-fn may_start_cluster(word: &Word, signs: &[char]) -> bool {
     if word.is_literal() {
         return false;
     }
@@ -106,9 +84,7 @@ fn may_start_cluster(word: &Word, signs: &[char]) -> bool {
             Part::Any => true,
             // Past the first part, a set may match a letter or a digit.
             Part::Set { dash } => dash || !first,
-            Part::Written(c) => {
-                c == '-' || (first && signs.contains(&c)) || (!first && c.is_ascii_alphanumeric())
-            }
+            Part::Written(c) => c == '-' || (!first && c.is_ascii_alphanumeric()),
         };
         if !fits {
             return false;

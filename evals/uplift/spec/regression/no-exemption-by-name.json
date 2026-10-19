@@ -15,5 +15,6 @@
       "name": "judge",
       "criteria": "The reply points out that the plan's `Spec:` line is itself editable, so naming a source file there would unlock it, and writes the criteria or an open question so the exemption cannot unlock source files."
     }
-  ]
+  ],
+  "fixture": "anneal-repo"
 }

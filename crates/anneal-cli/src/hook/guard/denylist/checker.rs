@@ -10,7 +10,7 @@ use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
 use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, readings, rm};
-use crate::hook::guard::shell::{self, SimpleCommand, Word};
+use crate::hook::guard::shell::{self, ParseError, SimpleCommand, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// Where a command is checked: what its standard input gets (when it does not redirect it),
@@ -124,6 +124,16 @@ impl<'c> Checker<'c> {
 
     /// Checks shell text.
     pub(super) fn text(&mut self, text: &str, scope: Scope<'_>) -> Option<Denial> {
+        self.lexed_by(text, scope, shell::parse)
+    }
+
+    /// Checks text read as `parse` lexes it.
+    fn lexed_by(
+        &mut self,
+        text: &str,
+        scope: Scope<'_>,
+        parse: fn(&str) -> Result<Vec<SimpleCommand>, ParseError>,
+    ) -> Option<Denial> {
         if scope.depth > MAX_DEPTH {
             return Some(unreadable(format!(
                 "the command nests bash -c, eval or find -exec deeper than {MAX_DEPTH}"
@@ -135,7 +145,7 @@ impl<'c> Checker<'c> {
                 "the command re-reads more than {MAX_LEXED_MIB} MiB through bash -c or eval"
             )));
         }
-        let commands = match shell::parse(text) {
+        let commands = match parse(text) {
             Ok(commands) => commands,
             Err(error) => {
                 return Some(unreadable(format!("the command cannot be read: {error}")));
@@ -213,6 +223,7 @@ impl<'c> Checker<'c> {
             Run::Nothing => None,
             Run::Either(runs) => runs.into_iter().find_map(|run| self.run(run, scope)),
             Run::Script(text) => self.text(&text, scope.nested()),
+            Run::Split(text) => self.lexed_by(&text, scope.nested(), shell::parse_without_extglob),
             Run::StdinScript(shell) => self.stdin_script(shell, scope),
             Run::Unseen(shell) => Some(unreadable(format!(
                 "{shell} runs a script from a process substitution, known only at run time; \
@@ -274,31 +285,21 @@ impl<'c> Checker<'c> {
     }
 
     /// Applies the entries for `program` (all of them when the program is not known), to the
-    /// arguments as written and, when a word holds an expansion, again in their emptied
-    /// reading ([`readings::arguments`]). `cd` is followed once: the first reading already
-    /// sends it anywhere, and following the second too would move it from anywhere to one
-    /// directory (`cd "$d"/x*` to `/x*`), so relative writes after it would no longer be judged
-    /// as possibly protected. The second reading reads the same calls again, so the gh calls and
-    /// argument commands it counts are dropped (each is counted once; it still stops at the
-    /// budget while it runs, and reads no more than the first), and so are the merges it finds
-    /// when the first reading found one: it is the same call (`gh pr merge 1$x` is one merge,
-    /// its pull request known only at run time), while a merge only the emptied reading shows
-    /// is kept.
+    /// arguments as written and, when a word holds both an expansion and an unquoted pattern
+    /// character, again in their emptied reading ([`readings::arguments`]). `cd` is followed
+    /// once: the first reading already sends it anywhere, and following the second too would
+    /// move it from anywhere to one directory (`cd "$d"/x*` to `/x*`), so relative writes after
+    /// it would no longer be judged as possibly protected. The second reading reads the same
+    /// calls again, so the gh calls it counts are dropped: each is counted once.
     fn program(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
-        let merges_before = self.merges.len();
         let denial = self.reading(program, args, scope);
         if denial.is_some() || matches!(program, Program::Named("cd" | "pushd")) {
             return denial;
         }
         let emptied = readings::arguments(args)?;
-        let (counted, found) = (self.gh_calls_here, self.merges.len());
-        let commands = self.argument_commands;
+        let counted = self.gh_calls_here;
         let denial = self.reading(program, &emptied, scope);
         self.gh_calls_here = counted;
-        self.argument_commands = commands;
-        if found > merges_before {
-            self.merges.truncate(found);
-        }
         denial
     }
 

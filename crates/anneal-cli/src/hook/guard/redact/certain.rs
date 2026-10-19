@@ -8,12 +8,12 @@
 //! reads `psql` as the program). So a wrapper's words are trusted only when they read with
 //! certainty by the tables here ([`readings`]): each an exact flag (or, for a shell, a cluster
 //! of its flags), an exact value option followed by its value (or with it attached, `-n1`,
-//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
-//! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
-//! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
-//! body. A body counts only when the words after it are what its wrapper's reading lets
-//! follow ([`after::After`]), each literal and not starting with `-` (`su` and `script`
-//! read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
+//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for
+//! `sudo` and `env`, literal assignments (bash field-splits a wrapper's arguments: `env K=$V x`
+//! may run `x` or a word of `$V`), ending exactly where the walk put the next wrapper, the
+//! program or the body. A body counts only when the words after it are what its wrapper's
+//! reading lets follow ([`after::After`]), each literal and not starting with `-` (`su` and
+//! `script` read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
 //! `flock`, none, its `-c` a word of its own; for `script`, at most one file in the whole run
 //! (and none of `-B`, `-I` or `-O`, after which it takes no file). Otherwise the wrapper may
 //! refuse the command and run nothing. A wrapper that may not run what the walk places after
