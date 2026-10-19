@@ -343,6 +343,19 @@ fn a_star_may_hold_an_option_and_its_attached_value() {
 /// Issue #165: a pattern that cannot start an option, or one after the option slots, is read
 /// as before.
 #[test]
+fn a_pattern_after_a_wrapper_s_double_dash_is_its_command_not_an_option() {
+    assert_table(&[
+        ("sudo -- *.sh", ALLOW),
+        ("env -- *.sh", ALLOW),
+        ("nice -- *.sh", ALLOW),
+        ("sudo -u root -- *.sh", ALLOW),
+        ("sudo -- -[s] 'rm -rf /'", ALLOW),
+        ("sudo -[u] root -- ls", UNREADABLE),
+    ]);
+}
+
+/// Issue #165: a pattern that cannot start an option, or that stands after the slots.
+#[test]
 fn a_pattern_outside_an_option_slot_is_read_as_before() {
     assert_table(&[
         ("bash run.sh *", ALLOW),

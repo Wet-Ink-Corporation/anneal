@@ -92,10 +92,16 @@ fn grammar(name: &str) -> Option<&'static Grammar> {
     }
 }
 
-/// The first `taken` words of `words` and the word after them.
+/// The first `taken` words of `words` and the word after them, unless the last of them is a
+/// literal `--`, after which getopt reads no option (`sudo -- *.sh` runs a command).
 fn before_and_first(words: &[Word], taken: usize) -> impl Iterator<Item = &Word> {
     let (before, after) = words.split_at_checked(taken).unwrap_or((words, &[]));
-    before.iter().chain(after.first())
+    let first = if before.last().is_some_and(ends_options) {
+        None
+    } else {
+        after.first()
+    };
+    before.iter().chain(first)
 }
 
 /// Whether `word` holds an unquoted glob or group (a brace or `~` alone, as in `-I{}`, is
