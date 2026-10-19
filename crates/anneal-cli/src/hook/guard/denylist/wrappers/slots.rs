@@ -99,8 +99,9 @@ fn grammar(name: &str) -> Option<&'static Grammar> {
 
 /// Whether the wrapper `name` read its first `taken` words of `rest` as its options and a `--`
 /// that ends them, after which it reads no option (`sudo -- *.sh` runs a command). A `--` an
-/// option takes as its value (`sudo -u -- -[s]`) ends nothing, and a wrapper whose grammar
-/// is not known here keeps the word after its options as a slot.
+/// option takes as its value (`sudo -u -- -[s]`) ends nothing. A wrapper not listed here keeps
+/// the word after its options as a slot: its peel takes operands after them (`timeout`'s
+/// duration, `chrt`'s priority) or reads its words otherwise.
 fn ended_options(name: &str, rest: &[Word], taken: usize) -> bool {
     let grammar = match name {
         "sudo" | "doas" => &SUDO,

@@ -358,6 +358,13 @@ fn a_pattern_after_a_wrapper_s_double_dash_is_its_command_not_an_option() {
         ("env -C -- -[S]'rm -rf ~'", UNREADABLE),
         ("xargs -E -- -[s] 'rm -rf /'", UNREADABLE),
         ("xargs -d -- -[s] 'rm -rf /'", UNREADABLE),
+        ("sudo --user=-- -[s] 'rm -rf /'", UNREADABLE),
+        ("doas -- *.sh", ALLOW),
+        ("stdbuf -- *.sh", ALLOW),
+        ("xargs -- -[s] x", ALLOW),
+        // A wrapper that takes operands after its options keeps the slot after them.
+        ("timeout -- 5 -[s] x", UNREADABLE),
+        ("chrt -o 0 -- -[s] x", UNREADABLE),
     ]);
 }
 
