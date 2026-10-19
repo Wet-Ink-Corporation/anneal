@@ -266,8 +266,8 @@ left (`decide label $ARGS "$flag"`). Arguments `xargs` appends at run time may b
 `cat f | xargs anneal verdict set --pr 7` is denied. Apart from that, each word is judged as one
 word: an unquoted expansion that word splitting makes `--actor human` (`--sha $x` with
 `x='HEAD --actor human'`) is the documented limit below (#128).
-`verdict set ... --source human` without `--actor` is not denied: the merge gate does not read
-the actor yet (`docs/verdict.md`).
+`verdict set ... --source human` without `--actor` is not denied: the merge gate does not count
+a human approval without `by.actor: human` as the review (`docs/verdict.md`).
 
 A subcommand-path word not read as written (`anneal "$@"`, `anneal $SUB`, `anneal verdict "$@"`)
 may stand for the whole path, and the words it stands for may be written anywhere in the call:
