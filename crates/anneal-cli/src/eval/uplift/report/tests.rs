@@ -61,6 +61,7 @@ fn outcome(cases: Vec<Case>, runs: Vec<(&str, Arms)>) -> UpliftOutcome {
         max_cost_usd: Some(25.0),
         anneal: None,
         read_only_sandbox: None,
+        unkept: Vec::new(),
     }
 }
 

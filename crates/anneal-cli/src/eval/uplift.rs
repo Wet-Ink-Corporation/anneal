@@ -24,10 +24,12 @@ mod tally;
 #[cfg(all(test, unix))]
 mod test_git;
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
+use args::default_work_dir;
 pub use args::{GatedTools, Scaffolds, UpliftArgs};
-pub(crate) use args::{Mode, Settings, default_work_dir};
+pub(crate) use args::{Mode, Settings};
 pub use gated::GatedCases;
 pub(crate) use report::report;
 
@@ -37,8 +39,9 @@ use crate::eval::real::{ChangedError, RouterError};
 use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;
+use crate::paths::PathError;
 use case::{Grader, Tool};
-use claude::{BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins};
+use claude::{BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins, Unkept};
 use drive::{Baseline, Drove, Metered, drive, first_batch_error};
 use suites::Suites;
 
@@ -65,6 +68,8 @@ pub(crate) struct UpliftOutcome {
     /// The work directory, when a run made its workspace there although a selected case
     /// names Bash and the eval sandbox denies Bash every write under it.
     pub(crate) read_only_sandbox: Option<String>,
+    /// The batch results `--keep-results` could not keep, in batch order.
+    pub(crate) unkept: Vec<Unkept>,
 }
 
 /// Where a run's plugin copies got the running `anneal`.
@@ -121,6 +126,9 @@ pub enum UpliftError {
          your rights; review them, then pass --allow-scaffolds to run them"
     )]
     Scaffolds(GatedCases),
+    /// The default work directory needs the anneal home, and it is not usable.
+    #[error("finding the default work directory")]
+    Home(#[source] PathError),
 }
 
 impl UpliftError {
@@ -128,10 +136,12 @@ impl UpliftError {
     /// whose manifest cannot be read (a bad argument, not a router failure), gated tools
     /// without `--allow-gated-tools`, fixtures without `--allow-scaffolds` and a missing or
     /// wrong-kind path ([`LintError::code`]); the evaluator's failures are
-    /// [`RouterError::code`]'s.
+    /// [`RouterError::code`]'s; an unusable anneal home is internal, as it is for every
+    /// command that needs one.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
+            Self::Home(_) => crate::exit_codes::INTERNAL,
             Self::Skills(error) | Self::Suites(error) => error.code(),
             Self::UnknownSkill { .. }
             | Self::Baseline(_)
@@ -145,17 +155,18 @@ impl UpliftError {
 
 /// Reads the suites under `args.suites` for the skills under `args.skills` and, unless
 /// `mode` is [`Mode::Check`], runs them through `claude plugin eval`, in a workspace made in
-/// `--work-dir`, else in `fallback_work_dir`.
+/// `--work-dir`, else in [`default_work_dir`] (`lookup` reads one variable for it).
 ///
 /// # Errors
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
 /// `--changed-since` cannot compare, a run's selected cases name gated tools without
-/// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the running binary cannot be
-/// found, or the evaluator cannot run its first batch.
+/// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the default work directory
+/// needs an anneal home that is relative, the work directory cannot be made absolute, the
+/// running binary cannot be found, or the evaluator cannot run its first batch.
 pub(crate) fn evaluate(
     args: &UpliftArgs,
     mode: &Mode<'_>,
-    fallback_work_dir: &Path,
+    lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<UpliftOutcome, UpliftError> {
     let mut outcome = UpliftOutcome {
         check: matches!(mode, Mode::Check),
@@ -167,6 +178,7 @@ pub(crate) fn evaluate(
         max_cost_usd: None,
         anneal: None,
         read_only_sandbox: None,
+        unkept: Vec::new(),
     };
     let Mode::Run(settings) = mode else {
         return Ok(outcome);
@@ -204,10 +216,12 @@ pub(crate) fn evaluate(
     {
         return Err(UpliftError::Scaffolds(cases));
     }
-    let work_dir = settings.work_dir.unwrap_or(fallback_work_dir);
-    let (drove, cleanup) = run(settings, &args.skills, &outcome.suites, work_dir)?;
-    outcome.drove = Some(drove);
-    outcome.cleanup = cleanup;
+    let work_dir = work_dir(settings.work_dir, lookup)?;
+    let work_dir = work_dir.as_path();
+    let finished = run(settings, &args.skills, &outcome.suites, work_dir)?;
+    outcome.drove = Some(finished.drove);
+    outcome.cleanup = finished.cleanup;
+    outcome.unkept = finished.unkept;
     // The host's target is fixed at build time, so this is the one `run` placed under.
     outcome.anneal = Some(
         LauncherTarget::host().map_or(PlacedAnneal::UnknownHost, |target| {
@@ -217,6 +231,20 @@ pub(crate) fn evaluate(
     // Judged once the run made the directory, so a link in it resolves.
     outcome.read_only_sandbox = read_only_sandbox(&outcome.suites.cases, work_dir);
     Ok(outcome)
+}
+
+/// The directory a run's workspace is made in: `given` (`--work-dir`), else
+/// [`default_work_dir`], made absolute against the current directory once here, because each
+/// batch's `claude` runs in the workspace and is handed paths inside it.
+fn work_dir(
+    given: Option<&Path>,
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, UpliftError> {
+    let absolute = match given {
+        Some(dir) => std::path::absolute(dir),
+        None => std::path::absolute(default_work_dir(lookup).map_err(UpliftError::Home)?),
+    };
+    Ok(absolute.map_err(RouterError::Workspace)?)
 }
 
 /// Reads the suites under `args.suites` for the skills under `args.skills`, keeping only the
@@ -251,13 +279,14 @@ fn select(args: &UpliftArgs) -> Result<Suites, UpliftError> {
 
 /// Runs `suites`' cases in both arms in a workspace made in `work_dir`, each plugin copy
 /// holding the running binary under the launcher's target for this host when there is one;
-/// with the run, why the workspace could not be removed afterwards, if it could not.
+/// with the run, why the workspace could not be removed afterwards, if it could not, and the
+/// results `--keep-results` could not keep.
 fn run(
     settings: &Settings<'_>,
     skills: &Path,
     suites: &Suites,
     work_dir: &Path,
-) -> Result<(Drove, Option<String>), UpliftError> {
+) -> Result<Finished, UpliftError> {
     let target = LauncherTarget::host();
     let binary = target
         .map(|_| std::env::current_exe())
@@ -303,7 +332,23 @@ fn run(
     let mut metered = Metered::new(&mut evaluator);
     let drove = drive(&mut metered, &suites.cases, kind, settings.max_cost_usd);
     let reported_usd = metered.reported_usd();
-    settle(drove, evaluator.finish(), reported_usd)
+    let unkept = evaluator.take_unkept();
+    let (drove, cleanup) = settle(drove, evaluator.finish(), reported_usd)?;
+    Ok(Finished {
+        drove,
+        cleanup,
+        unkept,
+    })
+}
+
+/// How a run that drove its batches ended.
+struct Finished {
+    /// How the batches went.
+    drove: Drove,
+    /// Why the workspace could not be removed, if it could not.
+    cleanup: Option<String>,
+    /// The batch results `--keep-results` could not keep.
+    unkept: Vec<Unkept>,
 }
 
 /// The run's result from how it `drove` and how removing its workspace went (`finished`):

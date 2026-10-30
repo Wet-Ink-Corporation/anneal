@@ -7,6 +7,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
+use super::claude::Unkept;
 use super::drive::Drove;
 use super::stats::Difference;
 use super::suites::{Coverage, SuiteKind};
@@ -220,6 +221,7 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
             ),
         ));
     }
+    findings.extend(outcome.unkept.iter().map(unkept_finding));
     findings.extend(incomplete_finding(outcome, short));
     if let Some(reason) = &outcome.cleanup {
         findings.push(Finding::new(
@@ -228,6 +230,17 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
         ));
     }
     findings
+}
+
+/// The finding of a batch result `--keep-results` could not keep.
+fn unkept_finding(unkept: &Unkept) -> Finding {
+    Finding::new(
+        format!("eval/uplift/keep-results:{}", unkept.name),
+        format!(
+            "--keep-results did not keep {}: {}; its batch's runs and cost still count",
+            unkept.name, unkept.reason
+        ),
+    )
 }
 
 /// The findings of one skill's missed bars: its uplift, each guard case that did not hold

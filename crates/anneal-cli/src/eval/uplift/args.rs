@@ -12,7 +12,9 @@ use crate::eval::real::args::{
     DEFAULT_CONCURRENCY, DEFAULT_MAX_COST_USD, DEFAULT_TIMEOUT, cost_cap,
 };
 use crate::eval::real::claude::Options;
-use crate::paths::anneal_home_from;
+use crate::paths::{PathError, anneal_home_from};
+
+use super::sandbox::denies_bash_writes;
 
 /// Arguments of `anneal eval uplift`.
 #[derive(Debug, Clone, Args)]
@@ -75,15 +77,18 @@ pub struct UpliftArgs {
     )]
     pub scaffolds: Scaffolds,
     /// The directory the run's workspace is made in, made if missing (by default `$TMPDIR`
-    /// when set, else `tmp` in the anneal home). `claude` runs with its `TMPDIR` inside the
-    /// workspace, and on Linux the eval sandbox denies Bash every write under `/tmp`,
-    /// `/var/tmp`, `/dev/shm` and `/run/shm`, so for a case that names Bash give a directory
-    /// outside them
+    /// when set, and on Linux not under the directories below, else `tmp` in the anneal home,
+    /// else, with no home set, the system's temporary directory). `claude` runs with its
+    /// `TMPDIR` inside the workspace, and on Linux the eval sandbox denies Bash every write
+    /// under `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm`, so for a case that names Bash give
+    /// a directory outside them
     #[arg(long, value_name = "DIR")]
     pub work_dir: Option<PathBuf>,
     /// Copy each batch's `claude plugin eval` result, which holds every run's grader
     /// verdicts, into DIR (made if missing) as `result-<batch>-<arm>.json`, where `<arm>` is
-    /// `with`, `without-<skill>` or `baseline`, so they outlive the workspace
+    /// `with`, `without-<skill>` or `baseline`, so they outlive the workspace; a file of that
+    /// name already there is overwritten, and one that cannot be written is reported as a
+    /// finding without failing its batch
     #[arg(long, value_name = "DIR")]
     pub keep_results: Option<PathBuf>,
 }
@@ -91,20 +96,29 @@ pub struct UpliftArgs {
 /// The variable whose value, when set and not empty, is the default work directory.
 const TMPDIR_VAR: &str = "TMPDIR";
 
-/// Where a run's workspace is made when `--work-dir` is not given: `$TMPDIR` when set and not
-/// empty (the operator's choice of temporary directory), else `<anneal home>/tmp`, which is
-/// outside the directories the eval sandbox denies on Linux, else, with no home either, the
-/// system's temporary directory. `lookup` reads one variable.
-pub(crate) fn default_work_dir(lookup: impl Fn(&str) -> Option<OsString>) -> PathBuf {
-    if let Some(dir) = lookup(TMPDIR_VAR).filter(|dir| !dir.is_empty()) {
-        return PathBuf::from(dir);
+/// Where a run's workspace is made when `--work-dir` is not given: `$TMPDIR` when set, not
+/// empty (the operator's choice of temporary directory) and, on Linux, not under a directory
+/// the eval sandbox denies Bash writes under; else `<anneal home>/tmp`, which is outside them;
+/// else, with no home set, the system's temporary directory. `lookup` reads one variable.
+///
+/// # Errors
+/// [`PathError::RelativeHome`] when the default needs the anneal home and the variable that
+/// names it holds a relative path.
+pub(crate) fn default_work_dir(
+    lookup: impl Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, PathError> {
+    if let Some(dir) = lookup(TMPDIR_VAR).filter(|dir| !dir.is_empty())
+        && !denies_bash_writes(Path::new(&dir))
+    {
+        return Ok(PathBuf::from(dir));
     }
     match anneal_home_from(lookup) {
-        Ok(home) => home.join("tmp"),
-        // No usable home (none set, or a relative one) to put it in: this is only a default,
-        // and the system's temporary directory still runs every case, only without Bash writes
-        // on Linux, which the run's `eval/uplift/read-only-sandbox` finding then says.
-        Err(_no_home) => std::env::temp_dir(),
+        Ok(home) => Ok(home.join("tmp")),
+        // No home to put it in: this is only a default, and the system's temporary directory
+        // still runs every case, only without Bash writes on Linux, which the run's
+        // `eval/uplift/read-only-sandbox` finding then says.
+        Err(PathError::NoHome) => Ok(std::env::temp_dir()),
+        Err(error) => Err(error),
     }
 }
 
@@ -263,6 +277,7 @@ mod tests {
 
     use super::{GatedTools, Mode, Scaffolds, UpliftArgs, default_work_dir};
     use crate::error::CliError;
+    use crate::paths::PathError;
 
     fn args() -> UpliftArgs {
         UpliftArgs {
@@ -300,7 +315,8 @@ mod tests {
 
     #[test]
     fn the_default_work_dir_is_tmpdir_when_it_is_set() {
-        let dir = default_work_dir(lookup(&[("TMPDIR", "/scratch/me"), ("HOME", "/home/me")]));
+        let dir = default_work_dir(lookup(&[("TMPDIR", "/scratch/me"), ("HOME", "/home/me")]))
+            .expect("TMPDIR needs no home");
 
         assert_eq!(dir, PathBuf::from("/scratch/me"));
     }
@@ -310,11 +326,13 @@ mod tests {
         // A home must be absolute on the host, so both sit under its temp dir (`C:\..` on Windows).
         let me = std::env::temp_dir().join("me");
         let srv = std::env::temp_dir().join("srv-anneal");
-        let unset = default_work_dir(lookup(&[("HOME", me.to_str().expect("UTF-8"))]));
+        let unset =
+            default_work_dir(lookup(&[("HOME", me.to_str().expect("UTF-8"))])).expect("a home");
         let empty = default_work_dir(lookup(&[
             ("TMPDIR", ""),
             ("ANNEAL_HOME", srv.to_str().expect("UTF-8")),
-        ]));
+        ]))
+        .expect("a home");
 
         assert_eq!(
             (unset, empty),
@@ -324,9 +342,42 @@ mod tests {
 
     #[test]
     fn with_no_tmpdir_and_no_home_the_default_work_dir_is_the_system_temp_dir() {
-        let dir = default_work_dir(lookup(&[]));
+        let dir = default_work_dir(lookup(&[])).expect("no home falls back");
 
         assert_eq!(dir, std::env::temp_dir());
+    }
+
+    #[test]
+    fn on_linux_a_tmpdir_the_eval_sandbox_denies_gives_way_to_the_anneal_home_s_tmp() {
+        let home = std::env::temp_dir().join("srv-anneal");
+        let dir = default_work_dir(lookup(&[
+            ("TMPDIR", "/var/tmp/me"),
+            ("ANNEAL_HOME", home.to_str().expect("UTF-8")),
+        ]))
+        .expect("a home");
+
+        let expected = if cfg!(target_os = "linux") {
+            home.join("tmp")
+        } else {
+            PathBuf::from("/var/tmp/me")
+        };
+        assert_eq!(dir, expected);
+    }
+
+    #[test]
+    fn a_relative_anneal_home_the_default_needs_is_an_error() {
+        let error = default_work_dir(lookup(&[("ANNEAL_HOME", "rel/home")]));
+
+        assert!(
+            matches!(
+                &error,
+                Err(PathError::RelativeHome {
+                    var: "ANNEAL_HOME",
+                    ..
+                })
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]

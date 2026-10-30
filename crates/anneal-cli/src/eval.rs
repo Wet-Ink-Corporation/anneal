@@ -85,8 +85,7 @@ pub fn run<O: Write>(
         },
         EvalSuite::Uplift(args) => {
             let mode = args.mode()?;
-            let fallback = uplift::default_work_dir(lookup);
-            uplift::report(&uplift::evaluate(args, &mode, &fallback)?, out)
+            uplift::report(&uplift::evaluate(args, &mode, lookup)?, out)
         }
     }
 }

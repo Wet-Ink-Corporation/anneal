@@ -77,6 +77,17 @@ pub(crate) struct ClaudeEvaluator<'a> {
     started: Instant,
     /// Where each batch's result is copied (`--keep-results`), if anywhere.
     keep_results: Option<&'a Path>,
+    /// The results that could not be copied there, in batch order.
+    unkept: Vec<Unkept>,
+}
+
+/// A batch result `--keep-results` could not keep. The batch's runs and cost still count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Unkept {
+    /// The file it would have been ([`kept_name`]).
+    pub(crate) name: String,
+    /// Why the copy failed.
+    pub(crate) reason: String,
 }
 
 impl<'a> ClaudeEvaluator<'a> {
@@ -119,6 +130,7 @@ impl<'a> ClaudeEvaluator<'a> {
             baseline: plugins.baseline.map(|base| base.name),
             started,
             keep_results: None,
+            unkept: Vec::new(),
         })
     }
 
@@ -127,6 +139,26 @@ impl<'a> ClaudeEvaluator<'a> {
     pub(crate) const fn keeping_results(mut self, dir: Option<&'a Path>) -> Self {
         self.keep_results = dir;
         self
+    }
+
+    /// The results `--keep-results` could not keep so far, taken out of the evaluator.
+    pub(crate) fn take_unkept(&mut self) -> Vec<Unkept> {
+        std::mem::take(&mut self.unkept)
+    }
+
+    /// Copies `batch`'s `result` into the `--keep-results` directory, if given, recording a
+    /// failed copy rather than failing a batch whose runs already happened and cost.
+    fn keep(&mut self, result: &Path, batch: &Batch<'_>) {
+        let Some(dir) = self.keep_results else {
+            return;
+        };
+        let name = kept_name(batch);
+        if let Err(error) = fs::copy(result, dir.join(&name)) {
+            self.unkept.push(Unkept {
+                name,
+                reason: error.to_string(),
+            });
+        }
     }
 
     /// What is left of the time limit.
@@ -210,17 +242,18 @@ impl Evaluator for ClaudeEvaluator<'_> {
             tmp_dir: Some(&tmp_dir),
         };
         let invoked = invoke(&invocation, left)?;
-        if let (Some(dir), Invoked::Result(_)) = (self.keep_results, &invoked) {
-            fs::copy(invocation.result_path(), dir.join(kept_name(batch)))
-                .map_err(RouterError::Workspace)?;
-        }
+        let result_path = invocation.result_path();
         match invoked {
             Invoked::TimedOut => Ok(stopped(true)),
-            Invoked::Result(value) => Ok(trials(
-                result::parse(value)?,
-                self.plugin_of(batch.arm),
-                &batch.cases,
-            )?),
+            Invoked::Result(value) => {
+                let ran = trials(
+                    result::parse(value)?,
+                    self.plugin_of(batch.arm),
+                    &batch.cases,
+                )?;
+                self.keep(&result_path, batch);
+                Ok(ran)
+            }
         }
     }
 }
