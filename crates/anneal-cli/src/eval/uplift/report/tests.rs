@@ -60,7 +60,30 @@ fn outcome(cases: Vec<Case>, runs: Vec<(&str, Arms)>) -> UpliftOutcome {
         cleanup: None,
         max_cost_usd: Some(25.0),
         anneal: None,
+        read_only_sandbox: None,
+        unkept: Vec::new(),
     }
+}
+
+#[test]
+fn a_run_made_where_bash_cannot_write_says_so_and_how_to_move_it() {
+    let mut outcome = outcome(Vec::new(), Vec::new());
+    outcome.read_only_sandbox = Some("/tmp".to_owned());
+
+    let mut out = Vec::new();
+    report(&outcome, &mut out).expect("written");
+    let envelope: Value = serde_json::from_slice(&out).expect("json");
+
+    assert_eq!(
+        envelope["findings"],
+        json!([{
+            "key": "eval/uplift/read-only-sandbox",
+            "message": "the run's workspace was made in /tmp, under which claude plugin eval's \
+                        Linux sandbox denies Bash every write (the anneal ledger's included), so \
+                        the cases that name Bash could not write; run again with --work-dir (or \
+                        TMPDIR) outside /tmp, /var/tmp, /dev/shm and /run/shm"
+        }])
+    );
 }
 
 /// The exit code and the finding keys of `outcome`'s envelope.

@@ -36,6 +36,7 @@ fn evaluator<'a>(
             baseline,
             anneal: None,
         },
+        &std::env::temp_dir(),
     )
 }
 
@@ -63,6 +64,7 @@ fn every_plugin_copy_holds_the_binary_where_the_launcher_looks_first() -> TestRe
                 target,
             }),
         },
+        &std::env::temp_dir(),
     )?;
 
     let placed = [Arm::With, Arm::Baseline, Arm::Without("diagnose")].map(|arm| {
@@ -103,6 +105,7 @@ fn a_skill_s_baseline_copy_inherits_an_executable_binary() -> TestResult {
                 target,
             }),
         },
+        &std::env::temp_dir(),
     )?;
 
     let mode = evaluator.target(Arm::Without("diagnose")).and_then(|copy| {
@@ -216,6 +219,63 @@ fn a_batch_runs_its_cases_single_arm_with_the_gated_tools_they_name_granted() {
         .map(OsString::from),
     );
     assert_eq!(args, expected);
+}
+
+#[test]
+fn each_case_withholds_the_gated_tools_its_batch_grants_that_it_does_not_name() -> TestResult {
+    let bash = Case {
+        slug: "bash".to_owned(),
+        ..case(&json!(["Skill", "Bash"]))
+    };
+    let write = Case {
+        slug: "write".to_owned(),
+        ..case(&json!(["Skill", "Write", "Edit"]))
+    };
+    let read = Case {
+        slug: "read".to_owned(),
+        ..case(&json!(["Skill", "Read"]))
+    };
+    let batch = Batch {
+        index: 1,
+        arm: Arm::With,
+        cases: vec![&bash, &write, &read],
+        runs: 3,
+        budget_usd: 1.0,
+    };
+    let dir = tempfile::tempdir()?;
+
+    write_cases(dir.path(), &batch)?;
+
+    let withheld = |slug: &str| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let text = fs::read(
+            dir.path()
+                .join(format!("diagnose--regression--{slug}/case.yaml")),
+        )?;
+        let mut value: serde_json::Value = serde_json::from_slice(&text)?;
+        Ok(value["execution"]["disallowed_tools"].take())
+    };
+    assert_eq!(
+        [withheld("bash")?, withheld("write")?, withheld("read")?],
+        [
+            json!(["Write", "Edit"]),
+            json!(["Bash"]),
+            json!(["Write", "Edit", "Bash"])
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_case_alone_in_its_batch_withholds_nothing() -> TestResult {
+    let bash = case(&json!(["Skill", "Bash"]));
+    let dir = tempfile::tempdir()?;
+
+    write_cases(dir.path(), &batch(vec![&bash]))?;
+
+    let text = fs::read(dir.path().join("diagnose--regression--flaky/case.yaml"))?;
+    let value: serde_json::Value = serde_json::from_slice(&text)?;
+    assert_eq!(value["execution"].get("disallowed_tools"), None);
+    Ok(())
 }
 
 #[test]

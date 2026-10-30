@@ -7,6 +7,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
+use super::claude::Unkept;
 use super::drive::Drove;
 use super::stats::Difference;
 use super::suites::{Coverage, SuiteKind};
@@ -209,6 +210,18 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
              launcher could",
         ));
     }
+    if let Some(dir) = &outcome.read_only_sandbox {
+        findings.push(Finding::new(
+            "eval/uplift/read-only-sandbox",
+            format!(
+                "the run's workspace was made in {dir}, under which claude plugin eval's Linux \
+                 sandbox denies Bash every write (the anneal ledger's included), so the cases \
+                 that name Bash could not write; run again with --work-dir (or TMPDIR) outside \
+                 /tmp, /var/tmp, /dev/shm and /run/shm"
+            ),
+        ));
+    }
+    findings.extend(outcome.unkept.iter().map(unkept_finding));
     findings.extend(incomplete_finding(outcome, short));
     if let Some(reason) = &outcome.cleanup {
         findings.push(Finding::new(
@@ -217,6 +230,17 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
         ));
     }
     findings
+}
+
+/// The finding of a batch result `--keep-results` could not keep.
+fn unkept_finding(unkept: &Unkept) -> Finding {
+    Finding::new(
+        format!("eval/uplift/keep-results:{}", unkept.name),
+        format!(
+            "--keep-results did not keep {}: {}; its batch's runs and cost still count",
+            unkept.name, unkept.reason
+        ),
+    )
 }
 
 /// The findings of one skill's missed bars: its uplift, each guard case that did not hold

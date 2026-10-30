@@ -4,6 +4,7 @@
 //! batch from its arguments.
 
 mod fixtures;
+mod work_dir;
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -21,14 +22,24 @@ fn plugin_skills() -> PathBuf {
     fixtures().join("eval-routing/skills")
 }
 
-/// `anneal eval uplift --skills <fixture skills> --suites <suites>` plus `args`.
+/// A directory for a run's `TMPDIR` and anneal home, outside the system's temporary directory,
+/// which the eval sandbox denies on Linux and the default work directory then skips.
+fn private_dir() -> std::io::Result<tempfile::TempDir> {
+    tempfile::Builder::new().tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+}
+
+/// `anneal eval uplift --skills <fixture skills> --suites <suites>` plus `args`, with its own
+/// `TMPDIR` and anneal home so a run never touches the real `~/.anneal`.
 fn eval_uplift(suites: &Path, args: &[&str]) -> std::io::Result<Output> {
+    let private = private_dir()?;
     Command::new(env!("CARGO_BIN_EXE_anneal"))
         .args(["eval", "uplift", "--skills"])
         .arg(plugin_skills())
         .arg("--suites")
         .arg(suites)
         .args(args)
+        .env("TMPDIR", private.path())
+        .env("ANNEAL_HOME", private.path())
         .output()
 }
 
@@ -219,7 +230,8 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 /// A `claude` that logs `<plugin copy> <eval dir> <budget> <runs> <allowed tools>` per batch to
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
-/// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_FAILS` set it writes no result
+/// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_TMPDIR_LOG` set it logs its
+/// `TMPDIR` and whether that is a directory. With `$FAKE_FAILS` set it writes no result
 /// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. A batch against
 /// the `baseline/` copy lists its plugin as `fixture-baseline`, the name in
 /// `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
@@ -249,6 +261,10 @@ if [ -n "${FAKE_SEEDS_LOG:-}" ]; then
   scripts=$(find "$target/$evaldir" -name scaffold.sh | wc -l | tr -d ' ')
   echo "$name $scaffold scripts=$scripts anneal=$placed" >> "$FAKE_SEEDS_LOG"
 fi
+if [ -n "${FAKE_TMPDIR_LOG:-}" ]; then
+  if [ -d "${TMPDIR:-}" ]; then made=dir; else made=missing; fi
+  echo "${TMPDIR:-unset} $made" >> "$FAKE_TMPDIR_LOG"
+fi
 if [ -n "${FAKE_FAILS:-}" ]; then echo 'Error: not logged in' >&2; exit 1; fi
 if [ "$name" = baseline ]; then listed=fixture-baseline; else listed=fixture; fi
 if [ "$name" = plugin ] || [ -n "${FAKE_BASE_PASSES:-}" ]; then passed=true; else passed=false; fi
@@ -272,6 +288,16 @@ struct FakeRun {
     dir: tempfile::TempDir,
     /// The run's `TMPDIR`.
     tmp: tempfile::TempDir,
+}
+
+/// The directories a [`FakeRun`] runs with: the plugin's skills, the suites and, if given,
+/// the current directory.
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+struct RunDirs<'a> {
+    skills: &'a Path,
+    suites: &'a Path,
+    cwd: Option<&'a Path>,
 }
 
 #[cfg(unix)]
@@ -303,14 +329,51 @@ impl FakeRun {
         env: &[(&str, &str)],
         args: &[&std::ffi::OsStr],
     ) -> Result<Self, Box<dyn Error>> {
+        let dirs = RunDirs {
+            skills,
+            suites,
+            cwd: None,
+        };
+        Self::launch(&dirs, env, args)
+    }
+
+    /// Runs the fixture suites against the fake from the current directory `cwd`, with `env`
+    /// set and `args` added.
+    fn in_cwd(
+        cwd: &Path,
+        env: &[(&str, &str)],
+        args: &[&std::ffi::OsStr],
+    ) -> Result<Self, Box<dyn Error>> {
+        let dirs = RunDirs {
+            skills: &plugin_skills(),
+            suites: &fixtures().join("eval-uplift/suites"),
+            cwd: Some(cwd),
+        };
+        Self::launch(&dirs, env, args)
+    }
+
+    fn launch(
+        dirs: &RunDirs<'_>,
+        env: &[(&str, &str)],
+        args: &[&std::ffi::OsStr],
+    ) -> Result<Self, Box<dyn Error>> {
         use std::os::unix::fs::PermissionsExt;
 
+        let RunDirs {
+            skills,
+            suites,
+            cwd,
+        } = *dirs;
         let dir = tempfile::tempdir()?;
-        let tmp = tempfile::tempdir()?;
+        let tmp = private_dir()?;
         let claude = dir.path().join("claude");
         std::fs::write(&claude, FAKE_CLAUDE)?;
         std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755))?;
-        let output = Command::new(env!("CARGO_BIN_EXE_anneal"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
+        if let Some(cwd) = cwd {
+            command.current_dir(cwd);
+        }
+        let output = command
             .args(["eval", "uplift", "--skills"])
             .arg(skills)
             .arg("--suites")
@@ -320,6 +383,7 @@ impl FakeRun {
             .args(args)
             .env("FAKE_CLAUDE_LOG", dir.path().join("claude.log"))
             .env("TMPDIR", tmp.path())
+            .env("ANNEAL_HOME", dir.path())
             .envs(env.iter().copied())
             .output()?;
         Ok(Self { output, dir, tmp })

@@ -17,6 +17,7 @@ mod real;
 pub mod routing;
 pub mod uplift;
 
+use std::ffi::OsString;
 use std::io::Write;
 
 use clap::{Args, Subcommand};
@@ -62,14 +63,19 @@ pub struct RoutingCommand {
     pub real: RealArgs,
 }
 
-/// Runs `anneal eval <suite>` and writes its envelope to `out`.
+/// Runs `anneal eval <suite>` and writes its envelope to `out`; `lookup` reads one environment
+/// variable (`eval uplift`'s default work directory).
 ///
 /// # Errors
 /// [`CliError::Usage`] for a Tier 2 flag without `--router claude` or a run flag with
 /// `eval uplift --check`, [`CliError::Eval`] or [`CliError::Uplift`] when the inputs could not
 /// be read or the real router could not run, [`CliError::Output`] when `out` cannot be
 /// written.
-pub fn run<O: Write>(args: &EvalArgs, out: &mut O) -> Result<Code, CliError> {
+pub fn run<O: Write>(
+    args: &EvalArgs,
+    lookup: impl Fn(&str) -> Option<OsString>,
+    out: &mut O,
+) -> Result<Code, CliError> {
     match &args.suite {
         EvalSuite::Routing(command) => match command.real.settings()? {
             None => report(&routing::evaluate(&command.inputs)?, out),
@@ -79,7 +85,7 @@ pub fn run<O: Write>(args: &EvalArgs, out: &mut O) -> Result<Code, CliError> {
         },
         EvalSuite::Uplift(args) => {
             let mode = args.mode()?;
-            uplift::report(&uplift::evaluate(args, &mode)?, out)
+            uplift::report(&uplift::evaluate(args, &mode, lookup)?, out)
         }
     }
 }

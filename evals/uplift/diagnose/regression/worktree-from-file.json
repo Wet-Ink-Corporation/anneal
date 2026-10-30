@@ -2,7 +2,8 @@
   "behaviour": "outcome",
   "fixture": "py-app",
   "seed": "anneal #23 review (blocker, reproduced): the preconditions hook judged an edit by its own cwd's worktree, not the edited file's.",
-  "prompt": "I keep an `app.ini` with `marker = WARN` under `[report]` in /srv/logs, next to the logs. Running `python3 -m app report /srv/logs/today.log` from my home directory still reports only the ERROR lines, never the WARN ones. A colleague says it works for them. Find the cause and fix it.",
+  "prompt": "I keep an `app.ini` with `marker = WARN` under `[report]` next to my logs, in another directory such as /srv/logs (not present here). Running `python3 -m app report /srv/logs/today.log` from my home directory still reports only the ERROR lines, never the WARN ones. A colleague says it works for them. Find the cause and fix it.",
+  "max_turns": 25,
   "allowed_tools": [
     "Skill",
     "Read",

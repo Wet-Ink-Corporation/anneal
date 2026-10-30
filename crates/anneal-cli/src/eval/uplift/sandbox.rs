@@ -1,0 +1,61 @@
+//! Whether `claude plugin eval`'s sandbox lets Bash write in a run whose workspace is under a
+//! directory.
+//!
+//! On Linux `claude plugin eval` writes each run's sandbox settings with its own `home/` and
+//! `tmp/` in `allowWrite`, and `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm` in `denyWrite`;
+//! the deny wins, so a run made under one of those can write nothing from Bash, the anneal
+//! ledger included (read from Claude Code 2.1.314's bundle). macOS makes its runs under `/tmp`
+//! and leaves that out of the deny list, so only Linux is affected.
+
+use std::fs;
+use std::path::Path;
+
+/// The directories the Linux eval sandbox denies Bash every write under.
+const DENIED_ROOTS: [&str; 4] = ["/tmp", "/var/tmp", "/dev/shm", "/run/shm"];
+
+/// Whether `dir` is one of [`DENIED_ROOTS`] or inside one, compared component by component
+/// (`/tmpfiles` is not inside `/tmp`).
+fn under_denied_root(dir: &Path) -> bool {
+    DENIED_ROOTS.iter().any(|root| dir.starts_with(root))
+}
+
+/// Whether Bash in a run whose workspace is made under `work_dir` can write nothing on this
+/// host: on Linux, `work_dir` resolved (links followed) is under a denied directory.
+pub(crate) fn denies_bash_writes(work_dir: &Path) -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    // The sandbox judges resolved paths; a directory that cannot be resolved is judged as
+    // written, which is the best this check can do without it.
+    let resolved = fs::canonicalize(work_dir);
+    under_denied_root(resolved.as_deref().unwrap_or(work_dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::under_denied_root;
+
+    #[test]
+    fn a_directory_in_or_at_a_denied_root_is_denied() {
+        let denied = [
+            "/tmp",
+            "/tmp/anneal",
+            "/var/tmp/x",
+            "/dev/shm/x",
+            "/run/shm",
+        ]
+        .map(|dir| under_denied_root(Path::new(dir)));
+
+        assert_eq!(denied, [true; 5]);
+    }
+
+    #[test]
+    fn a_directory_beside_or_above_a_denied_root_is_not() {
+        let denied = ["/tmpfiles", "/home/me/.anneal/tmp", "/var", "/", "tmp/x"]
+            .map(|dir| under_denied_root(Path::new(dir)));
+
+        assert_eq!(denied, [false; 5]);
+    }
+}

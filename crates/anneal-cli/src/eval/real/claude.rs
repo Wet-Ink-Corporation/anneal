@@ -82,6 +82,10 @@ pub(crate) struct Invocation<'a> {
     pub(crate) root: &'a Path,
     /// Names this run's files in the workspace: `result-<tag>.json`, `stderr-<tag>.log`.
     pub(crate) tag: &'a str,
+    /// The child's `TMPDIR`, or `None` to leave it as inherited. `claude plugin eval` makes
+    /// each run's sandbox root there, and on Linux its sandbox denies Bash every write under
+    /// `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm`, the run's own directories included.
+    pub(crate) tmp_dir: Option<&'a Path>,
 }
 
 /// Where `--json` writes the result of the run tagged `tag` in the workspace at `root`: the
@@ -127,7 +131,11 @@ pub(crate) fn invoke(invocation: &Invocation<'_>, left: Duration) -> Result<Invo
         .create_new(true)
         .open(&stderr_path)
         .map_err(RouterError::Workspace)?;
-    let mut child = Command::new(invocation.program)
+    let mut command = Command::new(invocation.program);
+    if let Some(dir) = invocation.tmp_dir {
+        command.env("TMPDIR", dir);
+    }
+    let mut child = command
         .args(invocation.args)
         .current_dir(invocation.root)
         .stdin(Stdio::null())
