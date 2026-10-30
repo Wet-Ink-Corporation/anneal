@@ -96,6 +96,7 @@ impl Router for ClaudeRouter<'_> {
             args: &arguments(&self.options, root, batch),
             root,
             tag: &tag,
+            tmp_dir: None,
         };
         match invoke(&invocation, left)? {
             Invoked::TimedOut => Ok(stopped(Spend::Unknown)),

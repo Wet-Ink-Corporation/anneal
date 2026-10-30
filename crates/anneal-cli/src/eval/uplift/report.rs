@@ -209,6 +209,17 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
              launcher could",
         ));
     }
+    if let Some(dir) = &outcome.read_only_sandbox {
+        findings.push(Finding::new(
+            "eval/uplift/read-only-sandbox",
+            format!(
+                "the run's workspace was made in {dir}, under which claude plugin eval's Linux \
+                 sandbox denies Bash every write (the anneal ledger's included), so the cases \
+                 that name Bash could not write; run again with --work-dir (or TMPDIR) outside \
+                 /tmp, /var/tmp, /dev/shm and /run/shm"
+            ),
+        ));
+    }
     findings.extend(incomplete_finding(outcome, short));
     if let Some(reason) = &outcome.cleanup {
         findings.push(Finding::new(

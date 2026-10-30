@@ -1,6 +1,6 @@
 //! The flags of `anneal eval uplift` and the mode they resolve to.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,6 +12,7 @@ use crate::eval::real::args::{
     DEFAULT_CONCURRENCY, DEFAULT_MAX_COST_USD, DEFAULT_TIMEOUT, cost_cap,
 };
 use crate::eval::real::claude::Options;
+use crate::paths::anneal_home_from;
 
 /// Arguments of `anneal eval uplift`.
 #[derive(Debug, Clone, Args)]
@@ -73,6 +74,38 @@ pub struct UpliftArgs {
         value_parser = BoolishValueParser::new().map(Scaffolds::from_flag)
     )]
     pub scaffolds: Scaffolds,
+    /// The directory the run's workspace is made in, made if missing (by default `$TMPDIR`
+    /// when set, else `tmp` in the anneal home). `claude` runs with its `TMPDIR` inside the
+    /// workspace, and on Linux the eval sandbox denies Bash every write under `/tmp`,
+    /// `/var/tmp`, `/dev/shm` and `/run/shm`, so for a case that names Bash give a directory
+    /// outside them
+    #[arg(long, value_name = "DIR")]
+    pub work_dir: Option<PathBuf>,
+    /// Copy each batch's `claude plugin eval` result, which holds every run's grader
+    /// verdicts, into DIR (made if missing) as `result-<batch>-<arm>.json`, where `<arm>` is
+    /// `with`, `without-<skill>` or `baseline`, so they outlive the workspace
+    #[arg(long, value_name = "DIR")]
+    pub keep_results: Option<PathBuf>,
+}
+
+/// The variable whose value, when set and not empty, is the default work directory.
+const TMPDIR_VAR: &str = "TMPDIR";
+
+/// Where a run's workspace is made when `--work-dir` is not given: `$TMPDIR` when set and not
+/// empty (the operator's choice of temporary directory), else `<anneal home>/tmp`, which is
+/// outside the directories the eval sandbox denies on Linux, else, with no home either, the
+/// system's temporary directory. `lookup` reads one variable.
+pub(crate) fn default_work_dir(lookup: impl Fn(&str) -> Option<OsString>) -> PathBuf {
+    if let Some(dir) = lookup(TMPDIR_VAR).filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    match anneal_home_from(lookup) {
+        Ok(home) => home.join("tmp"),
+        // No usable home (none set, or a relative one) to put it in: this is only a default,
+        // and the system's temporary directory still runs every case, only without Bash writes
+        // on Linux, which the run's `eval/uplift/read-only-sandbox` finding then says.
+        Err(_no_home) => std::env::temp_dir(),
+    }
 }
 
 /// Whether a run may run the scaffold scripts that seed its cases' fixtures
@@ -135,6 +168,11 @@ pub(crate) struct Settings<'a> {
     pub(crate) gated_tools: GatedTools,
     /// Whether the selected cases' scaffold scripts may run.
     pub(crate) scaffolds: Scaffolds,
+    /// `--work-dir`, the directory the run's workspace is made in; without it the run uses
+    /// [`default_work_dir`].
+    pub(crate) work_dir: Option<&'a Path>,
+    /// `--keep-results`, where each batch's result is copied, if given.
+    pub(crate) keep_results: Option<&'a Path>,
 }
 
 impl UpliftArgs {
@@ -151,6 +189,8 @@ impl UpliftArgs {
             ("--changed-since", self.changed_since.is_some()),
             ("--allow-gated-tools", self.gated_tools == GatedTools::Allow),
             ("--allow-scaffolds", self.scaffolds == Scaffolds::Allow),
+            ("--work-dir", self.work_dir.is_some()),
+            ("--keep-results", self.keep_results.is_some()),
         ]
         .into_iter()
         .find_map(|(flag, given)| given.then_some(flag))
@@ -210,15 +250,18 @@ impl UpliftArgs {
             baseline: self.baseline.as_deref(),
             gated_tools: self.gated_tools,
             scaffolds: self.scaffolds,
+            work_dir: self.work_dir.as_deref(),
+            keep_results: self.keep_results.as_deref(),
         }))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::{GatedTools, Mode, Scaffolds, UpliftArgs};
+    use super::{GatedTools, Mode, Scaffolds, UpliftArgs, default_work_dir};
     use crate::error::CliError;
 
     fn args() -> UpliftArgs {
@@ -237,7 +280,66 @@ mod tests {
             changed_since: None,
             gated_tools: GatedTools::Refuse,
             scaffolds: Scaffolds::Refuse,
+            work_dir: None,
+            keep_results: None,
         }
+    }
+
+    /// A lookup that knows only `vars`.
+    fn lookup(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let vars: Vec<(String, OsString)> = vars
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), OsString::from(value)))
+            .collect();
+        move |var| {
+            vars.iter()
+                .find(|(name, _)| name == var)
+                .map(|(_, value)| value.to_owned())
+        }
+    }
+
+    #[test]
+    fn the_default_work_dir_is_tmpdir_when_it_is_set() {
+        let dir = default_work_dir(lookup(&[("TMPDIR", "/scratch/me"), ("HOME", "/home/me")]));
+
+        assert_eq!(dir, PathBuf::from("/scratch/me"));
+    }
+
+    #[test]
+    fn without_tmpdir_the_default_work_dir_is_the_anneal_home_s_tmp() {
+        let unset = default_work_dir(lookup(&[("HOME", "/home/me")]));
+        let empty = default_work_dir(lookup(&[("TMPDIR", ""), ("ANNEAL_HOME", "/srv/anneal")]));
+
+        assert_eq!(
+            (unset, empty),
+            (
+                PathBuf::from("/home/me/.anneal/tmp"),
+                PathBuf::from("/srv/anneal/tmp")
+            )
+        );
+    }
+
+    #[test]
+    fn with_no_tmpdir_and_no_home_the_default_work_dir_is_the_system_temp_dir() {
+        let dir = default_work_dir(lookup(&[]));
+
+        assert_eq!(dir, std::env::temp_dir());
+    }
+
+    #[test]
+    fn a_run_keeps_the_work_dir_given() {
+        let args = UpliftArgs {
+            work_dir: Some(PathBuf::from("/var/eval")),
+            ..args()
+        };
+
+        let mode = args.mode();
+
+        assert!(
+            matches!(&mode, Ok(Mode::Run(settings))
+                if settings.work_dir == Some(std::path::Path::new("/var/eval"))),
+            "{mode:?}"
+        );
     }
 
     fn reason(mode: Result<Mode<'_>, CliError>) -> Option<String> {

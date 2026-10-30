@@ -1,6 +1,6 @@
 //! The temporary workspace a Tier 2 or Tier 3 run works in: a fresh directory under the
-//! system's temporary directory holding a copy of the plugin, removed by
-//! [`Workspace::finish`].
+//! system's temporary directory (Tier 2) or the run's work directory (Tier 3) holding a copy
+//! of the plugin, removed by [`Workspace::finish`].
 
 use std::fs;
 use std::io;
@@ -45,17 +45,18 @@ impl Workspace {
     /// the plugin is `InvalidInput`; a plugin over [`Limits::PLUGIN`] is `FileTooLarge`). The
     /// directory is removed again when the copy fails.
     pub(crate) fn create(plugin: &Path) -> io::Result<Self> {
-        Self::create_for("routing", plugin)
+        Self::create_in(&std::env::temp_dir(), "routing", plugin)
     }
 
-    /// [`Workspace::create`] for the suite named `suite`, whose directory is
-    /// `anneal-eval-<suite>-*`.
+    /// [`Workspace::create`] under `base` (made first if missing) for the suite named
+    /// `suite`, whose directory is `anneal-eval-<suite>-*`.
     ///
     /// # Errors
-    /// As [`Workspace::create`].
-    pub(crate) fn create_for(suite: &str, plugin: &Path) -> io::Result<Self> {
+    /// As [`Workspace::create`], and the I/O error that stopped `base` being made.
+    pub(crate) fn create_in(base: &Path, suite: &str, plugin: &Path) -> io::Result<Self> {
+        fs::create_dir_all(base)?;
         let workspace = Self {
-            root: fresh_dir(suite)?,
+            root: fresh_dir(base, suite)?,
         };
         match copy_tree(plugin, &workspace.plugin(), Limits::PLUGIN) {
             Ok(()) => Ok(workspace),
@@ -88,12 +89,11 @@ impl Workspace {
     }
 }
 
-/// Makes a new, empty directory under the temporary directory; never reuses an existing one.
-fn fresh_dir(suite: &str) -> io::Result<PathBuf> {
+/// Makes a new, empty directory under `base`; never reuses an existing one.
+fn fresh_dir(base: &Path, suite: &str) -> io::Result<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
-    let base = std::env::temp_dir();
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for attempt in 0..ATTEMPTS {
         let path = base.join(format!(
@@ -218,6 +218,27 @@ mod tests {
         let root = workspace.root().to_path_buf();
         workspace.finish()?;
         assert!(!root.exists(), "removed");
+        Ok(())
+    }
+
+    #[test]
+    fn a_workspace_made_in_a_base_that_does_not_exist_yet_makes_the_base() -> TestResult {
+        let source = tempfile::tempdir()?;
+        let parent = tempfile::tempdir()?;
+        let base = parent.path().join("cache/tmp");
+
+        let workspace = Workspace::create_in(&base, "uplift", source.path())?;
+
+        let (inside, name) = (
+            workspace.root().parent() == Some(base.as_path()),
+            workspace
+                .root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("anneal-eval-uplift-")),
+        );
+        workspace.finish()?;
+        assert_eq!((inside, name, base.is_dir()), (true, true, true));
         Ok(())
     }
 

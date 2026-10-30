@@ -8,7 +8,9 @@
 //! `baseline/`. No copy keeps an `anneal-uplift-*` eval directory. Each batch writes its
 //! cases below the copy it runs against and runs single-arm (`--ablation none`): the two arms
 //! are two runs, not `claude plugin eval`'s own with-without ablation, which would strip the
-//! whole plugin and its hooks.
+//! whole plugin and its hooks. A batch grants the union of its cases' gated tools, so each
+//! case withholds the ones it does not name, and `claude` runs with its `TMPDIR` in the
+//! workspace, outside the directories whose writes the Linux eval sandbox denies.
 
 mod libexec;
 mod scaffold;
@@ -73,21 +75,28 @@ pub(crate) struct ClaudeEvaluator<'a> {
     plugin: &'a str,
     baseline: Option<&'a str>,
     started: Instant,
+    /// Where each batch's result is copied (`--keep-results`), if anywhere.
+    keep_results: Option<&'a Path>,
 }
 
 impl<'a> ClaudeEvaluator<'a> {
     /// An evaluator over a fresh copy of `plugins`' plugin, and of its baseline plugin if
-    /// given, neither holding an eval directory and each holding `plugins.anneal`'s binary if
-    /// given. The time limit starts now, before the copies, so `--timeout` bounds the whole
-    /// run.
+    /// given, in a workspace made in `work_dir`, neither copy holding an eval directory and
+    /// each holding `plugins.anneal`'s binary if given, with the [`CHILD_TMP`] directory each
+    /// batch's `claude` gets as its `TMPDIR`. The time limit starts now, before the copies, so
+    /// `--timeout` bounds the whole run.
     ///
     /// # Errors
     /// [`RouterError::Workspace`] when the workspace cannot be made, a plugin copied or the
     /// binary placed (the workspace is removed again).
-    pub(crate) fn new(options: Options<'a>, plugins: Plugins<'a>) -> Result<Self, RouterError> {
+    pub(crate) fn new(
+        options: Options<'a>,
+        plugins: Plugins<'a>,
+        work_dir: &Path,
+    ) -> Result<Self, RouterError> {
         let started = Instant::now();
-        let workspace =
-            Workspace::create_for("uplift", plugins.dir).map_err(RouterError::Workspace)?;
+        let workspace = Workspace::create_in(work_dir, "uplift", plugins.dir)
+            .map_err(RouterError::Workspace)?;
         if let Err(error) = prepare(
             &workspace,
             plugins.baseline.map(|base| base.dir),
@@ -109,7 +118,15 @@ impl<'a> ClaudeEvaluator<'a> {
             plugin: plugins.name,
             baseline: plugins.baseline.map(|base| base.name),
             started,
+            keep_results: None,
         })
+    }
+
+    /// The evaluator, copying each batch's result into the existing directory `dir`, if
+    /// given, as [`kept_name`] names it.
+    pub(crate) const fn keeping_results(mut self, dir: Option<&'a Path>) -> Self {
+        self.keep_results = dir;
+        self
     }
 
     /// What is left of the time limit.
@@ -184,13 +201,20 @@ impl Evaluator for ClaudeEvaluator<'_> {
         }
         let root = self.workspace.root();
         let tag = batch.index.to_string();
+        let tmp_dir = root.join(CHILD_TMP);
         let invocation = Invocation {
             program: self.options.program,
             args: &arguments(&self.options, root, &target, batch),
             root,
             tag: &tag,
+            tmp_dir: Some(&tmp_dir),
         };
-        match invoke(&invocation, left)? {
+        let invoked = invoke(&invocation, left)?;
+        if let (Some(dir), Invoked::Result(_)) = (self.keep_results, &invoked) {
+            fs::copy(invocation.result_path(), dir.join(kept_name(batch)))
+                .map_err(RouterError::Workspace)?;
+        }
+        match invoked {
             Invoked::TimedOut => Ok(stopped(true)),
             Invoked::Result(value) => Ok(trials(
                 result::parse(value)?,
@@ -198,6 +222,17 @@ impl Evaluator for ClaudeEvaluator<'_> {
                 &batch.cases,
             )?),
         }
+    }
+}
+
+/// The name `--keep-results` gives `batch`'s result: `result-<index>-<arm>.json`, the arm
+/// `with`, `without-<skill>` or `baseline`.
+fn kept_name(batch: &Batch<'_>) -> String {
+    let index = batch.index;
+    match batch.arm {
+        Arm::With => format!("result-{index}-with.json"),
+        Arm::Without(skill) => format!("result-{index}-without-{skill}.json"),
+        Arm::Baseline => format!("result-{index}-baseline.json"),
     }
 }
 
@@ -216,6 +251,12 @@ fn stopped(killed: bool) -> Ran {
 /// The prefix of every batch's eval directory.
 const EVAL_DIR_PREFIX: &str = "anneal-uplift-";
 
+/// The workspace's directory each batch's `claude` gets as its `TMPDIR`, where
+/// `claude plugin eval` makes its runs' sandbox roots: inside the work directory rather than
+/// under the system's `/tmp`, whose writes the Linux eval sandbox denies (`super::sandbox`),
+/// and removed with the workspace.
+const CHILD_TMP: &str = "tmp";
+
 /// The eval directory of batch `index`, below the plugin copy it runs against.
 fn eval_dir(index: u32) -> String {
     format!("{EVAL_DIR_PREFIX}{index}")
@@ -223,12 +264,13 @@ fn eval_dir(index: u32) -> String {
 
 /// Leaves the fresh `workspace`'s plugin copy, and a copy of the baseline plugin at
 /// `baseline` if given, holding the plugins and no eval directory, so no batch runs cases
-/// nobody selected, and the `anneal` binary if given.
+/// nobody selected, and the `anneal` binary if given; and makes the children's [`CHILD_TMP`].
 fn prepare(
     workspace: &Workspace,
     baseline: Option<&Path>,
     anneal: Option<Placement<'_>>,
 ) -> io::Result<()> {
+    fs::create_dir(workspace.root().join(CHILD_TMP))?;
     let plugin = workspace.plugin();
     remove_eval_dirs(&plugin)?;
     place(anneal, &plugin)?;
@@ -263,13 +305,32 @@ fn remove_eval_dirs(copy: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes each case of `batch` to `<dir>/<case>/case.yaml`, as JSON, with the scaffold script
-/// beside it ([`scaffold::SCRIPT_FILE`]) for a case seeded from a fixture.
+/// The gated tools `batch` grants with `--allow-tools`: every one its cases name.
+/// `claude plugin eval` grants them to every case of the batch, so [`write_cases`] has each
+/// case withhold those it does not name.
+fn granted(batch: &Batch<'_>) -> BTreeSet<Tool> {
+    batch
+        .cases
+        .iter()
+        .flat_map(|case| case.body.allowed_tools.iter().copied())
+        .filter(|tool| tool.is_gated())
+        .collect()
+}
+
+/// Writes each case of `batch` to `<dir>/<case>/case.yaml`, as JSON, withholding the gated
+/// tools the batch grants that the case does not name, with the scaffold script beside it
+/// ([`scaffold::SCRIPT_FILE`]) for a case seeded from a fixture.
 fn write_cases(dir: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
+    let granted = granted(batch);
     for case in &batch.cases {
         let case_dir = dir.join(case.name());
         fs::create_dir_all(&case_dir).map_err(RouterError::Workspace)?;
-        let text = serde_json::to_vec_pretty(&case_file(case, batch.runs))
+        let withheld = granted
+            .iter()
+            .copied()
+            .filter(|tool| !case.body.allowed_tools.contains(tool))
+            .collect();
+        let text = serde_json::to_vec_pretty(&case_file(case, batch.runs).withholding(withheld))
             .map_err(|error| RouterError::Workspace(io::Error::other(error)))?;
         fs::write(case_dir.join("case.yaml"), text).map_err(RouterError::Workspace)?;
         if let Some(fixture) = &case.fixture {
@@ -309,12 +370,7 @@ pub(crate) fn arguments(
         "--max-cost-usd".into(),
         budget_arg(batch.budget_usd).into(),
     ]);
-    let gated: BTreeSet<Tool> = batch
-        .cases
-        .iter()
-        .flat_map(|case| case.body.allowed_tools.iter().copied())
-        .filter(|tool| tool.is_gated())
-        .collect();
+    let gated = granted(batch);
     if !gated.is_empty() {
         args.push("--allow-tools".into());
         args.extend(gated.into_iter().map(|tool| tool.name().into()));
@@ -366,6 +422,18 @@ struct Execution<'a> {
     max_turns: u32,
     timeout_seconds: u32,
     allowed_tools: &'a [Tool],
+    /// Gated tools the batch's `--allow-tools` grants that this case does not name, which
+    /// `claude plugin eval` then removes from this case's runs alone.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    disallowed_tools: Vec<Tool>,
+}
+
+impl CaseFile<'_> {
+    /// The case file with `tools` withheld from its runs (`execution.disallowed_tools`).
+    pub(crate) fn withholding(mut self, tools: Vec<Tool>) -> Self {
+        self.execution.disallowed_tools = tools;
+        self
+    }
 }
 
 /// `case` as `claude plugin eval` reads it, run `runs` times; a case seeded from a fixture
@@ -389,6 +457,7 @@ pub(crate) fn case_file(case: &Case, runs: u32) -> CaseFile<'_> {
             max_turns: case.body.max_turns,
             timeout_seconds: case.body.timeout_seconds,
             allowed_tools: &case.body.allowed_tools,
+            disallowed_tools: Vec::new(),
         },
         runs,
         graders: &case.body.graders,

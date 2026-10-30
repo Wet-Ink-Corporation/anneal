@@ -4,6 +4,7 @@
 //! batch from its arguments.
 
 mod fixtures;
+mod work_dir;
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -219,7 +220,8 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 /// A `claude` that logs `<plugin copy> <eval dir> <budget> <runs> <allowed tools>` per batch to
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
-/// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_FAILS` set it writes no result
+/// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_TMPDIR_LOG` set it logs its
+/// `TMPDIR` and whether that is a directory. With `$FAKE_FAILS` set it writes no result
 /// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. A batch against
 /// the `baseline/` copy lists its plugin as `fixture-baseline`, the name in
 /// `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
@@ -248,6 +250,10 @@ if [ -n "${FAKE_SEEDS_LOG:-}" ]; then
   done
   scripts=$(find "$target/$evaldir" -name scaffold.sh | wc -l | tr -d ' ')
   echo "$name $scaffold scripts=$scripts anneal=$placed" >> "$FAKE_SEEDS_LOG"
+fi
+if [ -n "${FAKE_TMPDIR_LOG:-}" ]; then
+  if [ -d "${TMPDIR:-}" ]; then made=dir; else made=missing; fi
+  echo "${TMPDIR:-unset} $made" >> "$FAKE_TMPDIR_LOG"
 fi
 if [ -n "${FAKE_FAILS:-}" ]; then echo 'Error: not logged in' >&2; exit 1; fi
 if [ "$name" = baseline ]; then listed=fixture-baseline; else listed=fixture; fi
