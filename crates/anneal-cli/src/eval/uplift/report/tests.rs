@@ -5,9 +5,10 @@ use serde_json::{Value, json};
 use super::report;
 use crate::eval::uplift::case::parse;
 use crate::eval::uplift::drive::Drove;
+use crate::eval::uplift::fixture::Fixture;
 use crate::eval::uplift::suites::{Case, SuiteKind, Suites};
 use crate::eval::uplift::tally::Arms;
-use crate::eval::uplift::{BaselineKind, Trial, UpliftOutcome};
+use crate::eval::uplift::{BaselineKind, PlacedAnneal, Trial, UpliftOutcome};
 
 /// A `plan` case in `suite` named `slug`, of `behaviour`, with one grader `a`.
 fn case(suite: SuiteKind, slug: &str, behaviour: &str) -> Case {
@@ -24,6 +25,7 @@ fn case(suite: SuiteKind, slug: &str, behaviour: &str) -> Case {
         slug: slug.to_owned(),
         file: format!("plan/{}/{slug}.json", suite.dir()),
         body: parse(text.as_bytes()).expect("valid"),
+        fixture: None,
     }
 }
 
@@ -57,6 +59,7 @@ fn outcome(cases: Vec<Case>, runs: Vec<(&str, Arms)>) -> UpliftOutcome {
         baseline: Some(BaselineKind::SkillRemoved),
         cleanup: None,
         max_cost_usd: Some(25.0),
+        anneal: None,
     }
 }
 
@@ -189,5 +192,81 @@ fn the_gated_tools_cases_grant_are_listed_per_case_and_named_in_a_finding() {
                             (plan/regression/b.json); review those cases before running them"
             }])
         )
+    );
+}
+
+/// A `plan` regression case named `slug` seeded from the fixture `fixture`.
+fn seeded(slug: &str, fixture: &str) -> Case {
+    Case {
+        fixture: Some(Fixture::sample(fixture)),
+        ..case(SuiteKind::Regression, slug, "outcome")
+    }
+}
+
+#[test]
+fn the_cases_seeded_from_fixtures_are_listed_and_named_in_a_finding() {
+    let mut outcome = outcome(
+        vec![
+            case(SuiteKind::Regression, "a", "outcome"),
+            seeded("b", "crate"),
+            seeded("c", "docs"),
+        ],
+        Vec::new(),
+    );
+    outcome.check = true;
+    outcome.drove = None;
+
+    let mut out = Vec::new();
+    report(&outcome, &mut out).expect("written");
+    let envelope: Value = serde_json::from_slice(&out).expect("json");
+
+    assert_eq!(
+        (&envelope["data"]["scaffolded"], &envelope["findings"]),
+        (
+            &json!([
+                {"case": "plan/regression/b.json", "fixture": "crate"},
+                {"case": "plan/regression/c.json", "fixture": "docs"}
+            ]),
+            &json!([{
+                "key": "eval/uplift/scaffolded",
+                "message": "a run seeds 2 cases from fixtures with scaffold scripts that run \
+                            outside the eval sandbox with your rights (plan/regression/b.json, \
+                            plan/regression/c.json); review those cases and fixtures before \
+                            running them with --allow-scaffolds"
+            }])
+        )
+    );
+}
+
+#[test]
+fn a_run_names_the_target_its_copies_got_the_binary_under() {
+    let mut placed = outcome(Vec::new(), Vec::new());
+    placed.anneal = Some(PlacedAnneal::Target("x86_64-unknown-linux-musl"));
+    let mut unknown = outcome(Vec::new(), Vec::new());
+    unknown.anneal = Some(PlacedAnneal::UnknownHost);
+
+    let envelopes = [placed, unknown].map(|outcome| {
+        let mut out = Vec::new();
+        report(&outcome, &mut out).expect("written");
+        serde_json::from_slice::<Value>(&out).expect("json")
+    });
+
+    assert_eq!(
+        envelopes
+            .iter()
+            .map(|envelope| (&envelope["data"]["libexec_target"], &envelope["findings"]))
+            .collect::<Vec<_>>(),
+        [
+            (&json!("x86_64-unknown-linux-musl"), &json!([])),
+            (
+                &Value::Null,
+                &json!([{
+                    "key": "eval/uplift/libexec",
+                    "message": "no anneal binary was placed in the plugin copies: the plugin's \
+                                launcher knows no target for this host, so the runs' hooks and \
+                                skills found anneal only if the launcher could"
+                }])
+            ),
+        ]
     );
 }

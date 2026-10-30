@@ -183,6 +183,44 @@ fn a_brace_built_option_beside_an_expansion_is_read_as_the_option() -> TestResul
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_model_s_human_verdict_is_denied_as_human_only_and_its_plan_approval_is_not() -> TestResult {
+    let scratch = Scratch::new()?;
+    let verdict = "bash -c 'anneal verdict set --pr 7 --sha HEAD --level approved --source \
+                   human --actor human --via bash'";
+
+    let denied = deny_reason(&scratch.guard(&scratch.bash(verdict)?)?)?;
+    let approved = scratch.guard(&scratch.bash("anneal plan approve p.md --actor human")?)?;
+
+    assert_eq!(
+        denied,
+        "ERROR guard human-only: human verdicts are human-only: use /anneal or run it in your \
+         own terminal",
+        "the rule and the one line"
+    );
+    assert_eq!(
+        (
+            approved.status.code(),
+            approved.stdout.is_empty(),
+            approved.stderr.is_empty()
+        ),
+        (Some(0), true, true),
+        "plan approve stays allowed, silently: {approved:?}"
+    );
+    let events = scratch.blocked()?;
+    let points: Vec<Option<&Value>> = events
+        .iter()
+        .map(|event| event.pointer("/event/point"))
+        .collect();
+    assert_eq!(
+        points,
+        [Some(&Value::from("guard.human-only"))],
+        "the denial alone is recorded"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn an_allowed_command_is_silent_and_records_nothing() -> TestResult {
     let scratch = Scratch::new()?;
 
@@ -341,6 +379,46 @@ fn a_git_that_never_answers_still_gets_the_deny_out_within_the_hook_budget() -> 
             && reason.contains("not recorded in the ledger")
             && reason.contains("git did not answer within 1s"),
         "denied, with a note that the block was not recorded: {reason}"
+    );
+    assert!(
+        elapsed < HOOK_BUDGET,
+        "the deny arrives within the hook's timeout: {elapsed:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary and a fake git")]
+fn a_git_whose_grandchild_holds_its_output_still_gets_the_deny_out_within_the_hook_budget()
+-> TestResult {
+    use std::fs::{self, Permissions};
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    /// The hook's `timeout` in `hooks.json`: after it, Claude Code blocks without the reason.
+    const HOOK_BUDGET: Duration = Duration::from_secs(5);
+
+    let scratch = Scratch::new()?;
+    let bin = scratch.path().join("bin");
+    fs::create_dir(&bin)?;
+    let git = bin.join("git");
+    // Killing the wrapper leaves its `sleep` holding git's stdout and stderr for 30 s (#132).
+    fs::write(&git, "#!/bin/sh\nsleep 30\nexit 0\n")?;
+    fs::set_permissions(&git, Permissions::from_mode(0o755))?;
+    let mut command = anneal_in(scratch.path());
+    command.env("PATH", format!("{}:/bin:/usr/bin", bin.display()));
+
+    // The one clock read: the budget is wall time by definition.
+    let started = Instant::now();
+    let output = run_guard(command, &scratch.bash("rm -rf /")?)?;
+    let elapsed = started.elapsed();
+
+    let reason = deny_reason(&output)?;
+    assert!(
+        reason.starts_with("ERROR guard rm-rf: ")
+            && reason.contains("git did not answer within 1s"),
+        "denied, naming the limit git was given: {reason}"
     );
     assert!(
         elapsed < HOOK_BUDGET,

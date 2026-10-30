@@ -1,16 +1,19 @@
 //! `anneal lint spec`: checks a spec written from `plugin/playbooks/spec.template.md`.
 //!
-//! Six rules, each finding with a fix (see `docs/spec.md`): the required sections are present
+//! Seven rules, each finding with a fix (see `docs/spec.md`): the required sections are present
 //! (`sections`), every acceptance criterion is EARS (`ears`), Out of Scope is not empty
 //! (`out-of-scope`), at most [`MAX_CLARIFICATIONS`] `[NEEDS CLARIFICATION]` markers
 //! (`needs-clarification`), the constitution check covers the constitution's gates and
-//! justifies each violation (`constitution`), and no avoided glossary term is used
-//! (`avoided-term`). [`check`] is the pure check, [`lint`] the edge that reads the files.
+//! justifies each violation (`constitution`), no avoided glossary term is used
+//! (`avoided-term`), and a `Tree:` header line, when there is one, names a valid design tree
+//! (`tree`, #77). [`check`] is the pure check, [`lint`] the edge that reads the files.
 
 mod checks;
 mod constitution;
 pub mod ears;
+pub(crate) mod field;
 pub(crate) mod markdown;
+mod tree;
 
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
@@ -28,7 +31,10 @@ use crate::lint::skills::LintError;
 use crate::lint::terms::Glossary;
 use checks::{ACCEPTANCE_CRITERIA, CONSTITUTION_CHECK, OUT_OF_SCOPE, find};
 use constitution::Constitution;
-use markdown::Document;
+use markdown::{Document, Line, Section};
+// `TreeLink` stays public: it is the type of `Report::tree`, a public field.
+pub use tree::TreeLink;
+pub(crate) use tree::{tree_link, tree_path};
 
 /// The most `[NEEDS CLARIFICATION]` markers a spec may hold.
 pub const MAX_CLARIFICATIONS: usize = 3;
@@ -71,6 +77,8 @@ pub enum Rule {
     Constitution,
     /// A term the glossary avoids.
     AvoidedTerm,
+    /// The `Tree:` line is repeated or names nothing, or its file is no valid design tree.
+    Tree,
 }
 
 impl Rule {
@@ -84,6 +92,7 @@ impl Rule {
             Self::NeedsClarification => "needs-clarification",
             Self::Constitution => "constitution",
             Self::AvoidedTerm => "avoided-term",
+            Self::Tree => "tree",
         }
     }
 }
@@ -201,6 +210,8 @@ pub struct Report {
     pub constitution_version: Option<String>,
     /// The constitution's gates (0 without a constitution).
     pub gates: usize,
+    /// The design tree the first `Tree:` line of the header links, if there is one.
+    pub tree: Option<TreeLink>,
 }
 
 /// Checks `spec`, with the avoided terms of `glossary` and the gates of `constitution` when
@@ -214,6 +225,8 @@ pub fn check(
     let doc = Document::parse(spec.text);
     let sections = doc.sections();
     let mut findings = checks::sections(spec.file, &sections);
+    let (tree, tree_findings) = tree::link(spec.file, header(&doc, &sections));
+    findings.extend(tree_findings);
     let (criteria, ears) = checks::criteria(spec.file, find(&sections, ACCEPTANCE_CRITERIA));
     findings.extend(ears);
     findings.extend(checks::out_of_scope(
@@ -236,9 +249,7 @@ pub fn check(
                 .map(checks::avoided),
         );
     }
-    findings.sort_by(|a, b| {
-        (&a.file, a.line, a.rule, &a.subject).cmp(&(&b.file, b.line, b.rule, &b.subject))
-    });
+    sort(&mut findings);
     let (constitution_version, gates) = parsed.map_or((None, 0), |(_, parsed)| {
         (parsed.version, parsed.gates.len())
     });
@@ -248,7 +259,24 @@ pub fn check(
         needs_clarification,
         constitution_version,
         gates,
+        tree,
     }
+}
+
+/// The header's lines: those before the first `##` section, where the `Tree:` line goes.
+fn header<'d>(
+    doc: &'d Document<'d>,
+    sections: &[Section<'_>],
+) -> impl Iterator<Item = &'d Line<'d>> {
+    let end = sections.first().map_or(usize::MAX, |section| section.line);
+    doc.lines().iter().take_while(move |line| line.number < end)
+}
+
+/// Sorts findings by file, line, rule and subject.
+fn sort(findings: &mut [SpecFinding]) {
+    findings.sort_by(|a, b| {
+        (&a.file, a.line, a.rule, &a.subject).cmp(&(&b.file, b.line, b.rule, &b.subject))
+    });
 }
 
 /// What a `lint spec` run read and found.
@@ -260,7 +288,9 @@ pub struct Outcome {
     pub glossary: Option<String>,
     /// The constitution read, if any.
     pub constitution: Option<String>,
-    /// What the checks found.
+    /// The design tree the `Tree:` line names, resolved against the spec's directory.
+    pub tree: Option<PathBuf>,
+    /// What the checks found, including a design tree that cannot be read or is not valid.
     pub report: Report,
 }
 
@@ -268,7 +298,8 @@ pub struct Outcome {
 ///
 /// The glossary and constitution are the named files, or the defaults ([`DEFAULT_GLOSSARY`],
 /// [`DEFAULT_CONSTITUTION`]) when those exist; an absent default is skipped. Files that are
-/// not UTF-8 are read lossily.
+/// not UTF-8 are read lossily. The design tree a `Tree:` line names is read too: one that
+/// cannot be read, or is not a valid design tree, is a `tree` finding, not an error.
 ///
 /// # Errors
 /// [`LintError::MissingPath`] or [`LintError::WrongKind`] when the spec or a named glossary or
@@ -284,7 +315,7 @@ pub fn lint(args: &SpecArgs) -> Result<Outcome, LintError> {
     let constitution_text = constitution_path.map(read_whole).transpose()?;
     let file = args.file.display().to_string();
     let constitution = constitution_path.map(|path| path.display().to_string());
-    let report = check(
+    let mut report = check(
         Source {
             file: &file,
             text: &spec,
@@ -295,10 +326,22 @@ pub fn lint(args: &SpecArgs) -> Result<Outcome, LintError> {
             .zip(constitution_text.as_deref())
             .map(|(file, text)| Source { file, text }),
     );
+    let tree = match &report.tree {
+        Some(TreeLink::Named { target, line }) => {
+            let path = tree_path(&file, target);
+            if let Some(finding) = tree::check_file(&file, *line, &path) {
+                report.findings.push(finding);
+                sort(&mut report.findings);
+            }
+            Some(path)
+        }
+        Some(TreeLink::Unnamed { .. }) | None => None,
+    };
     Ok(Outcome {
         file,
         glossary: glossary_path.map(|path| path.display().to_string()),
         constitution,
+        tree,
         report,
     })
 }
@@ -327,6 +370,10 @@ struct Data<'a> {
     constitution: Option<ConstitutionData<'a>>,
     criteria: usize,
     needs_clarification: usize,
+    /// The design tree the `Tree:` line names; absent without one, so a spec written before
+    /// the line existed keeps its envelope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tree: Option<&'a Path>,
     findings: Vec<Detail<'a>>,
 }
 
@@ -368,6 +415,7 @@ pub(crate) fn report<O: Write>(outcome: &Outcome, out: &mut O) -> Result<Code, C
             }),
         criteria: report.criteria,
         needs_clarification: report.needs_clarification,
+        tree: outcome.tree.as_deref(),
         findings: report
             .findings
             .iter()

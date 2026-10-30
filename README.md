@@ -19,18 +19,32 @@ Add the marketplace, then install the plugin from it (the marketplace and the pl
 /plugin install anneal@anneal
 ```
 
-The CLI ships inside the plugin as prebuilt binaries under `plugin/libexec/<target>/`, started through `plugin/libexec/anneal` (or `anneal.cmd` on Windows). Nothing is put on your PATH. A release builds Linux (x86_64 and aarch64, musl), macOS (Apple silicon) and Windows (x86_64). If no build exists for your platform the launcher falls back to an `anneal` on PATH. With neither, the advisory hooks exit quietly and the session start says why, but the guards fail closed: `guard` and `merge-gate` block every Bash call, `preconditions` every Edit, Write, MultiEdit and NotebookEdit, and `brief` every Agent spawn, until a binary is in place.
+That is the whole install. Every option is optional: with none set, anneal runs its deterministic gates and Clef stays off (see Clef below).
 
-The binaries are built by the release workflow and are not committed to `main`, so a marketplace that serves `main` installs the plugin without them. Each GitHub release carries `anneal-plugin-<version>.zip` (the plugin with every build in `libexec/`), the raw binaries and `SHA256SUMS`. Until a `marketplace` branch with the binaries is published, put `anneal` on PATH yourself (`cargo install --path crates/anneal-cli` from a checkout, or a release binary).
+### How the CLI is found
+
+The hooks run the `anneal` CLI through `plugin/libexec/anneal` (or `anneal.cmd` on Windows). Nothing is put on your PATH. The launcher takes the first of:
+
+1. a build in the plugin's `libexec/<target>/`. The `marketplace` branch and the release zip carry Linux (x86_64 and aarch64, musl), macOS (Apple silicon) and Windows (x86_64);
+2. an `anneal` on PATH (`cargo install --path crates/anneal-cli` from a checkout, or a release binary);
+3. a release build it downloaded earlier, in `~/.cache/anneal/<version>/<target>/` (`$XDG_CACHE_HOME/anneal` when set, or `$ANNEAL_CACHE_DIR`);
+4. the release build for the plugin's version, downloaded from the GitHub release `v<version>` (`anneal-<target>`) and kept only when it matches the release's `SHA256SUMS`. This needs `curl` or `wget`, `sha256sum` or `shasum`, and access to `github.com` and the host its release downloads redirect to. A failed download is retried after 2 minutes, resuming where it stopped. `ANNEAL_NO_FETCH=1` turns it off. The Windows launcher does not download yet.
+
+So a plugin installed without binaries (synced from claude.ai, or from a marketplace that serves `main`) fetches its CLI at the first session start. If none of the four works, anneal is off for the session: every hook exits quietly, the guards (`guard`, `merge-gate`, `preconditions`, `brief`) included, and the session start warns that nothing anneal would block is checked, and why. Once a binary runs, a guard that fails or times out still blocks.
+
+The binaries are built by the release workflow and are not committed to `main`. Each GitHub release carries `anneal-plugin-<version>.zip` (the plugin with every build in `libexec/`), the raw binaries and `SHA256SUMS`.
 
 ### Where it works
 
 | Surface | Skills | Hooks and gates | Clef |
 |---|---|---|---|
-| Claude Code (2.1.295 or later) | yes | yes | yes |
-| claude.ai and Cowork (upload the release zip) | yes | no | no |
+| Claude Code CLI and desktop (2.1.295 or later) | yes | yes | yes |
+| Claude Code on the web (cloud sessions), with the plugin added in claude.ai | yes | yes, once the launcher has downloaded the CLI | no: Clef's client ignores proxy settings, and cloud sessions reach the internet only through a proxy, so every call is unreachable and fails open |
+| claude.ai chat and Cowork (upload the release zip) | yes | no | no |
 
-The skills are portable: claude.ai rejects a plugin that ships a `bin/`, and the zip has none, so it can be uploaded there and to Cowork, where the skills load. Hooks and Clef run only in Claude Code, so on the other surfaces nothing enforces the gates, and a skill's `anneal` commands work only where the CLI can run.
+The skills are portable: claude.ai rejects a plugin that ships a `bin/`, and the zip has none, so it can be uploaded there and to Cowork, where the skills load. Hooks run only in Claude Code, so in claude.ai chat and Cowork nothing enforces the gates, and a skill's `anneal` commands work only where the CLI can run.
+
+In a cloud session the plugin arrives without its `libexec/` builds, so the launcher downloads the CLI at session start. The environment's network policy must let it reach `github.com` and GitHub's release-asset host; if it does not, either allow them or put `anneal` on PATH in the environment's setup script (for example, download `anneal-x86_64-unknown-linux-musl` from the release to `/usr/local/bin/anneal`).
 
 ### Status line (once, in user settings)
 
@@ -47,7 +61,9 @@ anneal's context monitor warns at 60% and stops at 75% of the auto-compact windo
 
 With `anneal` on your PATH (`cargo install --path crates/anneal-cli`, and on Windows), the command is just `anneal statusline`. If you keep another status line, have your script pipe its input to `anneal statusline` as well; it prints one line (`anneal ctx 120k/200k 60%`) and saves the reading to `~/.anneal/context-usage.json`.
 
-The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's context window, else 200,000 tokens. Until a status line saves a reading the monitor stays silent, and the session start shows a one-time setup hint. See `docs/handoff.md`.
+The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's context window, else 200,000 tokens. Until a status line saves a reading the monitor stays silent, and the session start shows a one-time setup hint. The status line is the fallback for anneal's TypeScript mod (#57), which saves the same reading through `anneal snapshot write --json` (to `~/.anneal/context-usage-mod.json`); when both save one, the monitor reads the fresher, and while the mod has saved one in the last 10 minutes the setup hint stays away. See `docs/handoff.md`.
+
+`anneal status` shows the rest of the state anneal holds for a worktree in at most 12 lines: its mode, the plan's approval, tasks done, gates that blocked, the verdict for `HEAD`, Clef's points, the context reading and the newest ledger events. With `--json` it is one versioned document a UI can render without logic of its own. See `docs/status.md`.
 
 ### Clef (optional)
 
@@ -87,12 +103,14 @@ cargo install --path crates/anneal-cli            # the developer path: anneal o
 ./scripts/build-plugin-bins.sh                    # release binaries into plugin/libexec/<target>/
 ./scripts/test-launcher.sh target/debug/anneal    # launcher smoke test
 claude plugin validate --strict .                 # marketplace and plugin manifests
+tsc -p plugin && claude plugin test plugin         # the mod: type check and tests (no model call)
 ```
 
 Layout:
 
 - `crates/anneal-cli/`: the `anneal` binary.
-- `plugin/`: the plugin as installed (`skills/`, `hooks/`, `playbooks/`, `libexec/`). Only this directory is packaged.
+- `plugin/`: the plugin as installed (`skills/`, `hooks/` with the settings hooks and the cockpit mod, `types/` and `tests/` for the mod, `playbooks/`, `libexec/`). Only this directory is packaged. See `docs/mods.md`.
+- `mod-types/`: a minimal hand-written declaration of the mods API the cockpit uses, for `tsc -p plugin` (not packaged).
 - `evals/`: skill evaluation suites (not packaged).
 - `scripts/`: build, release and check scripts.
 

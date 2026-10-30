@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::run;
 use crate::context::sessions::SessionFile;
 use crate::context::usage::WindowSource;
-use crate::context::{self, Snapshot};
+use crate::context::{self, Saved, Snapshot, Source};
 use crate::hook::HookEnv;
 
 /// An anneal home whose status line has reported a reading for session `s1`.
@@ -34,6 +34,22 @@ impl Home {
             },
         );
         file.save(&path).expect("saves");
+    }
+
+    /// Saves `used_tokens` of a 200,000-token window for session `s1` as `source` would,
+    /// written at `at_ms`.
+    fn save_from(&self, source: Source, used_tokens: f64, at_ms: u64) {
+        let reading = Snapshot {
+            used_tokens: Some(used_tokens),
+            window: 200_000,
+            window_source: WindowSource::Default,
+        };
+        context::save(
+            self.dir.path(),
+            "s1",
+            Saved::stamped(reading, source, at_ms),
+        )
+        .expect("saves");
     }
 
     /// Runs the monitor for a `PostToolBatch` of session `s1`: its output, or `None` when silent.
@@ -229,4 +245,76 @@ fn an_unreadable_input_is_one_error_line_and_never_a_block() {
         message.starts_with("ERROR context-monitor: ") && !message.contains('\n'),
         "one ERROR line: {message}"
     );
+}
+
+/// What fired at each batch: `"warn"`, `"stop"` or `"-"` for silence.
+fn fired(output: Option<&Value>) -> &'static str {
+    match (decision(output), context_of(output)) {
+        (Some("block"), _) => "stop",
+        (_, Some(_)) => "warn",
+        _ => "-",
+    }
+}
+
+/// The usage, in tokens of a 200,000-token window, at each batch of the crossing walk.
+const WALK: [f64; 7] = [
+    125_000.0, 125_000.0, 160_000.0, 160_000.0, 10_000.0, 130_000.0, 190_000.0,
+];
+
+/// The crossings `WALK` fires, one per batch.
+const WALK_FIRES: [&str; 7] = ["warn", "-", "stop", "-", "-", "warn", "stop"];
+
+#[test]
+fn a_mod_snapshot_alone_fires_at_the_crossings_a_status_line_one_does() {
+    let (status_line, from_mod) = (Home::new(), Home::new());
+
+    let mut by_status_line = Vec::new();
+    let mut by_mod = Vec::new();
+    for (at_ms, used) in (1..).zip(WALK) {
+        status_line.report(Some(used));
+        by_status_line.push(fired(status_line.batch().as_ref()));
+        from_mod.save_from(Source::Mod, used, at_ms);
+        by_mod.push(fired(from_mod.batch().as_ref()));
+    }
+
+    assert_eq!(by_status_line, WALK_FIRES, "the status line's crossings");
+    assert_eq!(by_mod, by_status_line, "the mod's are the same");
+}
+
+#[test]
+fn the_fresher_of_the_two_snapshots_is_the_one_judged() {
+    let home = Home::new();
+    home.save_from(Source::Mod, 10_000.0, 100);
+    home.save_from(Source::Statusline, 190_000.0, 200);
+
+    let status_line_newer = home.batch();
+    home.save_from(Source::Mod, 10_000.0, 300);
+    let mod_newer = home.batch();
+    home.save_from(Source::Statusline, 190_000.0, 400);
+    let status_line_again = home.batch();
+
+    assert_eq!(
+        fired(status_line_newer.as_ref()),
+        "stop",
+        "the status line's 95% is newer than the mod's 5%"
+    );
+    assert_eq!(
+        fired(mod_newer.as_ref()),
+        "-",
+        "the mod's newer 5%: below, so the stop re-arms"
+    );
+    assert_eq!(
+        fired(status_line_again.as_ref()),
+        "stop",
+        "the status line is newer again: it stops again"
+    );
+}
+
+#[test]
+fn an_unstamped_status_line_snapshot_is_older_than_a_mod_one() {
+    let home = Home::new();
+    home.report(Some(190_000.0));
+    home.save_from(Source::Mod, 10_000.0, 1);
+
+    assert_eq!(home.batch(), None, "the mod's stamped 5% is judged: silent");
 }

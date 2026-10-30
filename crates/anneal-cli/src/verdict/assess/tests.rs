@@ -1,4 +1,4 @@
-use anneal_ledger::event::{Verdict, VerdictSet, VerdictSource};
+use anneal_ledger::event::{Actor, By, Verdict, VerdictSet, VerdictSource, Via};
 
 use super::{Fresh, Head, Invalid, Outcome, Record, assess, needs_patch_id};
 
@@ -15,6 +15,7 @@ fn set(verdict: Verdict, source: VerdictSource, sha: &str, patch_id: &str) -> Ve
         sha: Some(sha.to_owned()),
         patch_id: Some(patch_id.to_owned()),
         base: Some("main".to_owned()),
+        by: None,
     }
 }
 
@@ -35,6 +36,20 @@ fn head(patch_id: Option<&'static str>) -> Head<'static> {
 
 fn outcome(sets: &[VerdictSet], patch_id: Option<&'static str>) -> Outcome {
     assess(&records(sets), &head(patch_id), false).outcome()
+}
+
+/// A fresh human `approved` at the head, given by `actor` through `via`.
+fn human_approval(actor: Option<Actor>, via: Option<Via>) -> VerdictSet {
+    VerdictSet {
+        by: By::known(actor, via),
+        ..set(Verdict::Approved, VerdictSource::Human, HEAD, PATCH)
+    }
+}
+
+/// Whether `set` alone is the review while the plugin is not required.
+fn is_review(set: VerdictSet) -> bool {
+    let sets = [set];
+    assess(&records(&sets), &head(None), false).review.is_some()
 }
 
 #[test]
@@ -116,6 +131,7 @@ fn a_verdict_without_a_commit_is_never_fresh() {
         sha: None,
         patch_id: None,
         base: None,
+        by: None,
     };
 
     assert_eq!(
@@ -172,9 +188,48 @@ fn changes_requested_voids_the_fresh_verdicts_before_it_but_not_after() {
 }
 
 #[test]
+fn changes_requested_voids_an_earlier_human_actor_approval() {
+    let sets = [
+        human_approval(Some(Actor::Human), None),
+        set(Verdict::ChangesRequested, VerdictSource::Human, HEAD, PATCH),
+        set(Verdict::TestsVerified, VerdictSource::Local, HEAD, PATCH),
+    ];
+
+    let assessment = assess(&records(&sets), &head(None), false);
+
+    assert!(
+        assessment.review.is_none(),
+        "the approval before the changes request no longer counts: {:?}",
+        assessment.review.map(|judged| judged.record.position)
+    );
+}
+
+#[test]
+fn changes_requested_voids_an_earlier_review_plugin_approval() {
+    let sets = [
+        set(Verdict::Approved, VerdictSource::ReviewPlugin, HEAD, PATCH),
+        set(
+            Verdict::ChangesRequested,
+            VerdictSource::ReviewPlugin,
+            HEAD,
+            PATCH,
+        ),
+        set(Verdict::TestsVerified, VerdictSource::Local, HEAD, PATCH),
+    ];
+
+    let assessment = assess(&records(&sets), &head(None), true);
+
+    assert!(
+        assessment.review.is_none(),
+        "the plugin's approval before the changes request no longer counts: {:?}",
+        assessment.review.map(|judged| judged.record.position)
+    );
+}
+
+#[test]
 fn a_later_tests_verified_keeps_an_earlier_fresh_approval_as_the_review() {
     let sets = [
-        set(Verdict::Approved, VerdictSource::Human, HEAD, PATCH),
+        human_approval(Some(Actor::Human), None),
         set(Verdict::TestsVerified, VerdictSource::Local, HEAD, PATCH),
     ];
 
@@ -189,7 +244,7 @@ fn a_later_tests_verified_keeps_an_earlier_fresh_approval_as_the_review() {
 
 #[test]
 fn a_human_approval_is_a_review_only_while_the_plugin_is_not_required() {
-    let sets = [set(Verdict::Approved, VerdictSource::Human, HEAD, PATCH)];
+    let sets = [human_approval(Some(Actor::Human), None)];
 
     let interim = assess(&records(&sets), &head(None), false);
     let plugin_required = assess(&records(&sets), &head(None), true);
@@ -199,6 +254,48 @@ fn a_human_approval_is_a_review_only_while_the_plugin_is_not_required() {
         (true, false),
         "the interim rule (Ryan, 2026-10-11) and its switch"
     );
+}
+
+#[test]
+fn a_human_approval_given_by_a_human_actor_counts_as_the_review() {
+    assert!(
+        is_review(human_approval(Some(Actor::Human), None)),
+        "by.actor human (wi-10f284)"
+    );
+}
+
+#[test]
+fn a_human_approval_given_by_a_model_is_no_review() {
+    assert!(
+        !is_review(human_approval(Some(Actor::Model), None)),
+        "by.actor model (wi-10f284)"
+    );
+}
+
+#[test]
+fn a_human_approval_with_no_actor_is_no_review() {
+    assert_eq!(
+        (
+            is_review(human_approval(None, None)),
+            is_review(human_approval(None, Some(Via::Terminal))),
+        ),
+        (false, false),
+        "no by, and a by with only a via: a legacy approval or one set without --actor"
+    );
+}
+
+#[test]
+fn via_does_not_decide_whether_a_human_approval_counts() {
+    let vias = [None, Some(Via::Mod), Some(Via::Bash), Some(Via::Terminal)];
+
+    let counted = vias.map(|via| {
+        (
+            is_review(human_approval(Some(Actor::Human), via)),
+            is_review(human_approval(Some(Actor::Model), via)),
+        )
+    });
+
+    assert_eq!(counted, [(true, false); 4], "via is for audit only");
 }
 
 #[test]

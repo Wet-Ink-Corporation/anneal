@@ -21,5 +21,6 @@
       "name": "judge",
       "criteria": "The reply says the work is not done because the code contradicts the recorded decision, and asks for the code to use TRUNCATE (or the decision to be changed by its owner) with a test that pins the journal mode."
     }
-  ]
+  ],
+  "fixture": "anneal-repo"
 }

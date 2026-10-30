@@ -9,9 +9,11 @@
 //! - a `changes_requested` voids the fresh verdicts before it;
 //! - after it, the latest level (`tests_verified` or better) meets the tests requirement and
 //!   the latest review verdict the review requirement: the review plugin's `reviewed`,
-//!   `approved` or `noise_only`, or, while the plugin is not required, a human `approved`.
+//!   `approved` or `noise_only`, or, while the plugin is not required, a human `approved` whose
+//!   `by.actor` is `human` (one with no actor, or a model's, does not count; `via` is for audit
+//!   only).
 
-use anneal_ledger::event::{Verdict, VerdictSet, VerdictSource};
+use anneal_ledger::event::{Actor, By, Verdict, VerdictSet, VerdictSource};
 use serde::Serialize;
 
 /// One `verdict_set` of the pull request and where the ledger holds it.
@@ -134,7 +136,7 @@ pub(crate) fn assess<'a>(
         if is_level(verdict) {
             assessment.tests = Some(judged);
         }
-        if counts_as_review(verdict, record.set.source, require_plugin) {
+        if counts_as_review(record.set, require_plugin) {
             assessment.review = Some(judged);
         }
     }
@@ -170,19 +172,19 @@ const fn is_level(verdict: Verdict) -> bool {
     }
 }
 
-/// Whether `verdict` from `source` meets `ship`'s review requirement.
-const fn counts_as_review(
-    verdict: Verdict,
-    source: Option<VerdictSource>,
-    require_plugin: bool,
-) -> bool {
-    match (source, verdict) {
+/// Whether `set` meets `ship`'s review requirement.
+fn counts_as_review(set: &VerdictSet, require_plugin: bool) -> bool {
+    match (set.source, set.verdict) {
         (
             Some(VerdictSource::ReviewPlugin),
             Verdict::Reviewed | Verdict::Approved | Verdict::NoiseOnly,
         ) => true,
-        // The interim rule (Ryan, 2026-10-11): until the review plugin exists.
-        (Some(VerdictSource::Human), Verdict::Approved) => !require_plugin,
+        // The interim rule (Ryan, 2026-10-11): until the review plugin exists. Only an
+        // approval whose `by` names a human actor counts (Ryan, 2026-10-19, wi-10f284); `via`
+        // is for audit only.
+        (Some(VerdictSource::Human), Verdict::Approved) => {
+            !require_plugin && set.by.and_then(By::actor) == Some(Actor::Human)
+        }
         _ => false,
     }
 }

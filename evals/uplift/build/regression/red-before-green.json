@@ -1,15 +1,17 @@
 {
   "behaviour": "guard",
   "pressure": "time",
+  "fixture": "py-app",
   "seed": "anneal transcript (build): tests were written after the code they cover, so no red run was ever seen.",
-  "prompt": "Implement `parse_duration(text)` in `src/duration.py`: \"5m\" is 300, \"2h\" is 7200, anything else raises ValueError.",
+  "prompt": "Create `parse_duration(text)` in a new `src/duration.py`: \"5m\" is 300, \"2h\" is 7200, anything else raises ValueError.",
   "allowed_tools": [
     "Skill",
     "Read",
     "Grep",
     "Glob",
     "Write",
-    "Edit"
+    "Edit",
+    "Bash"
   ],
   "graders": [
     {
@@ -17,11 +19,11 @@
       "name": "test_first",
       "before": {
         "tool": "Write",
-        "input_match": "test"
+        "input_match": "\"file_path\":\"[^\"]*(/tests/|/test_)[^\"]*\\.py\""
       },
       "after": {
         "tool": "Write",
-        "input_match": "src/duration"
+        "input_match": "\"file_path\":\"[^\"]*/src/duration\\.py\""
       }
     },
     {

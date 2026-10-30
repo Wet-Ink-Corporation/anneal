@@ -27,8 +27,8 @@ use crate::exit_codes::{self, Code};
 use crate::lint::read_whole_bytes;
 use crate::lint::skills::LintError;
 use crate::lint::spec::Source;
+use crate::lint::spec::field::spec_path;
 use crate::lint::spec::markdown::Document;
-use crate::path_text::slashed;
 
 /// Arguments of `anneal lint plan`.
 #[derive(Debug, Clone, Args)]
@@ -291,23 +291,6 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
         bound(&mut report.findings, &mut report.omitted);
     }
     Outcome { file, spec, report }
-}
-
-/// The path of the spec a plan at `plan` links as `target`, where `separator` is the
-/// platform's path separator: an absolute `target` as is, otherwise `target` joined to the
-/// plan's directory. Joined, and the directory's separators replaced, with `/` rather than
-/// `Path::join`, so the path shown (and keyed) is the same on every platform; Windows opens
-/// `/`-separated paths too.
-fn spec_path(plan: &str, target: &str, separator: char) -> String {
-    let drive = separator == '\\'
-        && matches!(target.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
-    if drive || target.starts_with(['/', separator]) {
-        return target.to_owned();
-    }
-    match slashed(plan, separator).rsplit_once('/') {
-        Some((dir, _)) => format!("{dir}/{target}"),
-        None => target.to_owned(),
-    }
 }
 
 /// The most tasks the envelope lists in `data.plan.tasks`.

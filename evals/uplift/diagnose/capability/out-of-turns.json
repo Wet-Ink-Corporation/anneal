@@ -1,7 +1,17 @@
 {
   "behaviour": "outcome",
+  "fixture": "anneal-repo",
   "seed": "anneal #40 transcript: every smoke run errored out of turns and the suite reported no trials.",
   "prompt": "Every run of the routing smoke eval ends in error with \"Reached maximum number of turns (2)\", so the suite reports no trials. Find the cause.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",

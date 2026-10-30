@@ -249,6 +249,8 @@ fn only_not_a_git_repository_classifies_as_outside_git() {
     let outside = [
         "fatal: not a git repository (or any of the parent directories): .git\n",
         "fatal: not a git repository: /work/does-not-exist\n",
+        // git 2.56 and later, for the same `.git` file pointing nowhere.
+        "fatal: gitfile does not point to a valid repository: /work/.git\n",
     ];
     let failures = [
         "fatal: detected dubious ownership in repository at '/work'\n",
@@ -270,4 +272,24 @@ fn only_not_a_git_repository_classifies_as_outside_git() {
             "{stderr:?} gave {error:?}"
         );
     }
+}
+
+#[test]
+fn the_git_timeout_names_a_duration_under_a_second() {
+    // The preconditions budget hands git less than a second; whole seconds rounded it to 0.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_millis(500),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 500ms");
+}
+
+#[test]
+fn the_git_timeout_is_named_in_whole_milliseconds() {
+    // What is left of a deadline is rarely a round number.
+    let error = PathError::GitTimeout {
+        timeout: Duration::from_nanos(1_987_654_321),
+    };
+
+    assert_eq!(error.to_string(), "git did not answer within 1.987s");
 }

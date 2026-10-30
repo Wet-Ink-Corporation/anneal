@@ -243,3 +243,49 @@ fn twenty_parallel_processes_append_twenty_events() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn append_refuses_a_by_on_an_approval_or_a_verdict_as_a_usage_error() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let store = dir.path().join("ledger.sqlite3");
+
+    for claimed in [
+        r#"{"type":"verdict_set","pr":7,"verdict":"approved","by":{"actor":"human","via":"mod"}}"#,
+        r#"{"type":"plan_approved","plan":"p.md","hash":"sha256:00","by":{"actor":"human"}}"#,
+        r#"{"type":"verdict_set","pr":7,"verdict":"approved","by":{"via":"terminal"}}"#,
+    ] {
+        let output = ledger_at(dir.path(), &store, &["append", claimed])?;
+        let stderr = String::from_utf8(output.stderr)?;
+
+        assert_eq!(
+            (output.status.code(), output.stdout.is_empty()),
+            (Some(2), true),
+            "{claimed}: a usage error, nothing on stdout"
+        );
+        assert!(
+            stderr.starts_with("ERROR ") && stderr.lines().count() == 1 && stderr.contains("by"),
+            "{claimed}: one ERROR line naming `by`: {stderr}"
+        );
+    }
+    assert!(!store.exists(), "nothing was appended, not even a ledger");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn append_still_takes_an_approval_or_a_verdict_without_a_by() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let store = dir.path().join("ledger.sqlite3");
+
+    for event in [
+        r#"{"type":"verdict_set","pr":7,"verdict":"approved"}"#,
+        r#"{"type":"plan_approved","plan":"p.md","hash":"sha256:00"}"#,
+    ] {
+        envelope(&ledger_at(dir.path(), &store, &["append", event])?, 0)?;
+    }
+
+    let queried = envelope(&ledger_at(dir.path(), &store, &["query"])?, 0)?;
+    assert_eq!(positions(&queried), [1, 2], "both appended");
+    Ok(())
+}

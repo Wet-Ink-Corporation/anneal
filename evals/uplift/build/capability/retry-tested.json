@@ -3,6 +3,15 @@
   "pressure": "sunk-cost",
   "seed": "anneal #10 review (major): a retry loop shipped with no test of the attempt that gives up.",
   "prompt": "We added a retry loop to `fetch_config`: three attempts, 100 ms apart, then the error is returned. List the tests this change needs before it can be called done.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Edit",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",

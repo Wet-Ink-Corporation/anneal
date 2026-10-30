@@ -3,13 +3,16 @@
 //! The command strings wrappers run (`bash -c`, `su -c`, `trap`, `watch`, ...) and `find`'s
 //! actions are read in [`strings`].
 
+mod grammar;
+mod slots;
 mod strings;
+mod tables;
 
 use std::borrow::Cow;
 use std::ops::Range;
 use std::ptr;
 
-use super::braces;
+use super::{braces, readings};
 use crate::hook::guard::shell::{Shape, Word};
 
 /// Words that may start a simple command before its program.
@@ -33,72 +36,10 @@ const PASSIVE: [&str; 20] = [
     "type", "whatis", "apropos", "for", "select", "case", "test", "[", "[[",
 ];
 
-/// Options that take a value in the next word, per wrapper.
-const SUDO_VALUES: &[&str] = &[
-    "-u",
-    "-g",
-    "-h",
-    "-p",
-    "-C",
-    "-D",
-    "-r",
-    "-t",
-    "-T",
-    "-U",
-    "--user",
-    "--group",
-    "--host",
-    "--prompt",
-    "--chdir",
-    "--role",
-    "--type",
-    "--close-from",
-    "--other-user",
-    "--command-timeout",
-];
+/// Options that take a value in the next word, for bash's `exec` and `time`; every other
+/// wrapper's options are read by its [`grammar::Grammar`] in [`tables`].
 const EXEC_VALUES: &[&str] = &["-a"];
 const TIME_VALUES: &[&str] = &["-f", "-o", "--format", "--output"];
-const NICE_VALUES: &[&str] = &["-n", "--adjustment"];
-const TIMEOUT_VALUES: &[&str] = &["-s", "-k", "--signal", "--kill-after"];
-const STDBUF_VALUES: &[&str] = &["-i", "-o", "-e", "--input", "--output", "--error"];
-const IONICE_VALUES: &[&str] = &[
-    "-c",
-    "-n",
-    "-p",
-    "-P",
-    "-u",
-    "--class",
-    "--classdata",
-    "--pid",
-    "--pgid",
-    "--uid",
-];
-const CHRT_VALUES: &[&str] = &[
-    "-T",
-    "-P",
-    "-D",
-    "--sched-runtime",
-    "--sched-period",
-    "--sched-deadline",
-];
-/// `--eof`, `--replace` and `--max-lines` are absent: their value is optional and only ever
-/// follows `=`, so the next word is the command.
-const XARGS_VALUES: &[&str] = &[
-    "-a",
-    "-d",
-    "-E",
-    "-I",
-    "-L",
-    "-n",
-    "-P",
-    "-s",
-    "--arg-file",
-    "--delimiter",
-    "--max-args",
-    "--max-procs",
-    "--max-chars",
-    "--process-slot-var",
-];
 
 /// The program of a simple command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,8 +64,11 @@ pub(super) enum Run<'a> {
         /// Whether more arguments are appended at run time.
         appended: bool,
     },
-    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `env -S`, `trap`.
+    /// Shell text to read in turn: a `-c` string, `eval`'s arguments, `trap`.
     Script(Cow<'a, str>),
+    /// `env -S`'s string, read in turn as shell text but split by env, which reads no
+    /// extended glob group.
+    Split(Cow<'a, str>),
     /// A shell (named) reading its script from standard input.
     StdinScript(&'a str),
     /// A shell (named) running a script from a process substitution or a file descriptor,
@@ -132,6 +76,36 @@ pub(super) enum Run<'a> {
     Unseen(&'a str),
     /// The commands `find`'s actions run, each with matches appended.
     Exec(Vec<&'a [Word]>),
+    /// Each a reading of what the wrapper may run, every one checked on its own: `su` and
+    /// `script` with several `-c` strings (each a separate word, never joined into one text),
+    /// `su`'s arguments as its shell may read them, and `env -S`'s string as env splits it and
+    /// as shell text.
+    Either(Vec<Run<'a>>),
+    /// A wrapper (named) with a pattern where it reads an option, which may expand to one
+    /// (`bash -[c] ...`), so what it runs is not known (#165).
+    UnsureOption {
+        /// The wrapper.
+        wrapper: &'a str,
+        /// The pattern word.
+        word: &'a Word,
+    },
+}
+
+impl<'a> Run<'a> {
+    /// `runs` as one run: the only one, or each of them, its duplicates dropped.
+    fn either(runs: impl IntoIterator<Item = Run<'a>>) -> Self {
+        let mut distinct: Vec<Run<'a>> = Vec::new();
+        for run in runs {
+            if !distinct.contains(&run) {
+                distinct.push(run);
+            }
+        }
+        if distinct.len() > 1 {
+            Run::Either(distinct)
+        } else {
+            distinct.pop().unwrap_or(Run::Nothing)
+        }
+    }
 }
 
 /// Where [`unwrap`] finds what a simple command runs, by word position: the view the guard's
@@ -171,6 +145,7 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
             .checked_sub(args.len())
             .and_then(|end| end.checked_sub(1))
             .map_or(Layout::Other, Layout::Program),
+        // Redaction renders a body only where `redact::certain` trusts it.
         Run::Script(text) => Layout::Script(text),
         // `find` peeled last, ending the walk with its actions.
         Run::Exec(actions) => roles
@@ -185,7 +160,13 @@ pub(in crate::hook::guard) fn layout(words: &[Word]) -> (Layout<'_>, Vec<Role>) 
                         .collect(),
                 })
             }),
-        Run::Nothing | Run::StdinScript(_) | Run::Unseen(_) => Layout::Other,
+        // Several readings, or `env -S`'s string as env splits it: the redaction trusts none.
+        Run::Nothing
+        | Run::StdinScript(_)
+        | Run::Unseen(_)
+        | Run::Split(_)
+        | Run::Either(_)
+        | Run::UnsureOption { .. } => Layout::Other,
     };
     (layout, roles)
 }
@@ -269,7 +250,22 @@ enum Peel<'a> {
 }
 
 /// Strips keywords, assignments and wrappers from `words`.
+///
+/// A pattern where a wrapper reads an option, which may expand to one (#165), is read both
+/// ways: as the walk reads it (an operand or a value), checked first so its own denial names
+/// what it runs, and as an option, which is not known ([`Run::UnsureOption`]).
 pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
+    let mut unsure = Vec::new();
+    let run = walk_wrappers(words, &mut unsure);
+    if unsure.is_empty() {
+        run
+    } else {
+        Run::either([run].into_iter().chain(unsure))
+    }
+}
+
+/// [`unwrap`]'s walk, collecting each wrapper's pattern option word in `unsure`.
+fn walk_wrappers<'a>(words: &'a [Word], unsure: &mut Vec<Run<'a>>) -> Run<'a> {
     let mut words = skip_prefix(words);
     let mut appended = false;
     loop {
@@ -281,6 +277,11 @@ pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
             Program::Named(name) => peel(name, rest),
             Program::Unknown(_) => Peel::Program,
         };
+        if let Program::Named(wrapper) = program
+            && let Some(word) = slots::unsure_option(wrapper, rest, &peeled)
+        {
+            unsure.push(Run::UnsureOption { wrapper, word });
+        }
         words = match peeled {
             Peel::Inner(inner) => skip_prefix(inner),
             Peel::Appending(inner) => {
@@ -362,19 +363,19 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         }
         "exec" => Peel::Inner(skip_options(rest, EXEC_VALUES)),
         "time" => Peel::Inner(skip_options(rest, TIME_VALUES)),
-        "nice" => Peel::Inner(skip_options(rest, NICE_VALUES)),
-        "stdbuf" => Peel::Inner(skip_options(rest, STDBUF_VALUES)),
-        "ionice" => Peel::Inner(skip_options(rest, IONICE_VALUES)),
-        // The duration, the priority, the CPU mask, the function's name.
-        "timeout" => Peel::Inner(skip_one(skip_options(rest, TIMEOUT_VALUES))),
-        "chrt" => Peel::Inner(skip_one(skip_options(rest, CHRT_VALUES))),
-        "taskset" => Peel::Inner(skip_one(skip_options(rest, &[]))),
+        "nice" => Peel::Inner(tables::NICE.parse(rest).rest),
+        "stdbuf" => Peel::Inner(tables::STDBUF.parse(rest).rest),
+        "ionice" => Peel::Inner(tables::IONICE.parse(rest).rest),
+        // The duration, the CPU mask, the function's name.
+        "timeout" => Peel::Inner(skip_one(tables::TIMEOUT.parse(rest).rest)),
+        "chrt" => Peel::Inner(chrt(rest)),
+        "taskset" => Peel::Inner(skip_one(tables::TASKSET.parse(rest).rest)),
         "function" => Peel::Inner(skip_one(rest)),
         // `busybox <applet> ...`.
         "busybox" => Peel::Inner(rest),
         "coproc" => strings::coproc(rest),
         "flock" => strings::flock(rest),
-        "xargs" => Peel::Appending(skip_options(rest, XARGS_VALUES)),
+        "xargs" => Peel::Appending(tables::XARGS.parse(rest).rest),
         "eval" => Peel::Done(Run::Script(Cow::Owned(join(rest)))),
         "alias" => strings::alias(rest),
         "source" | "." => strings::source(rest),
@@ -385,6 +386,28 @@ fn peel<'a>(name: &'a str, rest: &'a [Word]) -> Peel<'a> {
         "find" => strings::find(rest),
         shell if SHELLS.contains(&shell) => strings::shell(shell, rest),
         _ => Peel::Program,
+    }
+}
+
+/// `chrt [options] [PRIORITY] command`: util-linux 2.42 reads a priority only when it is all
+/// digits (or must, for `-f` and `-r`, refusing anything else), then skips one `--`; 2.39
+/// always reads one, refusing one not all digits. With `-p` the words after the priority are
+/// a pid for both, yet chrt runs them when the last is 0 (or -1), so they are read as a command.
+fn chrt(words: &[Word]) -> &[Word] {
+    let rest = tables::CHRT.parse(words).rest;
+    let rest = match rest {
+        [priority, tail @ ..]
+            if priority.is_literal()
+                && !priority.text.is_empty()
+                && priority.text.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            tail
+        }
+        _ => rest,
+    };
+    match rest {
+        [dashes, tail @ ..] if dashes.text == "--" => tail,
+        _ => rest,
     }
 }
 
@@ -421,6 +444,15 @@ fn is_checked(name: &str) -> bool {
 /// Whether `word` names the program `name` (by path or with `.exe` too).
 pub(super) fn names_program(word: &Word, name: &str) -> bool {
     program(word) == Program::Named(name)
+}
+
+/// Whether `word` names a program whose name (its last path component, a lowercase `.exe`
+/// removed) `matches`.
+pub(super) fn names_program_where(word: &Word, matches: impl FnOnce(&str) -> bool) -> bool {
+    match program(word) {
+        Program::Named(name) => matches(name),
+        Program::Unknown(_) => false,
+    }
 }
 
 /// Whether `name`, a program that is not a wrapper the guard unwraps, may run its arguments as

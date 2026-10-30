@@ -1,9 +1,9 @@
 //! Reading `evals/uplift/<skill>/{regression,capability}/<case>.json`.
 //!
 //! Directories are listed without following symlinks (a symlinked skill, suite or case is a
-//! problem); other files, such as a `README.md`, are ignored. Every case file is read, so one
-//! bad case is reported beside the others rather than hiding them; any problem stops a run
-//! before anything is spent.
+//! problem); other files, such as a `README.md`, are ignored. `fixtures/` holds the cases'
+//! fixtures, not a skill's suites. Every case file is read, so one bad case is reported beside
+//! the others rather than hiding them; any problem stops a run before anything is spent.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::case::{self, Parsed};
+use super::fixture::{self, FIXTURES_DIR, Fixture, RepoRoot};
 use crate::lint::skills::LintError;
 use crate::lint::skills::discover::{EntryKind, list_dir, read_bounded};
 
@@ -63,8 +64,11 @@ pub(crate) struct Case {
     pub(crate) slug: String,
     /// Its file, relative to the suites directory, with `/`.
     pub(crate) file: String,
-    /// What the file holds.
+    /// What the file holds, its fixture name taken out into [`Case::fixture`], so
+    /// `body.fixture` is always `None` here.
     pub(crate) body: Parsed,
+    /// The fixture that seeds its runs, located ([`fixture::locate`]), when it names one.
+    pub(crate) fixture: Option<Fixture>,
 }
 
 impl Case {
@@ -135,10 +139,23 @@ pub(crate) fn read(dir: &Path, skills: &[String]) -> Result<Suites, LintError> {
         });
     }
     let mut suites = Suites::default();
+    let source = Source {
+        dir,
+        root: RepoRoot::new(dir),
+    };
     for (name, kind) in list_dir(dir)? {
         let shown = display(&name);
         match kind {
             EntryKind::Symlink => suites.problem(shown, SYMLINK),
+            EntryKind::Dir if shown == FIXTURES_DIR => {
+                if skills.contains(&shown) {
+                    suites.problem(
+                        shown,
+                        "`fixtures` holds the case fixtures, so the skill `fixtures` cannot \
+                         have suites",
+                    );
+                }
+            }
             EntryKind::Dir if shown.contains(NAME_SEPARATOR) => {
                 suites.problem(
                     shown,
@@ -147,7 +164,7 @@ pub(crate) fn read(dir: &Path, skills: &[String]) -> Result<Suites, LintError> {
                 );
             }
             EntryKind::Dir if skills.contains(&shown) => {
-                read_skill(dir, &shown, &mut suites)?;
+                read_skill(&source, &shown, &mut suites)?;
             }
             EntryKind::Dir => {
                 let reason = format!("no skill `{shown}` under the skills directory");
@@ -161,15 +178,21 @@ pub(crate) fn read(dir: &Path, skills: &[String]) -> Result<Suites, LintError> {
     Ok(suites)
 }
 
-/// The suites of `skill`, the directory `<dir>/<skill>`.
-fn read_skill(dir: &Path, skill: &str, suites: &mut Suites) -> Result<(), LintError> {
+/// The suites directory being read, and the repository its fixtures' symlinks must stay in.
+struct Source<'a> {
+    dir: &'a Path,
+    root: RepoRoot<'a>,
+}
+
+/// The suites of `skill`, the directory `<suites>/<skill>`.
+fn read_skill(source: &Source<'_>, skill: &str, suites: &mut Suites) -> Result<(), LintError> {
     let mut coverage = Coverage {
         skill: skill.to_owned(),
         regression: 0,
         capability: 0,
     };
     let mut has_suite = false;
-    for (name, kind) in list_dir(&dir.join(skill))? {
+    for (name, kind) in list_dir(&source.dir.join(skill))? {
         let shown = format!("{skill}/{}", display(&name));
         let suite = name.to_str().and_then(SuiteKind::of);
         // A symlinked suite is a problem of its own; it still names a suite.
@@ -177,7 +200,7 @@ fn read_skill(dir: &Path, skill: &str, suites: &mut Suites) -> Result<(), LintEr
         match (kind, suite) {
             (EntryKind::Symlink, _) => suites.problem(shown, SYMLINK),
             (EntryKind::Dir, Some(suite)) => {
-                let read = read_suite(dir, skill, suite, suites)?;
+                let read = read_suite(source, skill, suite, suites)?;
                 match suite {
                     SuiteKind::Regression => coverage.regression = read,
                     SuiteKind::Capability => coverage.capability = read,
@@ -196,14 +219,15 @@ fn read_skill(dir: &Path, skill: &str, suites: &mut Suites) -> Result<(), LintEr
     Ok(())
 }
 
-/// The cases of one suite; returns how many were valid.
+/// The cases of one suite; returns how many were valid. A case whose fixture cannot seed a
+/// run is a problem, not a valid case.
 fn read_suite(
-    dir: &Path,
+    source: &Source<'_>,
     skill: &str,
     suite: SuiteKind,
     suites: &mut Suites,
 ) -> Result<usize, LintError> {
-    let path = dir.join(skill).join(suite.dir());
+    let path = source.dir.join(skill).join(suite.dir());
     let place = format!("{skill}/{}", suite.dir());
     let mut files = 0_usize;
     let mut valid = 0_usize;
@@ -238,8 +262,8 @@ fn read_suite(
             );
             continue;
         }
-        match read_case(&path.join(&name))? {
-            Ok(body) => {
+        match read_case(&path.join(&name), source)? {
+            Ok((body, fixture)) => {
                 valid = valid.saturating_add(1);
                 suites.cases.push(Case {
                     skill: skill.to_owned(),
@@ -247,6 +271,7 @@ fn read_suite(
                     slug: slug.to_owned(),
                     file,
                     body,
+                    fixture,
                 });
             }
             Err(reason) => suites.problem(file, reason),
@@ -258,19 +283,35 @@ fn read_suite(
     Ok(valid)
 }
 
-/// The case file at `path`, parsed, or why it is refused.
+/// The case file at `path`, parsed, with the fixture it names taken out of the body and
+/// located under `source`'s suites, or why it is refused.
 ///
 /// # Errors
 /// [`LintError::Io`] when it cannot be read.
-fn read_case(path: &Path) -> Result<Result<Parsed, String>, LintError> {
-    let read = read_bounded(path).map_err(|source| LintError::io(path, source))?;
+fn read_case(
+    path: &Path,
+    source: &Source<'_>,
+) -> Result<Result<(Parsed, Option<Fixture>), String>, LintError> {
+    let read = read_bounded(path).map_err(|error| LintError::io(path, error))?;
     let Some(bytes) = read.bytes else {
         return Ok(Err(format!(
             "larger than the read cap ({} bytes)",
             read.size
         )));
     };
-    Ok(case::parse(&bytes).map_err(|fault| fault.to_string()))
+    Ok(case::parse(&bytes)
+        .map_err(|fault| fault.to_string())
+        .and_then(|mut body| {
+            let fixture = body
+                .fixture
+                .take()
+                .map(|name| {
+                    fixture::locate(source.dir, &name, &source.root)
+                        .map(|dir| Fixture { name, dir })
+                })
+                .transpose()?;
+            Ok((body, fixture))
+        }))
 }
 
 /// Whether `text` is a case name: 1 to 64 of `a-z`, `0-9` and `-`, not starting with `-`.

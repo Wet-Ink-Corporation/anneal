@@ -9,7 +9,8 @@ bytes are compared; its spec is not (see below).
 
 ```text
 anneal lint plan <FILE>
-anneal plan approve <FILE> [--session <id>] [--store <ledger>]
+anneal plan approve <FILE> [--actor human|model] [--via mod|bash|terminal] [--session <id>]
+                    [--store <ledger>]
 anneal plan check <FILE> [--store <ledger>]
 ```
 
@@ -19,7 +20,9 @@ A plan is markdown. Fenced code blocks and HTML comments are not read, as for sp
 (`docs/spec.md`).
 
 - **Header**: the lines before the first `##` section hold one `Spec:` line naming the spec:
-  a markdown link (`- Spec: [export](../specs/export.md)`), a path in backticks or a plain path.
+  a markdown link (`- Spec: [export](../specs/export.md)`, or `[export](<../specs/export.md>)`
+  with the destination in angle brackets, read as what lies inside them), a path in backticks
+  or a plain path.
   A relative path is read relative to the plan's directory, as a markdown link is; an
   absolute one as written.
 - **Sections**: `## Goal`, `## Tasks` and `## Review focus`, each once (titles in any letter
@@ -83,6 +86,23 @@ Run only on the human's explicit approval of the plan they were shown. It refuse
 - while the linked spec has any `[NEEDS CLARIFICATION]` marker, counted as `lint spec` counts
   them (outside code, comments and fences); `data.needs_clarification` gives the count.
 
+Then, when the spec's header has a `Tree:` line (`docs/spec.md`), it refuses the same way
+(exit 3, nothing appended) unless one of the latest 256 `grill_confirmed` events carries the
+`sha256:` hash of that design tree's current bytes, matched by hash as the preconditions hook
+matches it (`docs/preconditions.md`), so any path spelling of the tree counts (#77):
+
+- a `Tree:` line naming no file, still the template's placeholder, or naming a file that does
+  not exist or is not a regular file: a `plan/approve/tree:<spec>` finding;
+- a tree with no such confirmation, never confirmed or edited since: a
+  `plan/approve/unconfirmed-tree:<tree>` finding naming `anneal grill confirm`, and
+  `data.tree` names the tree. A ledger that does not exist holds no confirmation and is not
+  created; a tree that exists but cannot be read, or a ledger that cannot be read, fails with
+  exit 70.
+
+A spec with no `Tree:` line is not checked, so specs written before #77 still approve.
+`data.tree` is present only when the spec names a tree: the resolved path, in a refusal about
+it and in an approval.
+
 Otherwise it appends `plan_approved {plan, hash}` to the ledger (`docs/ledger.md`) and exits
 0. `plan` is the plan id: the path as given, separated by `/` on every platform, with `.` and empty
 components dropped, so `./docs/plans/x.md` and `docs/plans/x.md` are one plan (`..` is
@@ -90,11 +110,22 @@ kept, leading separators are kept as written, so an absolute path stays absolute
 path keeps its `//`, and the path is not made absolute: approve and check a plan from the
 same directory, normally the repository root). `hash` is `sha256:` and
 the 64 lowercase hex digits of the SHA-256 of the plan's bytes. When the latest approval of the
-plan already has that hash, nothing is appended and `data.appended` is `false`. The append is
-conditioned on no other approval of the plan landing since the one it read. When one did, it
-is read back: with the same hash the plan is already approved (exit 0, `data.appended`
-`false`); with another hash the approval is refused (exit 3, a `plan/approve/conflict:<plan>`
-finding).
+plan already has that hash, nothing is appended and `data.appended` is `false`.
+
+`--actor` (who approved: `human` or `model`) and `--via` (through what: `mod`, the cockpit's
+buttons, `bash`, a model's Bash call, or `terminal`) are recorded as the approval's `by`
+(`{"actor": "model", "via": "bash"}`) and shown in `data.by`; each is optional and none is
+assumed, so an approval without them records no approver, as before (#62). The model may
+approve a plan (Ryan, wi-720468: B), so the guard allows `plan approve` with any actor. An
+approval counts as already recorded only when it also names the same approver, so a human's
+approval of content a model approved is appended and is the latest. `plan check` still
+compares only the hash. The append is conditioned on no other approval of the plan landing
+since the one it read. When one did, it is read back: with the same hash and approver the plan
+is already approved (exit 0, `data.appended` `false`); with the same hash but another approver
+(or none) this approval is still news and is appended after it, under the same condition, up
+to 8 times in a row; with another hash the approval is refused (exit 3, a
+`plan/approve/conflict:<plan>` finding: run `plan check`, then approve again if it is not
+current). Losing the race to the same hash 8 times in a row is refused the same way.
 
 ## `anneal plan check`
 

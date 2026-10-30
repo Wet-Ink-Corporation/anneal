@@ -1,13 +1,19 @@
 use std::error::Error;
 use std::path::Path;
 
-use anneal_ledger::Store;
+use anneal_ledger::{EventEnvelope, Store};
 use serde_json::Value;
 
 use super::{
-    PlanBytes, Recording, approval, conflict, latest, normalised, plan_id, read, record, refuse,
+    PlanBytes, Recording, approval_by, conflict, latest, normalised, plan_id, read, record, refuse,
 };
+use crate::error::CliError;
 use crate::exit_codes;
+
+/// The `plan_approved` event for `plan` with no approver named.
+fn approval(plan: &PlanBytes, session: Option<&str>) -> Result<EventEnvelope, CliError> {
+    approval_by(plan, session, None)
+}
 
 #[test]
 fn the_plan_id_drops_only_current_directory_components() {
@@ -158,5 +164,125 @@ fn a_conflict_is_refused_with_exit_3_and_a_conflict_key() -> Result<(), Box<dyn 
         "one conflict finding: {envelope}"
     );
     assert_eq!(envelope.get("ok"), Some(&Value::Bool(false)), "not ok");
+    Ok(())
+}
+
+#[test]
+fn losing_a_race_to_the_same_hash_by_another_approver_appends_after_it()
+-> Result<(), Box<dyn Error>> {
+    use anneal_ledger::event::{Actor, By, Via};
+
+    let dir = tempfile::tempdir()?;
+    let (plan, store) = setup(dir.path())?;
+    let model = By::known(Some(Actor::Model), Some(Via::Bash));
+    let human = By::known(Some(Actor::Human), Some(Via::Terminal));
+    let previous = latest(&store, &plan.approvals)?;
+    let winner = store.append(&approval_by(&plan, None, model)?)?;
+
+    let recording = record(
+        &store,
+        &approval_by(&plan, None, human)?,
+        &plan,
+        previous.as_ref(),
+    )?;
+
+    assert!(
+        matches!(recording, Recording::Appended(position) if position > winner),
+        "the human's approval is news, not a conflict: {recording:?}"
+    );
+    let approvals = store.query(&plan.approvals)?;
+    let givers: Vec<Option<By>> = approvals
+        .iter()
+        .filter_map(|recorded| super::approved(&recorded.event).map(|approval| approval.by))
+        .collect();
+    assert_eq!(givers, [model, human], "both kept, the human's latest");
+    Ok(())
+}
+
+#[test]
+fn losing_a_race_to_another_hash_after_an_approver_race_is_still_a_conflict()
+-> Result<(), Box<dyn Error>> {
+    use anneal_ledger::event::{Actor, By, Via};
+
+    let dir = tempfile::tempdir()?;
+    let (plan, store) = setup(dir.path())?;
+    let previous = latest(&store, &plan.approvals)?;
+    store.append(&approval_by(
+        &plan,
+        None,
+        By::known(Some(Actor::Model), None),
+    )?)?;
+    store.append(&approval(&edited(&plan), None)?)?;
+
+    let recording = record(
+        &store,
+        &approval_by(&plan, None, By::known(Some(Actor::Human), Some(Via::Mod)))?,
+        &plan,
+        previous.as_ref(),
+    )?;
+
+    assert_eq!(
+        recording,
+        Recording::Conflict,
+        "the edited plan's approval is latest"
+    );
+    assert_eq!(store.query(&plan.approvals)?.len(), 2, "nothing appended");
+    Ok(())
+}
+
+/// A ledger on which every conditioned append loses to a new approval of the same bytes by
+/// another approver, as if model approvals kept landing first.
+struct AlwaysOutraced {
+    /// The approval that keeps winning, re-read at a new position each time.
+    winner: EventEnvelope,
+    /// How many conditioned appends were tried.
+    tries: std::cell::Cell<usize>,
+}
+
+impl super::ApprovalLedger for AlwaysOutraced {
+    fn append_if(
+        &self,
+        _event: &EventEnvelope,
+        _condition: &anneal_ledger::Condition,
+    ) -> Result<anneal_ledger::Appended, CliError> {
+        self.tries.set(self.tries.get().saturating_add(1));
+        Ok(anneal_ledger::Appended::Conflict)
+    }
+
+    fn latest(
+        &self,
+        _approvals: &anneal_ledger::Filter,
+    ) -> Result<Option<anneal_ledger::Recorded>, CliError> {
+        let position = u64::try_from(self.tries.get()).unwrap_or(u64::MAX);
+        // Each read hands back an owned event, as the store's does.
+        Ok(Some(anneal_ledger::Recorded {
+            position,
+            event: self.winner.clone(),
+        }))
+    }
+}
+
+#[test]
+fn an_approval_that_keeps_losing_to_other_approvers_gives_up_as_a_conflict_after_8_races()
+-> Result<(), Box<dyn Error>> {
+    use anneal_ledger::event::{Actor, By, Via};
+
+    let dir = tempfile::tempdir()?;
+    let (plan, _store) = setup(dir.path())?;
+    let model = By::known(Some(Actor::Model), Some(Via::Bash));
+    let ledger = AlwaysOutraced {
+        winner: approval_by(&plan, None, model)?,
+        tries: std::cell::Cell::new(0),
+    };
+    let human = By::known(Some(Actor::Human), Some(Via::Terminal));
+
+    let recording = record(&ledger, &approval_by(&plan, None, human)?, &plan, None)?;
+
+    assert_eq!(recording, Recording::Conflict, "it gave up");
+    assert_eq!(
+        ledger.tries.get(),
+        super::MAX_APPROVER_RACES,
+        "one conditioned append per race, no more"
+    );
     Ok(())
 }

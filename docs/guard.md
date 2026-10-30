@@ -48,7 +48,7 @@ Whatever the guard cannot judge, it denies:
 | the arguments of programs the guard does not know read as a command more than 32 times in one check | deny, rule `unparseable` |
 | the decision cannot be written to stdout | exit 2 with one `ERROR` line on stderr (`docs/exit-codes.md`) |
 | bad arguments (a usage error) | exit 2 |
-| no anneal binary is installed | the launcher exits 2 with one `ERROR` line (`--fail-closed`) |
+| no anneal binary is installed | the launcher exits 0 and the guard is off; the session start warns (`docs/hooks.md`) |
 | a crash, a timeout (5 s), any other exit code, or invalid JSON | Claude Code blocks the call (`onFailure: "block"`, Claude Code 2.1.295 or later) |
 
 Claude Code reads exit 2 as "block". Tests pin these cases: `cargo test -p anneal-cli guard`,
@@ -61,7 +61,8 @@ is allowed.
 
 Each entry lists what it denies and the near misses it lets through. The table tests in
 `crates/anneal-cli/src/hook/guard/denylist/tests.rs` and `tests/` beside it hold every row
-below and more; `tests/forms.rs` checks every entry in every wrapping form of the bypass table.
+below and more; `tests/forms.rs` checks every entry in every wrapping form of the bypass table
+(`human-only` in `tests/human_only.rs`, through the same forms).
 
 ### `force-push`: force push to a protected branch
 
@@ -115,7 +116,51 @@ An operand that may expand to an option cluster may hold the flags: one whose fi
 be a `-` (a variable or substitution, which may hold one; an unquoted `?`, `*` or bracket
 expression, which may match a file named `-rf`; or a written `-`) and whose other written
 characters are only letters, digits and `-` (`$F`, `"$FLAGS"`, `"$a$b"`, `"$b"-rf`, `-$x`,
-`"$b"rf` with `b=-`, `?rf`, `[-]rf`). A bracket expression may match `-` unless it is a plain
+`"$b"rf` with `b=-`, `?rf`, `[-]rf`). An extended glob group (`shopt -s extglob`: `@( )`,
+`+( )`, `!( )`, `?( )`, `*( )`) may match any text, so `rm @(-rf) /home`, `rm +(-)rf /home`
+and `rm !(x) /home` are denied while `rm -f @(a|b).o x` is allowed; a `(` or `)` inside a
+quote does not close the group. A protected-config path reads a component's text from its
+first group to its last `)` as one or more `*` components, so a quoted `)` cannot cut a group
+short there either (`tee .c@(laude|l")")/settings.json` is denied), and a `/` inside a group
+is no separator (`tee .clau@(de|x/y)/settings.json` is denied). A special parameter's name
+before `(` opens a group too, as bash reads it (`$@(x)`, `$?(x)`). The lexer reads such a
+group as one pattern word, blanks and `|` included (bash without `extglob` refuses the word,
+so nothing runs then), and checks the commands of a `$( )` substitution inside it. A `<( )`
+or `>( )` inside a group (a line continuation between `<` and `(` included) is
+`unparseable`: bash ends the group at the first `)` that balances it, which may be a `case`
+pattern's inside the substitution, so what runs after it cannot be read reliably
+(`echo @(<(ls))` is denied). A backtick inside a group, at any depth, is `unparseable` too:
+inside a backtick substitution bash ends the substitution there, not where the group ends
+(`` echo `echo @(a`:`rm -rf ~ # )` `` runs `rm`), so `` echo @(`ls`) `` is denied as well.
+A `$[ ]` inside a group is `unparseable` too, since bash skips it whole, parentheses
+included; a line continuation after a `$` inside a group is dropped first, as bash drops it
+(`echo @($\<newline>(rm -rf /))` is judged as `rm -rf /`).
+An `env -S` string is split by env, which reads no group, so no group is read there:
+`env -S '@(rm -rf ~)'` is judged as `rm -rf ~`, as before extended globs were read. The string
+is also read as shell text, since a program it runs may be a shell or `watch`, and the words
+after it are the shell's, which reads their groups (`env -S 'watch rm @(-rf) /home'` and
+`env -S rm @(-rf) /home` are denied); either reading's denial denies. It is also read as env
+splits it, with each word after the string kept whole (`env -S bash -c 'rm -rf /'` is denied)
+and env's escapes applied, as GNU coreutils 9.4 splits it: `\_`, and outside quotes a LF, CR, VT
+or FF, separate words, and `;`, `&`, `|`, `<`, `>`, `(` and `)` are characters of their word (env
+reads no operator, so `env -S 'rm -rf ; /home'` is denied); outside single quotes a backtick is a
+character of its word too, as env runs no substitution; `\t`, `\n`, `\r`, `\f` and `\v` are those characters inside their word;
+inside single quotes `\'` is a quote and `\\` a backslash; and `\c` or an unquoted `#` starting
+a word ends the string, so the words after it follow (`env -S 'bash -c #' 'rm -rf /'`,
+`env -S 'rm\_-rf\_/'` and `env -S 'sh -c rm\t-rf\t/'` are denied). env then reads the words it
+split as its own arguments, so they are read as env's again (`env -S '-S "rm -rf /"'` and
+`env -S '-i -S rm\_-rf\_/'` are denied). A `${VAR}` env expands is read as a variable.
+A `!(` in command position (after only reserved words, `time`'s `-p` or `--`, or
+`function NAME {` and `coproc [NAME] {`) stays as bash reads it without `extglob`: the `!`
+keyword and a subshell whose commands are checked. A word ending in an opener before an
+empty `()` (blanks and line continuations allowed) where a function's name stands (command
+position, or after `function`) is `unparseable`: without `extglob` it defines a function,
+with it it is one pattern word whose later words are its arguments (`/bin/echo@() { hi }`
+runs `echo`), so `f?() { ...; }` and `/bin/rm@() -rf ~` are denied (a cost: name such a
+function without the opener). Elsewhere `@()` is an empty group, so `rm @()-rf /home` is
+denied. A group in the program word may name any program, as `?` and `*` may:
+`/bin/r@(m) -rf ~` is judged as an unknown program, its arguments checked.
+A bracket expression may match `-` unless it is a plain
 set that names none: `[!a]` and `[[:punct:]]` match it too, and so may `[$c]` (a `]` inside an
 expansion in the set, as in `[!$(echo ])]`, does not close it). A `[:` or `[=` that never
 closes is read as bash reads it: its `[` is a member and the set closes at the next `]`, a set
@@ -196,6 +241,77 @@ climbing above their start (`cd "$DIR" && echo x > settings.json` is denied). A 
 once, as written: its directory is not read again with its variables empty, which would place
 `cd "$d"/x*` at `/x*` rather than anywhere (`cd "$d"/x* && echo x > settings.json` is denied).
 
+### `human-only`: a human verdict or label from a model (#62)
+
+A Bash call may not run `anneal verdict set` or `anneal decide label` with `--actor human`:
+the guard sees only the model's tool calls, and a human verdict or label is a person's to give,
+from the cockpit mod or their own terminal. The reason is
+`ERROR guard human-only: human verdicts are human-only: use /anneal or run it in your own terminal`.
+`anneal plan approve` stays allowed with any actor (the model may approve a plan, Ryan's
+wi-720468: B), as do `plan check`, `verdict valid` and `--actor model`.
+
+The words are judged as the shell forms them (wrappers, `bash -c`, `eval`, assignments, chains,
+variables and braces, as for every entry), then as clap reads them: the program's last path
+component is `anneal` (or not known before the command runs, as `"$ANNEAL"`); the subcommand
+path is `verdict set` or `decide label`; options may come anywhere after it up to a `--`; a
+value-taking option's value is the next word or follows `=`, so `--sha "$SHA"` is a value and
+never an option; long options are not abbreviated. A word not read as written may be any text
+its written start allows: `--actor "$who"` and a lone `"$flags"` (which may be
+`--actor=human`) are denied, unless the command could then no longer have its required operands
+(`decide label "$id" yes` is allowed: were `"$id"` an option, `label` would lack one). A word
+that may become several words (`"$@"`, `"${x[@]}"`, `"${!prefix@}"`, or any unquoted expansion,
+which word splitting may split: `$x`, `$*`, `${x[*]}`, `$(cmd)`) may supply any number of
+operands, so beside it another word not read as written is denied however many operands are
+left (`decide label $ARGS "$flag"`). Arguments `xargs` appends at run time may be anything, so
+`cat f | xargs anneal verdict set --pr 7` is denied. Apart from that, each word is judged as one
+word: an unquoted expansion that word splitting makes `--actor human` (`--sha $x` with
+`x='HEAD --actor human'`) is the documented limit below (#128).
+`verdict set ... --source human` without `--actor` is not denied: the merge gate does not count
+a human approval without `by.actor: human` as the review (`docs/verdict.md`).
+
+A subcommand-path word not read as written (`anneal "$@"`, `anneal $SUB`, `anneal verdict "$@"`)
+may stand for the whole path, and the words it stands for may be written anywhere in the call:
+a function's arguments, a shell's positional arguments after `-c '...'`, `set --` operands, the
+words of an array assignment, one element at a time. So the guard tracks the two halves of a
+human actor across the whole call, each anywhere: a literal `--actor` (or an assignment of one,
+`a[2]=--actor`), and one word that may be `human` as `--actor "$who"` is judged above
+(`human`, `"$who"`, `"${H:-human}"`, `"$(echo human)"`, or an assignment of one, `a[3]=human`;
+a word that may become several words, such as `"$@"`, stands for words written elsewhere and is
+not one, except right after a literal `--actor`, where clap reads it as the value:
+`--actor $WHO`, `--actor "${WHO@L}"`); a word whose written start is `--actor=` and that may be `--actor=human`
+(`"--actor=${H:-human}"`) is both. A call holding both halves and such an anneal call is
+denied whichever comes first, in any simple command at any nesting (a nested `bash -c` string
+included): `anneal "$@" --actor human`,
+`f() { anneal "$@"; }; f verdict set --pr 7 --actor human`,
+`bash -c 'anneal "$@"' _ verdict set --pr 7 --actor human`,
+`bash -c 'anneal $0 "$@"' verdict set --actor human`,
+`set -- verdict set --pr 7 --actor human; anneal "$@"` and
+`args=(verdict set --pr 7 --actor human); anneal "${args[@]}"`. The same holds for an
+operand-position expansion: a `verdict set` or `decide label` path read as written followed by
+a word that may become several words stands for operands and options alike, so
+`v() { anneal decide label "$@"; }; v d1 yes --actor human`,
+`set -- d1 yes --actor human; anneal decide label "$@"`,
+`bash -c 'anneal decide label "$@"' _ d1 yes --actor human`,
+`args=(d1 yes --actor human); anneal decide label "${args[@]}"` and
+`su root -c 'anneal decide label "$@"' -- d1 yes --actor human` are denied, as are
+`v() { anneal decide label "$@"; }; v d1 yes --actor "$(echo human)"`,
+`set -- d1 yes "--actor=${H:-human}"; anneal decide label "$@"`,
+`set -- d1 yes --actor; set -- "$@" human; anneal decide label "$@"` and
+`a[0]=d1; a[1]=yes; a[2]=--actor; a[3]=human; anneal decide label "${a[@]}"`. A quoted
+expansion whose source text holds an `@` counts as several words, so `$@` nested in another
+expansion is read too (`set -- d1 yes --actor human; anneal decide label "${x:-$@}"`). A call
+with an unread anneal call and no human actor stays allowed (`anneal decide label "$@"`,
+`set -- d1 yes --actor model; anneal decide label "$@"`). The guard does not follow which
+words reach `"$@"`, so an unrelated `--actor` and `human` in the same call are denied too (a
+limit below); split such a command into separate Bash calls. The program is anneal in any
+ASCII case and with or without `.exe` in any case (`ANNEAL`, `Anneal`, `anneal.EXE`), as a
+case-insensitive file system finds it.
+
+The ledger has no back door for it: `anneal ledger append` refuses a `by` on `plan_approved`
+and `verdict_set` as a usage error and appends nothing (`docs/ledger.md`), so a human verdict
+reaches the ledger only through `verdict set`, where this rule sees it. Writing to the label
+log or the ledger file by other means is a limit below.
+
 ## Bypass handling
 
 The guard is a denylist: defence in depth, not a sandbox. It models the shell features that
@@ -212,17 +328,19 @@ lexer (`hook/guard/shell.rs`), and then every simple command it runs is checked 
 | `case` | a pattern's `)` does not close an enclosing `$( )` or `${x:-$( )}`; every unquoted `case` word is counted (bash also opens one after `time -p`, `function f` or `coproc`), and `esac` in command position |
 | Substitutions: `$( )`, backticks, `<( )`, `>( )`, `$(( ))`, `${x:-$(...)}` | the inner commands are checked; the word holding one is dynamic; a process substitution is a word (a pipe's path) |
 | Heredocs | the body is data and the reading command's stdin; with an unquoted delimiter its substitutions are checked |
-| `bash -c`, `sh -c`, `zsh -c`, `dash`, `ksh`, `mksh`, `ash` (also `-lc`, `-o opt -c`) | the string is lexed and checked, up to 8 levels deep and 4 MiB in total |
+| `bash -c`, `sh -c`, `zsh -c`, `dash`, `ksh`, `mksh`, `ash` (also `-lc`, `-o opt -c`, `+c`) | the string is lexed and checked, up to 8 levels deep and 4 MiB in total. A `+` cluster is read both ways: setting `c` and `s` as a `-` one does (`bash +c '...'`, as bash 5 and dash run it) and setting nothing, so the next word is the script file (`zsh +s <(...)`, as zsh, ksh and mksh may read it). A short cluster takes one value per `o` or `O` letter wherever it stands (`bash -ox pipefail -c '...'`, `bash -oc posix '...'`, `bash -coo posix pipefail '...'`), and the earlier reading, where only a trailing `o` takes one, is kept too. Long options are read three ways (see Long options below), each reading checked |
+| A shell argument known only at run time that may be options: `bash $o 'rm -rf /'` (`o=-c`), `bash "$y"-c 'rm -rf /'` (`y` unset), `bash "$o" -e '...'`, `bash "$o" pipefail -c '...'` (`o=-o`), `bash -c "$x" 'rm -rf /'` (`x=-e`) | a variable or substitution whose value may start an option cluster (`$o`, `"$y"-c`, `-"$y"c`, `+$x`; not `"$d"/run.sh` or `"$s".sh`) is read both ways: as the script path or string it is when its value is no option, and as options that may hold `c` or `s`, take any number of later words as values (`o=-oo`) or end the options; a glob or extended glob that may match `-` is read so too (`bash ?c '...'`, `bash -[c] '...'`, `bash @(-c) '...'`). Every word each reading may run as the `-c` string is checked as a script, and a reading that may take its script from stdin checks stdin; so `bash "$o" 'echo ('` is denied as unreadable, and `cat x \| bash "$script"` too, since `script=-s` reads the pipe (#129). A string that is itself known only at run time cannot be read, so `bash "$script" "$1"`, `sh "$0" "$@"` and `bash "$script" "$(date)"` are denied as unreadable, an accepted false-positive cost. `env`, `sudo`, `su` and unlisted wrappers reach the same reader. `bash "$script" --verbose` and `bash -c "$cmd"` stay allowed |
 | A shell reading its script from stdin: `bash <<'EOF'`, `sh -s`, `bash <<< '...'`, `echo '...' \| sh`, `bash /dev/stdin`, `sudo -s`, `su`, `script` | the script is checked when it is static: a heredoc whose delimiter is quoted (or whose body has no substitution), a literal here-string, or what `echo` or `printf` with literal arguments (no `\` escape, no `%` directive) pipes in. Any other stdin (`curl ... \| sh`, `cat x \| bash`, `bash <<< "$S"`) is denied |
 | A script from a process substitution or descriptor: `bash <(curl ...)`, `source <(...)`, `bash /dev/fd/3`, `bash < <(...)` | denied |
 | `eval`, `alias NAME=VALUE`, `trap '...' SIG`, `su -c`, `script -c`, `watch`, `flock -c`, `env -S '...'` | the string is lexed and checked (`eval` and `watch` join their arguments) |
 | Environment: `VAR=x cmd`, `env [-i] [-u N] VAR=x cmd` | assignments and options are skipped |
-| Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked |
+| Wrappers: `sudo`, `doas`, `command`, `builtin`, `exec`, `nohup`, `time`, `nice`, `timeout`, `setsid`, `stdbuf`, `ionice`, `chrt`, `taskset`, `unbuffer`, `busybox`, `flock`, `xargs`, `find -exec` | their options (and the duration, priority, mask or lock file) are skipped and the wrapped command is checked; every `-exec`, `-execdir`, `-ok` and `-okdir` of a `find` is checked. Options are read as each wrapper's getopt reads them (#121): short options cluster (`sudo -iu root` is `-i -u root`), a value letter takes the rest of its cluster or else the next word (`-uroot`, `-u root`), an optional letter only the rest of its cluster (`xargs -eE`, `watch -dn`), long options take their value after `=` or in the next word and may be abbreviated. Where implementations differ the guard takes their union: `sudo` with `doas` (`-a`, `-c`, `-R` take values), GNU with BSD `env` (`-L`, `-P`, `-U`) and `xargs` (`-J`, `-R`, `-S`). `chrt` reads a priority only when it is all digits, then skips one `--` (util-linux 2.42; `chrt -o rm -rf /` runs `rm`); with `-p` the words after the priority are still read as a command, since chrt runs them with a pid of 0. `su` and `script` read options anywhere, and every `-c` (`--command`, su's `--session-command`) is read, each on its own, the last being the one they run. `su` also hands its words after the user (its `-` and user may follow `--`: `su - -- root -c 'rm -rf /'`; all of them under `POSIXLY_CORRECT`) to the user's shell, read as that shell reads its arguments: its options, then the command string of `-c` (`su root -- -c 'rm -rf /'`, `su root -- -co pipefail 'rm -rf /'`), or else its first operand as a script file, so `su root -w PATH <(curl ...)` and `su root -g root +x <(curl ...)` run a process substitution and are denied; the words after `--` are also read on their own. `sudo -h` takes the next word as a host, since sudo runs the command when it names the local host. The tables also hold options newer than the probed binaries (coreutils `env -a`, procps-ng `watch -s`, util-linux `chrt -U`/`-X`), and FreeBSD `env` reads `--C` as `-C`; a later version that adds a value option is a gap until its table learns it. Each grammar is checked against the installed binaries by `crates/anneal-cli/tests/fixtures/wrappers/probes.txt`. A glob or extended glob where a shell or wrapper reads an option may expand to one when a file of that name exists (`bash -[c] 'rm -rf /'` runs `bash -c` beside a file named `-c`), so such a word is read both as the walk reads it, an operand or a value, and as an option the guard cannot know, which denies (#165): a word holding a glob or group whose first part may be the option's sign and whose second, if any, may be an option letter, whatever value is attached (`-[c]`, `-@(c)`, `?c`, `@(--)login`, `env -S@(rm -rf ~)`, `env -[S]'rm -rf ${HOME}'`), and, where options take a value, any word led by `*`, an expansion or a group, which may hold the sign, the letter and the value's start at once (`env *' rm -rf ~'`); a shell's options may be signed `+` too (`bash +[c] '...'`, `bash [+]c '...'`). The slots are the words a wrapper takes before the command it wraps and that command's first word; for a shell, the words any of its readings (#129) reads as options or their values and the word that ends them, a word known only at run time ending them where an option stands but not as an option's value, since the readings that take it as options already judge what follows (`bash "$script" *` is allowed, `bash -o "$o" [+]c '...'` is denied), its command string or script (`sh -c '...' *` and `bash -e run.sh *` are allowed); for `sudo -s`, `env -S`, `watch` and `flock -c`, the words their own grammar reads as options and the word after them; for `su`, every word, the words after `--` included, since it hands them to the user's shell; for `script`, every word before a `--`. After a `--` that `sudo`, `doas`, `env`, `nice`, `stdbuf`, `ionice` or `xargs` reads as the end of its options, the command's first word is no slot (`sudo -- *.sh` is allowed), while a `--` an option takes as its value ends nothing (`sudo -u -- -[s] 'rm -rf /'` is denied). A pattern that cannot start an option (`bash *.sh`) or stands after the slots (`bash run.sh *`, `sudo rm -f *.o`) is read as before; `find`, `eval`, `source`, `trap`, `alias`, `function`, `coproc` and `busybox` read no options of their own here |
 | Unlisted wrappers: `caffeinate`, `runuser -u root --`, `chroot /`, `unshare`, `nsenter`, `systemd-run`, `pkexec`, `parallel ... :::` | the arguments of any program the guard does not know are read as a command from each word that names a checked program (`rm`, `git`, `tee`, `truncate`, `cp`, `mv`, `install`, `ln`, `link`, `sed`, `unlink`, `rmdir`, `shred`, `chmod`, `chown`, `chgrp`), a shell or a wrapper above. Programs that only print, search or test their arguments (`echo`, `printf`, `grep`, `rg`, `man`, `which`, `type`, `test`, `[`, `for`, `case`, ...) are skipped. The cost is some false denials: `cargo run -- rm -rf build` or `ssh host git push -f origin main` are denied |
-| Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires |
+| Long options | an abbreviation counts as the option (`--forc` is `--force`, `--comm` is `--command`), for the entries and for the wrappers that use `getopt_long`; the shells' own long options must be spelled out, as bash requires, with one dash or two (`-rcfile`, `--norc`) and only before the first short option; every shell, bash included, is also read without long options (a name does not say which shell runs: `busybox bash` is ash), so a body after a long option is hidden from Clef (`bash --login -c <redacted>`) and `git log | bash --version` is denied, as dash (`sh` on Debian) and bash after su's `-c` or `-f` read them, where `-posix` is a cluster; and, as the guard read them before #121, with two dashes wherever they stand (`bash -e --rcfile x -c '...'` takes `x`) |
 | Program paths: `/bin/rm`, `/usr/bin/git`, `git.exe` | only the last path component, without `.exe`, is used |
 | Brace expansion: `git push {-f,origin,main}`, `tee .claude/{settings.json,x}` | a command holding a brace group is read brace-expanded (up to 256 words), as the shell expands it before any program, wrapper or shell reads its options. As in bash, a quoted or escaped `{`, `,` or `}` is no part of a group (`bash {-c,'echo ,; rm -rf /'}` is `bash -c 'echo ,; rm -rf /'`), nor is a variable's value or xargs input, and an empty product nothing quoted went into is no word (`echo 'rm -rf /' \| bash {,}` runs `bash`, which reads the script from stdin; `''{,}` is two empty words). A word with no other pattern character and no variable or substitution left in it (whatever the other words of its group kept: `git push {-f,origin$x}` is a force push) reads as written where a program name, option or gh operand is read (`bash {-c,'rm -rf /'}` is `bash -c 'rm -rf /'`, `caffeinate {sudo,-u,root,rm,-rf,/}` is `sudo -u root rm -rf /`), and keeps its pattern shape for the entries (`rm -rf /tmp/{a,b}` is denied). A program word that holds a group in the command as written, its wrappers removed (`{rm,-rf,/}`, `sudo {sh,-c,'rm -rf /'}`, `sudo {-u,root} ls`), is denied. Among the arguments of a program the guard does not know, a checked program, shell or wrapper is read as a command: `caffeinate {rm,-rf,/}`, `caffeinate {bash,-c,'rm -rf /'}` and `caffeinate "$b"{rm,x} -rf /` are denied as `rm -rf /`, while `brew install {git,jq}` and `make {install,clean}` are allowed as their literal forms are |
-| A brace or glob after a variable or substitution: `rm "$b"{-rf,/}`, `git push "$b"{-f,origin,main}`, `tee "$d".clau*/settings.json`, `echo x > "$d".clau*/settings.json` | a word with an unquoted `*`, `?`, `[`, `{` or leading `~` is brace-expanded whatever else it holds (the braces of `${x}` and the text of `$( )` are never a group), and such a word is judged in two readings: as written, and with its expansions empty, as they are when the variable is empty. A command's arguments are checked in both, and so is a redirection's target; either denial denies. A word with an expansion but no unquoted pattern character (`tee "$d".claude/settings.json`) is judged as written only |
+| A brace or glob after a variable or substitution: `rm "$b"{-rf,/}`, `git push "$b"{-f,origin,main}`, `tee "$d".clau*/settings.json`, `echo x > "$d".clau*/settings.json` | a word with an unquoted `*`, `?`, `[`, `{` or leading `~` is brace-expanded whatever else it holds (the braces of `${x}` and the text of `$( )` are never a group) |
+| Any word holding a variable or substitution: `tee "$d".claude/settings.json`, `echo x > "$d".claude/settings.json`, `cp x "$(printf '')".claude/settings.json` | the word is judged in two readings: as written, and with its expansions empty, as they are when the variable is empty (a pattern when it holds an unquoted pattern character, else exactly that text). A command's arguments are checked in both, and so is a redirection's target; either denial denies (#115, #125). So `tee "$out".log` and `echo x > "$d"/notes.md` stay allowed, while a write whose emptied reading lands on protected config is denied. The emptied reading of a `gh pr merge` call that the first reading already found is the same merge, not a second one |
 | Variables set earlier in the command: `F='rm -rf /'; $F`, `T=.claude/settings.json; echo x > $T` | a standalone assignment (also after `export`, `declare`, `local`, `typeset`, `readonly`) with a literal value is put in where the variable is used, split into words when unquoted. A variable the command sets to a value known only at run time (`F=$(...)`, `read F`, `for F in`, `printf -v F`, `F+=x`, two different values) and then runs as the program is denied, as is a name reference or array (`declare -n`, `local -n`, `-a`, `-A`, alone or in a cluster such as `-gn`); after the command sets `IFS`, unquoted values are not put in |
 | A program word that is only expansions: `$(echo rm) -rf /`, `"$GIT" push -f`, `rm${IFS}-rf${IFS}/` | its literal parts are read as words (each expansion a separator), and its arguments are checked against every entry. If it is a command's output (`$(...)`, backticks), the arguments of a function or script (`"$@"`, `$*`, `$1`) or an indirect expansion (`${!y}`), it is denied |
 
@@ -233,12 +351,42 @@ it cannot model instead of modelling every shell feature, and it does not try to
 
 - values from the environment (`"$EDITOR" file`, `$GIT status` run, with their arguments
   checked; `cp x "$DEST"` is allowed and `git push -f origin "$B"` denied);
-- word splitting of an unquoted expansion, `"$@"` or `"${a[@]}"` into an `rm` operand that is
-  `-rf` on its own: `rm x$b /home/x` with `b=' -rf'`, `rm $F` with `F='-rf /home'` and
-  `set -- a -rf; rm x"$@" /home/x` are allowed, since judging them would also deny the ordinary
-  `rm -f $f` (#128);
-- extended globs (`shopt -s extglob`) in an `rm` operand: `rm @(-rf) /home` and `rm !(x) /home`
-  may match a file named `-rf`, and are allowed (#128);
+- word splitting (a documented limit, Ryan's decision on #128): an unquoted expansion,
+  `"$@"` or `"${a[@]}"` may stand for zero, one or several words, and each word is judged as
+  one. So a split can put `-rf` in an `rm` operand of its own (`rm x$b /home/x` with
+  `b=' -rf'`, `rm $F` with `F='-rf /home'`, `set -- a -rf; rm x"$@" /home/x`,
+  `f() { rm x"$@" /home/x; }; f a -rf`); words split from one text reach `human-only`'s
+  halves only as that one text (`anneal decide label $(printf 'd1 yes --actor human')` and
+  `read -a a <<< 'd1 yes --actor human'; anneal decide label "${a[@]}"` are allowed); and an
+  expansion that is empty can vanish and move a later word into a checked place
+  (`cp x .claude/settings.json $x` with `x` unset). These are
+  allowed, because judging every such word as possibly several would also deny everyday
+  commands such as `rm -f $f` and `rm -f $dir/x /y`. Among a shell's arguments the vanishing
+  word is covered by reading it as possible options (#129: `bash -c $x 'rm -rf /'`,
+  `caffeinate bash $x -c 'rm -rf /'` and `bash {-xc,$x} 'rm -rf /'` are denied), but a split
+  into several words is not (`bash $x` with `x='-c rm\ -rf\ /'` is read as one word);
+- a bracket expression that may match only `+` before a shell's option letters
+  (`bash [+]c '...'` in a directory holding a file named `+c`): it is read as a script path;
+- a quoted expansion in `git push` that holds a force flag: `git push "$branch"` with
+  `branch=--force` (or `-f`) is allowed, since denying it would deny every
+  `git push origin "$branch"` (a documented gap, Ryan's decision on #127). A glob that may
+  match a file named like the flag is the same gap (`git push ?f origin main`,
+  `git push @(-f) origin main`). A variable set
+  earlier in the same command is put in and judged (`b=-f; git push $b origin main` is denied);
+- a `!(` in command position when `extglob` is on: bash reads it as a glob there, while the
+  guard reads the `!` keyword and a subshell, as bash does without `extglob`. Where the two
+  readings end the group at different `)` (a `#` comment inside it), a later command can be
+  missed (main had the same gap, #144);
+- a variable where a wrapper reads an option (`sudo $o 'rm -rf /'` with `o=-s`): word
+  splitting is the documented limit above (#128), and only globs and extended globs there are
+  judged as possible options (#165); a shell reads one as possible options (#129);
+- a glob that matches nothing under `nullglob` vanishes and moves a later word into an option
+  slot (`shopt -s nullglob; bash [z] -c 'rm -rf /'`), since a pattern that cannot start an
+  option ends the slots (#170);
+- a `find` action written as a pattern (`find . ?exec rm -rf / \;` beside a file named
+  `-exec`): `find` has no option slots, so `find -name *.rs` stays allowed (#171);
+- long options a shell has only in some builds: bash's `--wordexp` and `--protected` (with
+  `WORDEXP_OPTION`) are read as short-option clusters, as other builds read them;
 - scripts in files and the code of other interpreters (`bash script.sh`, `source x`, `make`,
   `npm run`, `python -c`, `node -e`, `perl -e`);
 - other programs that delete or write files (`find -delete`, `git clean`, `dd of=`,
@@ -254,7 +402,25 @@ it cannot model instead of modelling every shell feature, and it does not try to
 - a `cp`, `mv` or `ln` destination that is an existing directory not named as one
   (`cp clippy.toml crates/foo`, with no trailing `/`);
 - a write into a protected directory from a working directory inside it that an earlier Bash
-  call moved to (`..` that climbs from inside `hooks/`).
+  call moved to (`..` that climbs from inside `hooks/`);
+- a human label written without `anneal decide label`: a model that appends a row with
+  `"actor": "human"` straight to `~/.anneal/decisions/decisions.jsonl` (`echo '{...}' >>`, a
+  script, another program), or writes the ledger file with `sqlite3`, is not seen by
+  `human-only`, which reads only the anneal commands that record one;
+- which words reach an anneal call `human-only` cannot read (`anneal "$@"`,
+  `anneal decide label "$@"`): any `--actor` and any word that may be `human` in the same Bash
+  call deny it, related or not, so `echo --actor human; anneal "$@"` and
+  `set -- "$id" yes --actor model; anneal decide label "$@"` (`"$id"` may be `human`) are
+  false denials, accepted (#62); split such a command into separate Bash calls. The other
+  side of it: beside such a call, only a literal `--actor` (or one word whose written start
+  is `--actor=`) is the flag half, so a flag known only at run time is missed. Beside
+  `v() { anneal decide label "$@"; }`, `v d1 yes "$F" human`, `v d1 yes --act$x human`,
+  `v d1 yes "$W"` (with `W=--actor=human`) and `v d1 yes --ac* human` are allowed;
+- program names in another letter case: only anneal's name is matched ignoring ASCII case
+  (`ANNEAL`, `anneal.EXE`). Every other program is matched as written (a lowercase `.exe`
+  dropped), so on a case-insensitive file system (APFS, NTFS) `RM -rf /`, `Git push -f` or
+  `rm.EXE -rf /` runs the program while the guard reads an unknown one and does not apply the
+  `rm` or `git` entry to it.
 
 These are left undecided and go to Clef D1 (below).
 
@@ -262,10 +428,10 @@ The merge gate (`docs/verdict.md`) reads commands with this checker in a probe m
 (`Entries::PrMerge`) that collects `gh pr merge` calls and notes `GH_REPO`/`GH_HOST`
 assignments and directory changes (`cd`, `pushd`, `popd` anywhere; `env -C`, `sudo -D`,
 `sudo -i`, `su -`/`-l`, `find -execdir`). Those notes are defence in depth with the same
-limits as above (an `env` short cluster such as `env -vu X -C`, a gh run from a git pager, a
-name built at run time): the merge gate's invariant rests on the merge naming its repository
-with `--repo <host>/<owner>/<repo>`, which gh reads before the working directory and the `GH_*`
-variables.
+limits as above (a gh run from a git pager, a name built at run time; an `env` short cluster
+such as `env -vu X -C` is read as env reads it since #121): the merge gate's invariant rests
+on the merge naming its repository with `--repo <host>/<owner>/<repo>`, which gh reads before
+the working directory and the `GH_*` variables.
 
 ## Clef D1: `destructive_or_irreversible` (#30)
 
@@ -360,15 +526,16 @@ so `&&`, `||`, `&` and newlines all show as `; `.
   `find <redacted> -delete`).
 - **Uncertain wrappers**: the redaction never changes what the denylist denies, so it reads
   wrappers with the denylist's walk exactly as it is, and that walk is looser than some
-  wrappers are: an option it does not know is a flag, a short-option cluster (`-iu`) is one
-  flag, and `chrt -p` or `taskset -p` runs the words after the priority or mask. Where that
-  differs from the wrapper's own reading, the word the walk places as the program may be an
-  option's value. So a wrapper's words are trusted only when each reads with certainty by the
-  redaction's own tables (`guard::redact::certain`): an exact flag, an exact value option
-  followed by its value (or with it attached: `-n1`, `--user=root`; a shell takes none
-  attached, so `bash -oerrexit` is uncertain), `--`, then the wrapper's fixed operands
-  (`timeout`'s duration, `taskset`'s mask, `flock`'s file) and, for `sudo` and `env` only,
-  literal assignments, ending exactly where the walk puts the next wrapper, the program or the body.
+  wrappers are: an option it does not know is a flag, a union of implementations is read
+  (`sudo -c x` takes a value Linux sudo refuses), and `chrt -p` or `taskset -p` runs the words
+  after the priority or mask. Where that differs from the wrapper's own reading, the word the
+  walk places as the program may be an option's value. So a wrapper's words are trusted only
+  when each reads with certainty by the redaction's own tables (`guard::redact::certain`): an
+  exact flag, an exact value option followed by its value (or with it attached: `-n1`,
+  `--user=root`; a shell takes none attached, so `bash -oerrexit` is uncertain), `--`, then
+  the wrapper's fixed operands (`timeout`'s duration, `taskset`'s mask, `flock`'s file) and,
+  for `sudo` and `env` only, literal assignments, ending exactly where the walk puts the next
+  wrapper, the program or the body.
   A word filling a value or operand slot counts only when it has that slot's strict shape, one
   the wrapper takes whatever the environment (a value it refuses makes it run nothing):
   `timeout`'s duration and `-k` a number with an optional `s`, `m`, `h` or `d`, `-s` one of

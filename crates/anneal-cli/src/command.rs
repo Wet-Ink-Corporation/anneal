@@ -49,8 +49,12 @@ pub enum CommandName {
     Calibrate,
     /// `anneal eval`
     Eval,
+    /// `anneal status`: the one read model of the ledger and the anneal home for a UI
+    Status,
     /// `anneal statusline`
     Statusline,
+    /// `anneal snapshot`: the mod's context-usage snapshot, saved for the context monitor
+    Snapshot,
     /// `anneal hook`: the commands `hooks.json` runs
     Hook,
 }
@@ -70,9 +74,22 @@ const DAG_PROVES: &str = "the task graph has no cycle and no dangling dependency
     tasks, and every ticket is a task of the plan or an outside blocker of one (a ticket that \
     blocks a task's ticket, directly or through other such tickets)";
 
+/// `status`'s claim, out of `CommandName::proves` to keep that function short.
+const STATUS_PROVES: &str = "the ledger and the anneal home's state files were read and folded \
+    into the status document as they stood";
+
+/// What `status` does not prove, out of `CommandName::does_not_prove` to keep it short.
+const STATUS_DOES_NOT_PROVE: &str = "that the recorded work was done or done well, or that the \
+    state is still current when it is shown: an absent section had no data, and one that could \
+    not be read is a finding";
+
+/// `snapshot`'s claim, out of `CommandName::proves` to keep that function short.
+const SNAPSHOT_PROVES: &str =
+    "the snapshot had the documented shape and ranges and was saved for its session as the mod's";
+
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
@@ -95,7 +112,9 @@ impl CommandName {
         Self::Decide,
         Self::Calibrate,
         Self::Eval,
+        Self::Status,
         Self::Statusline,
+        Self::Snapshot,
         Self::Hook,
     ];
 
@@ -125,7 +144,9 @@ impl CommandName {
             Self::Decide => "decide",
             Self::Calibrate => "calibrate",
             Self::Eval => "eval",
+            Self::Status => "status",
             Self::Statusline => "statusline",
+            Self::Snapshot => "snapshot",
             Self::Hook => "hook",
         }
     }
@@ -195,7 +216,9 @@ impl CommandName {
                 "skill routing accuracy, or each skill's behaviour uplift over its baseline, is at \
                  or above its bound on the eval set"
             }
+            Self::Status => STATUS_PROVES,
             Self::Statusline => "the status line was rendered",
+            Self::Snapshot => SNAPSHOT_PROVES,
             Self::Hook => "the hook ran; anything it could not do is noted in its output",
         }
     }
@@ -251,7 +274,9 @@ impl CommandName {
             Self::Decide => "that the decision is right",
             Self::Calibrate => "that the decision point is calibrated well enough to enforce",
             Self::Eval => "routing accuracy or behaviour on prompts outside the eval set",
+            Self::Status => STATUS_DOES_NOT_PROVE,
             Self::Statusline => "that the state it shows is current",
+            Self::Snapshot => "that the usage it reports is right or current",
             Self::Hook => {
                 "that the hook succeeded: hooks other than guards fail open, so they exit 0 on \
                  failure too; for a guard, that the tool call was allowed"

@@ -14,15 +14,18 @@ mod case;
 mod changed;
 mod claude;
 mod drive;
+mod fixture;
 mod gated;
 mod report;
 mod stats;
 mod suites;
 mod tally;
+#[cfg(all(test, unix))]
+mod test_git;
 
 use std::path::Path;
 
-pub use args::{GatedTools, UpliftArgs};
+pub use args::{GatedTools, Scaffolds, UpliftArgs};
 pub(crate) use args::{Mode, Settings};
 pub use gated::GatedCases;
 pub(crate) use report::report;
@@ -34,7 +37,7 @@ use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;
 use case::Grader;
-use claude::{BaselinePlugin, ClaudeEvaluator, Plugins};
+use claude::{BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins};
 use drive::{Baseline, Drove, Metered, drive, first_batch_error};
 use suites::Suites;
 
@@ -56,6 +59,17 @@ pub(crate) struct UpliftOutcome {
     pub(crate) cleanup: Option<String>,
     /// The cost cap in US dollars, when a run was asked for.
     pub(crate) max_cost_usd: Option<f64>,
+    /// Where the plugin copies got the running binary, when a run made copies.
+    pub(crate) anneal: Option<PlacedAnneal>,
+}
+
+/// Where a run's plugin copies got the running `anneal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlacedAnneal {
+    /// Under `libexec/<target>/`, the launcher's first choice on this host.
+    Target(&'static str),
+    /// Nowhere: the launcher knows no target for this host.
+    UnknownHost,
 }
 
 /// The baseline a run compares with.
@@ -97,20 +111,28 @@ pub enum UpliftError {
          --allow-gated-tools to grant them"
     )]
     GatedTools(GatedCases),
+    /// A run's selected cases name fixtures and `--allow-scaffolds` was not given.
+    #[error(
+        "fixtures are named by {0}, whose scaffold scripts run outside the eval sandbox with \
+         your rights; review them, then pass --allow-scaffolds to run them"
+    )]
+    Scaffolds(GatedCases),
 }
 
 impl UpliftError {
     /// The documented exit code: an unknown `--skill` is a usage error, as are a `--baseline`
     /// whose manifest cannot be read (a bad argument, not a router failure), gated tools
-    /// without `--allow-gated-tools` and a missing or wrong-kind path ([`LintError::code`]);
-    /// the evaluator's failures are [`RouterError::code`]'s.
+    /// without `--allow-gated-tools`, fixtures without `--allow-scaffolds` and a missing or
+    /// wrong-kind path ([`LintError::code`]); the evaluator's failures are
+    /// [`RouterError::code`]'s.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Skills(error) | Self::Suites(error) => error.code(),
-            Self::UnknownSkill { .. } | Self::Baseline(_) | Self::GatedTools(_) => {
-                crate::exit_codes::USAGE
-            }
+            Self::UnknownSkill { .. }
+            | Self::Baseline(_)
+            | Self::GatedTools(_)
+            | Self::Scaffolds(_) => crate::exit_codes::USAGE,
             Self::Router(error) => error.code(),
             Self::Changed(error) => error.code(),
         }
@@ -123,7 +145,8 @@ impl UpliftError {
 /// # Errors
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
 /// `--changed-since` cannot compare, a run's selected cases name gated tools without
-/// `--allow-gated-tools`, or the evaluator cannot run its first batch.
+/// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the running binary cannot be
+/// found, or the evaluator cannot run its first batch.
 pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutcome, UpliftError> {
     let mut outcome = UpliftOutcome {
         check: matches!(mode, Mode::Check),
@@ -133,6 +156,7 @@ pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutco
         baseline: None,
         cleanup: None,
         max_cost_usd: None,
+        anneal: None,
     };
     let Mode::Run(settings) = mode else {
         return Ok(outcome);
@@ -158,15 +182,25 @@ pub(crate) fn evaluate(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutco
         outcome.skipped = true;
         return Ok(outcome);
     }
-    // The selection is final: refuse gated tools before anything is copied, spent or run.
+    // The selection is final: refuse gated tools and scaffolds before anything is copied,
+    // spent or run.
     if settings.gated_tools == GatedTools::Refuse
         && let Some(cases) = gated::refusal(&outcome.suites.cases)
     {
         return Err(UpliftError::GatedTools(cases));
     }
-    let (drove, cleanup) = run(settings, &args.skills, &outcome.suites)?;
+    if settings.scaffolds == Scaffolds::Refuse
+        && let Some(cases) = gated::scaffold_refusal(&outcome.suites.cases)
+    {
+        return Err(UpliftError::Scaffolds(cases));
+    }
+    let target = LauncherTarget::host();
+    let (drove, cleanup) = run(settings, &args.skills, &outcome.suites, target)?;
     outcome.drove = Some(drove);
     outcome.cleanup = cleanup;
+    outcome.anneal = Some(target.map_or(PlacedAnneal::UnknownHost, |target| {
+        PlacedAnneal::Target(target.triple())
+    }));
     Ok(outcome)
 }
 
@@ -200,13 +234,23 @@ fn select(args: &UpliftArgs) -> Result<Suites, UpliftError> {
     Ok(suites)
 }
 
-/// Runs `suites`' cases in both arms; with the run, why the workspace could not be removed
+/// Runs `suites`' cases in both arms, each plugin copy holding the running binary under the
+/// launcher's `target` when there is one; with the run, why the workspace could not be removed
 /// afterwards, if it could not.
 fn run(
     settings: &Settings<'_>,
     skills: &Path,
     suites: &Suites,
+    target: Option<LauncherTarget>,
 ) -> Result<(Drove, Option<String>), UpliftError> {
+    let binary = target
+        .map(|_| std::env::current_exe())
+        .transpose()
+        .map_err(RouterError::Workspace)?;
+    let anneal = binary
+        .as_deref()
+        .zip(target)
+        .map(|(binary, target)| Placement { binary, target });
     let plugin_dir = plugin_of(skills);
     let plugin = plugin_name(plugin_dir)?;
     let baseline_name = settings
@@ -230,6 +274,7 @@ fn run(
             skills_dir: settings.skills_dir,
             name: &plugin,
             baseline,
+            anneal,
         },
     )?;
     let mut metered = Metered::new(&mut evaluator);

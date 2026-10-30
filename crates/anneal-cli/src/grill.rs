@@ -19,7 +19,9 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anneal_ledger::event::GrillConfirmed;
-use anneal_ledger::{EventEnvelope, LedgerEvent, Store, TagError, Timestamp};
+use anneal_ledger::{
+    EventEnvelope, EventKind, Filter, LedgerEvent, Store, StoreError, TagError, Timestamp,
+};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
@@ -288,6 +290,31 @@ fn confirm<O: Write>(
         &Envelope::new(CommandName::Grill, Some(SUBCOMMAND), exit_codes::OK, data),
         out,
     )
+}
+
+/// How many of the latest `grill_confirmed` events are searched for a tree's hash (H-13): the
+/// ledger is shared by every worktree, and a confirmation older than this many is stale.
+const RECENT_CONFIRMATIONS: usize = 256;
+
+/// Whether one of the latest [`RECENT_CONFIRMATIONS`] `grill_confirmed` events in `store`
+/// carries `hash`, the `sha256:` hash of a design tree's bytes. Matched by hash, not by path,
+/// since `confirm` records the path as given. The preconditions hook and `plan approve` ask it.
+///
+/// # Errors
+/// [`StoreError`] when the ledger cannot be read.
+pub(crate) fn is_confirmed(store: &Store, hash: &str) -> Result<bool, StoreError> {
+    let confirmations = Filter {
+        types: vec![EventKind::GrillConfirmed],
+        tags: Vec::new(),
+    };
+    let recent = store.tail(&confirmations, RECENT_CONFIRMATIONS)?;
+    Ok(recent.iter().any(|recorded| {
+        matches!(
+            &recorded.event.event,
+            LedgerEvent::GrillConfirmed(GrillConfirmed { hash: Some(confirmed), .. })
+                if confirmed == hash
+        )
+    }))
 }
 
 /// The one-line usage reason for a `--tree` or `--session` the ledger refuses as a tag: the

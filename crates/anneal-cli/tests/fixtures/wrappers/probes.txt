@@ -1,0 +1,217 @@
+# What each wrapper runs, observed on the real binaries by probe.sh (see README.md). The first
+# column is the word W1..W9 that ran as a program or in a body, or - when nothing ran.
+# sudo 1.9.15p5; GNU coreutils 9.4; GNU findutils 4.9.0; procps-ng 4.0.4; util-linux 2.39.3
+W1	sudo W1 a
+W1	sudo -u root W1
+W1	sudo -iu root W1
+W1	sudo -nu root W1
+W1	sudo -uroot W1
+W1	sudo -su root W1
+W1	sudo -u root -- W1
+W1	sudo --user=root W1
+W1	sudo --user root W1
+W1	sudo --us root W1
+W1	sudo -g root W1
+-	sudo -R / W1
+-	sudo -c x W1
+-	sudo -a x W1
+# No sudo -h row: `sudo -h HOST W1` runs W1 when HOST is this machine's name.
+W1	sudo -E W1
+W1	sudo --preserve-env W1
+W1	sudo --preserve-env=PATH W1
+-	sudo -D / W1
+-	sudo -T 60 W1
+W1	sudo -C 3 W1
+W1	sudo -p x W1
+W1	sudo -px W1
+W1	sudo -s W1
+W1	sudo -i W1
+W1	sudo -k W1
+# env.
+W1	env W1
+W1	env -i W1
+W1	env -iu X W1
+W1	env -u X W1
+W1	env -uX W1
+W1	env -vu X -C / W1
+W1	env -C / W1
+W1	env -iC/ W1
+W1	env --unset=X W1
+W1	env --un X W1
+W1	env - W1
+-	env -0 W1
+W1	env -S 'W1 a'
+W1	env -iS 'W1 a'
+W1	env -vSW1
+W1	env --split-string='W1 a'
+-	env -P x W1
+-	env -L x W1
+W1	env --block-signal W1
+W1	env --block-signal=INT W1
+W1	env --default-signal W1
+W1	env X=1 W1
+# xargs (one line of input).
+W1	xargs W1
+W1	xargs -eE W1
+W1	xargs -e W1
+W1	xargs -E x W1
+W1	xargs -Ex W1
+W1	xargs -i W1
+W1	xargs -ix W1
+W1	xargs -I x W1
+W1	xargs -l W1
+W1	xargs -l1 W1
+W1	xargs -L 1 W1
+W1	xargs -n1 W1
+W1	xargs -tn 1 W1
+W1	xargs -rn1 W1
+W1	xargs -a /dev/null W1
+W1	xargs -d , W1
+W1	xargs -0 W1
+W1	xargs -s 100 W1
+W1	xargs -P 2 W1
+W1	xargs --eof W1
+W1	xargs --eof=x W1
+W1	xargs --replace W1
+W1	xargs --max-lines W1
+W1	xargs --max-args 1 W1
+W1	xargs --process-slot-var=V W1
+-	xargs -J x W1
+-	xargs -R 1 -I x W1
+# watch.
+W1	watch W1
+W1	watch -n 1 W1
+W1	watch -n1 W1
+W1	watch -tn 1 W1
+W1	watch -dn W1
+W1	watch -d W1
+W1	watch -q 2 W1
+W1	watch --differences W1
+W1	watch --interval 1 W1
+W1	watch -x W1 a
+W1	watch -tx W1
+# script.
+W1	script -qc W1 /dev/null
+W1	script -c W1 /dev/null
+W1	script -qcW1 /dev/null
+-	script -tqc W1 /dev/null
+W1	script -q -t -c W1 /dev/null
+W2	script -c W1 -c W2 /dev/null
+W2	script -cW1 -cW2 /dev/null
+W1	script /dev/null -qc W1
+W1	script -B /dev/null -c W1
+W1	script --command=W1 /dev/null
+W1	script --com W1 /dev/null
+-	script -Ec W1 /dev/null
+W1	script -ec W1 /dev/null
+-	script -q W1
+# su.
+W1	su -c W1
+W1	su root -c W1
+W1	su -c W1 root
+W1	su -cW1
+W1	su -lc W1
+W1	su - root -c W1
+W2	su -c W1 -c W2
+W2	su -cW1 -cW2
+W2	su --command=W1 --command=W2
+W1	su --command=W1
+W1	su --session-command=W1
+W1	su -s /bin/sh -c W1
+W1	su -fc W1
+-	su -gc W1
+W1	su root -- -c W1
+W1	su -- root -c W1
+W1	su -l root -- -c W1
+W1	su root -- -lc W1
+W1	POSIXLY_CORRECT=1 su root -s -c W1
+W1	su root -s /bin/sh -- -c W1
+W1	su root -- -c -x W1
+W1	su root -- -co pipefail W1
+W1	su root -- -c -- W1
+W1	POSIXLY_CORRECT=1 su root -c -e W1
+W1	su -c 'echo \' -c W1
+W1	su root -w PATH <(echo; echo W1)
+W1	su root -g root <(echo; echo W1)
+W1	su root -s /bin/bash <(echo; echo W1)
+W1	su root -g root +x -- -c W1
+W1	su root -g root - <(echo; echo W1)
+W1	su root -w PATH +x <(echo; echo W1)
+W1	su root -- -ox pipefail -c W1
+W1	su root -- -rcfile x -c W1
+W1	su root -g root -- -init-file x -c W1
+W1	su root +c W1
+W1	su -c -x root W1
+W1	su -c +x root W1
+W1	su -c -- root W1
+W1	su -c -o root pipefail W1
+-	su -c -rcfile root W1
+W1	su -c -posix root errexit W1
+-	su -f root -- -rcfile W1
+W1	su -f root -- -help -c W1
+W1	su - -- root -c W1
+W1	su -- - root -c W1
+W1	su - -- root -lc W1
+W1	su - -- root -s -c W1
+W1	su -c -x - -- root W1
+W1	su -m - -- root -c W1
+W1	su - -- root +x -c W1
+-	POSIXLY_CORRECT=1 su - -- root -c W1
+W1	POSIXLY_CORRECT=1 su -- - root -c W1
+-	su - -- root -- -c W1
+W2	su -c W2 - -- root W1
+W1	sh -posix errexit -c W1
+W1	dash -posix errexit -c W1
+# chrt.
+W1	chrt -o 0 W1
+-	chrt -o W1
+W1	chrt -f 10 W1
+W1	chrt 10 W1
+W1	chrt -r 10 W1
+W1	chrt -b 0 W1
+W1	chrt -i 0 W1
+-	chrt -o 0 -- W1
+W1	chrt -o -- 0 W1
+W1	chrt -vo 0 W1
+W1	chrt -ov 0 W1
+W1	chrt -p 10 W1 0
+-	chrt -p 0 W1
+# taskset.
+W1	taskset 1 W1
+W1	taskset -c 0 W1
+W1	taskset -ac 0 W1
+W1	taskset -p 1 W1 0
+# timeout.
+W1	timeout 5 W1
+W1	timeout -s KILL 5 W1
+W1	timeout -vs KILL 5 W1
+W1	timeout -sKILL 5 W1
+W1	timeout -k 1 5 W1
+W1	timeout --signal=KILL 5 W1
+W1	timeout --sig KILL 5 W1
+# stdbuf.
+W1	stdbuf -o L W1
+W1	stdbuf -oL W1
+W1	stdbuf -oL -e0 W1
+W1	stdbuf --output=L W1
+# ionice.
+W1	ionice -c 3 W1
+W1	ionice -c3 W1
+W1	ionice -tc 3 W1
+W1	ionice -c 2 -n 0 W1
+W1	ionice -n0 W1
+# nice.
+W1	nice W1
+W1	nice -n 5 W1
+W1	nice -n5 W1
+W1	nice -5 W1
+W1	nice --adjustment=5 W1
+W1	nice --adj 5 W1
+# flock.
+W1	flock lock W1
+W1	flock -n lock W1
+W1	flock -nw 1 lock W1
+W1	flock -w1 lock W1
+W1	flock lock -c W1
+W1	flock -E 3 lock W1
+W1	flock lock --command W1

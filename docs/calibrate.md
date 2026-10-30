@@ -29,7 +29,11 @@ follows:
 - A decision with a probability is **answered**; one without (unreachable, timed out, bad
   response) is counted as `unanswered`.
 - A label row attaches to the decision with its `id`. When an id has several labels, the last
-  one read wins.
+  one read wins, with its `via`; every row stays in the log, so the history is kept. Labelling
+  is idempotent per id in that sense: labelling again replaces the label calibrate uses.
+- A label row's `actor` and `via` are optional. Rows without them (every row written before
+  `--actor` and `--via`) read as before, and a `via` this build does not name still reads as a
+  label.
 - Labels whose id is no answered decision in the log are counted in `data.unmatched_labels`.
   That covers an unanswered decision, one rotated out of the log, or a mistyped id.
 - Rows of a question the thresholds no longer define are counted in `data.unreported_rows`.
@@ -55,6 +59,9 @@ Each point lists every question its thresholds define (D3 has `choice` and `scor
 
 - `n`: answered decisions. `labelled`: answered decisions with a usable label. `unanswered`
   and `unusable_labels` are counted separately.
+- `labelled_via_mod`: of `labelled`, the decisions whose winning label has `via: mod` (given
+  with a mod's buttons, `decide label --via mod`), so the mod's labels can be told apart from
+  those typed by hand. 0 for a log without such labels.
 - `brier`: the mean of (p - o)^2 over the labelled decisions (`null` with none).
 - `bins`: 10 equal-width bins [k/10, (k+1)/10), the last closed at 1.0. Each bin gives `lower`,
   `upper`, `count`, `mean_probability` and `observed_frequency` (the fraction of positives).
@@ -153,9 +160,87 @@ stdout carries the envelope (`docs/exit-codes.md` conventions, exit 0). Its `dat
 
 With `--point`, `points`, `apply` and `diff` hold that point only.
 
+There is no `--json` flag: stdout always carries the envelope, and the human summary goes to
+stderr. A reader that wants JSON (the cockpit's calibration dashboard, `docs/mods.md`) runs
+`anneal calibrate` and reads stdout; `anneal calibrate --json` is a usage error (exit 2).
+
+### The `data` schema
+
+The envelope is `{ok, command: "calibrate", data, findings, proves, does_not_prove}`
+(`docs/exit-codes.md`). Fields are only added, never renamed or removed, without a change
+recorded here, so a reader ignores fields it does not know. `data` is:
+
+```text
+data {
+  log            string              the live decision log
+  files          [string]            the log files read, oldest first
+  proposals      string              the proposals file this run wrote
+  thresholds     string | null       the thresholds file read; null for the built-in copy
+  costs          {false_accept: 5, needless: 1}
+  skipped_rows   integer             lines that are no row this build reads
+  unmatched_labels integer           labels whose id is no answered decision
+  unreported_rows  integer           rows of a question the thresholds no longer define
+  points         [Point]             D1 to D7 in order (one with --point)
+  apply          [Step]              the manual steps (see below)
+  diff           [{pointer: string, line: integer, before: string, after: string}]
+  diff_error     string              present only when a step does not apply to the text
+}
+
+Point {
+  point          "D1" .. "D7"
+  verdict        "stay-shadow" | "eligible-to-enforce"
+  questions      [Question]          one per question the point's thresholds define
+}
+
+Question {
+  question       "noul" | "choice" | "score"
+  subject        string              the rule's subject, e.g. "destructive_or_irreversible"
+  n              integer             answered decisions
+  labelled       integer             answered decisions with a usable label
+  labelled_via_mod integer           of labelled, those whose last label came via: mod
+  unanswered     integer
+  unusable_labels integer
+  brier          number | null       null with no labelled decision
+  bins           [Bin]               always 10, in order
+  asks           integer
+  ask_rate       number | null       asks / n; null when n is 0
+  threshold      Threshold
+  verdict        "stay-shadow" | "eligible-to-enforce"
+  reasons        ["too_few_labelled" | "brier_above_bound" | "ask_rate_at_or_above_bound"]
+}
+
+Bin {
+  lower, upper   number              [lower, upper); the last bin is closed at 1.0
+  count          integer             labelled decisions in the bin
+  mean_probability   number | null   null when count is 0
+  observed_frequency number | null   null when count is 0
+}
+
+Threshold {
+  band           string | null       the lowest band's action; null without bands
+  pointer        string | null       its at_least as a JSON pointer into the thresholds file
+  current        number | null
+  ceiling        number | null       the next band's at_least
+  false_accept   "below_threshold" | "at_or_above_threshold"
+  current_expected_cost  number | null
+  proposed       number | null       equal to current when nothing is cheaper
+  proposed_expected_cost number | null
+  no_proposal    "no_bands" | "no_labels" | null
+}
+
+Step = {kind: "threshold", point, question, file: string | null, pointer, from, to}
+     | {kind: "mode", point, user_config: "clef_mode", env: "CLAUDE_PLUGIN_OPTION_CLEF_MODE",
+        value: "Dn=enforce"}
+```
+
+The envelope carries no point's Clef mode (`off`, `shadow` or `enforce`): that is `anneal
+status --json`'s `clef` section (`docs/status.md`).
+
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
-proposed (or "kept (nothing cheaper)"), and the reasons. Then it gives the proposals file and
+proposed (or "kept (nothing cheaper)"), and the reasons. When some of a question's labelled
+decisions were labelled through a mod, its line also gives `via mod N` after `labelled`; for a
+log with no such labels the line is unchanged. Then it gives the proposals file and
 each manual step, then, when a threshold step is listed, the `--apply` command that would write
 it. Errors are one `ERROR` line as for every command (exit 70 for a log,
 thresholds or proposals file that cannot be read or written, or a log file over 16.5 MiB).

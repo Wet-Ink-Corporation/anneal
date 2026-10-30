@@ -14,7 +14,9 @@ sensitive. Three pieces carry this (#33):
 
 ```
 anneal verdict set --pr <n> --sha <rev> --level <tests-verified|reviewed|approved>
-                   --source <local|review-plugin|human> [--base <ref>] [--session <id>]
+                   --source <local|review-plugin|human> [--actor human|model]
+                   [--via mod|bash|terminal] [--base <ref>] [--session <id>]
+                   [--no-status]
 ```
 
 It resolves `--sha` to a full commit id, takes the base from `--base` (else `origin/main`, else
@@ -28,11 +30,65 @@ It resolves `--sha` to a full commit id, takes the base from `--base` (else `ori
 | `sha` | the full commit id the verdict is for |
 | `patch_id` | `git patch-id --verbatim` of `git diff <base>...<sha>`; `null` for an empty diff |
 | `base` | the base as given or defaulted |
+| `by` | who ran it (`actor`: `human` or `model`) and through what (`via`: `mod`, `bash` or `terminal`), each only when given; absent with neither (#62) |
 
 The review plugin records its outcomes, `changes_requested` and `noise_only`, with
 `anneal ledger append`; `verdict set` records only levels. It writes to the ledger the hook reads
 (no `--store`), and checks `--pr` and `--session` as ledger tags before it opens the ledger, so a
 refused value creates no file. A commit or base that does not resolve is a usage error (2).
+
+`--actor human` is a person's to give: the guard denies a model's Bash call that runs
+`verdict set ... --actor human` (rule `human-only`, `docs/guard.md`), so a human verdict comes
+from the person's own terminal (a cockpit button comes with the mod half of #62); `anneal ledger
+append` refuses a `verdict_set` with a `by` (`docs/ledger.md`). The merge gate
+counts a human `approved` as the review only when its `by.actor` is `human`: one recorded
+without `--actor` (including every one recorded before #62) or with `--actor model` does not
+count, and must be recorded again with `--actor human` from your own terminal. `via` is for
+audit only and never decides (Ryan, weigh-in wi-10f284, #62).
+
+## The `anneal/verdict` commit status
+
+Once the verdict is recorded, `verdict set` posts a GitHub commit status on its commit (#116),
+so the rule the merge gate enforces in Claude Code can also be enforced on GitHub: branch
+protection on the default branch requires the status context `anneal/verdict` (a repository
+setting, made by a maintainer). The merge-gate hook reads command text, so it can only be a
+tripwire; the required status is what GitHub itself checks.
+
+| State | When |
+|---|---|
+| `success` | the merge gate would allow `gh pr merge <n> --match-head-commit <sha>` (its own evaluation, `hook::merge_gate::judge_head`, as `watch pr` asks it) |
+| `pending` | the gate wants a verdict the commit may still get: `review` (the skip-rule wants a full review), or `no-verdict`, `stale` or `tests` |
+| `failure` | the gate denies and waits for nothing more on this commit: `changes-requested`, or `unjudged` (a ledger, git or `.anneal/config.json` it cannot read; the gate fails closed) |
+
+The description names the level, the source and the gate's answer, for example
+`tests-verified by local: the merge gate wants review`. Each `verdict set` posts again, and
+GitHub keeps the latest status of a context per commit, so a human `approved` after a
+`tests-verified` turns `pending` into `success`.
+
+- **Token.** `GH_TOKEN`, else `GITHUB_TOKEN` (an empty one counts as unset); it needs
+  permission to write commit statuses. With neither, nothing is sent and `data.commit_status`
+  is `{"outcome": "skipped", "reason": "no_token"}`; `--no-status` skips it the same way
+  (`"reason": "no_status"`).
+- **Repository.** The `origin` remote's, read as the merge gate reads it (`https://`,
+  `ssh://` or `git@github.com:owner/repo.git`); it must be on `github.com`.
+- **Request.** `POST https://api.github.com/repos/<owner>/<repo>/statuses/<sha>` with
+  `{state, context, description}`, at most 10 s from DNS to the last byte, no redirect
+  followed, no proxy taken from the environment; a refusal's body is read within 16 KiB for
+  GitHub's `message`.
+- **Failure.** The verdict stays recorded: the ledger is written first and nothing undoes it.
+  A status that was asked for and not posted (an unfit token, no `github.com` origin, GitHub
+  unreachable, a timeout, a non-2xx answer) exits 4 with the envelope (`ok: false`,
+  `data.commit_status` `{"outcome": "failed", "state"?, "reason"}` and a `verdict/status:<n>`
+  finding), then one `WARNING verdict set: ...` line on stderr. Run `verdict set` again to
+  post it, or pass `--no-status`.
+- **Tests.** `ANNEAL_GITHUB_API` replaces the API base, honoured only by a debug build and
+  only as `http://` on `127.0.0.1` or `[::1]` (as `ANNEAL_CLEF_URL`), so a released binary
+  never sends the token elsewhere.
+
+The status is the gate's answer when `verdict set` ran. A verdict recorded another way (the
+review plugin's `changes_requested` through `anneal ledger append`) posts nothing, so the
+status stays as it was until the next `verdict set`. Whether a human can override the required
+status is open (#116); anneal has no override.
 
 ## Freshness
 
@@ -57,8 +113,10 @@ fresh ones:
 - a `changes_requested` voids the levels and reviews before it;
 - the latest level after it is the tests verdict: `tests_verified` or better;
 - the latest review after it is the review verdict: the review plugin's `reviewed`, `approved`
-  or `noise_only`, or, while `review.require_plugin` is false, a human's `approved` (the interim
-  rule, Ryan, 2026-10-11, until the review plugin exists).
+  or `noise_only`, or, while `review.require_plugin` is false, a human's `approved` whose
+  `by.actor` is `human` (the interim rule, Ryan, 2026-10-11, until the review plugin exists;
+  the actor requirement, Ryan, 2026-10-19, wi-10f284). A human `approved` with no `by`, with a
+  `by` naming only a `via`, or with `actor: model` is no review; `via` does not matter.
 
 ## `anneal verdict valid`
 
@@ -117,8 +175,8 @@ directories and `*` and `?` within one name:
 }
 ```
 
-`review.require_plugin` (default `false`) decides whether a human `approved` counts as the review
-verdict. `ship.sensitive_globs` (at most 256, each at most 256 bytes, relative, `/`-separated)
+`review.require_plugin` (default `false`) decides whether a human `approved` (recorded with
+`--actor human`) counts as the review verdict. `ship.sensitive_globs` (at most 256, each at most 256 bytes, relative, `/`-separated)
 adds globs to the defaults under the category `configured`; it cannot remove one. Unknown keys
 inside `review` and `ship` are refused; other top-level keys (`check_fast`) belong to other
 readers. The file must be a regular file of at most 64 KiB. A file that does not parse is a
@@ -177,8 +235,8 @@ silently, as is `gh pr merge --disable-auto` (bare, or set to a true value such 
 **Threat model.** The canonical command is the only path that gets judged. The fallback is a
 best-effort tripwire against mistakes and casual workarounds; it is not complete against a
 determined adversary in a Turing-complete shell, and Known gaps lists what it cannot see.
-Strong enforcement is a GitHub required check or branch protection on the repository, which is
-a follow-up. For the canonical command:
+Strong enforcement is GitHub's: branch protection requiring the `anneal/verdict` commit status
+that `verdict set` posts (see above). For the canonical command:
 
 1. The pull request must be named by number (`7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`; an unquoted `#7` starts a
@@ -203,7 +261,8 @@ a follow-up. For the canonical command:
 5. A review verdict must hold, unless the skip-rule skips the change from the base the latest
    verdict recorded (else the default base). Otherwise it denies with `review`, naming the review
    plugin and, while `review.require_plugin` is false, `anneal verdict set ... --level approved
-   --source human`.
+   --source human --actor human`, to be run from your own terminal; a human approval without
+   `--actor human` does not count.
 
 A denial is Claude Code's deny decision whose reason is one `ERROR merge-gate: ...` line, plus a
 `gate_blocked` event (`point` `merge-gate.<check>`, the checks being `shape`, `target`, `repo`, `env`,
@@ -257,5 +316,6 @@ The gate judges what it can see in a Bash command, for an honest agent:
   it to be an ancestor of the judged base would close this, but needs a new `verdict_set` field
   (a registry change); the commit pin still makes gh refuse a head other than the one judged;
 - `.anneal/config.json` is read from the working tree, so an uncommitted edit changes the
-  settings; and anyone can record `--source human` or append a verdict with `anneal ledger
-  append`.
+  settings; and anyone can append a review plugin's verdict with `anneal ledger append`, and
+  anything outside the guard's sight (a script on disk, the ledger file written directly) can
+  record `--source human --actor human`; the guard denies only a model's Bash call that does.

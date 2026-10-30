@@ -31,8 +31,13 @@ pub enum PathError {
     /// `git` could not be started or waited on.
     #[error("running git")]
     Git(#[source] io::Error),
-    /// `git` did not finish within the timeout and was killed.
-    #[error("git did not answer within {}s", timeout.as_secs())]
+    /// `git` did not finish within the timeout and was killed, or it exited but a process it
+    /// started still held its output pipes at the deadline (that process is not killed).
+    ///
+    /// The limit is shown cut to whole milliseconds as `Duration` debugs it (`500ms`, `1s`,
+    /// `1.5s`): budgets under a second are common, whole seconds would show them as `0s`, and
+    /// a budget left over from a deadline would otherwise print every nanosecond.
+    #[error("git did not answer within {:?}", process::whole_millis(*timeout))]
     GitTimeout {
         /// The limit that was exceeded.
         timeout: Duration,
@@ -113,12 +118,16 @@ pub(crate) fn worktree_root_within(cwd: &Path, timeout: Duration) -> Result<Stri
 /// no repository.
 const NOT_A_REPOSITORY: &str = "not a git repository";
 
+/// What git 2.56 and later say for a `.git` file pointing nowhere, which older git reported as
+/// [`NOT_A_REPOSITORY`] naming the missing target: the same directory, in no repository.
+const GITFILE_POINTS_NOWHERE: &str = "gitfile does not point to a valid repository";
+
 /// The error for a git call in `dir` that exited non-zero, from what it wrote on stderr:
 /// [`PathError::NotARepository`] only when git says so, [`PathError::GitFailed`] otherwise.
 pub(crate) fn git_failure(dir: &Path, stderr: &[u8]) -> PathError {
     let dir = dir.to_path_buf();
     let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
-    if stderr.contains(NOT_A_REPOSITORY) {
+    if stderr.contains(NOT_A_REPOSITORY) || stderr.contains(GITFILE_POINTS_NOWHERE) {
         PathError::NotARepository { dir, stderr }
     } else {
         PathError::GitFailed { dir, stderr }

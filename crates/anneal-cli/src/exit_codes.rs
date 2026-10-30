@@ -100,6 +100,8 @@ pub const PLAN_NOT_APPROVED: Code = Code::new(3, "not approved");
 /// `plan approve|check`: the plan was approved but its bytes changed since; only the plan's
 /// bytes are compared, never its spec.
 pub const PLAN_STALE: Code = Code::new(4, "stale: the plan's bytes changed since approval");
+/// `plan`'s codes, in table order.
+const PLAN_CODES: [Code; 3] = [PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE];
 /// `mode build|diagnose|off`: the mode was recorded (a dirty tree is recorded too, with a
 /// finding).
 pub const MODE_RECORDED: Code = Code::new(0, "mode recorded");
@@ -125,6 +127,14 @@ pub const REPRO_TIMED_OUT: Code = Code::new(
     4,
     "record: timed out, killed; a hang is not a reproduction, nothing recorded",
 );
+/// `repro`'s table, out of [`CommandCodes::of`] to keep that function short.
+const REPRO_CODES: [Code; 5] = [
+    REPRO_OK,
+    REPRO_LEFTOVERS,
+    REPRO_NOT_STARTED,
+    REPRO_NOT_RED,
+    REPRO_TIMED_OUT,
+];
 /// `lint`: no error findings (warnings and review items are listed but do not fail).
 pub const LINT_CLEAN: Code = Code::new(0, "no errors");
 /// `lint`: at least one error finding.
@@ -147,6 +157,9 @@ pub const VERDICT_VALID: Code = Code::new(0, "valid");
 pub const VERDICT_INVALID: Code = Code::new(1, "invalid");
 /// `verdict set|valid`: every finding is noise.
 pub const VERDICT_NOISE_ONLY: Code = Code::new(3, "noise-only");
+/// `verdict set`: the verdict is recorded, but its `anneal/verdict` commit status was not
+/// posted (#116).
+pub const VERDICT_STATUS_UNPOSTED: Code = Code::new(4, "set: recorded, status not posted");
 /// `watch pr|ci|deploy`: the watched target is green.
 pub const WATCH_GREEN: Code = Code::new(0, "green");
 /// `watch pr|ci|deploy`: merge conflict.
@@ -259,6 +272,13 @@ pub const CALIBRATE_REFUSED: Code = Code::new(
     3,
     "--apply: a proposal no longer matches the thresholds file; nothing written",
 );
+/// `status`: no ledger exists yet. The document (or text) is still written, with only the
+/// sections read from the anneal home, and no ledger is created.
+pub const STATUS_NO_LEDGER: Code = Code::new(2, "no ledger exists yet; none was created");
+
+/// `snapshot write`: the mod's snapshot was saved for its session. Invalid input is a usage
+/// error (2) and saves nothing.
+pub const SNAPSHOT_WRITTEN: Code = Code::new(0, "snapshot written");
 /// `hook`: the hook ran (a guard's deny is a decision in its output), or failed open with its
 /// failure noted in its output or on stderr.
 pub const HOOK_DONE: Code = Code::new(
@@ -277,23 +297,11 @@ impl CommandCodes {
             CommandName::Ledger => ("", &[OK, LEDGER_SCHEMA_ERROR]),
             CommandName::Grill => ("", &[OK, GRILL_INVALID, GRILL_OPEN]),
             CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED, TASK_NOT_STARTED]),
-            CommandName::Plan => (
-                "approve|check",
-                &[PLAN_APPROVED, PLAN_NOT_APPROVED, PLAN_STALE],
-            ),
+            CommandName::Plan => ("approve|check", &PLAN_CODES),
             CommandName::Mode => ("", &[MODE_RECORDED]),
             // No scope: it would widen the help's title column; each meaning names its
             // subcommand instead.
-            CommandName::Repro => (
-                "",
-                &[
-                    REPRO_OK,
-                    REPRO_LEFTOVERS,
-                    REPRO_NOT_STARTED,
-                    REPRO_NOT_RED,
-                    REPRO_TIMED_OUT,
-                ],
-            ),
+            CommandName::Repro => ("", &REPRO_CODES),
             CommandName::Lint => ("", &[LINT_CLEAN, LINT_FINDINGS]),
             CommandName::Dag => (
                 "check|frontier",
@@ -302,7 +310,12 @@ impl CommandCodes {
             CommandName::FloorGuard => ("", &[FLOOR_HELD, FLOOR_LOWERED, FLOOR_TOOL_ERROR]),
             CommandName::Verdict => (
                 "set|valid",
-                &[VERDICT_VALID, VERDICT_INVALID, VERDICT_NOISE_ONLY],
+                &[
+                    VERDICT_VALID,
+                    VERDICT_INVALID,
+                    VERDICT_NOISE_ONLY,
+                    VERDICT_STATUS_UNPOSTED,
+                ],
             ),
             CommandName::Watch => (
                 "pr|ci|deploy",
@@ -330,7 +343,9 @@ impl CommandCodes {
             // No scope: `routing|uplift` would widen the help's title column.
             CommandName::Eval => ("", &EVAL_CODES),
             CommandName::Calibrate => ("", &[OK, CALIBRATE_REFUSED]),
+            CommandName::Status => ("", &[OK, STATUS_NO_LEDGER]),
             CommandName::Statusline => ("", &[OK]),
+            CommandName::Snapshot => ("write", &[SNAPSHOT_WRITTEN]),
             CommandName::Hook => ("", &[HOOK_DONE, HOOK_BLOCKED]),
         };
         Self {

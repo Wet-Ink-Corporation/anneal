@@ -20,8 +20,8 @@ const SUMMARY_EVENTS: usize = 5;
 /// How many of the worktree's newest `task_done` events are read for the task count (H-13).
 const TASKS_READ: usize = 1024;
 
-/// The most characters of a task title the note keeps.
-const MAX_TITLE_CHARS: usize = 200;
+/// The most characters of a task title the note (and `anneal status`) keeps.
+pub(crate) const MAX_TITLE_CHARS: usize = 200;
 
 /// The worktree's state for the handoff note.
 #[derive(Debug)]
@@ -134,24 +134,38 @@ impl Worktree<'_> {
         let path = Path::new(self.root).join(&build.plan);
         let bytes = lint::read_whole_bytes(&path)
             .map_err(|error| format!("the plan {}: {}", build.plan, reason(&error)))?;
-        let text = String::from_utf8_lossy(&bytes);
-        Ok(lint::plan::check(Source {
-            file: &build.plan,
-            text: &text,
-        })
-        .plan
-        .tasks)
+        Ok(plan_tasks(&build.plan, &bytes))
     }
+}
+
+/// The tasks of the plan `file` whose content is `bytes`, in file order, as `lint plan` reads
+/// them; shared with `anneal status`.
+pub(crate) fn plan_tasks(file: &str, bytes: &[u8]) -> Vec<lint::plan::Task> {
+    let text = String::from_utf8_lossy(bytes);
+    lint::plan::check(Source { file, text: &text }).plan.tasks
+}
+
+/// How many of `tasks` are in `done`.
+pub(crate) fn finished(tasks: &[lint::plan::Task], done: &BTreeSet<String>) -> usize {
+    tasks.iter().filter(|task| done.contains(&task.id)).count()
+}
+
+/// The first of `tasks` not in `done`, with its index in the plan.
+pub(crate) fn next_task<'t>(
+    tasks: &'t [lint::plan::Task],
+    done: &BTreeSet<String>,
+) -> Option<(usize, &'t lint::plan::Task)> {
+    tasks
+        .iter()
+        .enumerate()
+        .find(|(_, task)| !done.contains(&task.id))
 }
 
 /// The task line for the plan's `tasks` when `done` are done.
 fn task_line(tasks: &[lint::plan::Task], done: &BTreeSet<String>) -> String {
-    let finished = tasks.iter().filter(|task| done.contains(&task.id)).count();
+    let finished = finished(tasks, done);
     let total = tasks.len();
-    let next = tasks
-        .iter()
-        .enumerate()
-        .find(|(_, task)| !done.contains(&task.id));
+    let next = next_task(tasks, done);
     match next {
         Some((index, next)) => {
             let title: String = next.title.chars().take(MAX_TITLE_CHARS).collect();
@@ -166,8 +180,9 @@ fn task_line(tasks: &[lint::plan::Task], done: &BTreeSet<String>) -> String {
     }
 }
 
-/// The tasks with a `task_done` tagged with `worktree` after position `since`.
-fn done_since(
+/// The tasks with a `task_done` tagged with `worktree` after position `since`; shared with
+/// `anneal status`.
+pub(crate) fn done_since(
     store: &Store,
     since: u64,
     worktree: Option<&str>,
@@ -221,7 +236,7 @@ pub(crate) fn event_word(recorded: &Recorded) -> String {
 }
 
 /// The mode as typed after `anneal mode`.
-const fn mode_name(mode: Mode) -> &'static str {
+pub(crate) const fn mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Build => "build",
         Mode::Diagnose => "diagnose",

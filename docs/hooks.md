@@ -51,9 +51,10 @@ cannot judge. When its output cannot be written it exits 2 with one `ERROR` line
 Code reads as "block". Its entry passes `--fail-closed` and sets `onFailure: "block"`, so a crash
 or a timeout blocks too.
 
-With no binary at all, the launcher exits 0 for a hook (2 for one passed `--fail-closed`). For
-`hook bootstrap` it also prints an install hint as `SessionStart` output, so the session starts
-and says why anneal is off.
+With no binary at all, the launcher exits 0 for every hook, one passed `--fail-closed` included:
+a missing install warns rather than blocks every tool call. For `hook bootstrap` it prints the
+warning as `SessionStart` output, so the session starts and says that anneal's hooks and guards
+are off, and why.
 
 ## `bootstrap` (SessionStart)
 
@@ -72,7 +73,8 @@ The context is, in order:
    exists at the worktree root (a regular file of at most 32 KiB whose head the hook recorded),
    framed as data, with the injection scan's line on a hit; see `docs/handoff.md`.
 3. **The status-line hint**, once per anneal home, while no status line has saved context usage
-   (`context-usage.json`), so the context monitor is off; see `docs/handoff.md`.
+   (`context-usage.json`) and no mod snapshot is under 10 minutes old (`context-usage-mod.json`,
+   from `anneal snapshot write`), so the context monitor is off; see `docs/handoff.md`.
 4. **The live state**, only when it changed for this session (volatile last): the newest five
    ledger events. The ledger is found as `anneal ledger` finds it (`$ANNEAL_STORE`, else the git
    common dir, else `.anneal/` in the folder). With no ledger file there is no live state, and
@@ -144,7 +146,8 @@ it before the working directory, `GH_REPO` and `GH_HOST`), pin its head with `--
 <full commit>` (each denial names the command), and needs a fresh `tests_verified`-or-better
 verdict for that head (fresh by commit or by patch id, so a rebase keeps it) and a review verdict
 unless `anneal ship skip-rule` would skip the change; a human `approved` counts as the review
-only while `review.require_plugin` is false. A denial is the guard's deny decision with one
+only while `review.require_plugin` is false and only when its `by.actor` is `human` (recorded
+with `--actor human`; `via` does not matter). A denial is the guard's deny decision with one
 `ERROR merge-gate: ...` line naming what is missing and the `anneal verdict set` command that
 records it, plus a `gate_blocked` event (`point` is `merge-gate.<check>`) in an existing ledger;
 it never creates one. Unreadable input or commands, and a ledger, git or setting it cannot read,
@@ -209,10 +212,9 @@ Limits:
   killed `anneal floor-guard`, anything `check_fast` starts) can outlive it and keep running;
   std has no portable process-group kill (as for `anneal task done`, `docs/task.md`).
 - On Windows a child's handles are inherited by the processes it starts. A killed
-  `anneal floor-guard` can leave a `git` call holding its output pipe, and the hook waits for
-  that git to exit on its own (nothing bounds it once floor-guard is killed), so it can run
-  past its 15 s timeout;
-  Claude Code then drops its output and carries on (it fails open). A process `check_fast`
+  `anneal floor-guard` can leave a `git` call holding its output pipe. The hook stops reading
+  that pipe at the deadline (its reader thread is abandoned) and still returns within the
+  deadline plus about 100 ms, while that git lives on until it exits by itself. A process `check_fast`
   leaves running keeps the log file open, so removing it fails: that is a note, and the file
   stays in the temporary directory. On unix the log is removed and the hook returns as soon as
   `check_fast` itself exits (`a_process_check_fast_leaves_behind_does_not_hold_the_hook`).
@@ -295,8 +297,10 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   the clause; not `once more`, `once again` or a clause-final `once`) opens a scope that runs to
   the next `and`, `then` or `now`, to a second `is`, `are`, `was` or `were` ("The panic when
   the file is empty is resolved." claims), through a gerund right after the conditional ("The
-  crash when saving is fixed." claims) or a past-tense verb not after a determiner ("Once the
-  fix landed all tests pass" claims), or to the clause end; for an `it` or
+  crash when saving is fixed." claims) or a past-tense verb not after a determiner (an `-ed`
+  word or a common irregular one such as `ran`, `hit`, `got`, `found`: "Once the fix landed all
+  tests pass" and "The crash when the parser hit EOF is fixed" claim), or to the clause end;
+  for an `it` or
   `everything` claim, `sure`, `ensure`, `verify`, `check`, `whether`, `get`, `keep`, `need` or
   `to` one or two words before it ("make sure everything works"); and a `?` ending the clause
   ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
@@ -305,11 +309,13 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   hyphen between two letters or digits is part of the word, so "half-done" is not `done`; a
   spaced hyphen, `--`, an en dash and an em dash still end a clause. Some false positives
   ("done reading the logs", "here is how it works", "it all works out", "Is it done so I can
-  merge?") and misses ("When I ran it all tests pass" with no comma) are accepted, as are the scope's
-  misreadings ("Merge when lint is clean and all tests pass" and "Ship it when morning checks
-  pass" claim): the block
-  cap bounds them. Clef D4 does not read these words: it judges the status block's sections on
-  its own.
+  merge?", and plans after a clause-opening `after` or `before` such as "After the tests pass,
+  I'll open the PR."; #135) are accepted, as are the scope's misreadings ("Merge when lint is
+  clean and all tests pass", "Ship it when morning checks pass" and "If the build went green
+  I'll merge." claim): the block cap bounds them. A past verb that is neither an `-ed` word nor
+  a listed irregular one does not finish a condition, an accepted miss ("When the tests were
+  rerun everything passed"). Clef D4 does not read these words: it judges the status block's
+  sections on its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in
@@ -534,12 +540,13 @@ prompt labels it with the ruling's id (it held). Until then D6 is labelled only 
 ## `context-monitor` (PostToolBatch)
 
 No matcher, 5 s timeout, `onFailure: continue`, role `scaffolding`. Hooks receive no context
-usage, so it reads the reading `anneal statusline` saved for the session in the anneal home
-(`context-usage.json`) and keeps the level each session last reached (`context-monitor.json`).
+usage, so it reads the reading saved for the session in the anneal home, by `anneal statusline`
+(`context-usage.json`) or for the mod by `anneal snapshot write` (`context-usage-mod.json`), the
+fresher of the two, and keeps the level each session last reached (`context-monitor.json`).
 It warns once (`additionalContext`) when usage rises past 60% of the auto-compact window and
 stops once (`decision: "block"`, which ends the agentic loop before the next model call) when
-it rises past 75%; falling below a threshold re-arms it. With no reading (no status line
-configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
+it rises past 75%; falling below a threshold re-arms it. With no reading (neither the status
+line nor the mod configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
 answers a `PostToolUse` input as `PostToolUse`. Its own failures are one `ERROR` line as the
 `systemMessage`, never a block. It sits under `PostToolBatch`, not `PostToolUse *`, so it runs
 once per batch and no per-call entry exists. See `docs/handoff.md`.

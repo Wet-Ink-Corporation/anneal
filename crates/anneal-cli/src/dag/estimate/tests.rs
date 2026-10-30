@@ -48,9 +48,48 @@ fn backticked_paths_in_the_body_and_listed_files_are_named_once_each() {
 
     assert_eq!(
         named,
-        ["docs/dag.md", "src/dag.rs", "Cargo.toml"],
-        "listed files first, then body mentions, line suffix dropped, no repeats"
+        ["docs/dag.md", "src/dag.rs"],
+        "a ticket that lists files names only those, once each; its body mentions are context (#68)"
     );
+}
+
+#[test]
+fn listed_files_are_named_once_each() {
+    let ticket = ticket("", &["a.rs", "b.rs", "a.rs"]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(named, ["a.rs", "b.rs"], "in order, no repeats");
+}
+
+#[test]
+fn without_listed_files_backticked_body_paths_are_named_once_each() {
+    let body = "Change `src/dag.rs` and `Cargo.toml:12`, see `src/dag.rs` again. \
+                Not `--budget`, `1.5`, `two words`, `https://x.y/z` or `cargo test`.";
+
+    let ticket = ticket(body, &[]);
+
+    let named = named_files(&ticket);
+
+    assert_eq!(
+        named,
+        ["src/dag.rs", "Cargo.toml"],
+        "body mentions in order, line suffix dropped, no repeats"
+    );
+}
+
+#[test]
+fn a_body_mention_of_a_file_does_not_add_to_a_ticket_that_lists_files() -> std::io::Result<()> {
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("plan.md"), "x".repeat(40_000))?;
+    fs::write(root.path().join("a.rs"), "x".repeat(40))?;
+
+    let estimate = estimate(&ticket("See `plan.md`.", &["a.rs"]), root.path());
+
+    let paths: Vec<&str> = estimate.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["a.rs"], "only the listed file is named");
+    assert_eq!(estimate.tokens, estimate.body_tokens + 10, "body plus a.rs");
+    Ok(())
 }
 
 #[test]

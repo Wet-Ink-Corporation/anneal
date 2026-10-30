@@ -1,6 +1,10 @@
 //! The plan's own line syntax: `Key: value` field lines, task headings, backticked spans and
 //! blocker lists. The markdown around them (sections, fences, comments) is
-//! `lint::spec::markdown`'s.
+//! `lint::spec::markdown`'s. Reading a `Key: value` line, its backticked spans and the path a
+//! `Spec:` value names is `lint::spec::field`'s, shared with a spec's `Tree:` line.
+
+use crate::lint::spec::field::key_value;
+pub(super) use crate::lint::spec::field::{code_spans, spec_target};
 
 /// The longest task id, in bytes.
 pub(super) const MAX_ID_BYTES: usize = 64;
@@ -42,50 +46,8 @@ impl Key {
 /// The field `text` sets and its value, trimmed: `Key: value`, optionally a list item, with
 /// the key optionally bold (`**Key:**` or `**Key**:`). Lines with any other key are not fields.
 pub(super) fn field(text: &str) -> Option<(Key, &str)> {
-    let mut rest = text.trim_start();
-    if let Some(after) = rest
-        .strip_prefix(['-', '*', '+'])
-        .filter(|after| after.starts_with([' ', '\t']))
-    {
-        rest = after.trim_start();
-    }
-    let bold = rest.strip_prefix("**");
-    let (key, value) = bold.unwrap_or(rest).split_once(':')?;
-    let key = key.strip_suffix("**").unwrap_or(key);
-    let value = match bold {
-        Some(_) => value.strip_prefix("**").unwrap_or(value),
-        None => value,
-    };
-    Key::parse(key.trim()).map(|key| (key, value.trim()))
-}
-
-/// The closed backtick spans of `text`, trimmed, without blank ones.
-pub(super) fn code_spans(text: &str) -> Vec<&str> {
-    let pieces: Vec<&str> = text.split('`').collect();
-    // Spans are the odd pieces; the last piece follows the last backtick, so it is never
-    // a closed span.
-    let closed = pieces.len().saturating_sub(1);
-    pieces
-        .iter()
-        .take(closed)
-        .skip(1)
-        .step_by(2)
-        .map(|span| span.trim())
-        .filter(|span| !span.is_empty())
-        .collect()
-}
-
-/// The path a `Spec:` value names: a markdown link's target, else the first backticked span,
-/// else the value itself. `None` when it names nothing.
-pub(super) fn spec_target(value: &str) -> Option<&str> {
-    let target = if let Some((_, after)) = value.split_once("](") {
-        after.split_once(')').map_or(after, |(target, _)| target)
-    } else if let Some(span) = code_spans(value).first() {
-        span
-    } else {
-        value
-    };
-    Some(target.trim()).filter(|target| !target.is_empty())
+    let (key, value) = key_value(text)?;
+    Key::parse(key).map(|key| (key, value))
 }
 
 /// A task heading's id and title: `<id>: <title>` or `Task <id>: <title>`.

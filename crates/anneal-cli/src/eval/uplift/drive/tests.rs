@@ -22,6 +22,7 @@ fn case(skill: &str, slug: &str) -> Case {
         slug: slug.to_owned(),
         file: format!("{skill}/regression/{slug}.json"),
         body: parse(text.as_bytes()).expect("valid"),
+        fixture: None,
     }
 }
 

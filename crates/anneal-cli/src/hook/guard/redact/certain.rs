@@ -1,19 +1,19 @@
 //! Where the skeleton stops trusting the denylist's walk. The walk ([`denylist::layout`])
-//! reads wrapper options loosely: an option it does not know is a flag, a short-option
-//! cluster (`-iu`) is one flag, a value or operand is whatever word stands there, and chrt or
-//! taskset with `-p` runs the words after the priority. That is the denylist's reading, kept
-//! as the denylist reads it (see `denylist::wrappers`); where it differs from the wrapper's
-//! own, the word it places as the program may be an option's value (`sudo -iu alice psql`
-//! reads `alice` as the program; `chrt -i mysql -pX` reads `-pX`, since chrt takes no priority
-//! there). So a wrapper's words are trusted only when they read with certainty by the tables
-//! here ([`readings`]): each an exact flag (or, for a shell, a cluster of its flags), an exact
-//! value option followed by its value (or with it attached, `-n1`, `--user=x`, where the
-//! wrapper allows), `--`, then the wrapper's fixed operands and, for `sudo` and `env`,
-//! literal assignments (bash field-splits a wrapper's arguments: `env K=$V x` may run `x` or
-//! a word of `$V`), ending exactly where the walk put the next wrapper, the program or the
-//! body. A body counts only when the words after it are what its wrapper's reading lets
-//! follow ([`after::After`]), each literal and not starting with `-` (`su` and `script`
-//! read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
+//! reads wrapper options as a union of implementations: an option it does not know is a flag,
+//! a value letter one implementation refuses still takes a value (`sudo -c x`), a value or
+//! operand is whatever word stands there, and chrt or taskset with `-p` runs the words after
+//! the priority. That is the denylist's reading, kept as the denylist reads it (see
+//! `denylist::wrappers`); where it differs from the wrapper's own, the word it places as the
+//! program may be an option's value, or a word the wrapper never runs (`chrt -p 10 psql 4242`
+//! reads `psql` as the program). So a wrapper's words are trusted only when they read with
+//! certainty by the tables here ([`readings`]): each an exact flag (or, for a shell, a cluster
+//! of its flags), an exact value option followed by its value (or with it attached, `-n1`,
+//! `--user=x`, where the wrapper allows), `--`, then the wrapper's fixed operands and, for
+//! `sudo` and `env`, literal assignments (bash field-splits a wrapper's arguments: `env K=$V x`
+//! may run `x` or a word of `$V`), ending exactly where the walk put the next wrapper, the
+//! program or the body. A body counts only when the words after it are what its wrapper's
+//! reading lets follow ([`after::After`]), each literal and not starting with `-` (`su` and
+//! `script` read options anywhere, the last `-c` winning): for a shell and `su`, any number; for
 //! `flock`, none, its `-c` a word of its own; for `script`, at most one file in the whole run
 //! (and none of `-B`, `-I` or `-O`, after which it takes no file). Otherwise the wrapper may
 //! refuse the command and run nothing. A wrapper that may not run what the walk places after

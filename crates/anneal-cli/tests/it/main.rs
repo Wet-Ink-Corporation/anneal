@@ -54,11 +54,15 @@ mod repro;
 mod rollout;
 mod round;
 mod ship;
+mod snapshot;
+mod spec_tree;
+mod status;
 mod statusline;
 #[cfg(test)]
 mod support;
 mod task;
 mod verdict;
+mod verdict_status;
 mod verify;
 // The fake `gh` is a shell script; `watch::tests` covers every exit code on every platform.
 #[cfg(unix)]

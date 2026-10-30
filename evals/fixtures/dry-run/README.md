@@ -65,6 +65,9 @@ become checks):
    `grill_confirmed` event, so `lint spec` cannot tell a confirmed spec from an invented one.
    Candidate check: a `Tree:` header line in the spec that `lint spec` resolves, and a
    `plan approve` refusal when no `grill_confirmed` carries that tree's current hash.
+   #77 added both. This fixture's `spec.md` predates the line and is kept as recorded;
+   `crates/anneal-cli/tests/it/spec_tree.rs` replays the chain on a copy whose spec has
+   `Tree: design-tree.json`, refused before the confirmation and approved after it.
 4. **`grill_confirmed` names the tree under `plan`.** The event's path field is `plan`, but it
    holds the design tree's path, which reads wrongly in `ledger query` output. Candidate fix: a
    `tree` field in the next registry version.
@@ -73,3 +76,5 @@ become checks):
    Paths are sized from the working directory, so the same tickets estimate differently from
    another directory. Candidate rule for the plan skill: name only files the ticket touches in
    backticks; or a `files:` list that, when present, replaces the body scan.
+   #68 took the `files:` rule: a ticket that lists `files:` is sized by them alone; the body
+   is scanned only when it lists none.

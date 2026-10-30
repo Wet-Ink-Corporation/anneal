@@ -13,6 +13,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use crate::brief::{self, BriefArgs};
 use crate::calibrate::{self, CalibrateArgs, CalibrateEnv};
 use crate::command::CommandName;
+use crate::context::WriterEnv;
 use crate::dag::{self, DagArgs};
 use crate::decide::clock::SystemClock;
 use crate::decide::transport::http::UreqTransport;
@@ -36,6 +37,8 @@ use crate::repro::{self, ReproArgs};
 use crate::rollout::{self, RolloutArgs};
 use crate::round::{self, RoundArgs};
 use crate::ship::{self, ShipArgs};
+use crate::snapshot::{self, SnapshotArgs};
+use crate::status::{self, StatusArgs};
 use crate::statusline::{self, StatuslineArgs};
 use crate::task::{self, TaskArgs};
 use crate::verdict::{self, VerdictArgs};
@@ -131,10 +134,16 @@ pub enum Command {
     /// Run evaluation suites, such as skill routing
     #[command(after_help = command_help(CommandName::Eval))]
     Eval(EvalArgs),
+    /// Fold the ledger and the anneal home into one status document (text, or JSON with --json)
+    #[command(after_help = command_help(CommandName::Status))]
+    Status(StatusArgs),
     /// Render the Claude Code status line and save the context usage for the context monitor
     /// (fails open, like a hook)
     #[command(after_help = command_help(CommandName::Statusline))]
     Statusline(StatuslineArgs),
+    /// Save the mod's context-usage snapshot for the context monitor, beside the status line's
+    #[command(after_help = command_help(CommandName::Snapshot))]
+    Snapshot(SnapshotArgs),
     /// Run a plugin hook (hooks.json calls these; they fail open unless passed --fail-closed,
     /// and the guard and preconditions hooks always fail closed)
     #[command(after_help = command_help(CommandName::Hook))]
@@ -180,7 +189,9 @@ impl Command {
             Self::Decide(_) => CommandName::Decide,
             Self::Calibrate(_) => CommandName::Calibrate,
             Self::Eval(_) => CommandName::Eval,
+            Self::Status(_) => CommandName::Status,
             Self::Statusline(_) => CommandName::Statusline,
+            Self::Snapshot(_) => CommandName::Snapshot,
             Self::Hook(_) => CommandName::Hook,
         }
     }
@@ -212,7 +223,9 @@ impl Command {
             | Self::Verify(_)
             | Self::Decide(_)
             | Self::Calibrate(_)
-            | Self::Eval(_) => OnFailure::Exit,
+            | Self::Eval(_)
+            | Self::Status(_)
+            | Self::Snapshot(_) => OnFailure::Exit,
         }
     }
 }
@@ -315,10 +328,7 @@ fn dispatch<O: Write, E: Write>(
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             floor_guard::run(args, &cwd, out)
         }
-        Command::Verdict(args) => {
-            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
-            verdict::run(args, &cwd, |var| std::env::var_os(var), out)
-        }
+        Command::Verdict(args) => run_verdict(args, out, err),
         Command::Eval(args) => eval::run(args, out),
         Command::Decide(args) => run_decide(args, out),
         Command::Calibrate(args) => run_calibrate(args, out, err),
@@ -328,7 +338,12 @@ fn dispatch<O: Write, E: Write>(
             ship::run(args, &cwd, out)
         }
         Command::Watch(args) => run_watch(args, out),
+        Command::Status(args) => {
+            let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+            status::run(args, &cwd, |var| std::env::var_os(var), out)
+        }
         Command::Statusline(StatuslineArgs) => run_statusline(out, err),
+        Command::Snapshot(args) => run_snapshot(args, out),
         Command::Rollout(args) => rollout::run(args, out),
         Command::Perf(args) => perf::run(args, &mut ProcessRunner, out),
         Command::Migrate(args) => run_migrate(args, out),
@@ -407,6 +422,26 @@ fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> 
     grill::run(args, &env, out)
 }
 
+/// `anneal verdict` from the process's working directory, with its environment for the
+/// ledger, and `GH_TOKEN`, `GITHUB_TOKEN` and `ANNEAL_GITHUB_API` read here for the commit
+/// status `verdict set` posts.
+fn run_verdict<O: Write, E: Write>(
+    args: &VerdictArgs,
+    out: &mut O,
+    err: &mut E,
+) -> Result<Code, CliError> {
+    let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
+    let github = verdict::GithubEnv::read(|var| std::env::var_os(var));
+    let io = verdict::Io {
+        cwd: &cwd,
+        lookup: |var: &str| std::env::var_os(var),
+        github: &github,
+        out,
+        err,
+    };
+    verdict::run(args, io)
+}
+
 /// `anneal watch` from the process's working directory, with its environment for the merge
 /// gate's ledger.
 fn run_watch<O: Write>(args: &WatchArgs, out: &mut O) -> Result<Code, CliError> {
@@ -422,6 +457,16 @@ fn run_statusline<O: Write, E: Write>(out: &mut O, err: &mut E) -> Result<Code, 
         out,
         err,
     )
+}
+
+/// `anneal snapshot` with the process's stdin, environment and system clock.
+fn run_snapshot<O: Write>(args: &SnapshotArgs, out: &mut O) -> Result<Code, CliError> {
+    let env = WriterEnv {
+        stdin: std::io::stdin().lock(),
+        lookup: |var: &str| std::env::var_os(var),
+        clock: &SystemClock::new(),
+    };
+    snapshot::run(args, env, out)
 }
 
 /// `anneal round` from the process's working directory, with its environment for the ledger.

@@ -128,6 +128,7 @@ A green result proves no quality floor (coverage, lint level, test count) was lo
 | 0 | valid |
 | 1 | invalid |
 | 3 | noise-only |
+| 4 | set: recorded, status not posted |
 
 A green result proves the review verdict is well-formed and backed by findings. It does **not** prove that the reviewer was right.
 
@@ -252,6 +253,15 @@ A green result proves the calibration run completed and was recorded. It does **
 
 A green result proves skill routing accuracy, or each skill's behaviour uplift over its baseline, is at or above its bound on the eval set. It does **not** prove routing accuracy or behaviour on prompts outside the eval set.
 
+## `anneal status`
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+| 2 | no ledger exists yet; none was created |
+
+A green result proves the ledger and the anneal home's state files were read and folded into the status document as they stood. It does **not** prove that the recorded work was done or done well, or that the state is still current when it is shown: an absent section had no data, and one that could not be read is a finding.
+
 ## `anneal statusline`
 
 | Code | Meaning |
@@ -259,6 +269,14 @@ A green result proves skill routing accuracy, or each skill's behaviour uplift o
 | 0 | ok |
 
 A green result proves the status line was rendered. It does **not** prove that the state it shows is current.
+
+## `anneal snapshot write`
+
+| Code | Meaning |
+|---|---|
+| 0 | snapshot written |
+
+A green result proves the snapshot had the documented shape and ranges and was saved for its session as the mod's. It does **not** prove that the usage it reports is right or current.
 
 ## `anneal hook`
 

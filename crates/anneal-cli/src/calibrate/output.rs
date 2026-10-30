@@ -307,9 +307,15 @@ fn write_question<E: Write>(question: &QuestionReport<'_>, err: &mut E) -> io::R
     } else {
         format!(" ({})", reasons.join(", "))
     };
+    // Only a log with labels from a mod gets the count, so other logs' lines stay as they were.
+    let via_mod = if question.labelled_via_mod > 0 {
+        format!(", via mod {}", question.labelled_via_mod)
+    } else {
+        String::new()
+    };
     writeln!(
         err,
-        "  {}: n {}, labelled {}, Brier {brier}, ask rate {ask_rate}{proposal}; {}{reasons}",
+        "  {}: n {}, labelled {}{via_mod}, Brier {brier}, ask rate {ask_rate}{proposal}; {}{reasons}",
         question.question,
         question.n,
         question.labelled,

@@ -108,10 +108,10 @@ the story's; version 8 added `ticket` to `round_started` and made its `pr` optio
 |---|---|---|
 | `test_run` | `task?` string, `command` string, `outcome` `green`/`red`, `exit?` integer (`null` when killed), `duration_ms?` integer, `timeout_secs?` integer (set only when a timeout killed the command); `anneal task done` sets the envelope's `worktree` in a git worktree, which the Stop hook selects runs by | `task:` |
 | `task_done` | `task` string | `task:` |
-| `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`) | `plan:` |
+| `plan_approved` | `plan` string (the plan's path as given to `anneal plan approve`, `.` components dropped; normally from the repository root), `hash` string (`sha256:<64 hex digits>` of the approved bytes; `docs/plan.md`), `by?` object (#62: who gave it, `actor` `human`/`model`, and through what, `via` `mod`/`bash`/`terminal`, each written only when given; `by` itself only when one is, so an event without them keeps its earlier shape; the key is not `actor`, which is the envelope's writer; never empty, so `"by": {}` does not read; `ledger append` refuses it, see Commands; added without a registry bump, see the decisions log) | `plan:` |
 | `grill_confirmed` | `plan` string (for `anneal grill confirm`, the design tree's path as given), `hash?` string (`sha256:` and 64 hex digits of the confirmed tree), `quote?` string (the human's confirmation, verbatim); see [grill.md](grill.md) | `plan:` |
 | `repro_red` | `task` string, `test` string (the failing reproduction); `anneal repro record` sets the envelope's `worktree` ([preconditions.md](preconditions.md)) | `task:` |
-| `verdict_set` | `pr` number, `verdict` `tests_verified`/`reviewed`/`approved` (levels, lowest first) or `changes_requested`/`noise_only` (review outcomes), `source?` `local`/`review_plugin`/`human`, `sha?` string (the full commit the verdict is for), `patch_id?` string (`git patch-id --verbatim` of `git diff <base>...<sha>`; null for an empty diff), `base?` string (the base ref as given); written by `anneal verdict set`, see [verdict.md](verdict.md) | `pr:` |
+| `verdict_set` | `pr` number, `verdict` `tests_verified`/`reviewed`/`approved` (levels, lowest first) or `changes_requested`/`noise_only` (review outcomes), `source?` `local`/`review_plugin`/`human`, `sha?` string (the full commit the verdict is for), `patch_id?` string (`git patch-id --verbatim` of `git diff <base>...<sha>`; null for an empty diff), `base?` string (the base ref as given), `by?` object (#62: who gave it, `actor` `human`/`model`, and through what, `via` `mod`/`bash`/`terminal`, each written only when given; `by` itself only when one is, so an event without them keeps its earlier shape; the key is not `actor`, which is the envelope's writer; never empty, so `"by": {}` does not read; `ledger append` refuses it, see Commands; added without a registry bump, see the decisions log); written by `anneal verdict set`, see [verdict.md](verdict.md) | `pr:` |
 | `round_started` | `pr?` number (required before version 8), `ticket?` string (registry v8: the ticket of a fix-loop round, written by `anneal round start`), `round` number (from 1); at least one of `pr` and a non-empty `ticket`, else the event does not read; each is written only when set, so a pull request round keeps the version 6 shape; `ledger append` refuses a field the event would not write back, so an explicit `"pr": null` or `"ticket": null` is refused as an unknown field: leave the key out; see [brief.md](brief.md) | `pr:` when `pr` is set; a ticket round has none and is read by type |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
@@ -135,7 +135,13 @@ anneal ledger [--store <file>] journal
 
 - `append` fills `actor` (default `cli`), `session_id` (from `--session`) and `ts` (now) when
   the event leaves them out or sets them to `null`. Its envelope's `data` holds `store`,
-  `source`, `position` and the stored `event`.
+  `source`, `position` and the stored `event`. It refuses a `by` on `plan_approved` or
+  `verdict_set` as a usage error (exit 2, one `ERROR` line on stderr, nothing on stdout,
+  nothing appended and no ledger opened): who gave an approval or a verdict is recorded only by
+  their writers, `anneal plan approve` and `anneal verdict set` (`--actor`, `--via`). For
+  `verdict_set` that is where the guard's `human-only` rule sees the actor (`docs/guard.md`), so
+  a raw append cannot claim a human verdict; `plan approve` is allowed with any actor
+  (wi-720468), so for `plan_approved` the refusal only keeps one writer of `by`.
 - `query` and `tail` filter by any of the `--type`s and all of the `--tag`s (`--session <id>` is
   `--tag session:<id>`). Their `data` holds `store`, `source`, `registry` and `events`, each
   `{"position": n, "event": {...}}` in position order. `tail` keeps the last `N` (default 10).
@@ -143,6 +149,7 @@ anneal ledger [--store <file>] journal
   envelope: the output is a journal file a cloud session commits, since its ledger leaves with
   its container.
 
-Exit codes: 0 ok, 2 schema error (an envelope with one `ledger/schema` finding on stdout), and
+Exit codes: 0 ok, 2 schema error (an envelope with one `ledger/schema` finding on stdout) or
+usage error (`append` with a `by`, above), and
 the global codes in [exit-codes.md](exit-codes.md) (70 when the store cannot be opened or
 written).

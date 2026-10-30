@@ -20,10 +20,11 @@ use crate::decide::client::Setup;
 use crate::decide::clock::Clock;
 use crate::decide::config::{ClefConfig, ConfigError, Mode};
 use crate::decide::id::{DecisionId, OutcomeLabel};
+use crate::decide::label::{LabelRow, Source};
 use crate::decide::log::{DecisionLog, LogError};
 use crate::decide::point::Point;
 use crate::decide::thresholds::Thresholds;
-use crate::decide::{DecideError, LabelRow, read_thresholds, thresholds_path};
+use crate::decide::{DecideError, read_thresholds, thresholds_path};
 use crate::paths::{self, PathError};
 
 /// Whether Clef is on for a point, read from the environment alone.
@@ -117,12 +118,8 @@ impl Prepared {
         clock: &impl Clock,
     ) -> Result<(), LabelError> {
         let ts_ms = clock.unix_millis().map_err(LabelError::Clock)?;
-        let row = LabelRow {
-            kind: "label",
-            id,
-            outcome,
-            ts_ms,
-        };
+        // A hook labels from its own reading: neither a human nor a model is claimed.
+        let row = LabelRow::new(id, outcome, ts_ms, Source::default());
         Ok(self.log.append(&row)?)
     }
 

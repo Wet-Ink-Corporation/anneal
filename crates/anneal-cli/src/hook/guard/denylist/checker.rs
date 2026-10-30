@@ -9,8 +9,10 @@ use super::feed::{Feed, own_feed};
 use super::gh::PrMerge;
 use super::variables::{self, Variables};
 use super::wrappers::{self, Program, Run};
-use super::{Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, braces, git, readings, rm};
-use crate::hook::guard::shell::{self, SimpleCommand, Word};
+use super::{
+    Context, MAX_DEPTH, MAX_LEXED_BYTES, MAX_LEXED_MIB, anneal, braces, git, readings, rm,
+};
+use crate::hook::guard::shell::{self, ParseError, SimpleCommand, Word};
 use crate::hook::guard::{Denial, Rule};
 
 /// Where a command is checked: what its standard input gets (when it does not redirect it),
@@ -81,6 +83,12 @@ pub(super) struct Checker<'c> {
     /// How deep the check is inside [`Checker::arguments`]: a gh call found there is not read
     /// in full, since the unknown program may pass it other arguments (`parallel gh ::: pr`).
     argument_depth: usize,
+    /// Whether the command, so far, has an anneal call the guard cannot read
+    /// ([`anneal::unread_call`]: `anneal "$@"`, as in a function body, or `anneal decide label
+    /// "$@"`) and the two halves of a human actor in any simple command ([`anneal::Halves`]):
+    /// together, in any order, they deny (`f() { anneal "$@"; }; f verdict set --actor human`,
+    /// `set -- d1 yes --actor; set -- "$@" human; anneal decide label "$@"`).
+    anneal_seen: anneal::Seen,
 }
 
 /// The most commands arguments are read as in one check (H-13): each read walks the rest of
@@ -111,6 +119,7 @@ impl<'c> Checker<'c> {
             gh_hides: probe::GhHides::Nothing,
             gh_calls_here: 0,
             argument_depth: 0,
+            anneal_seen: anneal::Seen::default(),
         }
     }
 
@@ -124,6 +133,16 @@ impl<'c> Checker<'c> {
 
     /// Checks shell text.
     pub(super) fn text(&mut self, text: &str, scope: Scope<'_>) -> Option<Denial> {
+        self.lexed_by(text, scope, shell::parse)
+    }
+
+    /// Checks text read as `parse` lexes it.
+    fn lexed_by(
+        &mut self,
+        text: &str,
+        scope: Scope<'_>,
+        parse: fn(&str) -> Result<Vec<SimpleCommand>, ParseError>,
+    ) -> Option<Denial> {
         if scope.depth > MAX_DEPTH {
             return Some(unreadable(format!(
                 "the command nests bash -c, eval or find -exec deeper than {MAX_DEPTH}"
@@ -135,7 +154,7 @@ impl<'c> Checker<'c> {
                 "the command re-reads more than {MAX_LEXED_MIB} MiB through bash -c or eval"
             )));
         }
-        let commands = match shell::parse(text) {
+        let commands = match parse(text) {
             Ok(commands) => commands,
             Err(error) => {
                 return Some(unreadable(format!("the command cannot be read: {error}")));
@@ -156,6 +175,9 @@ impl<'c> Checker<'c> {
     fn command(&mut self, command: &SimpleCommand, scope: Scope<'_>) -> Option<Denial> {
         let writes = self.variables.substitute(&command.writes);
         let words = self.variables.substitute(&command.words);
+        if let Some(denial) = self.note_human_actor(&words) {
+            return Some(denial);
+        }
         let outer = self.enter_command();
         let denial = writes
             .iter()
@@ -204,13 +226,25 @@ impl<'c> Checker<'c> {
     /// Checks one reading of a simple command's words: its wrappers removed, what it runs.
     fn unwrapped(&mut self, words: &[Word], scope: Scope<'_>) -> Option<Denial> {
         let scope = self.moved_by_wrapper(words, scope);
-        match wrappers::unwrap(words) {
+        self.run(wrappers::unwrap(words), scope)
+    }
+
+    /// Checks what a simple command runs once its wrappers are removed.
+    fn run(&mut self, run: Run<'_>, scope: Scope<'_>) -> Option<Denial> {
+        match run {
             Run::Nothing => None,
+            Run::Either(runs) => runs.into_iter().find_map(|run| self.run(run, scope)),
             Run::Script(text) => self.text(&text, scope.nested()),
+            Run::Split(text) => self.lexed_by(&text, scope.nested(), shell::parse_without_extglob),
             Run::StdinScript(shell) => self.stdin_script(shell, scope),
             Run::Unseen(shell) => Some(unreadable(format!(
                 "{shell} runs a script from a process substitution, known only at run time; \
                  pass the script as text the guard can read, as in bash -c '...'"
+            ))),
+            Run::UnsureOption { wrapper, word } => Some(unreadable(format!(
+                "{wrapper} reads its options where {} stands, a pattern that may expand to \
+                 one; write the option out",
+                word.text
             ))),
             Run::Exec(actions) => actions.into_iter().find_map(|action| {
                 let appended = Scope {
@@ -268,21 +302,31 @@ impl<'c> Checker<'c> {
     }
 
     /// Applies the entries for `program` (all of them when the program is not known), to the
-    /// arguments as written and, when a word holds both an expansion and an unquoted pattern
-    /// character, again in their emptied reading ([`readings::arguments`]). `cd` is followed
-    /// once: the first reading already sends it anywhere, and following the second too would
-    /// move it from anywhere to one directory (`cd "$d"/x*` to `/x*`), so relative writes after
-    /// it would no longer be judged as possibly protected. The second reading reads the same
-    /// calls again, so the gh calls it counts are dropped: each is counted once.
+    /// arguments as written and, when a word holds an expansion, again in their emptied
+    /// reading ([`readings::arguments`]). `cd` is followed once: the first reading already
+    /// sends it anywhere, and following the second too would move it from anywhere to one
+    /// directory (`cd "$d"/x*` to `/x*`), so relative writes after it would no longer be judged
+    /// as possibly protected. The second reading reads the same calls again, so the gh calls and
+    /// argument commands it counts are dropped (each is counted once; it still stops at the
+    /// budget while it runs, and reads no more than the first), and so are the merges it finds
+    /// when the first reading found one: it is the same call (`gh pr merge 1$x` is one merge,
+    /// its pull request known only at run time), while a merge only the emptied reading shows
+    /// is kept.
     fn program(&mut self, program: Program<'_>, args: &[Word], scope: Scope<'_>) -> Option<Denial> {
+        let merges_before = self.merges.len();
         let denial = self.reading(program, args, scope);
         if denial.is_some() || matches!(program, Program::Named("cd" | "pushd")) {
             return denial;
         }
         let emptied = readings::arguments(args)?;
-        let counted = self.gh_calls_here;
+        let (counted, found) = (self.gh_calls_here, self.merges.len());
+        let commands = self.argument_commands;
         let denial = self.reading(program, &emptied, scope);
         self.gh_calls_here = counted;
+        self.argument_commands = commands;
+        if found > merges_before {
+            self.merges.truncate(found);
+        }
         denial
     }
 
@@ -295,6 +339,9 @@ impl<'c> Checker<'c> {
             Err(denial) => return Some(denial),
         };
         let args = expanded.as_ref();
+        if let Some(denial) = self.anneal_arguments(program, args) {
+            return Some(denial);
+        }
         match program {
             Program::Named("gh") if self.entries == Entries::PrMerge => self.gh(args, scope),
             Program::Named("git") => {
@@ -311,19 +358,58 @@ impl<'c> Checker<'c> {
             Program::Named("cd") => self.change_directory("cd", Some(args)),
             Program::Named("pushd") => self.change_directory("pushd", Some(args)),
             Program::Named("popd") => self.change_directory("popd", None),
-            Program::Named(name) => {
-                self.entry(|| config::check(name, args, &self.cwd))
-                    .or_else(|| {
-                        wrappers::may_run_arguments(name)
-                            .then(|| self.arguments(args, scope))
-                            .flatten()
-                    })
-            }
+            Program::Named(name) => self
+                .entry(|| {
+                    anneal::is_anneal(name)
+                        .then(|| anneal::check(args, scope.appended))
+                        .flatten()
+                        .or_else(|| config::check(name, args, &self.cwd))
+                })
+                .or_else(|| {
+                    wrappers::may_run_arguments(name)
+                        .then(|| self.arguments(args, scope))
+                        .flatten()
+                }),
             Program::Unknown(word) => {
                 self.note_unseen(probe::RUN_TIME_PROGRAM);
                 self.unknown(word, args, scope)
             }
         }
+    }
+
+    /// The `human-only` denial once the command, so far, holds both halves of a human actor
+    /// ([`anneal::Halves`]) and an anneal call the guard cannot read ([`anneal::Seen`]); notes
+    /// the halves one simple command's words (`words`, its variables put in) hold. Every simple
+    /// command of the call passes here: a shell's positional arguments, `set --` operands, the
+    /// words of an array assignment (listed as a command of their own), an assignment of one
+    /// element and, through [`Checker::text`], a nested `bash -c` string. Only the guard
+    /// applies it.
+    fn note_human_actor(&mut self, words: &[Word]) -> Option<Denial> {
+        if self.entries != Entries::Denylist {
+            return None;
+        }
+        self.anneal_seen.words(words)
+    }
+
+    /// The `human-only` denial once a reading of a program's arguments (`args`, unwrapped and
+    /// brace-expanded) completes, with what the command held before, both halves of a human
+    /// actor and an anneal call the guard cannot read ([`anneal::unread_call`],
+    /// [`anneal::Seen`]); notes what it holds. Only the guard applies it.
+    fn anneal_arguments(&mut self, program: Program<'_>, args: &[Word]) -> Option<Denial> {
+        if self.entries != Entries::Denylist {
+            return None;
+        }
+        if let Some(denial) = self.anneal_seen.words(args) {
+            return Some(denial);
+        }
+        let runs_anneal = match program {
+            Program::Named(name) => anneal::is_anneal(name),
+            Program::Unknown(word) => anneal::may_name_anneal(word),
+        };
+        if runs_anneal && anneal::unread_call(args) {
+            return self.anneal_seen.call_unread();
+        }
+        None
     }
 
     /// Follows `cd` or `pushd <args>`, or `popd` (`None`: back to a directory the guard never
@@ -338,10 +424,15 @@ impl<'c> Checker<'c> {
     }
 
     /// Whether `word` names a program whose arguments are read as a command: one the guard
-    /// checks, a shell or a wrapper, and for the probe also `gh`.
+    /// checks, a shell or a wrapper, for the guard also `anneal` (whose own arguments are still
+    /// read as a command, as `task done -- <cmd>` runs them; in any case, [`anneal::is_anneal`]),
+    /// and for the probe also `gh`.
     fn names_checked(&self, word: &Word) -> bool {
         wrappers::names_checked(word)
-            || (self.entries == Entries::PrMerge && wrappers::names_program(word, "gh"))
+            || match self.entries {
+                Entries::Denylist => wrappers::names_program_where(word, anneal::is_anneal),
+                Entries::PrMerge => wrappers::names_program(word, "gh"),
+            }
     }
 
     /// The arguments of a program the guard does not know, read as a command from each word
@@ -394,6 +485,11 @@ impl<'c> Checker<'c> {
             git::check(args)
                 .or_else(|| rm::check(args, self.context, scope.appended))
                 .or_else(|| config::check("cp", args, &self.cwd))
+                .or_else(|| {
+                    anneal::may_name_anneal(word)
+                        .then(|| anneal::check(args, scope.appended))
+                        .flatten()
+                })
         });
         if by_entry.is_some() {
             return by_entry;
