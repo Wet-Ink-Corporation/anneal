@@ -286,13 +286,15 @@ fn a_result_that_cannot_be_kept_keeps_its_batch_s_runs_and_says_so() -> TestResu
     assert_eq!(
         (
             &envelope["data"]["runs"],
-            &envelope["data"]["spend"],
+            &envelope["data"]["cost_usd"],
+            &envelope["data"]["cost_is_lower_bound"],
             unkept,
             kept.path().join("result-2-without-plan.json").is_file(),
         ),
         (
             &full["data"]["runs"],
-            &full["data"]["spend"],
+            &full["data"]["cost_usd"],
+            &full["data"]["cost_is_lower_bound"],
             vec!["eval/uplift/keep-results:result-1-with.json"],
             true
         )
