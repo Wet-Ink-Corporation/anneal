@@ -23,10 +23,10 @@ That is the whole install. Every option is optional: with none set, anneal runs 
 
 ### How the CLI is found
 
-The hooks run the `anneal` CLI through `plugin/libexec/anneal` (or `anneal.cmd` on Windows). Nothing is put on your PATH. The launcher takes the first of:
+The hooks run the `anneal` CLI through `plugin/libexec/anneal` (or `anneal.cmd` on Windows), by path. Your shell's PATH is not changed. For the session's own Bash calls, where the skills run `anneal ...`, the session-start hook appends one line to the script Claude Code sources before each Bash command (`$CLAUDE_ENV_FILE`), `export PATH='<plugin>/libexec':"$PATH"`, so `anneal` there is the launcher. The line is written once per file. A plugin directory holding a control character or a `:` (a Windows drive path among them) is not written; the session start notes it instead, and `anneal` must then be run by its full path. The launcher takes the first of:
 
 1. a build in the plugin's `libexec/<target>/`. The `marketplace` branch and the release zip carry Linux (x86_64 and aarch64, musl), macOS (Apple silicon) and Windows (x86_64);
-2. an `anneal` on PATH (`cargo install --path crates/anneal-cli` from a checkout, or a release binary);
+2. an `anneal` on PATH (`cargo install --path crates/anneal-cli` from a checkout, or a release binary), skipping the launcher's own directory;
 3. a release build it downloaded earlier, in `~/.cache/anneal/<version>/<target>/` (`$XDG_CACHE_HOME/anneal` when set, or `$ANNEAL_CACHE_DIR`);
 4. the release build for the plugin's version, downloaded from the GitHub release `v<version>` (`anneal-<target>`) and kept only when it matches the release's `SHA256SUMS`. This needs `curl` or `wget`, `sha256sum` or `shasum`, and access to `github.com` and the host its release downloads redirect to. A failed download is retried after 2 minutes, resuming where it stopped. `ANNEAL_NO_FETCH=1` turns it off. The Windows launcher does not download yet.
 

@@ -2,7 +2,8 @@
 # Smoke test for plugin/libexec/anneal. Takes the path of a built anneal binary.
 #  1. A build in libexec/<target>/ runs with nothing on PATH, and `hook guard --fail-closed`
 #     through it denies a force push with a PreToolUse deny decision.
-#  2. With no build, the launcher falls back to an anneal on PATH.
+#  2. With no build, the launcher falls back to an anneal on PATH, also when its own directory
+#     comes first on PATH.
 #  3. With neither and nothing to download with, every hook exits 0, a --fail-closed guard too
 #     (a missing install warns, it does not block), silently except `hook bootstrap`, which prints
 #     the warning as SessionStart output; a plain call exits 127.
@@ -55,6 +56,13 @@ onpath="$work/on-path"
 mkdir -p "$onpath"
 cp "$built" "$onpath/anneal"
 PATH="$onpath:$empty" "$sh_bin" "$launcher" --version | grep -q '^anneal ' || fail "PATH fallback"
+# With the launcher's own directory first on PATH, as `hook bootstrap` puts it for Bash calls,
+# the fallback skips the launcher and finds the anneal after it, both when called by path and
+# when called by name through PATH.
+PATH="$work/plugin/libexec:$onpath:$empty" "$sh_bin" "$launcher" --version | grep -q '^anneal ' \
+  || fail "PATH fallback past the launcher's own directory"
+PATH="$work/plugin/libexec/:$onpath:$empty" anneal --version | grep -q '^anneal ' \
+  || fail "anneal by name through PATH, the launcher's directory first"
 
 # 3. Neither: hooks and guards exit 0, bootstrap warns, plain calls exit 127.
 PATH="$empty" "$sh_bin" "$launcher" hook bootstrap </dev/null >"$work/hint" || fail "a hook with no binary must exit 0"
