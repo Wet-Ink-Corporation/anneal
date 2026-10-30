@@ -1,5 +1,6 @@
 {
   "behaviour": "outcome",
+  "fixture": "blank",
   "seed": "anneal #20 review (major): the duplicate-id check compared every pair, quadratic on large graphs.",
   "prompt": "Plan the task: reject duplicate ticket ids in a graph of up to 100,000 tickets.",
   "graders": [

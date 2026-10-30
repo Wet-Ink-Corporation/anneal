@@ -1,5 +1,6 @@
 {
   "behaviour": "outcome",
+  "fixture": "blank",
   "seed": "anneal #11 review (blocker): a `Drop` impl could panic by unwrapping a close that failed.",
   "prompt": "Review this Rust and say what you would change, test-first:\n\nimpl Drop for Store {\n    fn drop(&mut self) {\n        self.conn.close().unwrap();\n    }\n}",
   "allowed_tools": [

@@ -1,5 +1,6 @@
 {
   "behaviour": "outcome",
+  "fixture": "blank",
   "seed": "anneal #10 review (major): tests covered `--help` and `--version` but not `-h` and `-V`, and a later change broke the short forms.",
   "prompt": "The plan's task T3 is: \"`--help` and `--version` exit 0.\" Write the tests you would add for T3 as a list, then stop.",
   "allowed_tools": [
