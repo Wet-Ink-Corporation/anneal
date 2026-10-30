@@ -307,15 +307,18 @@ mod tests {
 
     #[test]
     fn without_tmpdir_the_default_work_dir_is_the_anneal_home_s_tmp() {
-        let unset = default_work_dir(lookup(&[("HOME", "/home/me")]));
-        let empty = default_work_dir(lookup(&[("TMPDIR", ""), ("ANNEAL_HOME", "/srv/anneal")]));
+        // A home must be absolute on the host, so both sit under its temp dir (`C:\..` on Windows).
+        let me = std::env::temp_dir().join("me");
+        let srv = std::env::temp_dir().join("srv-anneal");
+        let unset = default_work_dir(lookup(&[("HOME", me.to_str().expect("UTF-8"))]));
+        let empty = default_work_dir(lookup(&[
+            ("TMPDIR", ""),
+            ("ANNEAL_HOME", srv.to_str().expect("UTF-8")),
+        ]));
 
         assert_eq!(
             (unset, empty),
-            (
-                PathBuf::from("/home/me/.anneal/tmp"),
-                PathBuf::from("/srv/anneal/tmp")
-            )
+            (me.join(".anneal").join("tmp"), srv.join("tmp"))
         );
     }
 
