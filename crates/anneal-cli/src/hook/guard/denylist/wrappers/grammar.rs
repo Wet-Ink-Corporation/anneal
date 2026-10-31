@@ -109,6 +109,11 @@ impl<'a> Read<'a> {
 }
 
 impl Grammar {
+    /// Whether the table holds the short option `letter`.
+    pub(super) fn knows(&self, letter: char) -> bool {
+        self.short_arg(letter).is_some()
+    }
+
     /// What the short option `letter` takes; `None` when the table does not hold it.
     fn short_arg(&self, letter: char) -> Option<Arg> {
         let mut chars = self.short.chars().peekable();

@@ -60,7 +60,7 @@ pub(super) fn unsure_option<'a>(
     }
     let slots = match peeled {
         Peel::Program => return None,
-        Peel::Inner(inner) | Peel::Appending(inner) => {
+        Peel::Inner(inner) | Peel::Appending(inner) | Peel::Also { inner, .. } => {
             let taken = rest.len().saturating_sub(inner.len());
             let slots = if ended_options(name, rest, taken) {
                 taken
