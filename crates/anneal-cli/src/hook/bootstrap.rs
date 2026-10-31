@@ -139,7 +139,7 @@ fn context(
     };
     let (hint, hint_note) = compaction::statusline_hint(&lookup, &SystemClock::new());
     let path_note = env_file::export_libexec(&lookup);
-    let mut text = plugin_index(&lookup);
+    let (mut text, index_note) = plugin_index(&lookup);
     let (state, state_note) = match &cwd {
         Ok(cwd) => fresh_state(input.session_id.as_deref(), cwd, lookup),
         Err(error) => (
@@ -153,7 +153,14 @@ fn context(
         text.push('\n');
         text.push_str(&section);
     }
-    let notes = [input_note, path_note, handoff_note, hint_note, state_note];
+    let notes = [
+        input_note,
+        index_note,
+        path_note,
+        handoff_note,
+        hint_note,
+        state_note,
+    ];
     for note in notes.into_iter().flatten() {
         text.push('\n');
         text.push_str(&note);
@@ -163,18 +170,34 @@ fn context(
 }
 
 /// The index for the plugin at `$CLAUDE_PLUGIN_ROOT`, listing only the skills whose
-/// `skills/<name>/SKILL.md` is a file there (one that cannot be read counts as absent); every
-/// skill when the variable is unset or empty or `skills/` is not a directory, so the hook fails
-/// open to the full index.
-fn plugin_index(lookup: impl Fn(&str) -> Option<OsString>) -> String {
+/// `skills/<name>/SKILL.md` is a file there; and a note when a lookup failed. The hook fails
+/// open to the full index: when the variable is unset or empty, when no skill is found, and,
+/// with the note, when looking one up fails other than as not found.
+fn plugin_index(lookup: impl Fn(&str) -> Option<OsString>) -> (String, Option<String>) {
     let Some(root) = lookup(env_file::PLUGIN_ROOT_VAR).filter(|root| !root.is_empty()) else {
-        return index::index();
+        return (index::index(), None);
     };
     let skills = PathBuf::from(root).join("skills");
-    if !skills.is_dir() {
-        return index::index();
+    let mut present = Vec::new();
+    for name in index::skill_names() {
+        let file = skills.join(name).join("SKILL.md");
+        match std::fs::metadata(&file) {
+            Ok(metadata) if metadata.is_file() => present.push(name),
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let note = format!(
+                    "anneal listed every skill: looking up {}: {error}",
+                    file.display()
+                );
+                return (index::index(), Some(note));
+            }
+        }
     }
-    index::index_with(|name| skills.join(name).join("SKILL.md").is_file())
+    if present.is_empty() {
+        return (index::index(), None);
+    }
+    (index::index_with(|name| present.contains(&name)), None)
 }
 
 /// The live state section for the ledger seen from `cwd`, unless `session` was already given
@@ -335,6 +358,41 @@ mod tests {
         assert!(
             context.starts_with(&super::index::index()),
             "fails open to every skill: {context}"
+        );
+    }
+
+    #[test]
+    fn a_plugin_root_whose_skills_directory_holds_no_skill_gets_the_whole_index() {
+        let plugin = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir_all(plugin.path().join("skills/build")).expect("no SKILL.md");
+
+        let context = context_with_plugin_root(plugin.path());
+
+        assert!(
+            context.starts_with(&super::index::index()),
+            "no skill found is no reason to list none: {context}"
+        );
+    }
+
+    /// A skill path that is neither there nor absent (here `skills/grill` is a file, so its
+    /// `SKILL.md` cannot be looked up: `NotADirectory`) fails open to every skill, with a note.
+    #[test]
+    #[cfg(unix)]
+    fn a_skill_that_cannot_be_looked_up_gets_the_whole_index_and_a_note() {
+        let plugin = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir_all(plugin.path().join("skills/spec")).expect("a skill directory");
+        std::fs::write(plugin.path().join("skills/spec/SKILL.md"), "spec").expect("a SKILL.md");
+        std::fs::write(plugin.path().join("skills/grill"), "not a directory").expect("a file");
+
+        let context = context_with_plugin_root(plugin.path());
+
+        assert_eq!(
+            (
+                context.starts_with(&super::index::index()),
+                context.contains("\nanneal listed every skill: looking up "),
+            ),
+            (true, true),
+            "{context}"
         );
     }
 

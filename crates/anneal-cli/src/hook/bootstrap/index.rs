@@ -92,11 +92,22 @@ pub(crate) fn index() -> String {
 /// model to load it.
 #[must_use]
 pub(crate) fn index_with(present: impl Fn(&str) -> bool) -> String {
-    let skills = Bullets(&ENTRY_TRIGGERS, &|name| present(name));
-    let commands = Bullets(&USER_COMMANDS, &|command| {
-        present(command.strip_prefix(COMMAND_PREFIX).unwrap_or(command))
-    });
+    let skills = Bullets(&ENTRY_TRIGGERS, &present);
+    let commands = Bullets(&USER_COMMANDS, &|command| present(skill_of(command)));
     format!("{PREAMBLE}{skills}{COMMANDS_HEADING}{commands}")
+}
+
+/// The directory name of every skill the index can list, entry skills then user commands.
+pub(crate) fn skill_names() -> impl Iterator<Item = &'static str> {
+    ENTRY_TRIGGERS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(USER_COMMANDS.iter().map(|(command, _)| skill_of(command)))
+}
+
+/// The skill a user command runs: `/anneal:handoff` runs `handoff`.
+fn skill_of(command: &str) -> &str {
+    command.strip_prefix(COMMAND_PREFIX).unwrap_or(command)
 }
 
 /// One ``- `name`: text`` line per pair whose name the filter keeps.
