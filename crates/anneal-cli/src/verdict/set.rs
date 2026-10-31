@@ -187,8 +187,9 @@ fn report<O: Write, E: Write>(
     };
     out.flush().map_err(CliError::Output)?;
     match commit_status::warn(&mut err, args.pr, &recorded.sha, reason) {
+        Ok(()) => Ok(code),
         // Best effort, as `calibrate`'s summary: the envelope on stdout already carries the
         // failure (its finding and this exit code), and stderr is the stream that refused it.
-        Ok(()) | Err(_) => Ok(code),
+        Err(_unreportable) => Ok(code),
     }
 }
