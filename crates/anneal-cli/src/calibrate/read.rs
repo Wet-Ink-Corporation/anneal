@@ -68,6 +68,9 @@ pub(crate) struct LogRows {
     pub(crate) via_mod: HashSet<String>,
     /// Lines that are not a row this build reads.
     pub(crate) skipped_rows: u32,
+    /// When each of `answered` was decided (its `ts_ms`), by index; `None` for a row without
+    /// one that is a whole number of milliseconds.
+    pub(crate) answered_ms: Vec<Option<u64>>,
 }
 
 /// One line of the log.
@@ -81,6 +84,9 @@ enum RowDto {
 #[derive(Debug, Deserialize)]
 struct DecisionDto {
     id: String,
+    /// Read as any JSON value, so a row whose `ts_ms` is not a millisecond count still reads
+    /// (as it did before calibrate read the field); such a row is left out of the history.
+    ts_ms: Option<serde_json::Value>,
     point: Point,
     question: Question,
     probability: Option<f64>,
@@ -210,6 +216,8 @@ fn add_decision(decision: DecisionDto, rows: &mut LogRows) {
             .unwrap_or_default(),
         asked: decision.action.as_deref().is_some_and(is_ask),
     });
+    rows.answered_ms
+        .push(decision.ts_ms.as_ref().and_then(serde_json::Value::as_u64));
 }
 
 /// An action that hands the decision to a human: `ask`, or a name starting `ask_`.

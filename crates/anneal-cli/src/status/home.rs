@@ -11,9 +11,9 @@ use serde::Serialize;
 use super::Unreadable;
 use crate::context::usage::{Level, Window, WindowSource};
 use crate::context::{self, Fresher, Snapshot};
-use crate::decide::client::effective_mode;
-use crate::decide::config::{ClefConfig, Mode};
+use crate::decide::config::Mode;
 use crate::decide::log::DecisionLog;
+use crate::decide::modes::Modes;
 use crate::decide::point::Point;
 
 /// `clef`: each decision point's answered decisions and its mode.
@@ -52,27 +52,18 @@ pub(super) fn clef(
     home: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
 ) -> Result<Option<Clef>, Unreadable> {
-    let config = ClefConfig::from_env(lookup)?;
-    let answered = DecisionLog::in_home(home).answered_by_point()?;
-    let configured = config.account().is_some();
-    if !configured && answered.is_empty() {
+    let modes = Modes::read(&DecisionLog::in_home(home), lookup)?;
+    let configured = modes.is_configured();
+    if !configured && !modes.any_answered() {
         return Ok(None);
     }
     let points = Point::ALL
         .into_iter()
-        .map(|point| {
-            let answered = answered.get(&point).copied().unwrap_or(0);
-            let configured_mode = config.mode(point);
-            let mode = match configured_mode {
-                _ if !configured => Mode::Off,
-                other => effective_mode(other, answered),
-            };
-            PointStatus {
-                point,
-                answered,
-                configured_mode,
-                mode,
-            }
+        .map(|point| PointStatus {
+            point,
+            answered: modes.answered(point),
+            configured_mode: modes.configured(point),
+            mode: modes.effective(point),
         })
         .collect();
     Ok(Some(Clef { configured, points }))
