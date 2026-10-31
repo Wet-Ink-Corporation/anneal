@@ -232,6 +232,146 @@ fn on_linux_a_bash_case_run_under_tmp_is_flagged_and_one_elsewhere_is_not() -> T
     Ok(())
 }
 
+/// What a [`socket_run`] showed.
+#[cfg(target_os = "linux")]
+struct SocketRun {
+    /// The exit code.
+    code: Option<i32>,
+    /// Everything on stderr.
+    stderr: String,
+    /// The `eval/uplift/socket-path` findings' messages.
+    messages: Vec<String>,
+    /// The `TMPDIR` each batch got.
+    tmpdirs: Vec<String>,
+}
+
+/// A run of the gated suites (one case names Bash) against the fake, with its workspace made
+/// in `work_dir` and `env` set.
+#[cfg(target_os = "linux")]
+fn socket_run(work_dir: &Path, env: &[(&str, &str)]) -> Result<SocketRun, Box<dyn Error>> {
+    let logs = tempfile::tempdir()?;
+    let log = logs.path().join("tmpdir.log");
+    let mut env = env.to_vec();
+    env.push(("FAKE_TMPDIR_LOG", log.to_str().ok_or("UTF-8")?));
+    let run = FakeRun::with_suites(
+        &super::fixtures().join("eval-uplift/gated"),
+        &env,
+        &[
+            "--allow-gated-tools".as_ref(),
+            "--work-dir".as_ref(),
+            work_dir.as_os_str(),
+        ],
+    )?;
+    let envelope = envelope(&run.output)?;
+    let messages = envelope
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|finding| {
+            finding.get("key").and_then(serde_json::Value::as_str)
+                == Some("eval/uplift/socket-path")
+        })
+        .filter_map(|finding| finding.get("message").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let tmpdirs = fs::read_to_string(&log)?
+        .lines()
+        .filter_map(|line| line.strip_suffix(" dir").map(str::to_owned))
+        .collect();
+    Ok(SocketRun {
+        code: run.output.status.code(),
+        stderr: std::str::from_utf8(&run.output.stderr)?.to_owned(),
+        messages,
+        tmpdirs,
+    })
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_child_tmpdir_over_the_socket_budget_is_warned_before_any_batch() -> TestResult {
+    let work = tempfile::Builder::new().tempdir_in(env!("CARGO_TARGET_TMPDIR"))?;
+    let long = fs::canonicalize(work.path())?.join("a-work-directory-long-enough-to-overrun");
+
+    let SocketRun {
+        code,
+        stderr,
+        messages,
+        tmpdirs,
+    } = socket_run(&long, &[])?;
+
+    assert_eq!(code, Some(0), "{stderr}");
+    let tmpdir = tmpdirs.first().ok_or("a batch ran")?;
+    let warning = stderr.lines().next().unwrap_or_default();
+    assert_eq!(
+        (
+            warning.strip_prefix("WARN eval: "),
+            stderr.lines().count(),
+            messages.len(),
+            warning.contains(&format!("is {} bytes", tmpdir.len())),
+            warning.contains(&long.display().to_string()),
+        ),
+        (messages.first().map(String::as_str), 1, 1, true, true),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn the_socket_warning_comes_before_a_first_batch_that_fails() -> TestResult {
+    let work = tempfile::Builder::new().tempdir_in(env!("CARGO_TARGET_TMPDIR"))?;
+    let long = work.path().join("a-work-directory-long-enough-to-overrun");
+
+    let SocketRun { code, stderr, .. } = socket_run(&long, &[("FAKE_FAILS", "1")])?;
+
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        (
+            code,
+            lines.len(),
+            lines
+                .first()
+                .is_some_and(|line| line.starts_with("WARN eval: ")),
+            lines
+                .get(1)
+                .is_some_and(|line| line.starts_with("ERROR eval: ")),
+        ),
+        (Some(4), 2, true, true),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_short_work_dir_is_not_warned() -> TestResult {
+    let short = tempfile::Builder::new().tempdir_in("/tmp")?;
+
+    let SocketRun {
+        code,
+        stderr,
+        messages,
+        tmpdirs,
+    } = socket_run(short.path(), &[])?;
+
+    assert_eq!(
+        (
+            code,
+            stderr.as_str(),
+            messages.len(),
+            tmpdirs.len(),
+            tmpdirs.iter().all(|tmpdir| tmpdir.len() <= 49),
+        ),
+        (Some(0), "", 0, 3, true),
+        "{tmpdirs:?}"
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn keep_results_keeps_each_batch_s_result_named_by_its_arm() -> TestResult {
@@ -259,6 +399,88 @@ fn keep_results_keeps_each_batch_s_result_named_by_its_arm() -> TestResult {
             Some(1),
             Vec::<String>::new()
         )
+    );
+    Ok(())
+}
+
+/// The files below `dir`, as paths relative to it, sorted.
+#[cfg(target_os = "linux")]
+fn files_below(dir: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let relative = path.strip_prefix(dir)?.to_str().ok_or("UTF-8")?;
+                files.push(relative.to_owned());
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn keep_results_keeps_each_run_s_trace_from_inside_the_workspace() -> TestResult {
+    let kept = tempfile::tempdir()?;
+    let dir = kept.path().join("r6");
+    let outside = kept.path().join("outside.jsonl");
+    fs::write(&outside, "not this run's")?;
+
+    let run = FakeRun::with_args(
+        &[("FAKE_TRACES", outside.to_str().ok_or("UTF-8")?)],
+        &["--keep-results".as_ref(), dir.as_os_str()],
+    )?;
+
+    let envelope = envelope(&run.output)?;
+    assert_eq!(run.output.status.code(), Some(0), "{envelope}");
+    let traces: Vec<String> = files_below(&dir)?
+        .into_iter()
+        .filter(|file| file.starts_with("traces/"))
+        .collect();
+    let expected: Vec<String> = [
+        ("1-with", "plan--capability--estimate"),
+        ("1-with", "plan--regression--break-down"),
+        ("1-with", "spec--regression--criteria"),
+        ("2-without-plan", "plan--capability--estimate"),
+        ("2-without-plan", "plan--regression--break-down"),
+        ("3-without-spec", "spec--regression--criteria"),
+    ]
+    .iter()
+    .flat_map(|(batch, case)| [1, 2].map(|i| format!("traces/{batch}/{case}-{i}.jsonl")))
+    .collect();
+    let unkept = envelope["findings"]
+        .as_array()
+        .ok_or("findings is an array")?
+        .iter()
+        .filter(|finding| {
+            finding["key"]
+                .as_str()
+                .is_some_and(|key| key.starts_with("eval/uplift/keep-results"))
+        })
+        .count();
+    assert_eq!(
+        (
+            traces,
+            fs::read_to_string(
+                dir.join("traces/2-without-plan/plan--regression--break-down-2.jsonl")
+            )?,
+            unkept,
+            run.left_in_tmp()?,
+        ),
+        (
+            expected,
+            "{\"eval\":\"anneal-uplift-2\",\"case\":\"plan--regression--break-down\",\"run\":2}\n"
+                .to_owned(),
+            0,
+            Vec::<String>::new()
+        ),
+        "the third run's trace is outside the workspace and is skipped"
     );
     Ok(())
 }

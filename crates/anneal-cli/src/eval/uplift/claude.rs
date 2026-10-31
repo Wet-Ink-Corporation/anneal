@@ -14,6 +14,7 @@
 
 mod libexec;
 mod scaffold;
+mod traces;
 mod trials;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,7 +31,7 @@ use super::drive::{Arm, Batch, Evaluator, Ran};
 use super::suites::Case;
 use crate::eval::real::claude::{Invocation, Invoked, Options, budget_arg, invoke, result_path};
 use crate::eval::real::result;
-use crate::eval::real::workspace::{Limits, Workspace, copy_tree};
+use crate::eval::real::workspace::{Limits, Workspace, copy_tree, name_len};
 use crate::eval::real::{RouterError, Stop};
 pub(crate) use libexec::{LauncherTarget, Placement};
 pub(crate) use trials::trials;
@@ -106,8 +107,8 @@ impl<'a> ClaudeEvaluator<'a> {
         work_dir: &Path,
     ) -> Result<Self, RouterError> {
         let started = Instant::now();
-        let workspace = Workspace::create_in(work_dir, "uplift", plugins.dir)
-            .map_err(RouterError::Workspace)?;
+        let workspace =
+            Workspace::create_in(work_dir, SUITE, plugins.dir).map_err(RouterError::Workspace)?;
         if let Err(error) = prepare(
             &workspace,
             plugins.baseline.map(|base| base.dir),
@@ -135,20 +136,30 @@ impl<'a> ClaudeEvaluator<'a> {
     }
 
     /// The evaluator, copying each batch's result into the existing directory `dir`, if
-    /// given, as [`kept_name`] names it.
+    /// given, as [`kept_name`] names it, and each of its runs' traces as
+    /// [`traces::trace_name`] names them.
     pub(crate) const fn keeping_results(mut self, dir: Option<&'a Path>) -> Self {
         self.keep_results = dir;
         self
     }
 
-    /// The results `--keep-results` could not keep so far, taken out of the evaluator.
+    /// The results and traces `--keep-results` could not keep so far, taken out of the
+    /// evaluator.
     pub(crate) fn take_unkept(&mut self) -> Vec<Unkept> {
         std::mem::take(&mut self.unkept)
     }
 
-    /// Copies `batch`'s `result` into the `--keep-results` directory, if given, recording a
-    /// failed copy rather than failing a batch whose runs already happened and cost.
-    fn keep(&mut self, result: &Path, batch: &Batch<'_>) {
+    /// Whether batches pass `--keep-temp`, so their runs' traces are still there to copy: with
+    /// `--keep-results`, on Linux, where the kept runs are inside the workspace and go with it
+    /// (macOS keeps them under `/tmp`, which nothing would remove).
+    fn keeps_runs(&self) -> bool {
+        self.keep_results.is_some() && cfg!(target_os = "linux")
+    }
+
+    /// Copies `batch`'s `result`, and its runs' `traces`, into the `--keep-results` directory,
+    /// if given, recording a failed copy rather than failing a batch whose runs already
+    /// happened and cost.
+    fn keep(&mut self, result: &Path, batch: &Batch<'_>, traces: &[traces::Trace]) {
         let Some(dir) = self.keep_results else {
             return;
         };
@@ -159,6 +170,8 @@ impl<'a> ClaudeEvaluator<'a> {
                 reason: error.to_string(),
             });
         }
+        self.unkept
+            .extend(traces::keep(traces, self.workspace.root(), dir));
     }
 
     /// What is left of the time limit.
@@ -234,9 +247,13 @@ impl Evaluator for ClaudeEvaluator<'_> {
         let root = self.workspace.root();
         let tag = batch.index.to_string();
         let tmp_dir = root.join(CHILD_TMP);
+        let mut args = arguments(&self.options, root, &target, batch);
+        if self.keeps_runs() {
+            args.push("--keep-temp".into());
+        }
         let invocation = Invocation {
             program: self.options.program,
-            args: &arguments(&self.options, root, &target, batch),
+            args: &args,
             root,
             tag: &tag,
             tmp_dir: Some(&tmp_dir),
@@ -246,26 +263,33 @@ impl Evaluator for ClaudeEvaluator<'_> {
         match invoked {
             Invoked::TimedOut => Ok(stopped(true)),
             Invoked::Result(value) => {
-                let ran = trials(
-                    result::parse(value)?,
-                    self.plugin_of(batch.arm),
-                    &batch.cases,
-                )?;
-                self.keep(&result_path, batch);
+                let result = result::parse(value)?;
+                let traces = if self.keep_results.is_some() {
+                    traces::traces(&result, batch)
+                } else {
+                    Vec::new()
+                };
+                let ran = trials(result, self.plugin_of(batch.arm), &batch.cases)?;
+                self.keep(&result_path, batch, &traces);
                 Ok(ran)
             }
         }
     }
 }
 
-/// The name `--keep-results` gives `batch`'s result: `result-<index>-<arm>.json`, the arm
-/// `with`, `without-<skill>` or `baseline`.
+/// The name `--keep-results` gives `batch`'s result: `result-<batch>-<arm>.json`
+/// ([`batch_label`]).
 fn kept_name(batch: &Batch<'_>) -> String {
+    format!("result-{}.json", batch_label(batch))
+}
+
+/// `batch`'s index and arm, `<index>-<arm>`, the arm `with`, `without-<skill>` or `baseline`.
+fn batch_label(batch: &Batch<'_>) -> String {
     let index = batch.index;
     match batch.arm {
-        Arm::With => format!("result-{index}-with.json"),
-        Arm::Without(skill) => format!("result-{index}-without-{skill}.json"),
-        Arm::Baseline => format!("result-{index}-baseline.json"),
+        Arm::With => format!("{index}-with"),
+        Arm::Without(skill) => format!("{index}-without-{skill}"),
+        Arm::Baseline => format!("{index}-baseline"),
     }
 }
 
@@ -289,6 +313,13 @@ const EVAL_DIR_PREFIX: &str = "anneal-uplift-";
 /// under the system's `/tmp`, whose writes the Linux eval sandbox denies (`super::sandbox`),
 /// and removed with the workspace.
 const CHILD_TMP: &str = "tmp";
+
+/// The suite the workspace is named for: `anneal-eval-uplift-<hex>`.
+const SUITE: &str = "uplift";
+
+/// What the children's `TMPDIR` adds to the work directory's path, in bytes:
+/// `/anneal-eval-uplift-<hex>/tmp`, the same for every workspace.
+pub(crate) const CHILD_TMP_BELOW_WORK_DIR: usize = 1 + name_len(SUITE) + 1 + CHILD_TMP.len();
 
 /// The eval directory of batch `index`, below the plugin copy it runs against.
 fn eval_dir(index: u32) -> String {

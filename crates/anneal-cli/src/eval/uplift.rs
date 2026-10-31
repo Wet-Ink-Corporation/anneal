@@ -25,6 +25,7 @@ mod tally;
 mod test_git;
 
 use std::ffi::OsString;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use args::default_work_dir;
@@ -41,7 +42,10 @@ use crate::lint::skills::LintError;
 use crate::lint::skills::listing::listings;
 use crate::paths::PathError;
 use case::{Grader, Tool};
-use claude::{BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins, Unkept};
+use claude::{
+    BaselinePlugin, CHILD_TMP_BELOW_WORK_DIR, ClaudeEvaluator, LauncherTarget, Placement, Plugins,
+    Unkept,
+};
 use drive::{Baseline, Drove, Metered, drive, first_batch_error};
 use suites::Suites;
 
@@ -68,7 +72,10 @@ pub(crate) struct UpliftOutcome {
     /// The work directory, when a run made its workspace there although a selected case
     /// names Bash and the eval sandbox denies Bash every write under it.
     pub(crate) read_only_sandbox: Option<String>,
-    /// The batch results `--keep-results` could not keep, in batch order.
+    /// Why Bash's sandbox cannot start in the run's cases that name Bash, when the `claude`
+    /// children's `TMPDIR` is too long for its sockets (also written to stderr before the run).
+    pub(crate) socket_path: Option<String>,
+    /// The batch results and run traces `--keep-results` could not keep, in batch order.
     pub(crate) unkept: Vec<Unkept>,
 }
 
@@ -129,6 +136,9 @@ pub enum UpliftError {
     /// The default work directory needs the anneal home, and it is not usable.
     #[error("finding the default work directory")]
     Home(#[source] PathError),
+    /// A warning could not be written to stderr before the run.
+    #[error("writing a warning")]
+    Output(#[source] io::Error),
 }
 
 impl UpliftError {
@@ -137,11 +147,12 @@ impl UpliftError {
     /// without `--allow-gated-tools`, fixtures without `--allow-scaffolds` and a missing or
     /// wrong-kind path ([`LintError::code`]); the evaluator's failures are
     /// [`RouterError::code`]'s; an unusable anneal home is internal, as it is for every
-    /// command that needs one.
+    /// command that needs one; a stderr that cannot be written is an output error.
     #[must_use]
     pub const fn code(&self) -> Code {
         match self {
             Self::Home(_) => crate::exit_codes::INTERNAL,
+            Self::Output(_) => crate::exit_codes::OUTPUT,
             Self::Skills(error) | Self::Suites(error) => error.code(),
             Self::UnknownSkill { .. }
             | Self::Baseline(_)
@@ -161,12 +172,14 @@ impl UpliftError {
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
 /// `--changed-since` cannot compare, a run's selected cases name gated tools without
 /// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the default work directory
-/// needs an anneal home that is relative, the work directory cannot be made absolute, the
-/// running binary cannot be found, or the evaluator cannot run its first batch.
-pub(crate) fn evaluate(
+/// needs an anneal home that is relative, the work directory cannot be made absolute (or,
+/// for a case naming Bash, made), the running binary cannot be found, `err` cannot be
+/// written, or the evaluator cannot run its first batch.
+pub(crate) fn evaluate<E: Write>(
     args: &UpliftArgs,
     mode: &Mode<'_>,
     lookup: impl Fn(&str) -> Option<OsString>,
+    err: &mut E,
 ) -> Result<UpliftOutcome, UpliftError> {
     let mut outcome = UpliftOutcome {
         check: matches!(mode, Mode::Check),
@@ -178,6 +191,7 @@ pub(crate) fn evaluate(
         max_cost_usd: None,
         anneal: None,
         read_only_sandbox: None,
+        socket_path: None,
         unkept: Vec::new(),
     };
     let Mode::Run(settings) = mode else {
@@ -218,6 +232,7 @@ pub(crate) fn evaluate(
     }
     let work_dir = work_dir(settings.work_dir, lookup)?;
     let work_dir = work_dir.as_path();
+    outcome.socket_path = warn_socket_path(&outcome.suites.cases, work_dir, err)?;
     let finished = run(settings, &args.skills, &outcome.suites, work_dir)?;
     outcome.drove = Some(finished.drove);
     outcome.cleanup = finished.cleanup;
@@ -382,10 +397,68 @@ fn settle(
 /// The work directory as the `eval/uplift/read-only-sandbox` finding names it, when one of
 /// `cases` names Bash and the eval sandbox denies Bash every write under `work_dir`.
 fn read_only_sandbox(cases: &[suites::Case], work_dir: &Path) -> Option<String> {
-    let names_bash = cases
+    (names_bash(cases) && sandbox::denies_bash_writes(work_dir))
+        .then(|| work_dir.display().to_string())
+}
+
+/// Whether one of `cases` names Bash.
+fn names_bash(cases: &[suites::Case]) -> bool {
+    cases
         .iter()
-        .any(|case| case.body.allowed_tools.contains(&Tool::Bash));
-    (names_bash && sandbox::denies_bash_writes(work_dir)).then(|| work_dir.display().to_string())
+        .any(|case| case.body.allowed_tools.contains(&Tool::Bash))
+}
+
+/// [`socket_path`], also written to `err` as a `WARN` line, before anything is copied or
+/// spent, so the operator can stop a run whose Bash cases cannot work.
+///
+/// # Errors
+/// As [`socket_path`], and [`UpliftError::Output`] when `err` cannot be written.
+fn warn_socket_path<E: Write>(
+    cases: &[suites::Case],
+    work_dir: &Path,
+    err: &mut E,
+) -> Result<Option<String>, UpliftError> {
+    let warning = socket_path(cases, work_dir)?;
+    if let Some(warning) = &warning {
+        writeln!(err, "WARN eval: {warning}").map_err(UpliftError::Output)?;
+    }
+    Ok(warning)
+}
+
+/// Why Bash's sandbox cannot start in the runs, as the `eval/uplift/socket-path` finding and
+/// warning say it, when one of `cases` names Bash and the `claude` children's `TMPDIR` below
+/// `work_dir` (made here, then resolved as `claude` resolves it) is longer than
+/// [`sandbox::CHILD_TMPDIR_BUDGET`] on this host. Every workspace's name is as long, so the
+/// length is known before the workspace is made.
+///
+/// # Errors
+/// [`RouterError::Workspace`] when `work_dir` cannot be made.
+fn socket_path(cases: &[suites::Case], work_dir: &Path) -> Result<Option<String>, UpliftError> {
+    if !names_bash(cases) {
+        return Ok(None);
+    }
+    std::fs::create_dir_all(work_dir).map_err(RouterError::Workspace)?;
+    // A directory just made that cannot be resolved is measured as given, the best this
+    // check can do without it.
+    let resolved = std::fs::canonicalize(work_dir);
+    let dir = resolved.as_deref().unwrap_or(work_dir);
+    let len = dir
+        .as_os_str()
+        .len()
+        .saturating_add(CHILD_TMP_BELOW_WORK_DIR);
+    Ok(sandbox::socket_overrun(len).map(|over| {
+        format!(
+            "the claude children's TMPDIR, {}/anneal-eval-uplift-<hex>/tmp, is {len} bytes, \
+             {over} more than the {} that leave room below it for the sockets claude plugin \
+             eval's Bash sandbox binds (a Unix socket path holds at most {} bytes on Linux), \
+             so Bash fails in every run (\"Failed to create bridge sockets\"); run again with a \
+             --work-dir (or TMPDIR) of at most {} bytes once resolved",
+            dir.display(),
+            sandbox::CHILD_TMPDIR_BUDGET,
+            sandbox::SUN_PATH_MAX,
+            sandbox::CHILD_TMPDIR_BUDGET.saturating_sub(CHILD_TMP_BELOW_WORK_DIR),
+        )
+    }))
 }
 
 /// What one run of a case showed.

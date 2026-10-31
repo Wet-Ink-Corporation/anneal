@@ -42,6 +42,15 @@ pub(crate) struct ResultDto {
     cases: Vec<CaseDto>,
 }
 
+impl ResultDto {
+    /// Each case's name and its runs (the `with` arm), in the result's order, unchecked.
+    pub(crate) fn runs(&self) -> impl Iterator<Item = (&str, &[RunDto])> + '_ {
+        self.cases
+            .iter()
+            .map(|case| (case.name.as_str(), case.arms.with.as_slice()))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SuiteDto {
     plugins: Vec<PluginDto>,
@@ -71,9 +80,18 @@ pub(crate) struct RunDto {
     #[serde(default)]
     error: Option<String>,
     graders: Vec<GraderDto>,
+    /// Where the run's `trace.jsonl` was written (inside the run's sandbox root, which
+    /// `claude plugin eval` removes after the run unless given `--keep-temp`).
+    #[serde(default, rename = "tracePath")]
+    trace_path: Option<String>,
 }
 
 impl RunDto {
+    /// Where the run's trace was written, if the result says.
+    pub(crate) fn trace_path(&self) -> Option<&str> {
+        self.trace_path.as_deref()
+    }
+
     /// Why the run ended in error, if it did.
     pub(crate) fn error(&self) -> Option<&str> {
         self.error.as_deref()

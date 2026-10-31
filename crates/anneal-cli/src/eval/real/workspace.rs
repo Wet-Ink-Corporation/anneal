@@ -3,6 +3,7 @@
 //! of the plugin, removed by [`Workspace::finish`].
 
 use std::fs;
+use std::hash::{BuildHasher, RandomState};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -80,26 +81,79 @@ impl Workspace {
         self.root.join("plugin")
     }
 
-    /// Removes the workspace and everything in it.
+    /// Removes the workspace and everything in it. A directory it may not write is opened to
+    /// its owner first (`claude plugin eval --keep-temp` seals each kept run that way).
     ///
     /// # Errors
     /// The I/O error that stopped the removal.
     pub(crate) fn finish(self) -> io::Result<()> {
-        fs::remove_dir_all(&self.root)
+        remove(&self.root)
     }
 }
 
-/// Makes a new, empty directory under `base`; never reuses an existing one.
+/// Removes `root`, opening any directory it may not write to its owner and trying again.
+#[cfg(unix)]
+fn remove(root: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(root) {
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            open_up(root)?;
+            fs::remove_dir_all(root)
+        }
+        removed => removed,
+    }
+}
+
+/// Elsewhere directory modes do not stop a removal, so there is nothing to open first.
+#[cfg(not(unix))]
+fn remove(root: &Path) -> io::Result<()> {
+    fs::remove_dir_all(root)
+}
+
+/// Makes `root` and every directory below it readable, writable and searchable by its owner
+/// (0700), never following a link, so the tree can be removed.
+#[cfg(unix)]
+fn open_up(root: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            // The entry's own type: a link to a directory is not followed.
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The hex digits that end a workspace's name. Short, because Tier 3's `claude` children get a
+/// `TMPDIR` inside the workspace and their sandbox's socket paths must fit in 107 bytes
+/// (`uplift::sandbox`); uniqueness comes from the exclusive create and its retries.
+const SUFFIX_DIGITS: usize = 6;
+/// The bits of the hash [`SUFFIX_DIGITS`] hex digits show.
+const SUFFIX_MASK: u64 = (1 << (4 * SUFFIX_DIGITS)) - 1;
+
+/// The length in bytes of the name of a workspace for the suite named `suite`:
+/// `anneal-eval-<suite>-` and [`SUFFIX_DIGITS`] hex digits.
+pub(crate) const fn name_len(suite: &str) -> usize {
+    "anneal-eval--".len() + suite.len() + SUFFIX_DIGITS
+}
+
+/// Makes a new, empty directory under `base`, named `anneal-eval-<suite>-<hex>`
+/// ([`name_len`]); never reuses an existing one. The digits hash the process id, the clock
+/// and the attempt with a per-process random key, so another process cannot predict them.
 fn fresh_dir(base: &Path, suite: &str) -> io::Result<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
+    let keys = RandomState::new();
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for attempt in 0..ATTEMPTS {
-        let path = base.join(format!(
-            "anneal-eval-{suite}-{}-{nanos}-{attempt}",
-            std::process::id()
-        ));
+        let digits = keys.hash_one((std::process::id(), nanos, attempt)) & SUFFIX_MASK;
+        let path = base.join(format!("anneal-eval-{suite}-{digits:0SUFFIX_DIGITS$x}"));
         match create_private_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = error,
@@ -179,7 +233,7 @@ mod tests {
     use std::fs;
     use std::io;
 
-    use super::{Limits, Workspace, copy_tree};
+    use super::{Limits, Workspace, copy_tree, name_len};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -239,6 +293,75 @@ mod tests {
         );
         workspace.finish()?;
         assert_eq!((inside, name, base.is_dir()), (true, true, true));
+        Ok(())
+    }
+
+    #[test]
+    fn a_workspace_name_is_its_suite_prefix_and_six_hex_digits() -> TestResult {
+        let source = tempfile::tempdir()?;
+        let base = tempfile::tempdir()?;
+
+        let workspace = Workspace::create_in(base.path(), "uplift", source.path())?;
+
+        let name = workspace
+            .root()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned);
+        workspace.finish()?;
+        let name = name.ok_or("a UTF-8 name")?;
+        let suffix = name.strip_prefix("anneal-eval-uplift-").unwrap_or_default();
+        assert_eq!(
+            (
+                name.len(),
+                name_len("uplift"),
+                suffix.len(),
+                suffix.chars().all(|c| c.is_ascii_hexdigit())
+            ),
+            (25, 25, 6, true),
+            "{name}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn two_workspaces_in_one_base_get_different_names() -> TestResult {
+        let source = tempfile::tempdir()?;
+        let base = tempfile::tempdir()?;
+
+        let first = Workspace::create_in(base.path(), "uplift", source.path())?;
+        let second = Workspace::create_in(base.path(), "uplift", source.path())?;
+
+        let distinct = first.root() != second.root();
+        first.finish()?;
+        second.finish()?;
+        assert!(distinct, "each workspace is a fresh directory");
+        Ok(())
+    }
+
+    /// As `claude plugin eval --keep-temp` seals a kept run for a user other than root: the
+    /// run's root read-only (0500), holding a search-only (0100) directory.
+    #[test]
+    #[cfg(unix)]
+    fn finish_removes_directories_a_kept_run_sealed() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let source = tempfile::tempdir()?;
+        let workspace = Workspace::create(source.path())?;
+        let run = workspace.root().join("tmp/claude-eval-abc123");
+        fs::create_dir_all(run.join("sealed/home"))?;
+        fs::write(run.join("sealed/home/notes"), "kept")?;
+        fs::write(run.join("trace.jsonl"), "{}")?;
+        fs::set_permissions(run.join("sealed"), fs::Permissions::from_mode(0o100))?;
+        fs::set_permissions(&run, fs::Permissions::from_mode(0o500))?;
+        let root = workspace.root().to_path_buf();
+
+        let finished = workspace.finish();
+
+        assert_eq!(
+            (finished.map_err(|e| e.kind()), root.exists()),
+            (Ok(()), false)
+        );
         Ok(())
     }
 
