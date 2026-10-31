@@ -1,9 +1,12 @@
-// The anneal cockpit: the mod half of the plugin (#56).
+// The anneal cockpit (#56): the mod, shipped as its own plugin, `anneal-cockpit`, next to `anneal`.
+// It is a separate plugin because the desktop app's chats turn off a whole plugin that ships a
+// mod, skills included, so the mod must never sit in the plugin that carries anneal's skills.
 //
-// Hooks enforce, the mod shows and collects. Every gate stays a settings hook in
-// `hooks.json` calling the `anneal` CLI; this module holds no logic of its own. It renders what
-// `anneal status --json` prints, keeps the last reading in `$.state`, and writes nothing to the
-// ledger. anneal works fully without it (`--safe-mode`, `disableAllHooks` or a host without
+// Hooks enforce, the mod shows and collects. Every gate stays a settings hook in the `anneal`
+// plugin's `hooks.json` calling the `anneal` CLI; this module holds no logic of its own. It
+// renders what `anneal status --json` prints (through this plugin's own copy of the launcher),
+// keeps the last reading in `$.state`, and writes nothing to the ledger. anneal works fully
+// without it (`anneal-cockpit` not installed, `--safe-mode`, `disableAllHooks` or a host without
 // mods).
 //
 // - The band (`AbovePrompt`): one row, `anneal · build · plan ✓ a1b2c3 · task 3/7 · ctx 58%`,
@@ -70,8 +73,8 @@ export const UNREADABLE_BAND = 'anneal · status unreadable'
 export const UNREADABLE_PANE = 'anneal status unreadable'
 export const UNREADABLE_CALIBRATION = 'anneal calibrate unreadable'
 
-const reading = { plugin: 'anneal', key: 'reading' } as const
-const expanded = { plugin: 'anneal', key: 'expanded' } as const
+const reading = { plugin: 'anneal-cockpit', key: 'reading' } as const
+const expanded = { plugin: 'anneal-cockpit', key: 'expanded' } as const
 
 /**
  * The launchers the plugin ships, in the order they are tried: the sh launcher, then the
@@ -490,9 +493,9 @@ export const CALIBRATION_USAGE = 'usage: /anneal calibration [refresh]'
 /** The cells of the labelled-decisions bar. */
 const BAR_CELLS = 10
 
-const calibration = { plugin: 'anneal', key: 'calibration' } as const
-const selectedPoint = { plugin: 'anneal', key: 'selected_point' } as const
-const calibrationSection = { plugin: 'anneal', key: 'calibration_section' } as const
+const calibration = { plugin: 'anneal-cockpit', key: 'calibration' } as const
+const selectedPoint = { plugin: 'anneal-cockpit', key: 'selected_point' } as const
+const calibrationSection = { plugin: 'anneal-cockpit', key: 'calibration_section' } as const
 
 const isCalibrationBin = (value: unknown): boolean =>
   isObject(value) &&

@@ -1,10 +1,12 @@
 # The anneal mod (cockpit)
 
-anneal ships a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) inside the plugin: a TypeScript hooks module that Claude Code runs in its own process. The rule it follows is #56's: **hooks enforce, the mod shows and collects.**
+anneal ships a [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) as its own plugin, `anneal-cockpit` (`plugin-cockpit/`), in the same marketplace as `anneal`: a TypeScript hooks module that Claude Code runs in its own process. Install it next to `anneal` with `/plugin install anneal-cockpit@anneal`. The rule it follows is #56's: **hooks enforce, the mod shows and collects.**
+
+**Why a separate plugin.** In the Claude desktop app's chats (the merged Chat and Cowork, a folder chat), a plugin whose hooks name a mod has its whole entry switched off, skills included, with "this plugin entry is off here: it or its plugin comes with hooks other than the ones this session registered ...". The docs say chat ignores hooks without an error; it does not. Weigh-In isolated it on 2026-10-31 with uploaded copies of one plugin: with the mod it is off, without the mod (command hooks and a shipped binary kept) it loads, and Weigh-In 1.1.3's split was confirmed working in a chat the same day. So `anneal` ships no mod (`AGENTS.md`, Plugin rules), and the cockpit is installed only where it draws.
 
 - Every gate stays a settings hook in `plugin/hooks/hooks.json` calling the `anneal` CLI. The mod gates nothing.
-- The mod holds no logic of its own, and no state but its last reading of the CLI (kept in `$.state` so a drawing survives a hot reload). It renders what `anneal status --json` prints, through the plugin's launcher (`$.plugin.root + "/libexec/anneal"`), and writes nothing to the ledger.
-- anneal works fully with no mod: where mods are off or not supported, every gate still runs.
+- The mod holds no logic of its own, and no state but its last reading of the CLI (kept in `$.state` so a drawing survives a hot reload). It renders what `anneal status --json` prints, through its own plugin's copy of the launcher (`$.plugin.root + "/libexec/anneal"`; a plugin cannot reach another plugin's root, so `plugin-cockpit/libexec/` holds byte-for-byte copies of `plugin/libexec/anneal` and `anneal.cmd`, which `scripts/check-versions.sh` checks), and writes nothing to the ledger.
+- anneal works fully with no mod: where `anneal-cockpit` is not installed, or mods are off or not supported, every gate still runs.
 
 ## What it does (#57, #59, #63)
 
@@ -83,44 +85,46 @@ Screenshots of the band (dim and blocked), of the pane (docked and inline) and o
 
 | Path | Ships | What it is |
 |---|---|---|
-| `plugin/.claude-plugin/plugin.json` | yes | `"hooks": "./hooks/cockpit.json"` (merged with `hooks/hooks.json`) and `"types": "./types/index.d.ts"` |
-| `plugin/hooks/cockpit.json` | yes | `{ "modules": ["./cockpit.tsx"] }` |
-| `plugin/hooks/cockpit.tsx` | yes | the hooks module |
-| `plugin/types/index.d.ts` | yes | the status document's and `anneal calibrate`'s types and the `PluginState` contract: `anneal.reading` (the last reading: unread, absent, read or unavailable), `anneal.expanded` (the pane's expanded gate), `anneal.calibration` (the last calibrate run), `anneal.selected_point` (the point whose diagram is shown) and `anneal.calibration_section` (drawn inside the `anneal` pane on a narrow terminal) |
-| `plugin/tests/cockpit.test.ts` | yes | the band and pane on `terminal` and `desktop` from fixture status JSON (no ledger, mid-build, a blocked gate), the refresh's rate limit and timeout, and `/anneal` where nothing draws; the calibration dashboard on both surfaces from fixture calibrate JSON (no data, partial, one point ready), the raster and SVG read back and compared bin by bin, its refresh, failure, narrow section and text form; run by `claude plugin test plugin` |
-| `plugin/tsconfig.json` | yes | strict, `noUncheckedIndexedAccess`, the options Claude Code's declaration header gives for a hooks module |
+| `plugin-cockpit/.claude-plugin/plugin.json` | yes | the `anneal-cockpit` manifest: the same version as `anneal`, and `"types": "./types/index.d.ts"` |
+| `plugin-cockpit/hooks/hooks.json` | yes | `{ "modules": ["./cockpit.tsx"] }`, and no settings hooks |
+| `plugin-cockpit/hooks/cockpit.tsx` | yes | the hooks module |
+| `plugin-cockpit/libexec/anneal`, `anneal.cmd` | yes | copies of `anneal`'s launchers; the release puts the builds beside them, and without builds the launcher downloads the release for this plugin's version as `anneal`'s does |
+| `plugin-cockpit/types/index.d.ts` | yes | the status document's and `anneal calibrate`'s types and the `PluginState` contract, under the plugin key `anneal-cockpit`: `anneal-cockpit.reading` (the last reading: unread, absent, read or unavailable), `anneal-cockpit.expanded` (the pane's expanded gate), `anneal-cockpit.calibration` (the last calibrate run), `anneal-cockpit.selected_point` (the point whose diagram is shown) and `anneal-cockpit.calibration_section` (drawn inside the `anneal` pane on a narrow terminal) |
+| `plugin-cockpit/tests/cockpit.test.ts` | yes | the band and pane on `terminal` and `desktop` from fixture status JSON (no ledger, mid-build, a blocked gate), the refresh's rate limit and timeout, and `/anneal` where nothing draws; the calibration dashboard on both surfaces from fixture calibrate JSON (no data, partial, one point ready), the raster and SVG read back and compared bin by bin, its refresh, failure, narrow section and text form; run by `claude plugin test plugin-cockpit` |
+| `plugin-cockpit/tsconfig.json` | yes | strict, `noUncheckedIndexedAccess`, the options Claude Code's declaration header gives for a hooks module |
 | `mod-types/mod-api.d.ts` | no | a hand-written declaration of the few mods API types the module and test use (see below) |
 
-There is no packaging exclude list (the release zips `plugin/` whole and there is no `scripts/package-plugin.sh`), so the test and `tsconfig.json` ship. They are small and inert: Claude Code loads only the module `cockpit.json` names, and `claude plugin test` is the only thing that reads `*.test.ts`. The plugin still has no `bin/` and no `evals/`.
+There is no packaging exclude list (the release zips each plugin directory whole and there is no `scripts/package-plugin.sh`), so the test and `tsconfig.json` ship with `anneal-cockpit`. They are small and inert: Claude Code loads only the module `cockpit.json` names, and `claude plugin test` is the only thing that reads `*.test.ts`. The plugin still has no `bin/` and no `evals/`.
 
-`mod-types/mod-api.d.ts` is our own minimal declaration, in our own words, of only the API surface `cockpit.tsx` and its test use, mirroring the [mods reference](https://code.claude.com/docs/en/plugins/mods/reference) as of Claude Code 2.1.303. Claude Code's own declaration file is not vendored: it is not under this repository's licence. Nor can CI point `tsc` at it: the npm package `@anthropic-ai/claude-code` (2.1.303, and the 2.1.42 installed here) ships only `sdk-tools.d.ts`, and Claude Code writes its mods declarations only when an interactive session hot-reloads a mod. So `tsc -p plugin` checks the code against the shim, and the real engine checks it in CI through `claude plugin validate --strict` and `claude plugin test` on the pinned version. On 2026-10-19 the module, contract and test also type-checked against Claude Code 2.1.303's own declarations, in a throwaway config outside the repository. Extend the shim only as the mod uses more of the API.
+`mod-types/mod-api.d.ts` is our own minimal declaration, in our own words, of only the API surface `cockpit.tsx` and its test use, mirroring the [mods reference](https://code.claude.com/docs/en/plugins/mods/reference) as of Claude Code 2.1.303. Claude Code's own declaration file is not vendored: it is not under this repository's licence. Nor can CI point `tsc` at it: the npm package `@anthropic-ai/claude-code` (2.1.303, and the 2.1.42 installed here) ships only `sdk-tools.d.ts`, and Claude Code writes its mods declarations only when an interactive session hot-reloads a mod. So `tsc -p plugin-cockpit` checks the code against the shim, and the real engine checks it in CI through `claude plugin validate --strict` and `claude plugin test` on the pinned version. On 2026-10-19 the module, contract and test also type-checked against Claude Code 2.1.303's own declarations, in a throwaway config outside the repository. Extend the shim only as the mod uses more of the API.
 
 ## Checks
 
 ```sh
-tsc -p plugin                       # type-check the module, contract and test
-claude plugin validate --strict plugin
-claude plugin test plugin           # no model is called: the test answers $.process.run itself
+tsc -p plugin-cockpit                       # type-check the module, contract and test
+claude plugin validate --strict plugin-cockpit
+claude plugin test plugin-cockpit           # no model is called: the test answers $.process.run itself
 ```
 
 `claude plugin test` runs each `*.test.ts` in an environment like the module's (no fs, network or process); the test's own hooks stand for the host: `process.run` (the CLI, answered from fixture `anneal status --json` envelopes), a mocked clock, `session.surfaces`, `ui.open`, `ui.panes`, `ui.close` and `ui.log`. The band and pane are mounted on `terminal` and `desktop` in one loop. On 2026-10-19 the module, contract and test (#59) also type-checked against Claude Code 2.1.303's own declarations, in a throwaway config outside the repository.
 
 ## Turning it off
 
-Claude Code has no switch that stops anneal's mod and keeps anneal's settings hooks; the gates are unaffected by the mod either way. What exists today (Claude Code 2.1.303):
+Since the cockpit is its own plugin, disabling or uninstalling `anneal-cockpit` stops the mod and keeps every gate. The other switches (Claude Code 2.1.303):
 
 | Switch | Mod | anneal's settings hooks | Skills |
 |---|---|---|---|
-| Disable or uninstall the plugin in `/plugin` | off | off | off |
+| Disable or uninstall `anneal-cockpit` in `/plugin` | off | on | on |
+| Disable or uninstall `anneal` in `/plugin` | on, but every reading is `anneal status unavailable` unless the CLI is otherwise found | off | off |
 | `"disableAllHooks": true` in `~/.claude/settings.json` | off | off | on |
 | `claude --safe-mode` (one session) | off | off, per `claude --help` | off |
 | Organization `allowManagedModsOnly` (managed settings) | off | on, per the docs ("users' settings hooks keep running"; not checked for a plugin's) | on |
 
-So `--safe-mode` is not a way to keep the gates while dropping the mod: its help says it starts "with all customizations (CLAUDE.md, skills, installed plugins, hooks, ...) disabled". A mod-only off switch would be a `userConfig` option the module reads in `register` (a decision for Ryan, not built).
+So `--safe-mode` is not a way to keep the gates while dropping the mod: its help says it starts "with all customizations (CLAUDE.md, skills, installed plugins, hooks, ...) disabled". Uninstalling `anneal-cockpit` is the mod-only off switch.
 
 ## Packaging spike: evidence per host
 
-The question was whether one `plugin/hooks/hooks.json` can hold both the settings `hooks` and the mod's `modules`.
+The question was whether one `plugin/hooks/hooks.json` can hold both the settings `hooks` and the mod's `modules`. This is the 2026-10-19 record, from when the mod shipped inside `anneal`. It answered that question for Claude Code, but it missed the desktop app's chats, which turn the whole plugin off when a mod is present (see "Why a separate plugin" above), so the mod has moved to `anneal-cockpit` since.
 
 | Host | Result | How it was checked |
 |---|---|---|
@@ -128,16 +132,16 @@ The question was whether one `plugin/hooks/hooks.json` can hold both the setting
 | Claude Code CLI 2.1.303, `claude plugin test` | **loads** the module from the shipped layout: four tests pass, and one fails when `statusText` is broken (#57); twelve pass with the band and pane (#59), and the rate-limit test fails when the one-second interval is set to 0; twenty-three pass with the calibration dashboard (#63), and the raster-and-SVG test fails when the SVG's dots are moved up a tenth | `claude plugin test plugin` |
 | Claude Code CLI, a live session (settings hooks and the mod both running) | **unverified**: starting a session calls a model, which this story did not do | manual check below |
 | Claude Desktop (Code tab), VS Code extension | **unverified**: docs say mods run there (Desktop from 2.1.286) | manual check below |
-| claude.ai plugin upload, Cowork plugin upload | **unverified, for Ryan**: cannot be checked from a CLI session. The zip still has no `bin/` (the documented reason claude.ai and Cowork refuse a plugin); whether either accepts a `hooks.json`-referenced file holding `modules`, a `types` manifest key, `.tsx`/`.ts` files or a `tsconfig.json` is not known. Hooks and mods do not run there anyway, so the question is only whether the upload is accepted and the skills load | upload `anneal-plugin-<version>.zip` from a release built after this change |
+| claude.ai plugin upload, Cowork plugin upload | **unverified, for Ryan**: cannot be checked from a CLI session. The zip still has no `bin/` (the documented reason claude.ai and Cowork refuse a plugin); whether either accepts a `hooks.json`-referenced file holding `modules`, a `types` manifest key, `.tsx`/`.ts` files or a `tsconfig.json` is not known. Hooks and mods do not run there anyway, so the question is only whether the upload is accepted and the skills load | upload `anneal-plugin-<version>.zip` from a release built after this change. Answered since (Weigh-In, 2026-10-31): the desktop app's chats switch off a plugin that holds a mod, so the mod now ships apart |
 | Cloud sessions | docs: hooks run for a plugin that reaches the session, nothing is drawn | not checked |
 
-The docs' own layout is the single file ("`hooks/hooks.json`: `modules` ... Can also hold settings hooks under `hooks`", [mods reference](https://code.claude.com/docs/en/plugins/mods/reference#files)). The shipped layout uses a second file only because `crates/anneal-cli/tests/it/hooks_manifest.rs` reads `hooks.json` with `deny_unknown_fields` (`HooksFile` has only `hooks`), and this story changes no Rust. Moving `modules` into `hooks.json` needs that DTO to accept `modules` (an H-12/H-16 test change for Ryan); `plugin.json`'s `hooks` key then goes.
+The docs' own layout is the single file ("`hooks/hooks.json`: `modules` ... Can also hold settings hooks under `hooks`", [mods reference](https://code.claude.com/docs/en/plugins/mods/reference#files)). The layout it shipped with used a second file only because `crates/anneal-cli/tests/it/hooks_manifest.rs` reads `hooks.json` with `deny_unknown_fields` (`HooksFile` has only `hooks`), and this story changes no Rust. With the split, `anneal-cockpit`'s own `hooks/hooks.json` holds `modules` alone and that test, which reads only `plugin/hooks/hooks.json`, is untouched.
 
 ### Manual checks
 
-Run these in a terminal session with the plugin loaded (`claude --plugin-dir plugin`, or installed from the marketplace):
+Run these in a terminal session with both plugins loaded (`claude --plugin-dir plugin --plugin-dir plugin-cockpit`, or both installed from the marketplace):
 
-1. `/plugin` shows `1 mod active · anneal` under its tabs.
+1. `/plugin` shows `1 mod active · anneal-cockpit` under its tabs.
 2. The band shows `anneal · <mode> · ...` above the prompt in a repository with a ledger, and nothing in one without. `/anneal` opens the pane (docked in fullscreen, inline otherwise), each gate row expands on Enter or a click, and the band follows a Bash, Edit or Write call within about a second. In `claude -p` or the VS Code panel, `/anneal` prints `anneal status`'s text form.
 3. A settings hook still runs beside the mod: `rm -rf /` through the Bash tool is denied by the guard.
 4. `claude --safe-mode`: `/anneal` is unknown and `/plugin` lists no mod. Note whether the guard still denies `rm -rf /` (the help says hooks are off in safe mode; #57 expected them to keep running).
@@ -160,9 +164,9 @@ Run these in a terminal session with the plugin loaded (`claude --plugin-dir plu
       - name: Claude Code and TypeScript (pinned)
         run: npm install -g @anthropic-ai/claude-code@2.1.303 typescript@6.0.2
       - name: type-check the mod
-        run: tsc -p plugin
+        run: tsc -p plugin-cockpit
       - name: claude plugin validate --strict
-        run: claude plugin validate --strict plugin
+        run: claude plugin validate --strict plugin-cockpit
       - name: claude plugin test (no model is called)
-        run: claude plugin test plugin
+        run: claude plugin test plugin-cockpit
 ```
