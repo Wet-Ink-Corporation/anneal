@@ -122,6 +122,21 @@ fn a_snapshot_is_saved_as_the_mod_s_for_its_session() {
 }
 
 #[test]
+fn used_tokens_wins_over_a_used_percentage_that_disagrees() {
+    let home = tempfile::tempdir().expect("a temporary directory");
+    let input = r#"{"session_id":"s1","used_tokens":50000,"used_percentage":60,
+        "window":200000}"#;
+
+    write(input, Some(home.path()), None).written();
+
+    assert_eq!(
+        saved(home.path(), context::MOD_USAGE_FILE, "s1").map(|saved| saved.reading.used_tokens),
+        Some(Some(50_000.0)),
+        "used_tokens (25%), not used_percentage's 60% of the window (120000)"
+    );
+}
+
+#[test]
 fn without_a_window_source_the_window_is_the_model_s_and_the_variable_applies() {
     let home = tempfile::tempdir().expect("a temporary directory");
     let input = r#"{"session_id":"s1","used_tokens":100000,"window":1000000}"#;

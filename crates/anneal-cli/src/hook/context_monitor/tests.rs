@@ -318,3 +318,54 @@ fn an_unstamped_status_line_snapshot_is_older_than_a_mod_one() {
 
     assert_eq!(home.batch(), None, "the mod's stamped 5% is judged: silent");
 }
+
+/// The `systemMessage` of `output`.
+fn system_message(output: Option<&Value>) -> Option<&str> {
+    output?.get("systemMessage")?.as_str()
+}
+
+#[test]
+fn an_unreadable_mod_file_still_judges_the_status_line_and_says_so() {
+    let home = Home::new();
+    home.report(Some(190_000.0));
+    std::fs::write(
+        context::in_home(home.path(), context::MOD_USAGE_FILE),
+        "not json",
+    )
+    .expect("writes");
+
+    let output = home.batch();
+
+    assert_eq!(
+        decision(output.as_ref()),
+        Some("block"),
+        "the status line's 95% stops: {output:?}"
+    );
+    let message = system_message(output.as_ref()).expect("a system message");
+    assert!(
+        message.starts_with("ERROR context-monitor: ")
+            && message.contains(context::MOD_USAGE_FILE)
+            && !message.contains('\n'),
+        "one ERROR line naming the mod's file: {message}"
+    );
+}
+
+#[test]
+fn with_both_usage_files_unreadable_it_fails_open_naming_both() {
+    let home = Home::new();
+    for file in [context::USAGE_FILE, context::MOD_USAGE_FILE] {
+        std::fs::write(context::in_home(home.path(), file), "not json").expect("writes");
+    }
+
+    let output = home.batch();
+
+    assert_eq!(decision(output.as_ref()), None, "fails open: no block");
+    let message = system_message(output.as_ref()).expect("a system message");
+    assert!(
+        message.starts_with("ERROR context-monitor: ")
+            && message.contains(context::USAGE_FILE)
+            && message.contains(context::MOD_USAGE_FILE)
+            && !message.contains('\n'),
+        "one ERROR line naming both files: {message}"
+    );
+}

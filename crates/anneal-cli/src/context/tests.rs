@@ -3,8 +3,8 @@ use std::path::Path;
 use super::sessions::SessionFile;
 use super::usage::WindowSource;
 use super::{
-    MOD_USAGE_FILE, Saved, Snapshot, Source, USAGE_FILE, USAGE_KIND, freshest, in_home,
-    mod_written_within, save,
+    Fresher, MOD_USAGE_FILE, Saved, Snapshot, Source, Sources, USAGE_FILE, USAGE_KIND, freshest,
+    in_home, mod_written_within, save,
 };
 
 /// A reading of `used` tokens of a 200,000-token window.
@@ -135,4 +135,87 @@ fn a_mod_snapshot_is_recent_only_within_the_window() {
     assert!(!before.expect("no file reads"), "no mod snapshot");
     assert!(at(1_599), "599 ms old is within 600 ms");
     assert!(!at(1_600), "600 ms old is not");
+}
+
+/// Saves `used` for `session` as `source`, written at `at_ms`.
+fn saved_for(home: &Path, session: &str, (source, used, at_ms): (Source, f64, u64)) {
+    save(home, session, Saved::stamped(reading(used), source, at_ms)).expect("saves");
+}
+
+/// The source and tokens of `fresher`'s reading.
+fn judged(fresher: &Fresher) -> Option<(Source, Option<f64>)> {
+    fresher
+        .saved
+        .map(|saved| (saved.source, saved.reading.used_tokens))
+}
+
+#[test]
+fn the_newest_reading_of_any_session_is_the_fresher_source_s_and_the_mod_s_on_a_tie() {
+    let home = tempfile::tempdir().expect("a temporary directory");
+    saved_for(home.path(), "s2", (Source::Mod, 1.0, 100));
+    saved_for(home.path(), "s1", (Source::Statusline, 2.0, 200));
+
+    let status_line_newer = Sources::load(home.path()).newest();
+    saved_for(home.path(), "s3", (Source::Mod, 3.0, 300));
+    let mod_newer = Sources::load(home.path()).newest();
+    saved_for(home.path(), "s1", (Source::Statusline, 4.0, 300));
+    let tied = Sources::load(home.path()).newest();
+
+    assert_eq!(
+        judged(&status_line_newer),
+        Some((Source::Statusline, Some(2.0))),
+        "the status line wrote last, for another session"
+    );
+    assert_eq!(
+        judged(&mod_newer),
+        Some((Source::Mod, Some(3.0))),
+        "then the mod"
+    );
+    assert_eq!(
+        judged(&tied),
+        Some((Source::Mod, Some(3.0))),
+        "same time: the mod"
+    );
+    assert!(
+        tied.unreadable.is_empty(),
+        "both read: {:?}",
+        tied.unreadable
+    );
+}
+
+#[test]
+fn an_unreadable_source_leaves_the_readable_one_judged_with_its_failure() {
+    let home = tempfile::tempdir().expect("a temporary directory");
+    saved_by(home.path(), Source::Statusline, 2.0, 100);
+    std::fs::write(in_home(home.path(), MOD_USAGE_FILE), "not json").expect("writes");
+
+    let for_session = Sources::load(home.path()).session("s1");
+    let newest = Sources::load(home.path()).newest();
+
+    for fresher in [&for_session, &newest] {
+        assert_eq!(
+            judged(fresher),
+            Some((Source::Statusline, Some(2.0))),
+            "the status line's reading is still judged"
+        );
+        assert_eq!(
+            fresher.unreadable.len(),
+            1,
+            "the mod's file is named: {:?}",
+            fresher.unreadable
+        );
+    }
+}
+
+#[test]
+fn with_both_sources_unreadable_there_is_no_reading_and_two_failures() {
+    let home = tempfile::tempdir().expect("a temporary directory");
+    for file in [USAGE_FILE, MOD_USAGE_FILE] {
+        std::fs::write(in_home(home.path(), file), "not json").expect("writes");
+    }
+
+    let fresher = Sources::load(home.path()).session("s1");
+
+    assert_eq!(judged(&fresher), None, "nothing to judge");
+    assert_eq!(fresher.unreadable.len(), 2, "both files are named");
 }
