@@ -11,7 +11,7 @@ use super::grammar::{Grammar, Name, Parsed, Read};
 use super::tables::{ENV, FLOCK, SCRIPT, SU, SU_TO_USER, SUDO, WATCH};
 use super::{Long, Peel, Run, is_option, join, skip_one, skip_options};
 use crate::hook::guard::denylist::braces::reads_as_written;
-use crate::hook::guard::shell::Word;
+use crate::hook::guard::shell::{Shape, Word};
 
 /// The `find` actions that run a command on each match.
 const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
@@ -374,14 +374,51 @@ pub(super) fn script(words: &[Word]) -> Peel<'_> {
     Peel::Done(bodies(SCRIPT.parse(words).options).unwrap_or(Run::StdinScript("script")))
 }
 
-/// `watch [options] command...`: the words joined are run by `sh -c`.
+/// `watch [options] command...`: the words joined are run by `sh -c`, or, with `-x`
+/// (`--exec`), run as they are, without a shell (#150). The joined text is read either way
+/// (fail closed), and the words as a command too wherever watch may run them so: with `-x`,
+/// with an option its table does not know, or past a word known only at run time where watch
+/// reads its options, which may expand to `-x`.
 pub(super) fn watch(words: &[Word]) -> Peel<'_> {
-    let rest = WATCH.parse(words).rest;
-    if rest.is_empty() {
-        Peel::Done(Run::Nothing)
+    let read = WATCH.parse(words);
+    let joined = if read.rest.is_empty() {
+        Run::Nothing
     } else {
-        Peel::Done(Run::Script(Cow::Owned(join(rest))))
+        Run::Script(Cow::Owned(join(read.rest)))
+    };
+    match watch_exec(words, &read) {
+        Some(inner) => Peel::Also {
+            inner,
+            other: joined,
+        },
+        None => Peel::Done(joined),
     }
+}
+
+/// The words `watch` may run as a command, without a shell, given its options `read` from
+/// `words`; `None` when it surely joins them. A dynamic word among its options, their values
+/// or in its command's place may expand to `-x`: the words after the first one are read again
+/// as watch's options and then its command.
+fn watch_exec<'a>(words: &'a [Word], read: &Read<'a>) -> Option<&'a [Word]> {
+    let exec = read.holds('x', "exec")
+        || read.options.iter().any(|option| match option.name {
+            Name::Short(letter) => !WATCH.knows(letter),
+            Name::Long(_) => false,
+            Name::Unknown => true,
+        });
+    if exec {
+        return Some(read.rest);
+    }
+    let slots = words
+        .len()
+        .saturating_sub(read.rest.len())
+        .saturating_add(1);
+    let dynamic = words
+        .iter()
+        .take(slots)
+        .position(|word| word.shape == Shape::Dynamic)?;
+    let (_, after) = words.split_at_checked(dynamic.saturating_add(1))?;
+    Some(WATCH.parse(after).rest)
 }
 
 /// A shell: its `-c` string, nothing when it runs a script file, or, with `-s` or no operand,

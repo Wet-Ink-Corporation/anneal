@@ -218,7 +218,7 @@ fn roles(words: &[Word]) -> Vec<Role> {
             *slot = Role::Wrapper;
         }
         rest = match peeled {
-            Peel::Inner(inner) | Peel::Appending(inner) => inner,
+            Peel::Inner(inner) | Peel::Appending(inner) | Peel::Also { inner, .. } => inner,
             Peel::Done(_) | Peel::Program => return roles,
         };
     }
@@ -243,6 +243,14 @@ enum Peel<'a> {
     Inner(&'a [Word]),
     /// The wrapped command's words, with arguments appended at run time (`xargs`).
     Appending(&'a [Word]),
+    /// The wrapped command's words, and another reading of what the wrapper runs, checked
+    /// too: `watch -x`'s words joined as the shell text plain `watch` runs (#150).
+    Also {
+        /// The wrapped command's words.
+        inner: &'a [Word],
+        /// The other reading.
+        other: Run<'a>,
+    },
     /// The wrapper runs this.
     Done(Run<'a>),
     /// Not a wrapper: the program itself.
@@ -253,19 +261,21 @@ enum Peel<'a> {
 ///
 /// A pattern where a wrapper reads an option, which may expand to one (#165), is read both
 /// ways: as the walk reads it (an operand or a value), checked first so its own denial names
-/// what it runs, and as an option, which is not known ([`Run::UnsureOption`]).
+/// what it runs, and as an option, which is not known ([`Run::UnsureOption`]). A wrapper
+/// read two ways ([`Peel::Also`]) has its other reading checked beside the walk's too.
 pub(super) fn unwrap(words: &[Word]) -> Run<'_> {
-    let mut unsure = Vec::new();
-    let run = walk_wrappers(words, &mut unsure);
-    if unsure.is_empty() {
+    let mut others = Vec::new();
+    let run = walk_wrappers(words, &mut others);
+    if others.is_empty() {
         run
     } else {
-        Run::either([run].into_iter().chain(unsure))
+        Run::either([run].into_iter().chain(others))
     }
 }
 
-/// [`unwrap`]'s walk, collecting each wrapper's pattern option word in `unsure`.
-fn walk_wrappers<'a>(words: &'a [Word], unsure: &mut Vec<Run<'a>>) -> Run<'a> {
+/// [`unwrap`]'s walk, collecting in `others` each wrapper's pattern option word and each
+/// other reading of a wrapper read two ways.
+fn walk_wrappers<'a>(words: &'a [Word], others: &mut Vec<Run<'a>>) -> Run<'a> {
     let mut words = skip_prefix(words);
     let mut appended = false;
     loop {
@@ -280,10 +290,14 @@ fn walk_wrappers<'a>(words: &'a [Word], unsure: &mut Vec<Run<'a>>) -> Run<'a> {
         if let Program::Named(wrapper) = program
             && let Some(word) = slots::unsure_option(wrapper, rest, &peeled)
         {
-            unsure.push(Run::UnsureOption { wrapper, word });
+            others.push(Run::UnsureOption { wrapper, word });
         }
         words = match peeled {
             Peel::Inner(inner) => skip_prefix(inner),
+            Peel::Also { inner, other } => {
+                others.push(other);
+                skip_prefix(inner)
+            }
             Peel::Appending(inner) => {
                 appended = true;
                 skip_prefix(inner)
@@ -347,7 +361,9 @@ fn walk<'w, T>(
             return Some(found);
         }
         words = match peel(name, rest) {
-            Peel::Inner(inner) | Peel::Appending(inner) => skip_prefix(inner),
+            Peel::Inner(inner) | Peel::Appending(inner) | Peel::Also { inner, .. } => {
+                skip_prefix(inner)
+            }
             Peel::Done(_) | Peel::Program => return None,
         };
     }
