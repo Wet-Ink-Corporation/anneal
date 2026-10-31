@@ -81,8 +81,8 @@ pub struct UpliftArgs {
     /// else, with no home set, the system's temporary directory). `claude` runs with its
     /// `TMPDIR` inside the workspace, and on Linux the eval sandbox denies Bash every write
     /// under `/tmp`, `/var/tmp`, `/dev/shm` and `/run/shm`, so for a case that names Bash give
-    /// a directory outside them. Keep it short, too: the sandbox's sockets go 88 bytes below
-    /// it and a socket path holds at most 107, so on Linux a directory over 19 bytes (resolved)
+    /// a directory outside them. Keep it short, too: the sandbox's sockets go 70 bytes below
+    /// it and a socket path holds at most 107, so on Linux a directory over 37 bytes (resolved)
     /// is warned about before the run, as Bash cannot start in any run
     #[arg(long, value_name = "DIR")]
     pub work_dir: Option<PathBuf>,
@@ -90,8 +90,9 @@ pub struct UpliftArgs {
     /// verdicts, into DIR (made if missing) as `result-<batch>-<arm>.json`, where `<arm>` is
     /// `with`, `without-<skill>` or `baseline`, and each of its runs' traces as
     /// `traces/<batch>-<arm>/<case>-<run>.jsonl` (on Linux, where batches then pass
-    /// `--keep-temp` so the traces outlive their runs; a trace outside the workspace is left
-    /// where it is), so they outlive the workspace; a file of that name already there is
+    /// `--keep-temp` so the traces outlive their runs; a trace named outside the workspace is
+    /// left where it is, and one named inside that resolves outside it or is not a file is
+    /// reported), so they outlive the workspace; a file of that name already there is
     /// overwritten, and one that cannot be written is reported as a finding without failing
     /// its batch
     #[arg(long, value_name = "DIR")]

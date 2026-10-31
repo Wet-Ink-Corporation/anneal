@@ -38,26 +38,26 @@ pub(crate) struct Workspace {
 }
 
 impl Workspace {
-    /// A fresh directory under the system's temporary directory, holding a copy of `plugin`
-    /// at [`Workspace::plugin`].
+    /// A fresh directory under the system's temporary directory, named
+    /// [`ROUTING_PREFIX`] and hex digits, holding a copy of `plugin` at [`Workspace::plugin`].
     ///
     /// # Errors
     /// The I/O error that stopped the directory being made or the plugin copied (a symlink in
     /// the plugin is `InvalidInput`; a plugin over [`Limits::PLUGIN`] is `FileTooLarge`). The
     /// directory is removed again when the copy fails.
     pub(crate) fn create(plugin: &Path) -> io::Result<Self> {
-        Self::create_in(&std::env::temp_dir(), "routing", plugin)
+        Self::create_in(&std::env::temp_dir(), ROUTING_PREFIX, plugin)
     }
 
-    /// [`Workspace::create`] under `base` (made first if missing) for the suite named
-    /// `suite`, whose directory is `anneal-eval-<suite>-*`.
+    /// [`Workspace::create`] under `base` (made first if missing), the directory named
+    /// `prefix` and hex digits ([`name_len`]): each suite chooses its prefix.
     ///
     /// # Errors
     /// As [`Workspace::create`], and the I/O error that stopped `base` being made.
-    pub(crate) fn create_in(base: &Path, suite: &str, plugin: &Path) -> io::Result<Self> {
+    pub(crate) fn create_in(base: &Path, prefix: &str, plugin: &Path) -> io::Result<Self> {
         fs::create_dir_all(base)?;
         let workspace = Self {
-            root: fresh_dir(base, suite)?,
+            root: fresh_dir(base, prefix)?,
         };
         match copy_tree(plugin, &workspace.plugin(), Limits::PLUGIN) {
             Ok(()) => Ok(workspace),
@@ -117,6 +117,12 @@ fn open_up(root: &Path) -> io::Result<()> {
 
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
+        // Checked again right before the change, not following a link: anything that is not
+        // a real directory now (a link swapped in since it was listed, or a linked root) is
+        // left alone, so no mode outside the tree is ever changed.
+        if !fs::symlink_metadata(&dir)?.is_dir() {
+            continue;
+        }
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
@@ -136,24 +142,41 @@ const SUFFIX_DIGITS: usize = 6;
 /// The bits of the hash [`SUFFIX_DIGITS`] hex digits show.
 const SUFFIX_MASK: u64 = (1 << (4 * SUFFIX_DIGITS)) - 1;
 
-/// The length in bytes of the name of a workspace for the suite named `suite`:
-/// `anneal-eval-<suite>-` and [`SUFFIX_DIGITS`] hex digits.
-pub(crate) const fn name_len(suite: &str) -> usize {
-    "anneal-eval--".len() + suite.len() + SUFFIX_DIGITS
+/// The prefix of a Tier 2 (`eval routing --router claude`) workspace's name, kept as it was
+/// when Tier 3's became `ae-`: Tier 2's children get no `TMPDIR` inside it.
+const ROUTING_PREFIX: &str = "anneal-eval-routing-";
+
+/// The length in bytes of the name of a workspace whose name starts with `prefix`: the
+/// prefix and [`SUFFIX_DIGITS`] hex digits.
+pub(crate) const fn name_len(prefix: &str) -> usize {
+    prefix.len() + SUFFIX_DIGITS
 }
 
-/// Makes a new, empty directory under `base`, named `anneal-eval-<suite>-<hex>`
-/// ([`name_len`]); never reuses an existing one. The digits hash the process id, the clock
-/// and the attempt with a per-process random key, so another process cannot predict them.
-fn fresh_dir(base: &Path, suite: &str) -> io::Result<PathBuf> {
+/// Makes a new, empty directory under `base`, named `<prefix><hex>` ([`name_len`]); never
+/// reuses an existing one. The digits hash the process id, the clock and the attempt with a
+/// per-process random key, so another process cannot predict them.
+fn fresh_dir(base: &Path, prefix: &str) -> io::Result<PathBuf> {
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
     let keys = RandomState::new();
+    fresh_dir_from(base, prefix, |attempt| {
+        keys.hash_one((std::process::id(), nanos, attempt))
+    })
+}
+
+/// [`fresh_dir`] with the digits of each attempt (from 0) taken from `suffix`, masked to
+/// [`SUFFIX_DIGITS`]: a name already taken is retried with the next attempt's, up to
+/// [`ATTEMPTS`], then the last `AlreadyExists` is returned.
+fn fresh_dir_from(
+    base: &Path,
+    prefix: &str,
+    mut suffix: impl FnMut(u32) -> u64,
+) -> io::Result<PathBuf> {
     let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
     for attempt in 0..ATTEMPTS {
-        let digits = keys.hash_one((std::process::id(), nanos, attempt)) & SUFFIX_MASK;
-        let path = base.join(format!("anneal-eval-{suite}-{digits:0SUFFIX_DIGITS$x}"));
+        let digits = suffix(attempt) & SUFFIX_MASK;
+        let path = base.join(format!("{prefix}{digits:0SUFFIX_DIGITS$x}"));
         match create_private_dir(&path) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = error,
@@ -233,7 +256,7 @@ mod tests {
     use std::fs;
     use std::io;
 
-    use super::{Limits, Workspace, copy_tree, name_len};
+    use super::{ATTEMPTS, Limits, Workspace, copy_tree, fresh_dir_from, name_len};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -281,7 +304,7 @@ mod tests {
         let parent = tempfile::tempdir()?;
         let base = parent.path().join("cache/tmp");
 
-        let workspace = Workspace::create_in(&base, "uplift", source.path())?;
+        let workspace = Workspace::create_in(&base, "ae-", source.path())?;
 
         let (inside, name) = (
             workspace.root().parent() == Some(base.as_path()),
@@ -289,7 +312,7 @@ mod tests {
                 .root()
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("anneal-eval-uplift-")),
+                .is_some_and(|name| name.starts_with("ae-")),
         );
         workspace.finish()?;
         assert_eq!((inside, name, base.is_dir()), (true, true, true));
@@ -297,11 +320,11 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_name_is_its_suite_prefix_and_six_hex_digits() -> TestResult {
+    fn a_workspace_name_is_its_prefix_and_six_hex_digits() -> TestResult {
         let source = tempfile::tempdir()?;
         let base = tempfile::tempdir()?;
 
-        let workspace = Workspace::create_in(base.path(), "uplift", source.path())?;
+        let workspace = Workspace::create_in(base.path(), "ae-", source.path())?;
 
         let name = workspace
             .root()
@@ -310,16 +333,74 @@ mod tests {
             .map(str::to_owned);
         workspace.finish()?;
         let name = name.ok_or("a UTF-8 name")?;
-        let suffix = name.strip_prefix("anneal-eval-uplift-").unwrap_or_default();
+        let suffix = name.strip_prefix("ae-").unwrap_or_default();
         assert_eq!(
             (
                 name.len(),
-                name_len("uplift"),
+                name_len("ae-"),
                 suffix.len(),
                 suffix.chars().all(|c| c.is_ascii_hexdigit())
             ),
-            (25, 25, 6, true),
+            (9, 9, 6, true),
             "{name}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_tier_2_workspace_keeps_its_routing_name() -> TestResult {
+        let source = tempfile::tempdir()?;
+
+        let workspace = Workspace::create(source.path())?;
+
+        let name = workspace
+            .root()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned);
+        workspace.finish()?;
+        let name = name.ok_or("a UTF-8 name")?;
+        assert_eq!(
+            (
+                name.starts_with("anneal-eval-routing-"),
+                name.len(),
+                name_len("anneal-eval-routing-")
+            ),
+            (true, 26, 26),
+            "{name}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_name_already_taken_is_retried_with_the_next_suffix() -> TestResult {
+        let base = tempfile::tempdir()?;
+        fs::create_dir(base.path().join("ae-000000"))?;
+
+        let made = fresh_dir_from(base.path(), "ae-", u64::from)?;
+
+        assert_eq!((made.is_dir(), made), (true, base.path().join("ae-000001")));
+        Ok(())
+    }
+
+    #[test]
+    fn every_attempt_taken_is_already_exists() -> TestResult {
+        let base = tempfile::tempdir()?;
+        fs::create_dir(base.path().join("ae-000000"))?;
+        let mut tried: u32 = 0;
+
+        let made = fresh_dir_from(base.path(), "ae-", |_| {
+            tried += 1;
+            0
+        });
+
+        assert_eq!(
+            (
+                made.map_err(|e| e.kind()),
+                tried,
+                fs::read_dir(base.path())?.count()
+            ),
+            (Err(io::ErrorKind::AlreadyExists), ATTEMPTS, 1)
         );
         Ok(())
     }
@@ -329,8 +410,8 @@ mod tests {
         let source = tempfile::tempdir()?;
         let base = tempfile::tempdir()?;
 
-        let first = Workspace::create_in(base.path(), "uplift", source.path())?;
-        let second = Workspace::create_in(base.path(), "uplift", source.path())?;
+        let first = Workspace::create_in(base.path(), "ae-", source.path())?;
+        let second = Workspace::create_in(base.path(), "ae-", source.path())?;
 
         let distinct = first.root() != second.root();
         first.finish()?;
@@ -355,12 +436,41 @@ mod tests {
         fs::set_permissions(run.join("sealed"), fs::Permissions::from_mode(0o100))?;
         fs::set_permissions(&run, fs::Permissions::from_mode(0o500))?;
         let root = workspace.root().to_path_buf();
+        if fs::read_dir(run.join("sealed")).is_ok() {
+            // The seal does not bind this user (root ignores directory modes), so nothing
+            // here would need opening up and the test would pass whatever `finish` does:
+            // clean up and stop. Run it as another user (`setpriv --reuid 65534`) to check.
+            workspace.finish()?;
+            return Ok(());
+        }
 
         let finished = workspace.finish();
 
         assert_eq!(
             (finished.map_err(|e| e.kind()), root.exists()),
             (Ok(()), false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn opening_up_never_changes_what_a_link_points_at() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let target = tempfile::tempdir()?;
+        fs::set_permissions(target.path(), fs::Permissions::from_mode(0o750))?;
+        let parent = tempfile::tempdir()?;
+        let link = parent.path().join("link");
+        std::os::unix::fs::symlink(target.path(), &link)?;
+
+        let opened = super::open_up(&link);
+
+        let mode = fs::metadata(target.path())?.permissions().mode() & 0o777;
+        assert_eq!(
+            (opened.map_err(|e| e.kind()), mode),
+            (Ok(()), 0o750),
+            "{mode:o}"
         );
         Ok(())
     }

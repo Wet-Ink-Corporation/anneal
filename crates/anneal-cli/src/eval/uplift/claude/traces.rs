@@ -12,7 +12,7 @@ use crate::eval::real::result::ResultDto;
 use crate::eval::uplift::drive::Batch;
 
 /// One run's trace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct Trace {
     /// Its name below the `--keep-results` directory ([`trace_name`]).
     pub(super) name: String,
@@ -45,9 +45,11 @@ pub(super) fn trace_name(batch: &Batch<'_>, case: &str, run: u32) -> String {
     format!("traces/{}/{case}-{run}.jsonl", batch_label(batch))
 }
 
-/// Copies each of `traces` that is inside the workspace at `root` into `dir`, overwriting a
-/// file of its name; one the result places outside the workspace is not this run's to copy
-/// and is skipped. Each trace that could not be copied comes back with why.
+/// Copies each of `traces` named inside the workspace at `root` into `dir`, overwriting a
+/// file of its name. One named outside the workspace is not this run's to copy and is
+/// skipped. One named inside that resolves outside it (through `..` or a link), or that is
+/// not a file, is not copied and comes back, as does each trace that could not be copied,
+/// with why: an `eval/uplift/keep-results` finding.
 pub(super) fn keep(traces: &[Trace], root: &Path, dir: &Path) -> Vec<Unkept> {
     // `claude` names its paths resolved, so they are compared with the resolved root.
     let root = match fs::canonicalize(root) {
@@ -60,7 +62,8 @@ pub(super) fn keep(traces: &[Trace], root: &Path, dir: &Path) -> Vec<Unkept> {
         .collect()
 }
 
-/// Copies `trace` into `dir` when its path, as named and once resolved, is inside `root`.
+/// Copies `trace` into `dir` when its path, as named, is inside `root`: an error when, once
+/// resolved, it is outside `root` or not a file.
 fn copy(trace: &Trace, root: &Path, dir: &Path) -> io::Result<()> {
     let named = root.join(&trace.path);
     if !named.starts_with(root) {
@@ -71,6 +74,12 @@ fn copy(trace: &Trace, root: &Path, dir: &Path) -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("{} resolves outside the workspace", trace.path),
+        ));
+    }
+    if !fs::metadata(&resolved)?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a file", trace.path),
         ));
     }
     let target = dir.join(&trace.name);
@@ -88,3 +97,6 @@ fn unkept(trace: &Trace, error: &io::Error) -> Unkept {
         reason: format!("copying {}: {error}", trace.path),
     }
 }
+
+#[cfg(test)]
+mod tests;

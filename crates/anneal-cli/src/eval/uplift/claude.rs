@@ -1,7 +1,7 @@
 //! The [`Evaluator`] adapter over `claude plugin eval`, sharing Tier 2's process step
 //! ([`invoke`]), result checks ([`result::check`]) and workspace ([`Workspace`]).
 //!
-//! The plugin is copied once into a fresh `anneal-eval-uplift-*` workspace as `plugin/`. The
+//! The plugin is copied once into a fresh `ae-<hex>` workspace as `plugin/`. The
 //! baseline of a skill is a second copy, `without-<skill>/`, made from the first with only
 //! the skill's directory removed from the plugin's skills directory (named as `--skills`
 //! names it), so its hooks and sibling skills stay; a `--baseline` plugin is copied as
@@ -107,8 +107,8 @@ impl<'a> ClaudeEvaluator<'a> {
         work_dir: &Path,
     ) -> Result<Self, RouterError> {
         let started = Instant::now();
-        let workspace =
-            Workspace::create_in(work_dir, SUITE, plugins.dir).map_err(RouterError::Workspace)?;
+        let workspace = Workspace::create_in(work_dir, WORKSPACE_PREFIX, plugins.dir)
+            .map_err(RouterError::Workspace)?;
         if let Err(error) = prepare(
             &workspace,
             plugins.baseline.map(|base| base.dir),
@@ -264,7 +264,8 @@ impl Evaluator for ClaudeEvaluator<'_> {
             Invoked::TimedOut => Ok(stopped(true)),
             Invoked::Result(value) => {
                 let result = result::parse(value)?;
-                let traces = if self.keep_results.is_some() {
+                // Only kept runs leave their traces to copy.
+                let traces = if self.keeps_runs() {
                     traces::traces(&result, batch)
                 } else {
                     Vec::new()
@@ -312,14 +313,18 @@ const EVAL_DIR_PREFIX: &str = "anneal-uplift-";
 /// `claude plugin eval` makes its runs' sandbox roots: inside the work directory rather than
 /// under the system's `/tmp`, whose writes the Linux eval sandbox denies (`super::sandbox`),
 /// and removed with the workspace.
-const CHILD_TMP: &str = "tmp";
+/// One byte, as every byte of the children's `TMPDIR` counts against the sandbox's socket
+/// paths (`super::sandbox`).
+const CHILD_TMP: &str = "t";
 
-/// The suite the workspace is named for: `anneal-eval-uplift-<hex>`.
-const SUITE: &str = "uplift";
+/// The prefix of the workspace's name, `ae-<6 hex>`: short for the same reason as
+/// [`CHILD_TMP`] (Ryan, 2026-10-31).
+const WORKSPACE_PREFIX: &str = "ae-";
 
-/// What the children's `TMPDIR` adds to the work directory's path, in bytes:
-/// `/anneal-eval-uplift-<hex>/tmp`, the same for every workspace.
-pub(crate) const CHILD_TMP_BELOW_WORK_DIR: usize = 1 + name_len(SUITE) + 1 + CHILD_TMP.len();
+/// What the children's `TMPDIR` adds to the work directory's path, in bytes: `/ae-<hex>/t`,
+/// 12, the same for every workspace.
+pub(crate) const CHILD_TMP_BELOW_WORK_DIR: usize =
+    1 + name_len(WORKSPACE_PREFIX) + 1 + CHILD_TMP.len();
 
 /// The eval directory of batch `index`, below the plugin copy it runs against.
 fn eval_dir(index: u32) -> String {
