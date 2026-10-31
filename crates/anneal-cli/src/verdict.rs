@@ -22,7 +22,7 @@
 //!   repository from `origin`, and the ureq adapter that posts it.
 
 pub(crate) mod assess;
-pub(crate) mod commit_status;
+mod commit_status;
 pub(crate) mod pull_request;
 mod set;
 

@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
 use super::{Client, Request};
@@ -44,7 +44,12 @@ fn serve_one(listener: &TcpListener, response: Option<&str>) -> Served {
     served.body = String::from_utf8(body).expect("a UTF-8 body");
     let mut stream = stream;
     match response {
-        Some(response) => stream.write_all(response.as_bytes()).expect("the answer"),
+        // The dummy connection that `post_to_fake` makes has closed by now and may refuse the
+        // answer; the client's own result shows whether a real request got it.
+        Some(response) => {
+            let wrote: std::io::Result<()> = stream.write_all(response.as_bytes());
+            drop(wrote);
+        }
         // Blocks until the client gives up and closes the connection.
         None => drop(reader.read(&mut [0; 1]).expect("the client hangs up")),
     }
@@ -69,6 +74,8 @@ fn post_to_fake(response: Option<&str>, timeout: Duration) -> (Result<(), PostEr
             description: "tests-verified by local: the merge gate wants review",
         };
         let result = Client::new(timeout).post(&request);
+        // Unblocks `accept` if the client never connected; otherwise it waits in the backlog.
+        TcpStream::connect(addr).expect("a dummy connection");
         (result, server.join().expect("the fake GitHub"))
     })
 }
@@ -176,6 +183,24 @@ fn a_server_that_never_answers_times_out() {
         "{result:?}"
     );
     assert!(served.head.starts_with("POST "), "the request was sent");
+}
+
+#[test]
+fn a_request_ureq_cannot_build_is_named_so_not_blamed_on_github_s_answer() {
+    let http = ureq::http::Request::builder()
+        .uri("http://[not a host")
+        .body(())
+        .expect_err("an unparsable URI is an http::Error");
+    let client = Client::new(Duration::from_secs(10));
+
+    for error in [
+        ureq::Error::BadUri("no scheme".to_owned()),
+        ureq::Error::Http(http),
+    ] {
+        let failure = client.failure(&error);
+        assert!(matches!(failure, PostError::Request), "{failure:?}");
+        assert_eq!(failure.to_string(), "the status request could not be built");
+    }
 }
 
 #[test]

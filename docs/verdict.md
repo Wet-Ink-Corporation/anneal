@@ -49,10 +49,11 @@ audit only and never decides (Ryan, weigh-in wi-10f284, #62).
 ## The `anneal/verdict` commit status
 
 Once the verdict is recorded, `verdict set` posts a GitHub commit status on its commit (#116),
-so the rule the merge gate enforces in Claude Code can also be enforced on GitHub: branch
+so the rule the merge gate enforces in Claude Code can also be checked by GitHub: branch
 protection on the default branch requires the status context `anneal/verdict` (a repository
 setting, made by a maintainer). The merge-gate hook reads command text, so it can only be a
-tripwire; the required status is what GitHub itself checks.
+tripwire; the required status is what GitHub itself checks, but it is only as current as the
+last `verdict set` (see the limits at the end of this section).
 
 | State | When |
 |---|---|
@@ -62,8 +63,9 @@ tripwire; the required status is what GitHub itself checks.
 
 The description names the level, the source and the gate's answer, for example
 `tests-verified by local: the merge gate wants review`. Each `verdict set` posts again, and
-GitHub keeps the latest status of a context per commit, so a human `approved` after a
-`tests-verified` turns `pending` into `success`.
+GitHub keeps the latest status of a context per commit, so a human `approved` recorded with
+`--actor human` after a `tests-verified` turns `pending` into `success`. One recorded without
+`--actor human` is no review (#62), so for a change that needs one the status stays `pending`.
 
 - **Token.** `GH_TOKEN`, else `GITHUB_TOKEN` (an empty one counts as unset); it needs
   permission to write commit statuses. With neither, nothing is sent and `data.commit_status`
@@ -85,10 +87,21 @@ GitHub keeps the latest status of a context per commit, so a human `approved` af
   only as `http://` on `127.0.0.1` or `[::1]` (as `ANNEAL_CLEF_URL`), so a released binary
   never sends the token elsewhere.
 
-The status is the gate's answer when `verdict set` ran. A verdict recorded another way (the
-review plugin's `changes_requested` through `anneal ledger append`) posts nothing, so the
-status stays as it was until the next `verdict set`. Whether a human can override the required
-status is open (#116); anneal has no override.
+What the status does not enforce:
+
+- **It is a snapshot.** The status is the merge gate's answer at the moment `verdict set` ran,
+  and nothing updates it after. A verdict recorded another way posts nothing: a
+  `changes_requested` appended with `anneal ledger append` leaves a `success` in place until
+  the next `verdict set`, while the merge-gate hook denies at once. Record verdicts with
+  `verdict set`, which posts. `ledger append` stays an offline primitive that never reaches
+  GitHub (weigh-in wi-951b46).
+- **It belongs to a commit, not a pull request.** GitHub keys a status by commit and context,
+  so every pull request whose head is that commit sees it, whichever `--pr` it was posted for.
+- **A rebase leaves the new commit without one.** A verdict stays fresh across a rebase that
+  keeps the patch id (see Freshness), but the status is on the old commit, so the new head has
+  no `anneal/verdict` status and a required check fails closed until `verdict set` runs for it.
+
+Whether a human can override the required status is open (#116); anneal has no override.
 
 ## Freshness
 
@@ -235,8 +248,9 @@ silently, as is `gh pr merge --disable-auto` (bare, or set to a true value such 
 **Threat model.** The canonical command is the only path that gets judged. The fallback is a
 best-effort tripwire against mistakes and casual workarounds; it is not complete against a
 determined adversary in a Turing-complete shell, and Known gaps lists what it cannot see.
-Strong enforcement is GitHub's: branch protection requiring the `anneal/verdict` commit status
-that `verdict set` posts (see above). For the canonical command:
+The stronger check is GitHub's: branch protection requiring the `anneal/verdict` commit status
+that `verdict set` posts (The `anneal/verdict` commit status, above), within the limits that
+section lists: it is a snapshot of the last `verdict set`. For the canonical command:
 
 1. The pull request must be named by number (`7`, or an `http(s)://<host>/<owner>/<repo>/pull/7`
    URL whose host, owner and repository are the worktree's `origin`; an unquoted `#7` starts a

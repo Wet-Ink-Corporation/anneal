@@ -13,7 +13,7 @@
 //!
 //! - `http`: the ureq adapter that sends one status.
 
-pub(crate) mod http;
+pub(super) mod http;
 
 use std::ffi::OsString;
 use std::fmt;
@@ -116,12 +116,16 @@ impl GithubRepo {
     /// read as the merge gate reads `origin`.
     ///
     /// # Errors
-    /// [`PostError::OriginUnreadable`] when the URL does not read as `<host>/<owner>/<repo>`,
+    /// [`PostError::OriginUnreadable`] when the URL does not read as `<host>/<owner>/<repo>`
+    /// or its owner or repository is only dots (`.`, `..`, which the API path would resolve),
     /// [`PostError::NotGithub`] when its host is not `github.com`.
     fn from_remote_url(url: &str) -> Result<Self, PostError> {
         let full = merge_gate::origin_repo(url).ok_or(PostError::OriginUnreadable)?;
         let mut parts = full.split('/');
         match (parts.next(), parts.next(), parts.next()) {
+            (Some(GITHUB_HOST), Some(owner), Some(name)) if only_dots(owner) || only_dots(name) => {
+                Err(PostError::OriginUnreadable)
+            }
             (Some(GITHUB_HOST), Some(owner), Some(name)) => Ok(Self {
                 owner: owner.to_owned(),
                 name: name.to_owned(),
@@ -130,6 +134,11 @@ impl GithubRepo {
             _ => Err(PostError::NotGithub { origin: full }),
         }
     }
+}
+
+/// Whether `segment` holds nothing but dots (an empty one counts, and is refused too).
+fn only_dots(segment: &str) -> bool {
+    segment.chars().all(|c| c == '.')
 }
 
 impl fmt::Display for GithubRepo {
@@ -235,6 +244,9 @@ pub(crate) enum PostError {
     /// The answer was not HTTP that could be read.
     #[error("GitHub's answer could not be read")]
     BadResponse,
+    /// ureq could not build the request from the URL and headers, so nothing was sent.
+    #[error("the status request could not be built")]
+    Request,
     /// The request body could not be written.
     #[error("writing the status as JSON")]
     Body(#[source] serde_json::Error),

@@ -7,7 +7,7 @@ description: Use when a change needs a pull request, review verdict or depth, me
 
 ## Overview
 
-Takes a change that passed `verify` through review, merge, migration and rollout, deciding each step GO or NO-GO from exit codes, not by feel. Migrations follow references/migrate.md; rollout bands and error budgets are in references/release.md.
+Takes a change that passed `verify` through review, merge, migration and rollout, deciding each step GO or NO-GO from exit codes, not by feel.
 
 - You MUST write the rollback plan before any GO: no plan is NO-GO, and `anneal rollout decide` exit 2 means run it.
 - You MUST check the verdict ledger with `anneal verdict valid --pr <n>` before merging; the `merge-gate` hook denies `gh pr merge` without a fresh verdict.
@@ -23,7 +23,7 @@ Takes a change that passed `verify` through review, merge, migration and rollout
 ## Process
 
 1. **Review depth.** Run `anneal ship skip-rule`. It's working if you know the review it needs: exit 0 light, exit 1 the review plugin's full one.
-2. **Verdict.** Record green tests with `anneal verdict set --pr <n> --sha HEAD --level tests-verified --source local`, get the review, then run `anneal verdict valid --pr <n>`. It's working if it exits 0.
+2. **Verdict.** Record green tests with `anneal verdict set --pr <n> --sha HEAD --level tests-verified --source local` (exit 4: verdict recorded, status not posted; remove the cause or pass `--no-status`), get the review, then run `anneal verdict valid --pr <n>`. It's working if it exits 0.
 3. **Rollback plan.** In the pull request: the revert or flag that undoes the change, who runs it, and what it cannot undo. It's working if someone else could run it unaided.
 4. **GO or NO-GO.** GO only with steps 2 and 3 done and `anneal watch pr <n>` at exit 0; otherwise NO-GO. It's working if the decision names each exit code.
 5. **Merge.** Run exactly `gh pr merge <n> --match-head-commit <HEAD> --repo <origin's host/owner/repo>`, alone. It's working if the `merge-gate` hook lets it through.

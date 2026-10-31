@@ -9,13 +9,14 @@
 //! message. ureq's resolver thread may outlive a call that times out, as documented there; a
 //! `verdict set` process exits soon after.
 
-use std::io::{self, Read as _};
+use std::io::Read as _;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use super::{CONTEXT, PostError, State};
 use crate::decide::transport::ApiToken;
+use crate::ureq_failure::UreqFailure;
 
 /// Bytes read of a refusal's body: more, and its message is not shown.
 const ERROR_BODY_BYTES: u64 = 16 * 1024;
@@ -124,29 +125,25 @@ impl Client {
     }
 
     /// The failure for ureq's `error`, with a fixed reason: ureq's own messages can hold the
-    /// URL.
+    /// URL. The kinds are [`UreqFailure`]'s, shared with Clef's transport.
     fn failure(&self, error: &ureq::Error) -> PostError {
         let unreachable = |reason| PostError::Unreachable { reason };
-        match error {
-            ureq::Error::Timeout(_) => PostError::TimedOut {
+        match UreqFailure::of(error) {
+            UreqFailure::TimedOut => PostError::TimedOut {
                 after: self.timeout,
             },
-            ureq::Error::Io(io) if io.kind() == io::ErrorKind::TimedOut => PostError::TimedOut {
-                after: self.timeout,
-            },
-            ureq::Error::Io(_) | ureq::Error::ConnectionFailed => {
-                unreachable("the connection failed")
-            }
-            ureq::Error::HostNotFound => unreachable("the host was not found"),
-            ureq::Error::Tls(_)
-            | ureq::Error::Pem(_)
-            | ureq::Error::Rustls(_)
-            | ureq::Error::TlsRequired => unreachable("TLS failed"),
-            ureq::Error::StatusCode(code) => PostError::Status {
-                code: *code,
+            UreqFailure::ConnectionFailed { .. } => unreachable("the connection failed"),
+            UreqFailure::HostNotFound => unreachable("the host was not found"),
+            UreqFailure::Tls => unreachable("TLS failed"),
+            UreqFailure::InvalidRequest => PostError::Request,
+            UreqFailure::Status(code) => PostError::Status {
+                code,
                 detail: String::new(),
             },
-            _ => PostError::BadResponse,
+            UreqFailure::MalformedResponse
+            | UreqFailure::BodyTooLarge
+            | UreqFailure::Redirect
+            | UreqFailure::Other => PostError::BadResponse,
         }
     }
 }
