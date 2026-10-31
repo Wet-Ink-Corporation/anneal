@@ -24,6 +24,7 @@ mod head_verdict;
 mod home;
 mod ledger;
 mod text;
+mod unreadable;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -41,6 +42,7 @@ use crate::error_chain::reason;
 use crate::existing_ledger::{self, LedgerError};
 use crate::exit_codes::{self, Code};
 use crate::paths::{self, GIT_TIMEOUT, PathError};
+use unreadable::Unreadable;
 
 /// The document's schema version. Fields are only ever added within schema 1.
 pub const SCHEMA: u32 = 1;
@@ -166,11 +168,11 @@ struct Gathered {
 
 impl Gathered {
     /// Keeps `read`'s value, or notes why `section` could not be read and leaves it absent.
-    fn keep<T>(&mut self, section: Section, read: Result<Option<T>, String>) -> Option<T> {
+    fn keep<T>(&mut self, section: Section, read: Result<Option<T>, Unreadable>) -> Option<T> {
         match read {
             Ok(value) => value,
             Err(why) => {
-                self.unreadable(section.key(), &why);
+                self.unreadable(section.key(), &why.reason());
                 None
             }
         }
@@ -292,6 +294,7 @@ fn from_plan(
     let ledger::PlanRead { approval, bytes } = match worktree.plan(build) {
         Ok(read) => read,
         Err(why) => {
+            let why = why.reason();
             for section in [Section::Plan, Section::Tasks] {
                 if wanted.has(section) {
                     gathered.unreadable(section.key(), &why);
@@ -334,7 +337,8 @@ fn from_home(
             unreadable,
         } = home::context(&home);
         if !unreadable.is_empty() {
-            gathered.unreadable(Section::Context.key(), &unreadable.join("; "));
+            let why: Vec<String> = unreadable.iter().map(Unreadable::reason).collect();
+            gathered.unreadable(Section::Context.key(), &why.join("; "));
         }
         gathered.document.context = context;
     }

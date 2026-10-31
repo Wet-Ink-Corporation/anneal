@@ -4,7 +4,6 @@
 //! `Spec:` value names is `lint::spec::field`'s, shared with a spec's `Tree:` line.
 
 use crate::lint::spec::field::key_value;
-pub(super) use crate::lint::spec::field::{code_spans, spec_target};
 
 /// The longest task id, in bytes.
 pub(super) const MAX_ID_BYTES: usize = 64;
@@ -90,7 +89,8 @@ pub(super) fn blockers(value: &str) -> Result<Vec<&str>, &str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Key, blockers, code_spans, field, spec_target, task_heading};
+    use super::{Key, blockers, field, task_heading};
+    use crate::lint::spec::field::{code_spans, spec_target};
 
     #[test]
     fn fields_read_plain_bold_and_listed_forms() {

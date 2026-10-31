@@ -27,7 +27,7 @@ use crate::exit_codes::{self, Code};
 use crate::lint::read_whole_bytes;
 use crate::lint::skills::LintError;
 use crate::lint::spec::Source;
-use crate::lint::spec::field::spec_path;
+use crate::lint::spec::field::linked_path;
 use crate::lint::spec::markdown::Document;
 
 /// Arguments of `anneal lint plan`.
@@ -279,7 +279,7 @@ pub fn examine(path: &Path, bytes: &[u8]) -> Outcome {
         .plan
         .spec
         .as_deref()
-        .map(|target| PathBuf::from(spec_path(&file, target, MAIN_SEPARATOR)));
+        .map(|target| PathBuf::from(linked_path(&file, target, MAIN_SEPARATOR)));
     if let Some(resolved) = spec.as_deref().filter(|resolved| !resolved.is_file()) {
         report
             .findings

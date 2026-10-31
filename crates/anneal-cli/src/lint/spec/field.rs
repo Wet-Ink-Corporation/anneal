@@ -1,6 +1,6 @@
 //! `Key: value` header lines that name a file, as a plan's `Spec:` line and a spec's `Tree:`
 //! line are written: the line's key and value ([`key_value`]), the path its value names
-//! ([`spec_target`]) and where that path lies ([`spec_path`]). `pub(crate)` beside
+//! ([`spec_target`]) and where that path lies ([`linked_path`]). `pub(crate)` beside
 //! `spec::markdown`, so `lint plan` reads its `Spec:` line as `lint spec` reads its `Tree:`
 //! line, and `lint spec` never reaches into `lint plan`.
 
@@ -76,7 +76,7 @@ fn link_destination(after: &str) -> &str {
 /// `from`'s directory. Joined, and the directory's separators replaced, with `/` rather than
 /// `Path::join`, so the path shown (and keyed) is the same on every platform; Windows opens
 /// `/`-separated paths too. A plan's spec and a spec's design tree are resolved with it.
-pub(crate) fn spec_path(from: &str, target: &str, separator: char) -> String {
+pub(crate) fn linked_path(from: &str, target: &str, separator: char) -> String {
     let drive = separator == '\\'
         && matches!(target.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
     if drive || target.starts_with(['/', separator]) {

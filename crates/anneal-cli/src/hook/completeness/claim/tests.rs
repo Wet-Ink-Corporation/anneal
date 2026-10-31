@@ -530,3 +530,24 @@ fn a_report_in_a_fronted_after_clause_before_a_plan_still_claims() {
         assert_eq!(success_claim(reply).as_deref(), Some(claim), "{reply:?}");
     }
 }
+
+#[test]
+fn an_irregular_past_verb_after_a_determiner_does_not_finish_a_condition() {
+    // After a determiner a listed past form reads as a word of the noun phrase ("the hit
+    // list"), as an `-ed` word does ("the updated tests"), so the condition runs on to the
+    // claim and withdraws it.
+    let plans = [
+        "I'll merge when the hit list is done",
+        "Ship it when the broke build is fixed",
+        "Tag it once our built images are green",
+        "I'll merge when the updated tests pass",
+    ];
+    for plan in plans {
+        assert_eq!(success_claim(plan), None, "{plan:?}");
+    }
+    // The same verb with no determiner before it finishes the condition, so the claim stands.
+    assert_eq!(
+        success_claim("The crash when the parser hit the list is fixed").as_deref(),
+        Some("fixed")
+    );
+}

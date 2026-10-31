@@ -381,6 +381,30 @@ fn the_flag_and_the_human_value_split_across_commands_of_one_call_are_denied() {
 }
 
 #[test]
+fn a_flag_half_that_reads_as_actor_with_its_expansions_empty_is_denied() {
+    // The emptied reading (#125) reads `"$a"--actor` and `--act"$x"or` as `--actor`, so each
+    // is the flag half beside an unread call, as docs/guard.md's Limits says.
+    assert_table(&[
+        (
+            "set -- d1 yes \"$a\"--actor; set -- \"$@\" human; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "set -- d1 yes --act\"$x\"or; set -- \"$@\" human; anneal decide label \"$@\"",
+            HUMAN_ONLY,
+        ),
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes \"$a\"--actor human",
+            HUMAN_ONLY,
+        ),
+        (
+            "v() { anneal decide label \"$@\"; }; v d1 yes --act\"$x\"or human",
+            HUMAN_ONLY,
+        ),
+    ]);
+}
+
+#[test]
 fn a_model_actor_or_no_actor_beside_an_unread_call_stays_allowed() {
     assert_table(&[
         ("anneal decide label \"$@\"", ALLOW),

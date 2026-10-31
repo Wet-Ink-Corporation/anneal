@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use super::{MAX_FINDINGS, Plan, Report, Rule, Task, check, spec_path};
+use super::{MAX_FINDINGS, Plan, Report, Rule, Task, check, linked_path};
 use crate::lint::spec::Source;
 use crate::path_text::slashed;
 
@@ -371,38 +371,38 @@ fn thousands_of_chained_tasks_check_clean() {
 #[test]
 fn a_relative_spec_joins_the_plan_directory_with_forward_slashes() {
     assert_eq!(
-        spec_path("docs/plans/p.md", "../specs/s.md", '/'),
+        linked_path("docs/plans/p.md", "../specs/s.md", '/'),
         "docs/plans/../specs/s.md",
         "unix"
     );
     assert_eq!(
-        spec_path(r"docs\plans\p.md", "../specs/s.md", '\\'),
+        linked_path(r"docs\plans\p.md", "../specs/s.md", '\\'),
         "docs/plans/../specs/s.md",
         "Windows separators become `/`"
     );
-    assert_eq!(spec_path("p.md", "s.md", '/'), "s.md", "no directory");
-    assert_eq!(spec_path("/p.md", "s.md", '/'), "/s.md", "the root");
+    assert_eq!(linked_path("p.md", "s.md", '/'), "s.md", "no directory");
+    assert_eq!(linked_path("/p.md", "s.md", '/'), "/s.md", "the root");
 }
 
 #[test]
 fn an_absolute_spec_is_used_as_written() {
     assert_eq!(
-        spec_path("docs/p.md", "/srv/specs/s.md", '/'),
+        linked_path("docs/p.md", "/srv/specs/s.md", '/'),
         "/srv/specs/s.md",
         "unix absolute"
     );
     assert_eq!(
-        spec_path(r"docs\p.md", r"C:\specs\s.md", '\\'),
+        linked_path(r"docs\p.md", r"C:\specs\s.md", '\\'),
         r"C:\specs\s.md",
         "a Windows drive"
     );
     assert_eq!(
-        spec_path(r"docs\p.md", r"\specs\s.md", '\\'),
+        linked_path(r"docs\p.md", r"\specs\s.md", '\\'),
         r"\specs\s.md",
         "a Windows rooted path"
     );
     assert_eq!(
-        spec_path("docs/p.md", "C:/specs/s.md", '/'),
+        linked_path("docs/p.md", "C:/specs/s.md", '/'),
         "docs/C:/specs/s.md",
         "a drive means nothing on unix"
     );

@@ -346,6 +346,48 @@ fn a_malformed_label_id_is_a_usage_error_and_appends_nothing() {
 }
 
 #[test]
+fn label_with_only_an_actor_leaves_via_off_the_row_and_data() {
+    let endpoint = Endpoint(Ok(json!({})));
+    let words = ["label", "d1760000000000-42-0", "yes", "--actor", "model"];
+
+    let (code, envelope, log) = decide(&words, &[], &endpoint);
+
+    assert_eq!(code.ok(), Some(0));
+    let row: Value = serde_json::from_str(log.trim_end()).expect("one JSON row");
+    assert_eq!(
+        row,
+        json!({
+            "kind": "label",
+            "id": "d1760000000000-42-0",
+            "outcome": "yes",
+            "ts_ms": 1_760_000_000_000_u64,
+            "actor": "model",
+        })
+    );
+    let data = envelope["data"].as_object().expect("data is an object");
+    assert_eq!(
+        (data.get("actor"), data.contains_key("via")),
+        (Some(&json!("model")), false),
+        "{envelope}"
+    );
+}
+
+#[test]
+fn label_without_flags_has_no_actor_or_via_in_data() {
+    let endpoint = Endpoint(Ok(json!({})));
+
+    let (code, envelope, _) = decide(&["label", "d1760000000000-42-0", "yes"], &[], &endpoint);
+
+    assert_eq!(code.ok(), Some(0));
+    let data = envelope["data"].as_object().expect("data is an object");
+    assert_eq!(
+        (data.contains_key("actor"), data.contains_key("via")),
+        (false, false),
+        "{envelope}"
+    );
+}
+
+#[test]
 fn the_token_is_in_no_envelope_or_row() {
     let replies = [
         Ok(json!({"probabilities": {"yes": 0.5}})),

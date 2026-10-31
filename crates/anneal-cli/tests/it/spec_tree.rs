@@ -244,6 +244,37 @@ fn a_tree_line_naming_a_missing_file_refuses_the_approval() -> TestResult {
     Ok(())
 }
 
+/// Makes git fail in `dir` with something other than "not a git repository": a `.git` file
+/// that is no gitfile, so locating the ledger without `--store` fails there.
+fn break_git(dir: &Path) -> Result<(), Box<dyn Error>> {
+    fs::write(dir.join(".git"), "not a gitfile\n")?;
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_missing_tree_is_refused_before_the_ledger_is_located() -> TestResult {
+    let located = workspace(&format!("Tree: {TREE}"))?;
+    break_git(located.path())?;
+    let missing = workspace("Tree: trees/missing.json")?;
+    break_git(missing.path())?;
+
+    let (failed, _) = anneal(located.path(), &["plan", "approve", PLAN])?;
+    let (refused, envelope) = anneal(missing.path(), &["plan", "approve", PLAN])?;
+
+    assert!(
+        !matches!(failed.status.code(), Some(0 | 3)),
+        "with a readable tree the approval reaches the ledger and git fails: {failed:?}"
+    );
+    assert_eq!(refused.status.code(), Some(3), "not approved: {envelope}");
+    assert_eq!(
+        keys(&envelope),
+        vec!["plan/approve/tree:spec.md"],
+        "the missing tree is the refusal, decided before git is asked where the ledger is"
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_tree_link_with_an_angle_bracket_destination_lints_clean() -> TestResult {
