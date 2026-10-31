@@ -404,6 +404,7 @@ fn keep_results_keeps_each_batch_s_result_named_by_its_arm() -> TestResult {
 }
 
 /// The files below `dir`, as paths relative to it, sorted.
+#[cfg(target_os = "linux")]
 fn files_below(dir: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
