@@ -313,12 +313,13 @@ const EVAL_DIR_PREFIX: &str = "anneal-uplift-";
 /// `claude plugin eval` makes its runs' sandbox roots: inside the work directory rather than
 /// under the system's `/tmp`, whose writes the Linux eval sandbox denies (`super::sandbox`),
 /// and removed with the workspace.
+///
 /// One byte, as every byte of the children's `TMPDIR` counts against the sandbox's socket
 /// paths (`super::sandbox`).
 const CHILD_TMP: &str = "t";
 
 /// The prefix of the workspace's name, `ae-<6 hex>`: short for the same reason as
-/// [`CHILD_TMP`] (Ryan, 2026-10-31).
+/// [`CHILD_TMP`].
 const WORKSPACE_PREFIX: &str = "ae-";
 
 /// What the children's `TMPDIR` adds to the work directory's path, in bytes: `/ae-<hex>/t`,

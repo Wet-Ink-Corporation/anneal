@@ -119,7 +119,8 @@ fn open_up(root: &Path) -> io::Result<()> {
     while let Some(dir) = pending.pop() {
         // Checked again right before the change, not following a link: anything that is not
         // a real directory now (a link swapped in since it was listed, or a linked root) is
-        // left alone, so no mode outside the tree is ever changed.
+        // left alone. `set_permissions` follows links, so this narrows the race rather than
+        // closing it; the workspace's 0700 mode limits who could swap a link in.
         if !fs::symlink_metadata(&dir)?.is_dir() {
             continue;
         }
@@ -142,8 +143,8 @@ const SUFFIX_DIGITS: usize = 6;
 /// The bits of the hash [`SUFFIX_DIGITS`] hex digits show.
 const SUFFIX_MASK: u64 = (1 << (4 * SUFFIX_DIGITS)) - 1;
 
-/// The prefix of a Tier 2 (`eval routing --router claude`) workspace's name, kept as it was
-/// when Tier 3's became `ae-`: Tier 2's children get no `TMPDIR` inside it.
+/// The prefix of a Tier 2 (`eval routing --router claude`) workspace's name. Tier 2's
+/// children get no `TMPDIR` inside it, so its name has no length budget.
 const ROUTING_PREFIX: &str = "anneal-eval-routing-";
 
 /// The length in bytes of the name of a workspace whose name starts with `prefix`: the
@@ -320,11 +321,11 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_name_is_its_prefix_and_six_hex_digits() -> TestResult {
+    fn a_workspace_name_is_its_suite_prefix_and_six_hex_digits() -> TestResult {
         let source = tempfile::tempdir()?;
         let base = tempfile::tempdir()?;
 
-        let workspace = Workspace::create_in(base.path(), "ae-", source.path())?;
+        let workspace = Workspace::create_in(base.path(), "anneal-eval-uplift-", source.path())?;
 
         let name = workspace
             .root()
@@ -333,15 +334,15 @@ mod tests {
             .map(str::to_owned);
         workspace.finish()?;
         let name = name.ok_or("a UTF-8 name")?;
-        let suffix = name.strip_prefix("ae-").unwrap_or_default();
+        let suffix = name.strip_prefix("anneal-eval-uplift-").unwrap_or_default();
         assert_eq!(
             (
                 name.len(),
-                name_len("ae-"),
+                name_len("anneal-eval-uplift-"),
                 suffix.len(),
                 suffix.chars().all(|c| c.is_ascii_hexdigit())
             ),
-            (9, 9, 6, true),
+            (25, 25, 6, true),
             "{name}"
         );
         Ok(())
@@ -425,6 +426,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn finish_removes_directories_a_kept_run_sealed() -> TestResult {
+        use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt;
 
         let source = tempfile::tempdir()?;
@@ -439,8 +441,14 @@ mod tests {
         if fs::read_dir(run.join("sealed")).is_ok() {
             // The seal does not bind this user (root ignores directory modes), so nothing
             // here would need opening up and the test would pass whatever `finish` does:
-            // clean up and stop. Run it as another user (`setpriv --reuid 65534`) to check.
+            // clean up, check the removal and say so. Run it as another user
+            // (`setpriv --reuid 65534`) to check the seal itself.
             workspace.finish()?;
+            writeln!(
+                io::stderr().lock(),
+                "skipped: the seal does not bind this user"
+            )?;
+            assert!(!root.exists());
             return Ok(());
         }
 
