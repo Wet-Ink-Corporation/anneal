@@ -94,7 +94,7 @@ Screenshots of the band (dim and blocked), of the pane (docked and inline) and o
 | `plugin-cockpit/tsconfig.json` | yes | strict, `noUncheckedIndexedAccess`, the options Claude Code's declaration header gives for a hooks module |
 | `mod-types/mod-api.d.ts` | no | a hand-written declaration of the few mods API types the module and test use (see below) |
 
-There is no packaging exclude list (the release zips each plugin directory whole and there is no `scripts/package-plugin.sh`), so the test and `tsconfig.json` ship with `anneal-cockpit`. They are small and inert: Claude Code loads only the module `cockpit.json` names, and `claude plugin test` is the only thing that reads `*.test.ts`. The plugin still has no `bin/` and no `evals/`.
+There is no packaging exclude list (the release zips each plugin directory whole, `anneal-cockpit-plugin-<version>.zip` from the release workflow patch in `anneal-afk/cockpit-split-github.patch` once applied, and there is no `scripts/package-plugin.sh`), so the test and `tsconfig.json` ship with `anneal-cockpit`. They are small and inert: Claude Code loads only the module `hooks/hooks.json` names, and `claude plugin test` is the only thing that reads `*.test.ts`. The plugin still has no `bin/` and no `evals/`.
 
 `mod-types/mod-api.d.ts` is our own minimal declaration, in our own words, of only the API surface `cockpit.tsx` and its test use, mirroring the [mods reference](https://code.claude.com/docs/en/plugins/mods/reference) as of Claude Code 2.1.303. Claude Code's own declaration file is not vendored: it is not under this repository's licence. Nor can CI point `tsc` at it: the npm package `@anthropic-ai/claude-code` (2.1.303, and the 2.1.42 installed here) ships only `sdk-tools.d.ts`, and Claude Code writes its mods declarations only when an interactive session hot-reloads a mod. So `tsc -p plugin-cockpit` checks the code against the shim, and the real engine checks it in CI through `claude plugin validate --strict` and `claude plugin test` on the pinned version. On 2026-10-19 the module, contract and test also type-checked against Claude Code 2.1.303's own declarations, in a throwaway config outside the repository. Extend the shim only as the mod uses more of the API.
 
@@ -115,7 +115,7 @@ Since the cockpit is its own plugin, disabling or uninstalling `anneal-cockpit` 
 | Switch | Mod | anneal's settings hooks | Skills |
 |---|---|---|---|
 | Disable or uninstall `anneal-cockpit` in `/plugin` | off | on | on |
-| Disable or uninstall `anneal` in `/plugin` | on, but every reading is `anneal status unavailable` unless the CLI is otherwise found | off | off |
+| Disable or uninstall `anneal` in `/plugin` | on: it keeps reading through its own launcher (its builds, the shared download cache or its own download) | off | off |
 | `"disableAllHooks": true` in `~/.claude/settings.json` | off | off | on |
 | `claude --safe-mode` (one session) | off | off, per `claude --help` | off |
 | Organization `allowManagedModsOnly` (managed settings) | off | on, per the docs ("users' settings hooks keep running"; not checked for a plugin's) | on |

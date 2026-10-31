@@ -1,11 +1,11 @@
 // A minimal, hand-written declaration of the Claude Code mods API, in this repository's own
-// words, covering only what plugin/hooks/cockpit.tsx and plugin/tests/cockpit.test.ts use.
+// words, covering only what plugin-cockpit/hooks/cockpit.tsx and plugin-cockpit/tests/cockpit.test.ts use.
 //
 // It mirrors the documented API (https://code.claude.com/docs/en/plugins/mods/reference) as of
 // Claude Code 2.1.303. It is not Claude Code's own declaration file, which is not under this
 // repository's licence and is not shipped in the `@anthropic-ai/claude-code` npm package
 // (2.1.303 ships only `sdk-tools.d.ts`). The real engine checks the mod in CI: the job in
-// docs/mods.md runs `claude plugin validate --strict plugin` and `claude plugin test plugin`
+// docs/mods.md runs `claude plugin validate --strict plugin-cockpit` and `claude plugin test plugin-cockpit`
 // on the pinned Claude Code, so a shape this file gets wrong fails there. Extend it only as the
 // mod starts using more of the API; where it is looser than the engine (a tool's input, an
 // element's props), the engine's own check is the one that counts.
