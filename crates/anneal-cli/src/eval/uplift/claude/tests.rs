@@ -6,8 +6,8 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::{
-    BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins, arguments, case_file,
-    scaffold, traces, trials, write_cases,
+    BaselinePlugin, CHILD_TMP_BELOW_WORK_DIR, ClaudeEvaluator, LauncherTarget, Placement, Plugins,
+    arguments, case_file, scaffold, traces, trials, write_cases,
 };
 use crate::eval::real::claude::Options;
 use crate::eval::real::result::{ResultError, parse};
@@ -825,6 +825,20 @@ fn the_traces_kept_are_the_asked_cases_runs_that_name_one() -> TestResult {
         .map(|(name, path)| (name.to_owned(), path.to_owned()))
     );
     Ok(())
+}
+
+/// `/ae-<6 hex>/t` is 12 bytes, which leaves 37 of the Linux budget of 49 for the work
+/// directory, enough for `/home/<user>/.anneal/tmp` (Ryan, 2026-10-31).
+#[test]
+fn the_children_s_tmpdir_is_the_work_dir_and_12_bytes_leaving_37() {
+    assert_eq!(
+        (
+            CHILD_TMP_BELOW_WORK_DIR,
+            crate::eval::uplift::sandbox::CHILD_TMPDIR_BUDGET
+                .saturating_sub(CHILD_TMP_BELOW_WORK_DIR)
+        ),
+        (12, 37)
+    );
 }
 
 #[test]

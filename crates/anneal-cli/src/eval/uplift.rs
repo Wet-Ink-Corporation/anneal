@@ -448,7 +448,7 @@ fn socket_path(cases: &[suites::Case], work_dir: &Path) -> Result<Option<String>
         .saturating_add(CHILD_TMP_BELOW_WORK_DIR);
     Ok(sandbox::socket_overrun(len).map(|over| {
         format!(
-            "the claude children's TMPDIR, {}/anneal-eval-uplift-<hex>/tmp, is {len} bytes, \
+            "the claude children's TMPDIR, {}/ae-<hex>/t, is {len} bytes, \
              {over} more than the {} that leave room below it for the sockets claude plugin \
              eval's Bash sandbox binds (a Unix socket path holds at most {} bytes on Linux), \
              so Bash fails in every run (\"Failed to create bridge sockets\"); run again with a \

@@ -38,19 +38,19 @@ fn tmpdir_run_from(
     Ok((run, lines))
 }
 
-/// Whether `line` names an existing directory `tmp` directly inside an
-/// `anneal-eval-uplift-*` workspace directly inside `base`.
+/// Whether `line` names an existing directory `t` directly inside an `ae-*` workspace
+/// directly inside `base`.
 fn is_workspace_tmp(line: &str, base: &Path) -> bool {
     let Some(path) = line.strip_suffix(" dir").map(Path::new) else {
         return false;
     };
     let workspace = path.parent();
-    path.file_name() == Some("tmp".as_ref())
+    path.file_name() == Some("t".as_ref())
         && workspace.and_then(Path::parent) == Some(base)
         && workspace
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("anneal-eval-uplift-"))
+            .is_some_and(|name| name.starts_with("ae-"))
 }
 
 #[test]
