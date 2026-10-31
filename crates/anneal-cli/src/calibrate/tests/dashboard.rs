@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
-use super::{TestResult, args, calibrate, hand_log, label, point};
+use super::{TestResult, args, calibrate, decision, hand_log, label, point, write_log};
 use crate::calibrate::{CalibrateEnv, PROPOSALS_FILE, run};
 use crate::decide;
 
@@ -189,5 +189,60 @@ fn the_proposals_file_carries_neither_mode_nor_history() -> TestResult {
     let file: Value = serde_json::from_slice(&fs::read(proposals)?)?;
     let d1 = &file["points"][0];
     assert_eq!((d1.get("mode"), d1.get("history")), (None, None), "{d1}");
+    Ok(())
+}
+
+/// The questions D1's history lists, in order.
+fn history_questions(envelope: &Value) -> Vec<&Value> {
+    point(envelope, "D1")["history"]
+        .as_array()
+        .expect("history")
+        .iter()
+        .map(|day| &day["question"])
+        .collect()
+}
+
+#[test]
+fn the_history_leaves_out_a_question_the_thresholds_do_not_define() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let mut choice = decision("d1-9-0", "D1", 0.7, "ask");
+    choice["question"] = json!("choice");
+    write_log(
+        home.path(),
+        "decisions.jsonl",
+        &[decision("d1-9-1", "D1", 0.5, "ask"), choice],
+    )?;
+
+    let ran = calibrate(home.path(), &[]);
+
+    assert_eq!(
+        ran.envelope["data"]["unreported_rows"],
+        json!(1),
+        "D1 asks no choice"
+    );
+    assert_eq!(history_questions(&ran.envelope), [&json!("noul")]);
+    Ok(())
+}
+
+#[test]
+fn a_ts_ms_that_is_not_a_millisecond_count_is_scored_but_left_out_of_the_history() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let rows: Vec<Value> = [json!("x"), json!(-1), json!(1.5)]
+        .into_iter()
+        .enumerate()
+        .map(|(k, ts_ms)| {
+            let mut row = decision(&format!("d1-8-{k}"), "D1", 0.5, "ask");
+            row["ts_ms"] = ts_ms;
+            row
+        })
+        .collect();
+    write_log(home.path(), "decisions.jsonl", &rows)?;
+
+    let ran = calibrate(home.path(), &[]);
+
+    let data = &ran.envelope["data"];
+    assert_eq!(data["skipped_rows"], json!(0), "every row still reads");
+    assert_eq!(point(&ran.envelope, "D1")["questions"][0]["n"], json!(3));
+    assert_eq!(point(&ran.envelope, "D1")["history"], json!([]));
     Ok(())
 }

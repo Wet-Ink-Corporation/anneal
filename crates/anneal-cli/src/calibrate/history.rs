@@ -13,13 +13,13 @@ use crate::calibrate::score::{self, Sample};
 use crate::decide::point::{Point, Question};
 
 /// How many days with decisions each question's history keeps, the latest.
-pub(crate) const HISTORY_DAYS: usize = 30;
+const HISTORY_DAYS: usize = 30;
 
 /// Milliseconds in a day; a UTC day starts at a multiple of it.
-pub(crate) const DAY_MS: u64 = 86_400_000;
+const DAY_MS: u64 = 86_400_000;
 
 /// One question's answered decisions on one UTC day.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct DayScore {
     pub(crate) question: Question,
     /// The day's start, in Unix milliseconds (UTC).
@@ -42,8 +42,11 @@ struct Tally {
 /// Each point's days, by question then oldest first; a point with no dated decision is absent.
 pub(crate) fn history(rows: &LogRows) -> BTreeMap<Point, Vec<DayScore>> {
     let mut tallies: BTreeMap<(Point, Question, u64), Tally> = BTreeMap::new();
-    for (decision, decided_ms) in rows.answered.iter().zip(&rows.answered_ms) {
-        let Some(decided_ms) = decided_ms else {
+    // `answered_ms` holds one entry per answered decision when the reader filled both. An
+    // entry that is missing (rows built without timestamps) means no timestamp: that decision
+    // is left out of the history alone, and no other is cut off.
+    for (index, decision) in rows.answered.iter().enumerate() {
+        let Some(decided_ms) = rows.answered_ms.get(index).copied().flatten() else {
             continue;
         };
         let day_start_ms = decided_ms - decided_ms % DAY_MS;

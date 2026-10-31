@@ -262,7 +262,7 @@ nothing is stored between runs. An answered decision belongs to the UTC day of i
 label given later moves the day it labels. Per question and day it gives `n`, `labelled` and
 the Brier score of that day's labelled decisions. Only days with an answered decision appear,
 the latest 30 per question; a question the thresholds no longer define is left out, as it is
-from `questions`; a decision whose `ts_ms` is missing or not a whole number of milliseconds is
+from `questions`; a decision whose `ts_ms` is missing or not a non-negative JSON integer is
 counted in `questions` but not in `history`. The history covers what the log still holds:
 rotation drops the oldest file.
 

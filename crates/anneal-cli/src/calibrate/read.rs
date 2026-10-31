@@ -68,8 +68,9 @@ pub(crate) struct LogRows {
     pub(crate) via_mod: HashSet<String>,
     /// Lines that are not a row this build reads.
     pub(crate) skipped_rows: u32,
-    /// When each of `answered` was decided (its `ts_ms`), by index; `None` for a row without
-    /// one that is a whole number of milliseconds.
+    /// When each of `answered` was decided (its `ts_ms`), by index: `read_log` pushes one entry
+    /// per answered decision, `None` for a row whose `ts_ms` is missing or not a non-negative
+    /// JSON integer. A reader treats a missing entry as `None` (`calibrate::history`).
     pub(crate) answered_ms: Vec<Option<u64>>,
 }
 
@@ -84,8 +85,8 @@ enum RowDto {
 #[derive(Debug, Deserialize)]
 struct DecisionDto {
     id: String,
-    /// Read as any JSON value, so a row whose `ts_ms` is not a millisecond count still reads
-    /// (as it did before calibrate read the field); such a row is left out of the history.
+    /// Read as any JSON value, so a row whose `ts_ms` is not a non-negative JSON integer still
+    /// reads (as it did before calibrate read the field); such a row is left out of the history.
     ts_ms: Option<serde_json::Value>,
     point: Point,
     question: Question,

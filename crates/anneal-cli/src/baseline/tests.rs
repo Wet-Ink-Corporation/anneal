@@ -1,4 +1,7 @@
-use super::{Baseline, BaselineError, create_temporary, load_capped, temporary_path};
+use super::{
+    Baseline, BaselineError, create_temporary, load_capped, temporary_path,
+    write_snapshot_json_if_changed,
+};
 use crate::envelope::Finding;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -225,4 +228,40 @@ fn a_failed_save_removes_its_temporary_file() {
         "got {error:?}"
     );
     assert_eq!(file_names(dir.path()), ["baseline.json"], "no temp left");
+}
+
+#[test]
+fn a_file_longer_than_the_new_json_is_replaced_by_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("proposals.json");
+    let longer = format!("{{\"keys\": [{}]}}\n", "\"a\", ".repeat(100) + "\"a\"");
+    std::fs::write(&path, &longer).expect("seed");
+
+    let written = write_snapshot_json_if_changed(&path, &serde_json::json!({"keys": []}));
+
+    assert!(written.is_ok(), "{written:?}");
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        "{\n  \"keys\": []\n}\n"
+    );
+    assert_eq!(file_names(dir.path()), ["proposals.json"], "no temp left");
+}
+
+#[test]
+fn a_file_holding_the_same_json_is_left_as_it_is() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("proposals.json");
+    let value = serde_json::json!({"keys": ["a"]});
+    write_snapshot_json_if_changed(&path, &value).expect("first write");
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(old))
+        .expect("age the file");
+
+    write_snapshot_json_if_changed(&path, &value).expect("second write");
+
+    let modified = std::fs::metadata(&path).and_then(|meta| meta.modified());
+    assert_eq!(modified.expect("mtime"), old, "not rewritten");
 }
