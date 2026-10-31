@@ -7,10 +7,11 @@
 //! decision to its latest label, and reports per point and question: n, the labelled n, the
 //! Brier score, 10 reliability bins, the ask rate, the lowest band's threshold now and as
 //! proposed, and a verdict (`stay-shadow` or `eligible-to-enforce`). It writes every point's
-//! report and the manual steps that would apply it to `<anneal home>/decisions/proposals.json`,
-//! writes the envelope (for `--point`'s point only, when given) on stdout and a short summary
-//! on stderr, and exits 0. Its `data.diff` shows each proposed threshold as the changed line of
-//! the thresholds file. It never edits the thresholds or the mode: only
+//! report and the manual steps that would apply it to `<anneal home>/decisions/proposals.json`
+//! (only when those bytes would change), writes the envelope (for `--point`'s point only, when
+//! given; each point with its mode in effect and its per-day history) on stdout and a short
+//! summary on stderr, and exits 0. Its `data.diff` shows each proposed threshold as the changed
+//! line of the thresholds file. It never edits the thresholds or the mode: only
 //! `calibrate --apply --thresholds <file>` writes a thresholds file, from the last run's
 //! proposals, and never the mode. See `docs/calibrate.md`.
 //!
@@ -18,12 +19,14 @@
 //! - `read`: the log's files into rows.
 //! - `score`: Brier score, bins, expected cost and the proposed threshold.
 //! - `report`: the join, the per-question report and the verdict.
+//! - `history`: each question's decisions per UTC day, for a trend.
 //! - `output`: envelope, proposals file, manual steps and summary.
 //! - `edit`: a threshold step applied to the file's text, number by number (pure).
 //! - `apply`: `--apply`, the proposals file's threshold steps written into `--thresholds`.
 
 mod apply;
 mod edit;
+mod history;
 mod output;
 mod read;
 mod report;
@@ -36,6 +39,7 @@ use std::path::{Path, PathBuf};
 use clap::Args;
 
 use crate::baseline::BaselineError;
+use crate::decide::modes::Modes;
 use crate::decide::point::Point;
 use crate::decide::{self, DecideError, log::DecisionLog};
 use crate::error::CliError;
@@ -164,6 +168,9 @@ where
         .map_err(CalibrateError::Thresholds)?;
     let rows = read::read_log(&log)?;
     let report = report::report(&thresholds, &rows);
+    // A mode that cannot be read is reported in the envelope, never fatal: the scores stand.
+    let modes = Modes::read(&log, &env.lookup);
+    let history = history::history(&rows);
     let steps = output::steps(&report, thresholds_file.as_deref());
     let edits: Vec<_> = steps
         .iter()
@@ -182,6 +189,8 @@ where
         skipped_rows: rows.skipped_rows,
         proposals: &proposals,
         thresholds: thresholds_file.as_deref(),
+        modes: &modes,
+        history: &history,
     };
     output::write_proposals(&calibration)?;
     let code = output::emit(&calibration, selected, out).map_err(CliError::Output)?;

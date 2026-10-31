@@ -512,3 +512,4 @@ fn mod_labels_are_counted_apart_in_the_envelope_and_the_summary() -> TestResult 
 }
 
 mod apply;
+mod dashboard;

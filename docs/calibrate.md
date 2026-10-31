@@ -153,7 +153,8 @@ stdout carries the envelope (`docs/exit-codes.md` conventions, exit 0). Its `dat
   `thresholds` (the file read, or `null` for the copy built in).
 - `costs` (`{false_accept: 5, needless: 1}`), `skipped_rows`, `unmatched_labels` and
   `unreported_rows`.
-- `points` and `apply`.
+- `points` and `apply`. Each point also carries its `mode` and its `history` (below), which
+  only the envelope has, not `proposals.json`.
 - `diff`: each threshold step as the line it changes in the thresholds file read (the copy
   built in when `thresholds` is `null`): `{pointer, line, before, after}`. `diff_error` is
   present only when a step does not apply to that text, saying why.
@@ -174,7 +175,7 @@ recorded here, so a reader ignores fields it does not know. `data` is:
 data {
   log            string              the live decision log
   files          [string]            the log files read, oldest first
-  proposals      string              the proposals file this run wrote
+  proposals      string              the proposals file (left as it was when unchanged)
   thresholds     string | null       the thresholds file read; null for the built-in copy
   costs          {false_accept: 5, needless: 1}
   skipped_rows   integer             lines that are no row this build reads
@@ -184,12 +185,23 @@ data {
   apply          [Step]              the manual steps (see below)
   diff           [{pointer: string, line: integer, before: string, after: string}]
   diff_error     string              present only when a step does not apply to the text
+  mode_error     string              present only when no point's mode can be read
 }
 
 Point {
   point          "D1" .. "D7"
   verdict        "stay-shadow" | "eligible-to-enforce"
   questions      [Question]          one per question the point's thresholds define
+  mode           "off" | "shadow" | "enforce" | null   the mode in effect; null with mode_error
+  history        [Day]               per question, then oldest day first (see History)
+}
+
+Day {
+  question       "noul" | "choice" | "score"
+  day_start_ms   integer             the UTC day's start, in Unix milliseconds
+  n              integer             answered decisions that day
+  labelled       integer             of n, those with a usable label
+  brier          number | null       of the labelled ones; null with none
 }
 
 Question {
@@ -233,8 +245,26 @@ Step = {kind: "threshold", point, question, file: string | null, pointer, from, 
         value: "Dn=enforce"}
 ```
 
-The envelope carries no point's Clef mode (`off`, `shadow` or `enforce`): that is `anneal
-status --json`'s `clef` section (`docs/status.md`).
+### Mode
+
+Each point's `mode` is the mode in effect now, read exactly as `anneal status --json`'s `clef`
+section reads it (`docs/status.md`; the same code): `off` without an account, `shadow` while a
+configured `enforce` has fewer than 50 answered decisions (`counts.json`), else the configured
+mode. A configuration that does not parse (`CLAUDE_PLUGIN_OPTION_CLEF_MODE`, the account or the
+token) or a `counts.json` that cannot be read does not fail the run: every `mode` is `null`
+and `data.mode_error` says why.
+
+### History
+
+Each point's `history` is the trend of its scores, derived only from the decision log, so
+nothing is stored between runs. An answered decision belongs to the UTC day of its `ts_ms`
+(the time `decide` asked), and its label is the latest one, joined as for the scores, so a
+label given later moves the day it labels. Per question and day it gives `n`, `labelled` and
+the Brier score of that day's labelled decisions. Only days with an answered decision appear,
+the latest 30 per question; a question the thresholds no longer define is left out, as it is
+from `questions`; a decision whose `ts_ms` is missing or not a non-negative JSON integer is
+counted in `questions` but not in `history`. The history covers what the log still holds:
+rotation drops the oldest file.
 
 stderr carries a short summary, written after the envelope. It has a line per point with its
 verdict, a line per question with n, labelled, Brier, ask rate, the threshold now and as
@@ -252,7 +282,10 @@ and stdout already holds its one envelope.
 
 ### The proposal and how to apply it
 
-Every run overwrites `<anneal home>/decisions/proposals.json` atomically. The file holds
+Every run writes `<anneal home>/decisions/proposals.json` atomically, but only when its
+content would change: a run over the same log, thresholds and file path leaves the file, and
+its modification time, as it was, so a reader that runs `calibrate` only to look (the
+cockpit's calibration pane) changes nothing on disk. The file holds
 `{kind: "anneal-threshold-proposals", version: 1, thresholds, costs, points, apply}` with
 **every** point, whatever `--point` selected.
 

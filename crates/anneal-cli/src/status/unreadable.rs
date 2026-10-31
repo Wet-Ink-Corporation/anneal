@@ -6,6 +6,7 @@ use anneal_ledger::StoreError;
 use crate::context::sessions::SessionsError;
 use crate::decide::config::ConfigError;
 use crate::decide::log::LogError;
+use crate::decide::modes::ModesError;
 use crate::error::CliError;
 use crate::error_chain::reason;
 use crate::lint::skills::LintError;
@@ -61,6 +62,17 @@ impl Unreadable {
         match self {
             Self::Plan { plan, source } => format!("the plan {plan}: {}", reason(source)),
             other => reason(other),
+        }
+    }
+}
+
+/// The Clef modes fail as the configuration or the counts they read, so `clef`'s finding is
+/// the same either way.
+impl From<ModesError> for Unreadable {
+    fn from(error: ModesError) -> Self {
+        match error {
+            ModesError::Config(error) => Self::ClefConfig(error),
+            ModesError::Counts(error) => Self::DecisionLog(error),
         }
     }
 }

@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 
 mod branches;
+mod clef_unreadable;
 mod context_sources;
 mod edges;
 
