@@ -1,6 +1,7 @@
 //! What `anneal calibrate` writes: the envelope on stdout, the proposals file, the manual
 //! steps that would apply a proposal, and the short summary on stderr.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -9,11 +10,15 @@ use serde::Serialize;
 use crate::baseline;
 use crate::calibrate::CalibrateError;
 use crate::calibrate::edit::{Change, Edit, EditError};
+use crate::calibrate::history::DayScore;
 use crate::calibrate::report::{PointReport, QuestionReport, Report, Verdict};
 use crate::calibrate::score::{FALSE_ACCEPT_COST, NEEDLESS_COST};
 use crate::command::CommandName;
+use crate::decide::config::Mode;
+use crate::decide::modes::{Modes, ModesError};
 use crate::decide::point::{Point, Question};
 use crate::envelope::Envelope;
+use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
 
 /// The proposals file's `kind`.
@@ -106,6 +111,10 @@ pub(crate) struct Calibration<'a> {
     pub(crate) proposals: &'a Path,
     /// The thresholds file read; `None` for the copy built in.
     pub(crate) thresholds: Option<&'a Path>,
+    /// Each point's mode, or why it cannot be read.
+    pub(crate) modes: &'a Result<Modes, ModesError>,
+    /// Each point's decisions per day.
+    pub(crate) history: &'a BTreeMap<Point, Vec<DayScore>>,
 }
 
 /// The steps that would apply `report`: a threshold edit wherever the proposal differs from
@@ -152,7 +161,8 @@ struct ProposalsFile<'a> {
     apply: &'a [Step<'a>],
 }
 
-/// Writes the proposals file atomically.
+/// Writes the proposals file atomically, and only when its content would change, so a reader
+/// that runs `calibrate` to look (the cockpit's calibration pane) leaves the disk as it was.
 ///
 /// # Errors
 /// [`CalibrateError::Proposals`] when it cannot be written.
@@ -165,7 +175,8 @@ pub(crate) fn write_proposals(calibration: &Calibration<'_>) -> Result<(), Calib
         points: &calibration.report.points,
         apply: calibration.steps,
     };
-    baseline::write_snapshot_json(calibration.proposals, &file).map_err(CalibrateError::Proposals)
+    baseline::write_snapshot_json_if_changed(calibration.proposals, &file)
+        .map_err(CalibrateError::Proposals)
 }
 
 /// `data` of `anneal calibrate`.
@@ -179,13 +190,27 @@ struct Data<'a> {
     skipped_rows: u32,
     unmatched_labels: u32,
     unreported_rows: u32,
-    points: Vec<&'a PointReport<'a>>,
+    points: Vec<PointOut<'a>>,
     apply: Vec<&'a Step<'a>>,
     /// The selected threshold steps as a line diff of the thresholds file.
     diff: &'a [Change],
     /// Why the steps do not apply to the thresholds text, when they do not.
     #[serde(skip_serializing_if = "Option::is_none")]
     diff_error: Option<String>,
+    /// Why no point's mode could be read, when it could not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode_error: Option<String>,
+}
+
+/// One point of the envelope: its report, then what only the envelope carries.
+#[derive(Debug, Serialize)]
+struct PointOut<'a> {
+    #[serde(flatten)]
+    report: &'a PointReport<'a>,
+    /// The mode in effect, as `anneal status` reports it; `None` when it cannot be read.
+    mode: Option<Mode>,
+    /// The point's reported questions per day of decisions.
+    history: Vec<&'a DayScore>,
 }
 
 /// Writes the envelope for the points `selected` lets through, and returns its code.
@@ -197,6 +222,10 @@ pub(crate) fn emit<O: Write>(
     let (diff, diff_error) = match calibration.diff {
         Ok(changes) => (changes.as_slice(), None),
         Err(error) => (&[][..], Some(error.to_string())),
+    };
+    let (modes, mode_error) = match calibration.modes {
+        Ok(modes) => (Some(modes), None),
+        Err(error) => (None, Some(reason(error))),
     };
     let data = Data {
         log: calibration.log,
@@ -212,6 +241,11 @@ pub(crate) fn emit<O: Write>(
             .points
             .iter()
             .filter(|point| selected(point.point))
+            .map(|report| PointOut {
+                report,
+                mode: modes.map(|modes| modes.effective(report.point)),
+                history: reported_days(report, calibration.history),
+            })
             .collect(),
         apply: calibration
             .steps
@@ -220,8 +254,28 @@ pub(crate) fn emit<O: Write>(
             .collect(),
         diff,
         diff_error,
+        mode_error,
     };
     Envelope::new(CommandName::Calibrate, None, exit_codes::OK, data).emit(out)
+}
+
+/// The days of `report`'s point, of the questions it reports (as `points` leaves out a question
+/// the thresholds no longer define, so does its history).
+fn reported_days<'a>(
+    report: &PointReport<'_>,
+    history: &'a BTreeMap<Point, Vec<DayScore>>,
+) -> Vec<&'a DayScore> {
+    history
+        .get(&report.point)
+        .into_iter()
+        .flatten()
+        .filter(|day| {
+            report
+                .questions
+                .iter()
+                .any(|question| question.question == day.question)
+        })
+        .collect()
 }
 
 /// Writes the short human summary: a line per point and per question, where the proposals

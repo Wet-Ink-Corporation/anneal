@@ -325,17 +325,54 @@ pub(crate) fn write_snapshot_json<T: Serialize>(
     path: &Path,
     value: &T,
 ) -> Result<(), BaselineError> {
+    let json = snapshot_json(path, value)?;
+    write_snapshot_bytes(path, &json)
+}
+
+/// As [`write_snapshot_json`], but only when the file at `path` does not already hold exactly
+/// those bytes, so a run that changes nothing leaves the file (and its modification time) as
+/// it was. A file that cannot be read for the comparison (missing, longer than the new bytes,
+/// or refused) is written over, and that write reports any real failure.
+///
+/// # Errors
+/// [`BaselineError::Io`] when the directory or file cannot be written.
+pub(crate) fn write_snapshot_json_if_changed<T: Serialize>(
+    path: &Path,
+    value: &T,
+) -> Result<(), BaselineError> {
+    let json = snapshot_json(path, value)?;
+    let same = u64::try_from(json.len())
+        .ok()
+        .and_then(|len| read_capped_bytes(path, len).ok().flatten())
+        .is_some_and(|existing| existing == json);
+    if same {
+        return Ok(());
+    }
+    write_snapshot_bytes(path, &json)
+}
+
+/// `value` as pretty JSON with a final newline.
+fn snapshot_json<T: Serialize>(path: &Path, value: &T) -> Result<Vec<u8>, BaselineError> {
+    let mut json = serde_json::to_vec_pretty(value).map_err(|error| BaselineError::Io {
+        op: "writing",
+        path: path.to_path_buf(),
+        source: error.into(),
+    })?;
+    json.push(b'\n');
+    Ok(json)
+}
+
+/// Writes `json` to `path`, creating its parent directory, through [`write_atomically`].
+fn write_snapshot_bytes(path: &Path, json: &[u8]) -> Result<(), BaselineError> {
     let io_error = |source| BaselineError::Io {
         op: "writing",
         path: path.to_path_buf(),
         source,
     };
-    let mut json = serde_json::to_vec_pretty(value).map_err(|e| io_error(e.into()))?;
-    json.push(b'\n');
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(io_error)?;
     }
-    write_atomically(path, &json).map_err(io_error)
+    write_atomically(path, json).map_err(io_error)
 }
 
 #[cfg(test)]

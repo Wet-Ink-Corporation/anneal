@@ -239,3 +239,92 @@ fn a_repository_with_no_github_origin_fails_the_post_without_sending() -> TestRe
     );
     Ok(())
 }
+
+/// Whether `token` shows in `output`'s stdout or stderr.
+fn shows(output: &Output, token: &str) -> bool {
+    [&output.stdout, &output.stderr]
+        .into_iter()
+        .any(|stream| String::from_utf8_lossy(stream).contains(token))
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git, the binary and a loopback server")]
+fn a_refused_status_shows_the_token_in_neither_stream() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+
+    let (output, _) = with_fake_http(
+        "401 Unauthorized",
+        r#"{"message":"Bad credentials"}"#,
+        |api| set(&repo, api, Some("t0k"), &TESTS_VERIFIED),
+    );
+
+    let output = output?;
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert!(
+        !output.stdout.is_empty() && !output.stderr.is_empty(),
+        "{output:?}"
+    );
+    assert!(!shows(&output, "t0k"), "{output:?}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git, the binary and a loopback server")]
+fn a_token_with_a_blank_exits_4_without_sending_or_showing_it() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+
+    let (output, served) = with_fake_http(CREATED, "{}", |api| {
+        set(&repo, api, Some("two words"), &TESTS_VERIFIED)
+    });
+
+    let output = output?;
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert_eq!(served.head, "", "no request was sent");
+    assert!(!shows(&output, "two words"), "{output:?}");
+    assert_eq!(
+        envelope(&output)?["data"]["commit_status"],
+        json!({
+            "outcome": "failed",
+            "reason": "GH_TOKEN is not a token (printable ASCII without blanks)",
+        })
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git, the binary and a loopback server")]
+fn a_human_approval_counts_as_the_review_only_with_actor_human() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    repo.write("src/auth.rs", "pub fn check() {}\n")?;
+    repo.commit("a sensitive path")?;
+    let approved = ["--level", "approved", "--source", "human"];
+
+    let (without_actor, unattributed) = set_posting(&repo, &approved)?;
+    let with_actor = [approved.as_slice(), &["--actor", "human"]].concat();
+    let (by_a_human, attributed) = set_posting(&repo, &with_actor)?;
+
+    assert_eq!(without_actor.status.code(), Some(0), "{without_actor:?}");
+    let body = status_body(&unattributed)?;
+    assert_eq!(
+        (&body["state"], &body["description"]),
+        (
+            &json!("pending"),
+            &json!("approved by human: the merge gate wants review")
+        ),
+        "{body}"
+    );
+    assert_eq!(by_a_human.status.code(), Some(0), "{by_a_human:?}");
+    let body = status_body(&attributed)?;
+    assert_eq!(
+        (&body["state"], &body["description"]),
+        (
+            &json!("success"),
+            &json!("approved by human: the merge gate passes")
+        ),
+        "{body}"
+    );
+    Ok(())
+}

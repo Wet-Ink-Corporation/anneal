@@ -219,7 +219,7 @@ impl DecisionLog {
     ///
     /// # Errors
     /// As [`DecisionLog::answered`].
-    pub fn answered_by_point(&self) -> Result<BTreeMap<Point, u64>, LogError> {
+    pub(crate) fn answered_by_point(&self) -> Result<BTreeMap<Point, u64>, LogError> {
         self.load_counts()
     }
 

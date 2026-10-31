@@ -117,6 +117,7 @@ pub mod statusline;
 pub mod task;
 #[cfg(test)]
 mod test_repo;
+mod ureq_failure;
 pub mod verdict;
 pub mod verify;
 pub mod watch;

@@ -3,8 +3,10 @@
 //!
 //! Hooks receive no usage field, so it reads the reading saved for the session in the anneal
 //! home: by `anneal statusline` (`context-usage.json`) or for the mod by `anneal snapshot
-//! write` (`context-usage-mod.json`), the fresher of the two (`context::freshest`). Without
-//! one (neither configured, or none reported yet for this session) it is silent. The level
+//! write` (`context-usage-mod.json`), the fresher of the two (`context::Sources`). Without
+//! one (neither configured, or none reported yet for this session) it is silent. A file that
+//! cannot be read does not silence it: the other is judged, and the unreadable one is named on
+//! the `ERROR` line beside any warning or stop (weigh-in wi-6c304b). The level
 //! each session last reached is kept in `context-monitor.json`, so a threshold fires only when
 //! usage rises past it, and fires again only after usage has fallen below it (after a
 //! compaction, say).
@@ -16,13 +18,13 @@
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::context::sessions::{SessionFile, SessionsError};
 use crate::context::usage::{self, Level, Window};
-use crate::context::{self, Fired, Saved};
+use crate::context::{self, Fired, Fresher, Saved};
 use crate::error_chain::reason;
 use crate::hook::HookEnv;
 use crate::hook::stop_output::StopOutput;
@@ -76,15 +78,36 @@ where
     let output = match input {
         Ok(input) => {
             let event = event_of(Some(&input));
-            match judge(&input, &env.lookup) {
+            let Judgement {
+                crossed,
+                unreadable,
+            } = judge(&input, &env.lookup);
+            let mut failures: Vec<MonitorError> =
+                unreadable.into_iter().map(MonitorError::State).collect();
+            let output = match crossed {
                 Ok(Some(crossed)) => fire(StopOutput::new(event), &crossed),
                 Ok(None) => StopOutput::new(event),
-                Err(error) => failed(event, &error),
-            }
+                Err(error) => {
+                    failures.push(error);
+                    StopOutput::new(event)
+                }
+            };
+            failed(output, &failures)
         }
-        Err(error) => failed(event_of(None), &MonitorError::Input(error)),
+        Err(error) => failed(
+            StopOutput::new(event_of(None)),
+            &[MonitorError::Input(error)],
+        ),
     };
     output.write(out)
+}
+
+/// What judging the input's session gave: the threshold to fire, or why it could not be
+/// judged; and the usage files that could not be read beside it (wi-6c304b: the readable
+/// source is judged, the unreadable one is reported).
+struct Judgement {
+    crossed: Result<Option<Crossed>, MonitorError>,
+    unreadable: Vec<SessionsError>,
 }
 
 /// A threshold the session's usage has just risen past.
@@ -95,22 +118,38 @@ struct Crossed {
     window: u32,
 }
 
-/// The threshold to fire for the input's session, with the reading that crossed it; `None`
-/// when nothing fires. Records the session's new level.
-fn judge(
-    input: &Input,
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<Option<Crossed>, MonitorError> {
+/// The threshold to fire for the input's session, judged on the fresher snapshot of the usage
+/// files that can be read, with the failures of those that cannot.
+fn judge(input: &Input, lookup: impl Fn(&str) -> Option<OsString>) -> Judgement {
     let Some(session) = input.session_id.as_deref() else {
-        return Ok(None);
+        return Judgement {
+            crossed: Ok(None),
+            unreadable: Vec::new(),
+        };
     };
-    let home = paths::anneal_home_from(lookup).map_err(MonitorError::Home)?;
-    let Some(Saved {
+    let home = match paths::anneal_home_from(lookup) {
+        Ok(home) => home,
+        Err(error) => {
+            return Judgement {
+                crossed: Err(MonitorError::Home(error)),
+                unreadable: Vec::new(),
+            };
+        }
+    };
+    let Fresher { saved, unreadable } = context::Sources::load(&home).session(session);
+    Judgement {
+        crossed: saved.map_or(Ok(None), |saved| cross(&home, session, saved)),
+        unreadable,
+    }
+}
+
+/// The threshold to fire for `session` given its reading `saved`, with the reading that
+/// crossed it; `None` when nothing fires. Records the session's new level in the anneal home
+/// `home`.
+fn cross(home: &Path, session: &str, saved: Saved) -> Result<Option<Crossed>, MonitorError> {
+    let Saved {
         reading: snapshot, ..
-    }) = context::freshest(&home, session)?
-    else {
-        return Ok(None);
-    };
+    } = saved;
     let window = Window {
         tokens: snapshot.window,
         source: snapshot.window_source,
@@ -119,7 +158,7 @@ fn judge(
         .used_tokens
         .and_then(|used| window.level(used).map(|level| (level, used)));
     let current = reached.map(|(level, _)| level);
-    let path = context::in_home(&home, context::MONITOR_FILE);
+    let path = context::in_home(home, context::MONITOR_FILE);
     let mut fired = SessionFile::<Fired>::load(&path, context::MONITOR_KIND)?;
     let previous = fired.get(session).and_then(|fired| fired.level);
     if previous == current {
@@ -167,9 +206,14 @@ fn fire(output: StopOutput, crossed: &Crossed) -> StopOutput {
     }
 }
 
-/// The output for a monitor that could not judge: one `ERROR` line, never a block.
-fn failed(event: &'static str, error: &MonitorError) -> StopOutput {
-    StopOutput::new(event).error(&format!("context-monitor: {}", reason(error)))
+/// `output` with each of `failures` on its one `ERROR` line, joined by `"; "`; `output` as it
+/// is without any. A failure never adds a block.
+fn failed(output: StopOutput, failures: &[MonitorError]) -> StopOutput {
+    if failures.is_empty() {
+        return output;
+    }
+    let reasons: Vec<String> = failures.iter().map(|error| reason(error)).collect();
+    output.error(&format!("context-monitor: {}", reasons.join("; ")))
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::parse::{self, Key};
 use super::{PlanFinding, Rule, Task};
+use crate::lint::spec::field::{code_spans, spec_target};
 use crate::lint::spec::markdown::{Line, Section, heading};
 
 /// The `## Tasks` section's title.
@@ -90,7 +91,7 @@ pub(super) fn spec<'d>(
             ));
             continue;
         }
-        match parse::spec_target(value) {
+        match spec_target(value) {
             Some(target) => found = Some((target, line.number)),
             None => findings.push(Rule::Spec.at(file, line.number).finding(
                 "the `Spec:` line names no file",
@@ -197,16 +198,14 @@ fn task(file: &str, head: Head<'_>, body: &[Line<'_>], findings: &mut Vec<PlanFi
     let seen = field_lines(file, head, body, findings);
     let value = |key: Key| seen.get(key.as_str()).copied();
     let files: Vec<String> = value(Key::Files).map_or_else(Vec::new, |(at, value)| {
-        let files = parse::code_spans(value);
+        let files = code_spans(value);
         if files.is_empty() {
             findings.push(malformed(file, at, id, Key::Files));
         }
         files.into_iter().map(str::to_owned).collect()
     });
     let test = value(Key::Test).and_then(|(at, value)| {
-        let test = parse::code_spans(value)
-            .first()
-            .map(|test| (*test).to_owned());
+        let test = code_spans(value).first().map(|test| (*test).to_owned());
         if test.is_none() {
             findings.push(malformed(file, at, id, Key::Test));
         }

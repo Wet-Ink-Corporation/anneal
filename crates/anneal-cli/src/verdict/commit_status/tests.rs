@@ -186,3 +186,20 @@ fn every_description_fits_github_s_limit() {
         }
     }
 }
+
+#[test]
+fn an_owner_or_repository_of_only_dots_is_not_a_repository() {
+    for url in [
+        "https://github.com/./repo.git",
+        "https://github.com/../repo",
+        "https://github.com/owner/..",
+        "git@github.com:owner/....git",
+        "ssh://git@github.com/.../...",
+    ] {
+        let refused = GithubRepo::from_remote_url(url);
+        assert!(
+            matches!(refused, Err(PostError::OriginUnreadable)),
+            "{url:?}: {refused:?}"
+        );
+    }
+}

@@ -20,9 +20,10 @@
 //! - [`clock`]: the wall and monotonic clocks, a port.
 //! - [`log`]: the decision log and its counts.
 //! - [`id`]: decision ids and outcome labels.
-//! - [`label`]: label rows, with who gave a label and through what.
+//! - `label`: label rows, with who gave a label and through what.
 //! - `in_process`: the same call in process, for hooks and `grill classify`.
 //! - `redact`: text made safe to send to Clef, shared by every caller.
+//! - `modes`: each point's configured mode and mode in effect, for `status` and `calibrate`.
 
 pub mod answer;
 pub mod client;
@@ -30,8 +31,9 @@ pub mod clock;
 pub mod config;
 pub mod id;
 pub(crate) mod in_process;
-pub mod label;
+pub(crate) mod label;
 pub mod log;
+pub(crate) mod modes;
 mod output;
 pub mod point;
 pub(crate) mod redact;

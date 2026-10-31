@@ -9,18 +9,22 @@
 //!   `gate_blocked`/`stop_blocked` events and `facts::event_word`;
 //! - `verdict` from `verdict::pull_request` against `HEAD` (`status::head_verdict`);
 //! - `clef` and `context` from the anneal home (`status::home`): `decide`'s configuration and
-//!   `counts.json`, and the snapshot `anneal statusline` saves.
+//!   `counts.json`, and the fresher of the snapshots `anneal statusline` and the mod save
+//!   (`context::Sources`).
 //!
 //! A section whose source does not exist is absent; one whose source exists but cannot be read
 //! is absent too, with one `status/unreadable:<section>` finding saying why, and the exit code
-//! is unchanged. `--fields` limits the work to the sections named: `--fields phase,plan,gates`
-//! runs no git beyond finding the ledger and the worktree. Exit 0 with a ledger; 2 without one,
-//! still with the document, and no ledger is created. See `docs/status.md`.
+//! is unchanged. `context` has two sources: when one cannot be read, the other's reading is
+//! still shown beside the finding. `--fields` limits the work to the sections named:
+//! `--fields phase,plan,gates` runs no git beyond finding the ledger and the worktree. Exit 0
+//! with a ledger; 2 without one, still with the document, and no ledger is created. See
+//! `docs/status.md`.
 
 mod head_verdict;
 mod home;
 mod ledger;
 mod text;
+mod unreadable;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -38,6 +42,7 @@ use crate::error_chain::reason;
 use crate::existing_ledger::{self, LedgerError};
 use crate::exit_codes::{self, Code};
 use crate::paths::{self, GIT_TIMEOUT, PathError};
+use unreadable::Unreadable;
 
 /// The document's schema version. Fields are only ever added within schema 1.
 pub const SCHEMA: u32 = 1;
@@ -163,11 +168,11 @@ struct Gathered {
 
 impl Gathered {
     /// Keeps `read`'s value, or notes why `section` could not be read and leaves it absent.
-    fn keep<T>(&mut self, section: Section, read: Result<Option<T>, String>) -> Option<T> {
+    fn keep<T>(&mut self, section: Section, read: Result<Option<T>, Unreadable>) -> Option<T> {
         match read {
             Ok(value) => value,
             Err(why) => {
-                self.unreadable(section.key(), &why);
+                self.unreadable(section.key(), &why.reason());
                 None
             }
         }
@@ -289,6 +294,7 @@ fn from_plan(
     let ledger::PlanRead { approval, bytes } = match worktree.plan(build) {
         Ok(read) => read,
         Err(why) => {
+            let why = why.reason();
             for section in [Section::Plan, Section::Tasks] {
                 if wanted.has(section) {
                     gathered.unreadable(section.key(), &why);
@@ -326,7 +332,15 @@ fn from_home(
         gathered.document.clef = gathered.keep(Section::Clef, home::clef(&home, &lookup));
     }
     if wanted.has(Section::Context) {
-        gathered.document.context = gathered.keep(Section::Context, home::context(&home));
+        let home::ContextRead {
+            context,
+            unreadable,
+        } = home::context(&home);
+        if !unreadable.is_empty() {
+            let why: Vec<String> = unreadable.iter().map(Unreadable::reason).collect();
+            gathered.unreadable(Section::Context.key(), &why.join("; "));
+        }
+        gathered.document.context = context;
     }
 }
 

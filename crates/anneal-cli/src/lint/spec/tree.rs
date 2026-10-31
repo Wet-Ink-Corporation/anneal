@@ -5,7 +5,7 @@
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 
-use super::field::{key_value, spec_path, spec_target};
+use super::field::{key_value, linked_path, spec_target};
 use super::markdown::{Document, Line};
 use super::{Rule, SpecFinding, header};
 use crate::error_chain::reason;
@@ -91,7 +91,7 @@ pub(crate) fn tree_link(text: &str) -> Option<TreeLink> {
 /// `/`, as a plan's `Spec:` line is resolved against the plan.
 #[must_use]
 pub(crate) fn tree_path(spec: &str, target: &str) -> PathBuf {
-    PathBuf::from(spec_path(spec, target, MAIN_SEPARATOR))
+    PathBuf::from(linked_path(spec, target, MAIN_SEPARATOR))
 }
 
 /// Whether `target` is a template placeholder: wholly inside `<` and `>`.

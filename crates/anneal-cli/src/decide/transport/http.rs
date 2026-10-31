@@ -13,10 +13,11 @@
 //! transport ever runs in a long-lived process, give the agent an owned resolver (bounded and
 //! joined, H-13) instead.
 
-use std::io::{self, Read as _};
+use std::io::Read as _;
 use std::time::Duration;
 
 use super::{ClefRequest, MAX_RESPONSE_BYTES, Transport, TransportError};
+use crate::ureq_failure::UreqFailure;
 
 /// Bytes read of a response body: one past [`MAX_RESPONSE_BYTES`], so a larger body shows.
 const READ_CAP: u64 = 64 * 1024 + 1;
@@ -94,34 +95,23 @@ fn unreachable_because(reason: &str) -> TransportError {
 /// The failure for ureq's `error`, with a fixed reason: ureq's own messages can hold the URL.
 ///
 /// A body that stops arriving surfaces as [`ureq::Error::Timeout`] once the request's timeout
-/// passes (pinned by `a_body_that_stalls_after_the_headers_times_out`). ureq's
-/// `#[doc(hidden)]` `BodyStalled`, which its docs say is never seen, is not matched by name; it
-/// falls to the last arm.
+/// passes (pinned by `a_body_that_stalls_after_the_headers_times_out`). The kinds are
+/// [`UreqFailure`]'s, shared with the commit status client.
 fn failure(error: &ureq::Error, after: Duration) -> TransportError {
-    match error {
-        ureq::Error::Timeout(_) => TransportError::TimedOut { after },
-        ureq::Error::Io(io) if io.kind() == io::ErrorKind::TimedOut => {
-            TransportError::TimedOut { after }
+    match UreqFailure::of(error) {
+        UreqFailure::TimedOut => TransportError::TimedOut { after },
+        UreqFailure::ConnectionFailed { io: Some(kind) } => {
+            unreachable_because(&format!("connection failed ({kind})"))
         }
-        ureq::Error::Io(io) => unreachable_because(&format!("connection failed ({})", io.kind())),
-        ureq::Error::HostNotFound => unreachable_because("host not found"),
-        ureq::Error::ConnectionFailed => unreachable_because("connection failed"),
-        ureq::Error::Tls(_)
-        | ureq::Error::Pem(_)
-        | ureq::Error::Rustls(_)
-        | ureq::Error::TlsRequired => unreachable_because("TLS failure"),
-        ureq::Error::BadUri(_) | ureq::Error::Http(_) => unreachable_because("invalid request"),
-        ureq::Error::Protocol(_) | ureq::Error::LargeResponseHeader(..) => {
-            bad("malformed HTTP response".to_owned())
-        }
-        ureq::Error::BodyExceedsLimit(_) => {
-            bad(format!("response body over {MAX_RESPONSE_BYTES} bytes"))
-        }
-        ureq::Error::StatusCode(code) => bad(format!("HTTP {code}")),
-        ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => {
-            bad("redirect refused".to_owned())
-        }
-        _ => unreachable_because("request failed"),
+        UreqFailure::ConnectionFailed { io: None } => unreachable_because("connection failed"),
+        UreqFailure::HostNotFound => unreachable_because("host not found"),
+        UreqFailure::Tls => unreachable_because("TLS failure"),
+        UreqFailure::InvalidRequest => unreachable_because("invalid request"),
+        UreqFailure::MalformedResponse => bad("malformed HTTP response".to_owned()),
+        UreqFailure::BodyTooLarge => bad(format!("response body over {MAX_RESPONSE_BYTES} bytes")),
+        UreqFailure::Status(code) => bad(format!("HTTP {code}")),
+        UreqFailure::Redirect => bad("redirect refused".to_owned()),
+        UreqFailure::Other => unreachable_because("request failed"),
     }
 }
 

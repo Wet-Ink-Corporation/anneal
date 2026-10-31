@@ -37,7 +37,9 @@ file that does not parse, git failing), the section is absent too and the envelo
 finding `status/unreadable:<section>` saying why; the exit code does not change. A failure to
 find the worktree is `status/unreadable:worktree`, and of the anneal home
 `status/unreadable:home`. The mode is `phase`'s source, so a mode that cannot be read is
-`status/unreadable:phase` even when only `plan` or `tasks` was asked for.
+`status/unreadable:phase` even when only `plan` or `tasks` was asked for. `context` has two
+sources: when one of them cannot be read, the other's reading is still shown, beside the
+`status/unreadable:context` finding.
 
 Positions (`event`) are ledger positions, as `anneal ledger query` prints them; times (`ts`)
 are the events' RFC 3339 timestamps.
@@ -147,12 +149,17 @@ reading up to 80 MiB of decision log on every refresh (`anneal calibrate` reads 
 
 ### `context`
 
-The newest session's context usage, as `anneal statusline` last saved it
-(`context-usage.json` in the anneal home): `used_tokens` (null before Claude Code reports
-usage), the auto-compact `window` and where it came from, `percent` to one decimal, and
-`level`, the context monitor's threshold reached (`warn` at 60%, `stop` at 75%, null below).
-The file keys sessions by a hash of their id, so the reading is the newest of any session, not
-necessarily this one's. Absent until a status line saves a reading.
+The newest session's context usage, as `anneal statusline` (`context-usage.json` in the anneal
+home) or the mod, through `anneal snapshot write` (`context-usage-mod.json`), last saved it:
+`used_tokens` (null before Claude Code reports usage), the auto-compact `window` and where it
+came from, `percent` to one decimal, and `level`, the context monitor's threshold reached
+(`warn` at 60%, `stop` at 75%, null below). Of the two files' newest readings the fresher is
+shown, by the time it was saved, the mod's on a tie (a reading saved before readings carried a
+time is older than any that does); the context monitor judges the same way. The files key
+sessions by a hash of their id, so the reading is the newest of any session, not necessarily
+this one's. Absent until the status line or the mod saves a reading. When one file cannot be
+read, the other's reading is shown and the `status/unreadable:context` finding names the one
+that could not be.
 
 ### `ledger_tail`
 

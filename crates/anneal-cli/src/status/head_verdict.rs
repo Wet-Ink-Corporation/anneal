@@ -13,7 +13,7 @@ use anneal_ledger::event::{Verdict, VerdictSet, VerdictSource};
 use anneal_ledger::{EventKind, Filter, LedgerEvent, Store};
 use serde::Serialize;
 
-use crate::error_chain::reason;
+use super::Unreadable;
 use crate::pr_diff::{self, Budget};
 use crate::repo_config;
 use crate::verdict::assess::{Fresh, Invalid, Judged, Outcome};
@@ -120,15 +120,14 @@ impl From<Judged<'_>> for FreshVerdict {
 
 /// The verdict for `HEAD` of the worktree at `root`; `None` with no verdict in `store` or an
 /// unborn `HEAD`.
-pub(super) fn read(store: &Store, root: &Path) -> Result<Option<HeadVerdict>, String> {
+pub(super) fn read(store: &Store, root: &Path) -> Result<Option<HeadVerdict>, Unreadable> {
     let budget = Budget::per_call(GIT_CALL);
     let filter = Filter {
         types: vec![EventKind::VerdictSet],
         tags: Vec::new(),
     };
     let sets: Vec<VerdictSet> = store
-        .tail(&filter, MAX_VERDICTS)
-        .map_err(|error| reason(&error))?
+        .tail(&filter, MAX_VERDICTS)?
         .into_iter()
         .filter_map(|recorded| match recorded.event.event {
             LedgerEvent::VerdictSet(set) => Some(set),
@@ -138,8 +137,8 @@ pub(super) fn read(store: &Store, root: &Path) -> Result<Option<HeadVerdict>, St
     let Some(newest) = sets.last() else {
         return Ok(None);
     };
-    let timeout = budget.next().map_err(|error| reason(&error))?;
-    let Some(head) = pr_diff::resolve_commit(root, "HEAD", timeout).map_err(|e| reason(&e))? else {
+    let timeout = budget.next()?;
+    let Some(head) = pr_diff::resolve_commit(root, "HEAD", timeout)? else {
         return Ok(None);
     };
     let pr = sets
@@ -148,7 +147,7 @@ pub(super) fn read(store: &Store, root: &Path) -> Result<Option<HeadVerdict>, St
         .find(|set| set.sha.as_deref() == Some(head.as_str()))
         .unwrap_or(newest)
         .pr;
-    let config = repo_config::gate(root).map_err(|error| reason(&error))?;
+    let config = repo_config::gate(root)?;
     let query = Query {
         root,
         pr,
@@ -156,7 +155,7 @@ pub(super) fn read(store: &Store, root: &Path) -> Result<Option<HeadVerdict>, St
         base: None,
         budget,
     };
-    let pull = pull_request::read(Some(store), &query).map_err(|error| reason(&error))?;
+    let pull = pull_request::read(Some(store), &query)?;
     let assessment = pull.assess(config.require_plugin);
     let outcome = Shown::from(assessment.outcome());
     Ok(Some(HeadVerdict {
