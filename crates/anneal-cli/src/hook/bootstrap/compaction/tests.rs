@@ -7,7 +7,8 @@ use crate::context::usage::WindowSource;
 use crate::context::{self, Saved, Snapshot, Source};
 use crate::decide::clock::Clock;
 
-/// A wall clock stopped at `0` milliseconds since the epoch.
+/// A wall clock stopped at its field's milliseconds since the epoch, its monotonic clock at
+/// zero.
 struct At(u64);
 
 impl Clock for At {

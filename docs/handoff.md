@@ -69,7 +69,10 @@ nothing on stdout, nothing saved); a stdin, clock, anneal home or file failure e
 Hooks receive no usage field, so the monitor reads the session's reading from
 `context-usage.json` and `context-usage-mod.json`. When both hold one, the fresher wins: the
 later `written_at_ms`, the mod's on a tie (an unstamped one is older than any). With none
-(neither the status line nor the mod configured, or none yet this session) it is silent. The
+(neither the status line nor the mod configured, or none yet this session) it is silent. A
+file that cannot be read does not silence it: the other is judged, and the unreadable one is
+named on the monitor's `ERROR` line. `anneal status` shows the same fresher reading as its
+`context` section (`docs/status.md`). The
 thresholds and crossings are the same whichever source the reading came from. It keeps the
 level each session last reached (`context-monitor.json`, same format):
 

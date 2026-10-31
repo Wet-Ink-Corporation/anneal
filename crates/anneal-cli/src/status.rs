@@ -9,13 +9,16 @@
 //!   `gate_blocked`/`stop_blocked` events and `facts::event_word`;
 //! - `verdict` from `verdict::pull_request` against `HEAD` (`status::head_verdict`);
 //! - `clef` and `context` from the anneal home (`status::home`): `decide`'s configuration and
-//!   `counts.json`, and the snapshot `anneal statusline` saves.
+//!   `counts.json`, and the fresher of the snapshots `anneal statusline` and the mod save
+//!   (`context::Sources`).
 //!
 //! A section whose source does not exist is absent; one whose source exists but cannot be read
 //! is absent too, with one `status/unreadable:<section>` finding saying why, and the exit code
-//! is unchanged. `--fields` limits the work to the sections named: `--fields phase,plan,gates`
-//! runs no git beyond finding the ledger and the worktree. Exit 0 with a ledger; 2 without one,
-//! still with the document, and no ledger is created. See `docs/status.md`.
+//! is unchanged. `context` has two sources: when one cannot be read, the other's reading is
+//! still shown beside the finding. `--fields` limits the work to the sections named:
+//! `--fields phase,plan,gates` runs no git beyond finding the ledger and the worktree. Exit 0
+//! with a ledger; 2 without one, still with the document, and no ledger is created. See
+//! `docs/status.md`.
 
 mod head_verdict;
 mod home;
@@ -326,7 +329,14 @@ fn from_home(
         gathered.document.clef = gathered.keep(Section::Clef, home::clef(&home, &lookup));
     }
     if wanted.has(Section::Context) {
-        gathered.document.context = gathered.keep(Section::Context, home::context(&home));
+        let home::ContextRead {
+            context,
+            unreadable,
+        } = home::context(&home);
+        if !unreadable.is_empty() {
+            gathered.unreadable(Section::Context.key(), &unreadable.join("; "));
+        }
+        gathered.document.context = context;
     }
 }
 

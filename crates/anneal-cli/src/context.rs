@@ -11,7 +11,8 @@
 //! [`USAGE_FILE`] (written by the status line) and [`MOD_USAGE_FILE`] (written for the mod),
 //! one per [`Source`] so neither writer races the other; [`MONITOR_FILE`] (the level each
 //! session last reached, written by the monitor) and [`HINT_FILE`] (the bootstrap's one-time
-//! setup hint). Of a session's two snapshots the monitor reads the fresher ([`freshest`]).
+//! setup hint). Of the two snapshots the monitor and `anneal status` read the fresher
+//! ([`Sources`]); a file that cannot be read leaves the other judged, and is reported.
 
 pub(crate) mod note;
 pub(crate) mod sessions;
@@ -133,17 +134,64 @@ pub(crate) fn save(home: &Path, session: &str, saved: Saved) -> Result<(), Sessi
     file.save(&path)
 }
 
-/// `session`'s fresher snapshot of the two sources in the anneal home `home`: the later
-/// `written_at_ms`, the mod's on a tie; `None` when neither has one.
-///
-/// # Errors
-/// [`SessionsError`] when either file cannot be read or is not a usage file.
-pub(crate) fn freshest(home: &Path, session: &str) -> Result<Option<Saved>, SessionsError> {
-    let [status_line, from_mod] =
-        [Source::Statusline, Source::Mod].map(|source| load(home, source));
-    let status_line = status_line?.get(session).copied();
-    let from_mod = from_mod?.get(session).copied();
-    Ok(match (status_line, from_mod) {
+/// Both sources' files in an anneal home, each loaded or the reason it could not be. The
+/// context monitor and `anneal status` read usage through it, so both judge the same snapshot.
+pub(crate) struct Sources {
+    status_line: Result<SessionFile<Saved>, SessionsError>,
+    from_mod: Result<SessionFile<Saved>, SessionsError>,
+}
+
+/// What [`Sources`] gave: the fresher snapshot of the readable sources, and why each other
+/// source could not be read (at most two).
+#[derive(Debug)]
+pub(crate) struct Fresher {
+    /// The fresher snapshot; `None` when no readable source has one.
+    pub(crate) saved: Option<Saved>,
+    /// The sources that could not be read, status line first.
+    pub(crate) unreadable: Vec<SessionsError>,
+}
+
+impl Sources {
+    /// Loads both sources' files from the anneal home `home`. A file that cannot be read is
+    /// kept as its failure, so the other is still judged.
+    pub(crate) fn load(home: &Path) -> Self {
+        Self {
+            status_line: load(home, Source::Statusline),
+            from_mod: load(home, Source::Mod),
+        }
+    }
+
+    /// `session`'s fresher snapshot ([`fresher`]).
+    pub(crate) fn session(self, session: &str) -> Fresher {
+        self.pick(|file| file.get(session).copied())
+    }
+
+    /// The fresher of each source's newest snapshot, of any session ([`fresher`]).
+    pub(crate) fn newest(self) -> Fresher {
+        self.pick(|file| file.newest().copied())
+    }
+
+    /// The fresher of `of` each readable file, with the failures of the others.
+    fn pick(self, of: impl Fn(&SessionFile<Saved>) -> Option<Saved>) -> Fresher {
+        let mut unreadable = Vec::new();
+        let [status_line, from_mod] = [self.status_line, self.from_mod].map(|file| match file {
+            Ok(file) => of(&file),
+            Err(error) => {
+                unreadable.push(error);
+                None
+            }
+        });
+        Fresher {
+            saved: fresher(status_line, from_mod),
+            unreadable,
+        }
+    }
+}
+
+/// The fresher of the status line's snapshot and the mod's: the later `written_at_ms`, the
+/// mod's on a tie (an unstamped one is older than any stamped one).
+fn fresher(status_line: Option<Saved>, from_mod: Option<Saved>) -> Option<Saved> {
+    match (status_line, from_mod) {
         (Some(status_line), Some(from_mod))
             if status_line.written_at_ms > from_mod.written_at_ms =>
         {
@@ -151,7 +199,21 @@ pub(crate) fn freshest(home: &Path, session: &str) -> Result<Option<Saved>, Sess
         }
         (status_line, None) => status_line,
         (_, from_mod) => from_mod,
-    })
+    }
+}
+
+/// `session`'s fresher snapshot of the two sources in the anneal home `home` ([`fresher`]);
+/// `None` when neither has one. The strict form of [`Sources::session`], for its tests.
+///
+/// # Errors
+/// [`SessionsError`] when either file cannot be read or is not a usage file.
+#[cfg(test)]
+pub(crate) fn freshest(home: &Path, session: &str) -> Result<Option<Saved>, SessionsError> {
+    let Fresher { saved, unreadable } = Sources::load(home).session(session);
+    match unreadable.into_iter().next() {
+        Some(error) => Err(error),
+        None => Ok(saved),
+    }
 }
 
 /// True when any mod snapshot in the anneal home `home` was saved less than `window_ms`

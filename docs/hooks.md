@@ -569,7 +569,9 @@ stops once (`decision: "block"`, which ends the agentic loop before the next mod
 it rises past 75%; falling below a threshold re-arms it. With no reading (neither the status
 line nor the mod configured) it is silent. It reads only `session_id` and `hook_event_name` from its input, and
 answers a `PostToolUse` input as `PostToolUse`. Its own failures are one `ERROR` line as the
-`systemMessage`, never a block. It sits under `PostToolBatch`, not `PostToolUse *`, so it runs
+`systemMessage`, never a block. A usage file that cannot be read does not silence it: the
+other is judged, and the unreadable one is named on that `ERROR` line beside any warning or
+stop. It sits under `PostToolBatch`, not `PostToolUse *`, so it runs
 once per batch and no per-call entry exists. See `docs/handoff.md`.
 
 ## `handoff` (PreCompact)
