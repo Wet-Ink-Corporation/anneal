@@ -219,6 +219,36 @@ fn an_unknown_via_is_a_usage_error_that_appends_nothing() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn an_unknown_actor_is_a_usage_error_that_appends_nothing() -> TestResult {
+    let home = tempfile::tempdir()?;
+
+    let output = anneal(home.path())
+        .args([
+            "decide",
+            "label",
+            "d1760000000000-7-0",
+            "yes",
+            "--actor",
+            "robot",
+        ])
+        .env("ANNEAL_HOME", home.path())
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "nothing on stdout");
+    assert!(
+        !home
+            .path()
+            .join("decisions")
+            .join("decisions.jsonl")
+            .exists(),
+        "no row appended"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn a_missing_state_is_a_usage_error_with_nothing_on_stdout() -> TestResult {
     let home = tempfile::tempdir()?;
 

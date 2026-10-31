@@ -274,12 +274,13 @@ may stand for the whole path, and the words it stands for may be written anywher
 a function's arguments, a shell's positional arguments after `-c '...'`, `set --` operands, the
 words of an array assignment, one element at a time. So the guard tracks the two halves of a
 human actor across the whole call, each anywhere: a literal `--actor` (or an assignment of one,
-`a[2]=--actor`), and one word that may be `human` as `--actor "$who"` is judged above
-(`human`, `"$who"`, `"${H:-human}"`, `"$(echo human)"`, or an assignment of one, `a[3]=human`;
-a word that may become several words, such as `"$@"`, stands for words written elsewhere and is
-not one, except right after a literal `--actor`, where clap reads it as the value:
-`--actor $WHO`, `--actor "${WHO@L}"`); a word whose written start is `--actor=` and that may be `--actor=human`
-(`"--actor=${H:-human}"`) is both. A call holding both halves and such an anneal call is
+`a[2]=--actor`), in either reading of the word, so `"$a"--actor` and `--act"$x"or`, which are
+`--actor` with their expansions empty (#125), count too; and one word that may be `human` as
+`--actor "$who"` is judged above (`human`, `"$who"`, `"${H:-human}"`, `"$(echo human)"`, or an
+assignment of one, `a[3]=human`; a word that may become several words, such as `"$@"`, stands
+for words written elsewhere and is not one, except right after a literal `--actor`, where clap
+reads it as the value: `--actor $WHO`, `--actor "${WHO@L}"`); a word whose written start is
+`--actor=` and that may be `--actor=human` (`"--actor=${H:-human}"`) is both. A call holding both halves and such an anneal call is
 denied whichever comes first, in any simple command at any nesting (a nested `bash -c` string
 included): `anneal "$@" --actor human`,
 `f() { anneal "$@"; }; f verdict set --pr 7 --actor human`,
@@ -413,8 +414,10 @@ it cannot model instead of modelling every shell feature, and it does not try to
   call deny it, related or not, so `echo --actor human; anneal "$@"` and
   `set -- "$id" yes --actor model; anneal decide label "$@"` (`"$id"` may be `human`) are
   false denials, accepted (#62); split such a command into separate Bash calls. The other
-  side of it: beside such a call, only a literal `--actor` (or one word whose written start
-  is `--actor=`) is the flag half, so a flag known only at run time is missed. Beside
+  side of it: beside such a call, only a word that is `--actor` as written or with its
+  expansions empty (`--actor`, `"$a"--actor`, `--act"$x"or`; #125), or one word whose
+  written start is `--actor=`, is the flag half, so any other flag known only at run time is
+  missed. Beside
   `v() { anneal decide label "$@"; }`, `v d1 yes "$F" human`, `v d1 yes --act$x human`,
   `v d1 yes "$W"` (with `W=--actor=human`) and `v d1 yes --ac* human` are allowed;
 - program names in another letter case: only anneal's name is matched ignoring ASCII case

@@ -313,18 +313,20 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   words is that claim (`all-green`, `ready-to-merge`). Fenced code blocks, code spans and HTML
   comments are quoted text, not claims. Structural rules withdraw a claim within its clause: a
   negation (`not`, `never`, `no` or a word ending in `n't`) one or two words before it; a
-  conditional's scope covering it ("I'll merge once the CI checks pass."). A conditional (`if`,
-  `once`, `when`, `whenever`, `unless`, `until`, and `after` or `before` when they do not open
-  the clause; not `once more`, `once again` or a clause-final `once`) opens a scope that runs to
-  the next `and`, `then` or `now`, to a second `is`, `are`, `was` or `were` ("The panic when
-  the file is empty is resolved." claims), through a gerund right after the conditional ("The
-  crash when saving is fixed." claims) or a past-tense verb not after a determiner (an `-ed`
-  word or a common irregular one such as `ran`, `hit`, `got`, `found`: "Once the fix landed all
-  tests pass" and "The crash when the parser hit EOF is fixed" claim), or to the clause end;
-  for an `it` or
+  conditional's scope covering it ("I'll merge once the CI checks pass."); for an `it` or
   `everything` claim, `sure`, `ensure`, `verify`, `check`, `whether`, `get`, `keep`, `need` or
   `to` one or two words before it ("make sure everything works"); and a `?` ending the clause
-  ("Does it work?"). Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
+  ("Does it work?"). A conditional (`if`, `once`, `when`, `whenever`, `unless`, `until`, and
+  `after` or `before` when they do not open the clause; not `once more`, `once again` or a
+  clause-final `once`) opens a scope that runs to the next `and`, `then` or `now`, to a second
+  `is`, `are`, `was` or `were` ("The panic when the file is empty is resolved." claims),
+  through a gerund right after the conditional ("The crash when saving is fixed." claims) or
+  through a past-tense verb, or to the clause end. The past-tense verb is an `-ed` word or one
+  of 19 common irregular ones such as `ran`, `hit`, `got` and `found` ("Once the fix landed all
+  tests pass" and "The crash when the parser hit EOF is fixed" claim), and it ends the scope
+  only when no determiner (`the`, `a`, `our`, `this` and the like) stands right before it: in
+  "I'll merge when the hit list is done" `hit` belongs to the noun phrase, the scope runs on
+  and nothing claims. Clauses end at `.`, `!`, `?`, `;`, `:`, `,`, a dash, a bracket, a line end
   and the words `so` and `but`, so "No failures. Done.", "Done (anything else?)" and "All tests
   pass so should I merge?" claim, and so does "Did the tests pass, or should I re-run?". A
   hyphen between two letters or digits is part of the word, so "half-done" is not `done`; a
@@ -334,8 +336,8 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   I'll open the PR."; #135) are accepted, as are the scope's misreadings ("Merge when lint is
   clean and all tests pass", "Ship it when morning checks pass" and "If the build went green
   I'll merge." claim): the block cap bounds them. A past verb that is neither an `-ed` word nor
-  a listed irregular one does not finish a condition, an accepted miss ("When the tests were
-  rerun everything passed"). Clef D4 does not read these words: it judges the status block's
+  one of the 19 listed does not end the scope, so "When the tests were rerun everything
+  passed" claims nothing, an accepted miss. Clef D4 does not read these words: it judges the status block's
   sections on its own.
 - **Source edits** are the files `git status --porcelain -z --untracked-files=all` lists
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts

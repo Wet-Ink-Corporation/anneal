@@ -9,9 +9,12 @@ use super::{ACTOR, HUMAN, PATTERN, braces, may_be, may_be_several, written_start
 /// literal `--actor`; and the value, one word that may be `human` ([`may_be`]: `human`,
 /// `"$who"`, `"${H:-human}"`, `"$(echo human)"`), a word that may become several words
 /// ([`may_be_several`]: `"$@"`, `$SUB`) excepted, since it stands for words written
-/// elsewhere, unless it comes right after a literal `--actor` (`--actor $WHO`). A word whose written start reaches `--actor=` and that may be `--actor=human`
-/// (`--actor=human`, `"--actor=${H:-human}"`) is both. The value of an assignment
-/// (`a[2]=--actor`, `a[3]=human`) is read as such a word too.
+/// elsewhere, unless it comes right after a literal `--actor` (`--actor $WHO`). A word whose
+/// written start reaches `--actor=` and that may be `--actor=human` (`--actor=human`,
+/// `"--actor=${H:-human}"`) is both. The value of an assignment (`a[2]=--actor`,
+/// `a[3]=human`) is read as such a word too. The checker passes the words in each of its
+/// readings, so a word that is `--actor` with its expansions empty (#125) is the flag half
+/// too: `"$a"--actor`, `--act"$x"or`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::hook::guard::denylist) struct Halves {
     /// A literal `--actor`.

@@ -8,13 +8,13 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::Unreadable;
 use crate::context::usage::{Level, Window, WindowSource};
 use crate::context::{self, Fresher, Snapshot};
 use crate::decide::client::effective_mode;
 use crate::decide::config::{ClefConfig, Mode};
 use crate::decide::log::DecisionLog;
 use crate::decide::point::Point;
-use crate::error_chain::reason;
 
 /// `clef`: each decision point's answered decisions and its mode.
 #[derive(Debug, Serialize)]
@@ -51,11 +51,9 @@ struct PointStatus {
 pub(super) fn clef(
     home: &Path,
     lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<Option<Clef>, String> {
-    let config = ClefConfig::from_env(lookup).map_err(|error| reason(&error))?;
-    let answered = DecisionLog::in_home(home)
-        .answered_by_point()
-        .map_err(|error| reason(&error))?;
+) -> Result<Option<Clef>, Unreadable> {
+    let config = ClefConfig::from_env(lookup)?;
+    let answered = DecisionLog::in_home(home).answered_by_point()?;
     let configured = config.account().is_some();
     if !configured && answered.is_empty() {
         return Ok(None);
@@ -106,8 +104,8 @@ impl Context {
 pub(super) struct ContextRead {
     /// The section, or `None` when no readable usage file has a reading.
     pub(super) context: Option<Context>,
-    /// One reason per unreadable usage file, the status line's first.
-    pub(super) unreadable: Vec<String>,
+    /// Why each unreadable usage file could not be read, the status line's first.
+    pub(super) unreadable: Vec<Unreadable>,
 }
 
 /// `context`: the fresher of the status line's and the mod's newest snapshots
@@ -116,7 +114,7 @@ pub(super) fn context(home: &Path) -> ContextRead {
     let Fresher { saved, unreadable } = context::Sources::load(home).newest();
     ContextRead {
         context: saved.map(|saved| section(saved.reading)),
-        unreadable: unreadable.iter().map(|error| reason(error)).collect(),
+        unreadable: unreadable.into_iter().map(Unreadable::Sessions).collect(),
     }
 }
 

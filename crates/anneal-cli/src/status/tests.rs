@@ -15,6 +15,7 @@ use clap::Parser;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+mod branches;
 mod context_sources;
 mod edges;
 
