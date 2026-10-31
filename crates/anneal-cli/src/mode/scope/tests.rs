@@ -173,6 +173,40 @@ fn prose_documents_are_docs() {
 }
 
 #[test]
+fn bytecode_tool_caches_and_logs_are_generated_at_any_depth() {
+    for path in [
+        "src/app/__pycache__/__init__.cpython-313.pyc",
+        "tests/__pycache__/test_cli.cpython-313.pyc",
+        "legacy.pyc",
+        "src/old.PYO",
+        ".pytest_cache/v/cache/lastfailed",
+        "pkg/.mypy_cache/3.13/app.data.json",
+        ".ruff_cache/0.6.0/123",
+        ".npm/_logs/2026-10-30T21_27_55_045Z-debug-0.log",
+        "sample.log",
+        "logs/App.LOG",
+    ] {
+        assert_eq!(classify(path, &[]), PathKind::Generated, "{path}");
+    }
+}
+
+#[test]
+fn authored_dot_directories_and_cache_names_inside_longer_names_stay_source() {
+    for path in [
+        ".github/workflows/ci.yml",
+        ".cargo/config.toml",
+        ".venv/lib/python3.13/site-packages/sitecustomize.py",
+        "src/my__pycache__/x.py",
+        "src/__pycache__.py",
+        "src/catalog.rs",
+        "src/log.rs",
+        "src/blog/post.py",
+    ] {
+        assert_eq!(classify(path, &[]), PathKind::Source, "{path}");
+    }
+}
+
+#[test]
 fn the_define_artifacts_are_artifacts_in_any_letter_case() {
     let artifacts = ["design-tree.json", "docs/spec.yaml"];
     assert_eq!(classify("Design-Tree.json", &artifacts), PathKind::Artifact);

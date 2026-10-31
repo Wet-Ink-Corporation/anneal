@@ -68,7 +68,10 @@ The context is, in order:
    `docs/bootstrap-index.md` (`ANNEAL_BLESS=1 cargo test -p anneal-cli bootstrap_index_doc`),
    and `anneal lint skills <skills> --index docs/bootstrap-index.md` accepts it. `lint skills`
    runs its index rule only when it lints at least one skill; `plugin/skills` has none yet, so
-   the test (`lint_skills_accepts_the_committed_index`) lints a fixture skill.
+   the test (`lint_skills_accepts_the_committed_index`) lints a fixture skill. With
+   `CLAUDE_PLUGIN_ROOT` set and its `skills/` a directory, the injected index lists only the
+   entry skills and commands whose `skills/<name>/SKILL.md` is there, so a plugin without a
+   skill never sends the model to load it; otherwise it lists them all.
 2. **`.continue-here`**, the note the `handoff` hook writes before a compaction, every time it
    exists at the worktree root (a regular file of at most 32 KiB whose head the hook recorded),
    framed as data, with the injection scan's line on a hit; see `docs/handoff.md`.

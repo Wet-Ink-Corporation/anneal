@@ -119,6 +119,12 @@ In either mode, these paths are never source and are always allowed:
 - prose documents: `*.md`, `*.txt` and `*.rst`. The spec is editable as one of these; it is not
   exempt by name, since the plan's `Spec:` line is itself editable and naming a source file
   there would otherwise unlock it;
+- what tools write while code runs: anything under a `__pycache__`, `.pytest_cache`,
+  `.mypy_cache`, `.ruff_cache`, `.hypothesis`, `.npm` or `.cache` directory at any depth,
+  Python bytecode (`*.pyc`, `*.pyo`) and logs (`*.log`). The completeness hook reads source
+  the same way, so bytecode a green test run writes is not a later source edit. Other
+  dot-directories, such as `.github/`, `.cargo/` and `.venv/` (code written into a virtual
+  environment runs), are source;
 - any file in no git repository.
 
 One file is denied in every mode, and with no mode or no ledger: `.anneal/config.json`

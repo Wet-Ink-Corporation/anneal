@@ -1,7 +1,8 @@
 //! `anneal hook bootstrap`: the `SessionStart` hook.
 //!
 //! It reads Claude Code's `SessionStart` input on stdin and writes one `SessionStart` output object
-//! on stdout whose `additionalContext` is the [`index`] (stable, every time), then the
+//! on stdout whose `additionalContext` is the [`index`] (stable, every time; only the skills
+//! the plugin at `CLAUDE_PLUGIN_ROOT` holds, when it has a `skills/` directory), then the
 //! worktree's `.continue-here` note when there is one (the `handoff` hook writes it before a
 //! compaction), then a one-time status-line setup hint while no status line saves context
 //! usage, then the live state from the ledger when it changed for this session (volatile,
@@ -138,6 +139,7 @@ fn context(
     };
     let (hint, hint_note) = compaction::statusline_hint(&lookup, &SystemClock::new());
     let path_note = env_file::export_libexec(&lookup);
+    let mut text = plugin_index(&lookup);
     let (state, state_note) = match &cwd {
         Ok(cwd) => fresh_state(input.session_id.as_deref(), cwd, lookup),
         Err(error) => (
@@ -147,7 +149,6 @@ fn context(
             )),
         ),
     };
-    let mut text = index::index();
     for section in [handoff, hint, state].into_iter().flatten() {
         text.push('\n');
         text.push_str(&section);
@@ -159,6 +160,21 @@ fn context(
         text.push('\n');
     }
     text
+}
+
+/// The index for the plugin at `$CLAUDE_PLUGIN_ROOT`, listing only the skills whose
+/// `skills/<name>/SKILL.md` is a file there (one that cannot be read counts as absent); every
+/// skill when the variable is unset or empty or `skills/` is not a directory, so the hook fails
+/// open to the full index.
+fn plugin_index(lookup: impl Fn(&str) -> Option<OsString>) -> String {
+    let Some(root) = lookup(env_file::PLUGIN_ROOT_VAR).filter(|root| !root.is_empty()) else {
+        return index::index();
+    };
+    let skills = PathBuf::from(root).join("skills");
+    if !skills.is_dir() {
+        return index::index();
+    }
+    index::index_with(|name| skills.join(name).join("SKILL.md").is_file())
 }
 
 /// The live state section for the ledger seen from `cwd`, unless `session` was already given
@@ -270,6 +286,55 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&env_file).expect("the env file was written"),
             "export PATH='/plugins/anneal/libexec':\"$PATH\"\n"
+        );
+    }
+
+    /// The injected context with `CLAUDE_PLUGIN_ROOT` set to `root`.
+    fn context_with_plugin_root(root: &Path) -> String {
+        let lookup = |var: &str| (var == "CLAUDE_PLUGIN_ROOT").then(|| OsString::from(root));
+        let mut out = Vec::new();
+        let env = HookEnv {
+            stdin: &b"{}"[..],
+            current_dir: || Err(io::Error::other("gone")),
+            lookup,
+        };
+        run(env, &mut out).expect("a Vec accepts every write");
+        let json: serde_json::Value = serde_json::from_slice(&out).expect("one JSON object");
+        json.pointer("/hookSpecificOutput/additionalContext")
+            .and_then(serde_json::Value::as_str)
+            .expect("additionalContext")
+            .to_owned()
+    }
+
+    #[test]
+    fn the_index_lists_only_the_skills_the_plugin_root_holds() {
+        let plugin = tempfile::tempdir().expect("a temporary directory");
+        for skill in ["spec", "verify", "handoff"] {
+            let dir = plugin.path().join("skills").join(skill);
+            std::fs::create_dir_all(&dir).expect("a skill directory");
+            std::fs::write(dir.join("SKILL.md"), skill).expect("a SKILL.md");
+        }
+        std::fs::create_dir_all(plugin.path().join("skills/build")).expect("no SKILL.md");
+
+        let context = context_with_plugin_root(plugin.path());
+
+        let listed: Vec<&str> = context
+            .lines()
+            .filter_map(|line| line.strip_prefix("- `"))
+            .filter_map(|rest| rest.split_once('`').map(|(name, _)| name))
+            .collect();
+        assert_eq!(listed, ["spec", "verify", "/anneal:handoff"], "{context}");
+    }
+
+    #[test]
+    fn a_plugin_root_with_no_skills_directory_gets_the_whole_index() {
+        let plugin = tempfile::tempdir().expect("a temporary directory");
+
+        let context = context_with_plugin_root(plugin.path());
+
+        assert!(
+            context.starts_with(&super::index::index()),
+            "fails open to every skill: {context}"
         );
     }
 

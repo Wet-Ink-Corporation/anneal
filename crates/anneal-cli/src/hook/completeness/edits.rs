@@ -4,8 +4,9 @@
 //! The changed files are what `git status --porcelain=v1 -z --untracked-files=all` lists
 //! (tracked changes, staged or not, and untracked files git does not ignore); source is what
 //! the preconditions hook guards (`mode::scope::classify`: not a test, a prose document, a
-//! scratch path). A deleted file has no time and is passed over; so are committed changes,
-//! which git no longer lists.
+//! scratch path, or what a tool generated while code ran, such as Python bytecode, a cache or
+//! a log, so the green test run's own bytecode is not a later edit). A deleted file has no
+//! time and is passed over; so are committed changes, which git no longer lists.
 
 use std::io;
 use std::path::Path;
@@ -186,6 +187,18 @@ mod tests {
             source_paths(listing),
             [b"src/lib.rs".as_slice(), b"Cargo.toml"],
             "tests, docs and scratch are not source"
+        );
+    }
+
+    #[test]
+    fn bytecode_and_logs_written_by_a_test_run_are_not_source_edits() {
+        let listing = b"?? src/app/__pycache__/__init__.cpython-313.pyc\0?? .pytest_cache/README\0\
+                        ?? debug.log\0 M src/app/cli.py\0";
+
+        assert_eq!(
+            source_paths(listing),
+            [b"src/app/cli.py".as_slice()],
+            "what the run generated is not a later source edit"
         );
     }
 }
