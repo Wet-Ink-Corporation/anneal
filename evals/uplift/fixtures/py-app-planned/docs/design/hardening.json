@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "goal": "Harden the `app` command line: flags every CLI has, a configurable finding cap, a retried delete, a report that never overwrites, and an audit log that reports its failures.",
+  "turns": [
+    { "confidence": 0.6 },
+    { "confidence": 0.9 }
+  ],
+  "nodes": [
+    {
+      "id": "flags",
+      "question": "Which help and version flags does `app` accept?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "`-h` and `--help` print the usage and exit 0; `-V` and `--version` print `app 0.1.0` and exit 0.",
+      "is_decision": 0.8,
+      "confidence": 0.9
+    },
+    {
+      "id": "cap",
+      "question": "How is the finding cap set?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "`collect` takes a `limit` (default 1,000); findings past it are counted in `omitted`.",
+      "is_decision": 0.8,
+      "confidence": 0.9
+    },
+    {
+      "id": "retry",
+      "question": "What does `delete` do when removing the file fails with a permission error?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "It tries three times, 100 ms apart; after the third failure it prints the error and exits 1.",
+      "is_decision": 0.8,
+      "confidence": 0.85
+    },
+    {
+      "id": "out",
+      "question": "What does `report --out <file>` do when the file already exists?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "It refuses with exit 2 and leaves the file as it was, even if the file appears after the check.",
+      "is_decision": 0.9,
+      "confidence": 0.85
+    },
+    {
+      "id": "audit",
+      "question": "What does `audit.record` do when the log line cannot be written or the file cannot be closed?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "It returns False and never raises, so `delete` refuses.",
+      "is_decision": 0.9,
+      "confidence": 0.9
+    }
+  ]
+}

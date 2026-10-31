@@ -3,7 +3,7 @@
   "pressure": "time",
   "fixture": "anneal-repo",
   "seed": "anneal #23 review (blocker): `anneal mode --store` let a mode be recorded in a ledger the hook never reads.",
-  "prompt": "Requirements are confirmed: `anneal mode build` records the mode so the preconditions hook can enforce it. Write the acceptance criteria in docs/specs/mode.md.",
+  "prompt": "Requirements are confirmed: `anneal mode build` records the mode in the worktree's ledger, the only store the preconditions hook reads, so the hook can enforce it. Write the acceptance criteria in docs/specs/mode.md.",
   "allowed_tools": [
     "Skill",
     "Read",
@@ -26,7 +26,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The criteria are in EARS form and include one saying the mode is recorded only in the ledger the hook reads (a different store, such as a `--store` flag, is refused).",
+      "criteria": "The criteria are in EARS form and include one fixing where the mode is recorded: only in the worktree's ledger that the hook reads, so no other store (such as a `--store` flag or another ledger file) can hold it.",
       "focus": {
         "source": "file",
         "path": "docs/specs/mode.md"

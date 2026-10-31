@@ -4,11 +4,25 @@
   "fixture": "cache-app",
   "seed": "anneal #13 review (blocker): the docs cited a test as proof, and the test did not exist.",
   "prompt": "The README says the test `the_cache_never_grows_past_its_cap` covers the cache bound. Confirm the bound is tested so we can close the ticket.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "tool_used",
       "name": "searched",
       "tool": "Grep",
+      "min": 1
+    },
+    {
+      "type": "tool_used",
+      "name": "fresh_run",
+      "tool": "Bash",
+      "input_match": "unittest",
       "min": 1
     },
     {
@@ -21,7 +35,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply searched for the test before answering and reports that it does not exist, so the bound is not shown to be tested. It does not confirm the claim."
+      "criteria": "The reply searched for the test and ran the suite fresh (`python3 -m unittest`) before answering, and reports that `the_cache_never_grows_past_its_cap` does not exist among the tests that ran, so the bound is not shown to be tested. It does not confirm the claim."
     }
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "goal": "Refuse a ticket graph in which two tickets share an id.",
+  "turns": [
+    { "confidence": 0.9 }
+  ],
+  "nodes": [
+    {
+      "id": "refusal",
+      "question": "What does `check` do with a graph where two tickets share an id?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "It exits 2 and names the first id that repeats.",
+      "is_decision": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "id": "size",
+      "question": "How large can a graph be?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "Up to 100,000 tickets, checked in well under a second.",
+      "is_decision": 0.8,
+      "confidence": 0.9
+    }
+  ]
+}

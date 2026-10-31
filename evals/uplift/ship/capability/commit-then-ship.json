@@ -7,13 +7,6 @@
   "graders": [
     {
       "type": "regex",
-      "name": "commit",
-      "target": "last_message",
-      "pattern": "\\bcommit",
-      "flags": "i"
-    },
-    {
-      "type": "regex",
       "name": "rollback",
       "target": "last_message",
       "pattern": "rollback|roll back|revert",

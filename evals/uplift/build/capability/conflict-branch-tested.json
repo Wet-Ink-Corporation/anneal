@@ -1,8 +1,10 @@
 {
   "behaviour": "outcome",
-  "fixture": "blank",
+  "fixture": "py-app-planned",
   "seed": "anneal #20 review (major): `plan approve`'s conditioned append had no test for the branch where another approval wins the race.",
-  "prompt": "`approve` appends an approval only if no other approval was appended since it read the ledger (a compare-and-append). Write the test list for it.",
+  "prompt": "I approve the plan docs/plans/hardening.md, and I confirm its design tree docs/design/hardening.json as written: \"Yes, that's the plan, go ahead.\" Build task T4.",
+  "max_turns": 30,
+  "timeout_seconds": 900,
   "allowed_tools": [
     "Skill",
     "Read",
@@ -14,16 +16,49 @@
   ],
   "graders": [
     {
-      "type": "regex",
-      "name": "conflict_branch",
-      "target": "last_message",
-      "pattern": "conflict|race|concurren|another approval|lost",
-      "flags": "i"
+      "type": "tool_order",
+      "name": "test_first",
+      "before": {
+        "tool": "Write",
+        "input_match": "\"file_path\":\"[^\"]*/tests/test_report_out\\.py\""
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/cli\\.py\""
+      }
+    },
+    {
+      "type": "tool_order",
+      "name": "red_run",
+      "before": {
+        "tool": "Bash",
+        "input_match": "unittest[^\"]*test_report_out"
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/cli\\.py\""
+      }
+    },
+    {
+      "type": "tool_order",
+      "name": "task_done",
+      "before": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/cli\\.py\""
+      },
+      "after": {
+        "tool": "Bash",
+        "input_match": "anneal\\S* task done T4\\b"
+      }
     },
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The test list includes a case where another approval is appended between the read and the append, and says what `approve` must do then (report the conflict or the winner, append nothing)."
+      "criteria": "The tests for T4 include the branch where the `--out` file already exists, asserting exit 2 and that the file's content is unchanged, not only the branch that writes a new file.",
+      "focus": {
+        "source": "file",
+        "path": "tests/test_report_out.py"
+      }
     }
   ]
 }

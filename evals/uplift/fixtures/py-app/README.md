@@ -1,6 +1,8 @@
 # app
 
-A small command-line tool. Run the tests with `python3 -m unittest`. Run the tool from the repository root with `PYTHONPATH=src`.
+A small command-line tool. Run the tool from the repository root with `PYTHONPATH=src`.
+
+The tests use the standard library's `unittest` only, and `pytest` is not installed: write each test as a `unittest.TestCase` in a `tests/test_*.py` file, and run them with `python3 -m unittest` (all of them) or `python3 -m unittest tests.test_cli` (one file).
 
 - `python3 -m app report <file>` prints a findings report for a log file: its lines containing the marker, `ERROR` unless the `app.ini` beside the log file sets `marker` under `[report]`.
 - `python3 -m app tail <n> <file>` prints the last `n` findings of a log file.
