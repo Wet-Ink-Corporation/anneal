@@ -87,14 +87,26 @@ impl Workspace {
     /// # Errors
     /// The I/O error that stopped the removal.
     pub(crate) fn finish(self) -> io::Result<()> {
-        match fs::remove_dir_all(&self.root) {
-            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-                open_up(&self.root)?;
-                fs::remove_dir_all(&self.root)
-            }
-            removed => removed,
-        }
+        remove(&self.root)
     }
+}
+
+/// Removes `root`, opening any directory it may not write to its owner and trying again.
+#[cfg(unix)]
+fn remove(root: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(root) {
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            open_up(root)?;
+            fs::remove_dir_all(root)
+        }
+        removed => removed,
+    }
+}
+
+/// Elsewhere directory modes do not stop a removal, so there is nothing to open first.
+#[cfg(not(unix))]
+fn remove(root: &Path) -> io::Result<()> {
+    fs::remove_dir_all(root)
 }
 
 /// Makes `root` and every directory below it readable, writable and searchable by its owner
@@ -114,12 +126,6 @@ fn open_up(root: &Path) -> io::Result<()> {
             }
         }
     }
-    Ok(())
-}
-
-/// Elsewhere directory modes do not stop a removal, so there is nothing to open.
-#[cfg(not(unix))]
-fn open_up(_root: &Path) -> io::Result<()> {
     Ok(())
 }
 
