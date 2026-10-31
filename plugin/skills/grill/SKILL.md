@@ -1,6 +1,6 @@
 ---
 name: grill
-description: Use when a request or idea is new or vague, even if it looks clear; question the human in rounds, each with a recommended answer, until they confirm the requirements. Do NOT use for writing the spec once requirements are agreed (use `spec`) or splitting agreed work into tasks (use `plan`).
+description: Use when asked for new behaviour without saying how it works ("let users X", "make every Y do Z") or a request or idea is vague, even if it looks clear; question the human in rounds, each with a recommended answer, until they confirm. Do NOT use for the spec (use `spec`) or a bug (use `diagnose`).
 ---
 
 # Grill
@@ -13,6 +13,7 @@ Turns a new or vague request into requirements the human confirmed. The question
 - You MUST give every question a recommended answer that a plain "yes" accepts; `anneal grill frontier` rejects a node with a blank `answer`.
 - You MUST run `anneal grill classify --tree <file> --node <id>` on each new open node, and look up, not ask, every `look_up` node of `anneal grill frontier` (`is_decision` below 0.5).
 - You MUST run `anneal grill confirm --tree <file> --quote "<their words>"` only after the human explicitly confirms your restatement, quoting them verbatim; it records `grill_confirmed`.
+- Without Bash or Write, ask each round inline, numbered, each with a recommended answer.
 
 ## When to use
 
@@ -22,10 +23,10 @@ Turns a new or vague request into requirements the human confirmed. The question
 ## Process
 
 1. **Seed the tree.** Write `.anneal/grill/<topic>.json`: `version: 1`, a one-line `goal`, empty `turns`, and the root questions (goal, users, scope, constraints, done-when) with `depends_on`, a recommended `answer`, `is_decision` and `confidence`. It's working if `anneal grill frontier --tree <file>` exits 0.
-2. **Look facts up.** Answer each `look_up` id from the code, docs or tracker (or hand a subagent the file paths and the question); mark it `answered`. It's working if no fact reaches the human.
+2. **Look facts up.** Answer each `look_up` id from the code, docs or tracker (or hand a subagent the paths and the question); mark it `answered`. It's working if no fact reaches the human.
 3. **Builder check.** Of the `ask` ids, keep those where a wrong guess changes what gets built; accept your recommendation for the rest, listed in one line the human can object to. It's working if every question asked would change the build.
 4. **Ask one round.** Number the questions, each with your recommendation and why; "yes" accepts all. Record answers and statuses, and append the round's confidence to `turns`. Label asked nodes (classify's `data.id`): `anneal decide label <id> no` if the human says you could have looked it up, else `yes`. It's working if the next frontier drops the questions just answered.
-5. **Restate at the gate.** When `data.confidence.restate` is true (confidence 0.8 or more, or 3 turns without a gain), stop asking: restate the goal, every decision and every deferral, and ask whether it is right. It's working if the human answers the restatement.
+5. **Restate at the gate.** When `data.confidence.restate` is true, stop asking: restate the goal, every decision and every deferral, and ask whether it is right. It's working if the human answers the restatement.
 6. **Confirm.** Answer or defer every open node, then run `anneal grill confirm` with the human's exact words. It's working if it exits 0 and its event carries the tree's hash.
 7. **Keep language and scope.** Corrected terms go into the glossary (references/domain-language.md); out-of-scope rulings into the ruling store (references/scope-ledger.md). It's working if each has its entry.
 

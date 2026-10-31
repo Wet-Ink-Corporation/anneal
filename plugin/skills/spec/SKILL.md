@@ -7,7 +7,7 @@ description: Use when requirements are agreed, even if the spec seems obvious; w
 
 ## Overview
 
-Turns requirements the human confirmed into a spec a script can check, written in the same session as the interview and only from what it confirmed. The template is `${CLAUDE_PLUGIN_ROOT}/playbooks/spec.template.md`.
+Turns requirements the human confirmed into a spec a script can check, written in the interview's session. The template is `${CLAUDE_PLUGIN_ROOT}/playbooks/spec.template.md`, in the plugin, not this repository.
 
 - You MUST write the spec from the template and run `anneal lint spec <file>` until it exits 0, applying each finding's `fix`.
 - You MUST write every acceptance criterion in EARS (`WHEN <trigger>, THE <system> SHALL <response>.` and its variants); `anneal lint spec` rejects any other form.
@@ -23,12 +23,12 @@ Turns requirements the human confirmed into a spec a script can check, written i
 
 1. **Copy the template.** Copy it to `docs/specs/<topic>.md` and set its `Tree:` line to the confirmed design tree, relative to the spec; `plan approve` refuses until that tree's `grill_confirmed` matches. It's working if all seven `##` sections are there.
 2. **Fill from what was confirmed.** Problem, Users and Requirements in the human's words, from the design tree and the conversation, nothing else. It's working if every requirement traces to a confirmed answer.
-3. **Write the criteria.** One list item per observable behaviour, in the EARS form that fits: `WHEN`, `WHILE`, `IF … THEN`, `WHERE`, or ubiquitous. It's working if each criterion could become one test.
-4. **Scope it out.** List what this spec will not do, and why; record each out-of-scope ruling in `.out-of-scope/`. It's working if Out of Scope is not empty.
+3. **Write the criteria.** Read the code they touch first. One list item per observable behaviour, in the EARS form that fits: `WHEN`, `WHILE`, `IF … THEN`, `WHERE`, or ubiquitous. Give each exemption and stored artifact `IF … THEN` criteria for misuse and where it may be written. It's working if each criterion could become one test.
+4. **Scope it out.** List what it will not do, and why; record each out-of-scope ruling in `.out-of-scope/`. It's working if Out of Scope is not empty.
 5. **Mark the gaps.** Give each unconfirmed point a marker and an Open questions entry. It's working if nothing unconfirmed reads as fact.
 6. **Check the constitution.** Read `constitution.md`, write its version, mark each gate `pass`, `violated: <why>` or `n/a`, and add a Complexity row per violation. It's working if every gate has a status.
-7. **Lint.** Run `anneal lint spec docs/specs/<topic>.md` and apply each fix. It's working if it exits 0.
-8. **Close the questions.** Ask the human each open question with a recommended answer, then remove its marker. It's working if `data.needs_clarification` is 0 before `plan`.
+7. **Lint.** Run `anneal lint spec docs/specs/<topic>.md`; apply each fix. It's working if it exits 0.
+8. **Close the questions.** Ask each open question with a recommended answer, then remove its marker. It's working if `data.needs_clarification` is 0 before `plan`.
 
 ## Rationalizations
 
