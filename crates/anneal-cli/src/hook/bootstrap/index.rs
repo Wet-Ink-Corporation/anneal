@@ -77,23 +77,45 @@ The human runs these; do not start them unasked:
 
 ";
 
-/// The bootstrap index, as injected at every session start and committed as
-/// `docs/bootstrap-index.md`.
+/// The prefix of a user command naming the skill it runs.
+const COMMAND_PREFIX: &str = "/anneal:";
+
+/// The bootstrap index with every skill, as committed as `docs/bootstrap-index.md` and
+/// injected when the plugin's skills cannot be listed.
 #[must_use]
 pub(crate) fn index() -> String {
-    format!(
-        "{PREAMBLE}{}{COMMANDS_HEADING}{}",
-        Bullets(&ENTRY_TRIGGERS),
-        Bullets(&USER_COMMANDS)
-    )
+    index_with(|_| true)
 }
 
-/// One ``- `name`: text`` line per pair.
-struct Bullets<'a>(&'a [(&'a str, &'a str)]);
+/// The bootstrap index listing only the entry skills and user commands whose skill `present`
+/// holds, by directory name (`grill`, `handoff`), so a plugin missing a skill never sends the
+/// model to load it.
+#[must_use]
+pub(crate) fn index_with(present: impl Fn(&str) -> bool) -> String {
+    let skills = Bullets(&ENTRY_TRIGGERS, &present);
+    let commands = Bullets(&USER_COMMANDS, &|command| present(skill_of(command)));
+    format!("{PREAMBLE}{skills}{COMMANDS_HEADING}{commands}")
+}
+
+/// The directory name of every skill the index can list, entry skills then user commands.
+pub(crate) fn skill_names() -> impl Iterator<Item = &'static str> {
+    ENTRY_TRIGGERS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(USER_COMMANDS.iter().map(|(command, _)| skill_of(command)))
+}
+
+/// The skill a user command runs: `/anneal:handoff` runs `handoff`.
+fn skill_of(command: &str) -> &str {
+    command.strip_prefix(COMMAND_PREFIX).unwrap_or(command)
+}
+
+/// One ``- `name`: text`` line per pair whose name the filter keeps.
+struct Bullets<'a>(&'a [(&'a str, &'a str)], &'a dyn Fn(&str) -> bool);
 
 impl Display for Bullets<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        for (name, text) in self.0 {
+        for (name, text) in self.0.iter().filter(|(name, _)| (self.1)(name)) {
             writeln!(f, "- `{name}`: {text}")?;
         }
         Ok(())
@@ -102,7 +124,7 @@ impl Display for Bullets<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::index;
+    use super::{index, index_with};
 
     /// Path of the generated copy of the index, relative to the repository root.
     const DOC_PATH: &str = "docs/bootstrap-index.md";
@@ -153,6 +175,23 @@ mod tests {
                 "{command} is listed under User commands"
             );
         }
+    }
+
+    #[test]
+    fn a_skill_the_plugin_lacks_is_not_listed_as_an_entry_skill_or_a_command() {
+        let text = index_with(|skill| !matches!(skill, "grill" | "handoff"));
+
+        let listed = listed_skills(&text);
+        assert_eq!(
+            (
+                listed.contains(&"grill".to_owned()),
+                listed.len(),
+                text.contains("/anneal:handoff"),
+                text.contains("- `/anneal:correct`: "),
+            ),
+            (false, ENTRY_SKILLS.len() - 1, false, true),
+            "{text}"
+        );
     }
 
     #[test]

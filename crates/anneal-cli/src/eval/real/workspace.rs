@@ -35,7 +35,12 @@ impl Limits {
 #[derive(Debug)]
 pub(crate) struct Workspace {
     root: PathBuf,
+    /// The name of the plugin's copy in `root`.
+    copy: &'static str,
 }
+
+/// The name of the plugin's copy unless a suite names its own.
+const PLUGIN_COPY: &str = "plugin";
 
 impl Workspace {
     /// A fresh directory under the system's temporary directory, named
@@ -55,9 +60,24 @@ impl Workspace {
     /// # Errors
     /// As [`Workspace::create`], and the I/O error that stopped `base` being made.
     pub(crate) fn create_in(base: &Path, prefix: &str, plugin: &Path) -> io::Result<Self> {
+        Self::create_with_copy(base, prefix, PLUGIN_COPY, plugin)
+    }
+
+    /// [`Workspace::create_in`] with the plugin's copy named `copy` (one plain path component)
+    /// rather than `plugin`.
+    ///
+    /// # Errors
+    /// As [`Workspace::create_in`].
+    pub(crate) fn create_with_copy(
+        base: &Path,
+        prefix: &str,
+        copy: &'static str,
+        plugin: &Path,
+    ) -> io::Result<Self> {
         fs::create_dir_all(base)?;
         let workspace = Self {
             root: fresh_dir(base, prefix)?,
+            copy,
         };
         match copy_tree(plugin, &workspace.plugin(), Limits::PLUGIN) {
             Ok(()) => Ok(workspace),
@@ -76,9 +96,9 @@ impl Workspace {
         &self.root
     }
 
-    /// The plugin's copy.
+    /// The plugin's copy: `plugin`, or the name given to [`Workspace::create_with_copy`].
     pub(crate) fn plugin(&self) -> PathBuf {
-        self.root.join("plugin")
+        self.root.join(self.copy)
     }
 
     /// Removes the workspace and everything in it. A directory it may not write is opened to
@@ -296,6 +316,24 @@ mod tests {
         let root = workspace.root().to_path_buf();
         workspace.finish()?;
         assert!(!root.exists(), "removed");
+        Ok(())
+    }
+
+    #[test]
+    fn a_named_copy_holds_the_plugin_under_that_name_and_no_plugin_directory() -> TestResult {
+        let source = tempfile::tempdir()?;
+        fs::write(source.path().join("README.md"), "readme")?;
+        let base = tempfile::tempdir()?;
+
+        let workspace = Workspace::create_with_copy(base.path(), "ae-", "with", source.path())?;
+
+        let seen = (
+            workspace.plugin() == workspace.root().join("with"),
+            fs::read_to_string(workspace.root().join("with/README.md")).ok(),
+            workspace.root().join("plugin").exists(),
+        );
+        workspace.finish()?;
+        assert_eq!(seen, (true, Some("readme".to_owned()), false));
         Ok(())
     }
 

@@ -17,7 +17,7 @@ use crate::error_chain::reason;
 const ENV_FILE_VAR: &str = "CLAUDE_ENV_FILE";
 
 /// The variable naming the plugin's root directory.
-const PLUGIN_ROOT_VAR: &str = "CLAUDE_PLUGIN_ROOT";
+pub(super) const PLUGIN_ROOT_VAR: &str = "CLAUDE_PLUGIN_ROOT";
 
 /// How much of the env file is read to find an earlier copy of the line; past it the line is
 /// appended without the check (H-13).
