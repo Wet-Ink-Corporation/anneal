@@ -121,9 +121,12 @@ In either mode, these paths are never source and are always allowed:
   there would otherwise unlock it;
 - what tools write while code runs: anything under a `__pycache__`, `.pytest_cache`,
   `.mypy_cache`, `.ruff_cache`, `.hypothesis`, `.npm` or `.cache` directory at any depth,
-  Python bytecode (`*.pyc`, `*.pyo`) and logs (`*.log`). The completeness hook reads source
-  the same way, so bytecode a green test run writes is not a later source edit. Other
-  dot-directories, such as `.github/`, `.cargo/` and `.venv/` (code written into a virtual
+  except code and the config tools read on import (`*.py`, `*.js`, `*.ts`, `*.mjs`, `*.cjs`,
+  `*.sh`, `*.rs`, `*.rb`, `*.go`, `*.java`, `*.toml`, `*.yaml`, `*.yml`, `*.cfg`, `*.ini`),
+  which stay source there, so writing code into a cache directory does not skip the guard
+  (`*.json` there is generated, as mypy caches as JSON); Python bytecode (`*.pyc`, `*.pyo`)
+  and logs (`*.log`). The completeness hook reads source the same way, so bytecode a green
+  test run writes is not a later source edit. Other dot-directories, such as `.github/`, `.cargo/` and `.venv/` (code written into a virtual
   environment runs), are source;
 - any file in no git repository.
 

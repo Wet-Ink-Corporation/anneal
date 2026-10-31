@@ -207,6 +207,19 @@ fn authored_dot_directories_and_cache_names_inside_longer_names_stay_source() {
 }
 
 #[test]
+fn code_and_config_written_into_a_cache_directory_stay_source() {
+    for path in [
+        "src/.cache/helpers.py",
+        "__pycache__/x.js",
+        ".npm/hook.SH",
+        ".pytest_cache/conftest.toml",
+        "pkg/.ruff_cache/settings.yml",
+    ] {
+        assert_eq!(classify(path, &[]), PathKind::Source, "{path}");
+    }
+}
+
+#[test]
 fn the_define_artifacts_are_artifacts_in_any_letter_case() {
     let artifacts = ["design-tree.json", "docs/spec.yaml"];
     assert_eq!(classify("Design-Tree.json", &artifacts), PathKind::Artifact);

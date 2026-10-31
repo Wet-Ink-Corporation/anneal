@@ -29,6 +29,14 @@ const GENERATED_DIRS: [&str; 7] = [
 /// Extensions of files tools write while code runs: Python bytecode and logs. Lowercase.
 const GENERATED_EXTENSIONS: [&str; 3] = ["pyc", "pyo", "log"];
 
+/// Extensions of code and of configuration tools read on import, source even under one of
+/// [`GENERATED_DIRS`], so writing code into a cache directory does not skip the guard.
+/// Lowercase. `json` is left out: mypy writes its cache as `*.data.json` and `*.meta.json`.
+const SOURCE_EXTENSIONS: [&str; 15] = [
+    "py", "js", "ts", "mjs", "cjs", "sh", "rs", "rb", "go", "java", "toml", "yaml", "yml", "cfg",
+    "ini",
+];
+
 /// What a path inside the worktree is, for the preconditions hook. Only [`PathKind::Source`]
 /// is guarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,13 +140,20 @@ pub(crate) fn classify(path: &str, artifacts: &[&str]) -> PathKind {
 }
 
 /// True when the lowercase `path`, whose last `.`-suffix is `extension`, is what a tool wrote
-/// while code ran: a directory on the way to it is one of [`GENERATED_DIRS`], or its extension
-/// one of [`GENERATED_EXTENSIONS`].
+/// while code ran: its extension is one of [`GENERATED_EXTENSIONS`], or a directory on the way
+/// to it is one of [`GENERATED_DIRS`] and its file name's extension is not one of
+/// [`SOURCE_EXTENSIONS`].
 fn is_generated(path: &str, extension: Option<&str>) -> bool {
-    let in_generated_dir = path
-        .rsplit_once('/')
-        .is_some_and(|(dirs, _)| dirs.split('/').any(|dir| GENERATED_DIRS.contains(&dir)));
-    in_generated_dir || extension.is_some_and(|extension| GENERATED_EXTENSIONS.contains(&extension))
+    if extension.is_some_and(|extension| GENERATED_EXTENSIONS.contains(&extension)) {
+        return true;
+    }
+    let Some((dirs, name)) = path.rsplit_once('/') else {
+        return false;
+    };
+    let source_like = name
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| SOURCE_EXTENSIONS.contains(&extension));
+    !source_like && dirs.split('/').any(|dir| GENERATED_DIRS.contains(&dir))
 }
 
 /// True for a Rust test module file, `tests.rs` or `test.rs` (`#[cfg(test)] mod tests;`).
