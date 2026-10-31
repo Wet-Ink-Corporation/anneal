@@ -221,6 +221,9 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
             ),
         ));
     }
+    if let Some(message) = &outcome.socket_path {
+        findings.push(Finding::new("eval/uplift/socket-path", message.as_str()));
+    }
     findings.extend(outcome.unkept.iter().map(unkept_finding));
     findings.extend(incomplete_finding(outcome, short));
     if let Some(reason) = &outcome.cleanup {

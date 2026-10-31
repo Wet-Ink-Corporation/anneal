@@ -232,7 +232,10 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 /// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
 /// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_TMPDIR_LOG` set it logs its
 /// `TMPDIR` and whether that is a directory. With `$FAKE_FAILS` set it writes no result
-/// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. A batch against
+/// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. With
+/// `$FAKE_TRACES` set each run names a `tracePath`: the first two under its `TMPDIR`, written
+/// only when given `--keep-temp` (as `claude` removes a run's root without it), the third
+/// `$FAKE_TRACES` itself. A batch against
 /// the `baseline/` copy lists its plugin as `fixture-baseline`, the name in
 /// `eval-uplift/baseline-plugin`'s manifest; any other as `fixture`.
 #[cfg(unix)]
@@ -240,6 +243,7 @@ const FAKE_CLAUDE: &str = r#"#!/bin/sh
 set -eu
 target=$3
 tools=''
+keep=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --eval-dir) evaldir=$2; shift ;;
@@ -248,6 +252,7 @@ while [ $# -gt 0 ]; do
     --runs) runs=$2; shift ;;
     --allow-tools) tools=$2; shift ;;
     --scaffold|--no-scaffold) scaffold=$1 ;;
+    --keep-temp) keep=1 ;;
   esac
   shift
 done
@@ -272,7 +277,20 @@ run="{\"error\":null,\"graders\":[{\"name\":\"outcome\",\"passed\":$passed},{\"n
 cases=''
 for dir in "$target/$evaldir"/*/; do
   case_name=$(basename "$dir")
-  one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$run,$run,$run]}}"
+  runs="$run,$run,$run"
+  if [ -n "${FAKE_TRACES:-}" ]; then
+    runs=''
+    for i in 1 2 3; do
+      trace="$TMPDIR/claude-eval-$evaldir-$case_name-$i/out/trace.jsonl"
+      if [ "$i" = 3 ]; then trace=$FAKE_TRACES; elif [ -n "$keep" ]; then
+        mkdir -p "$(dirname "$trace")"
+        echo "{\"eval\":\"$evaldir\",\"case\":\"$case_name\",\"run\":$i}" > "$trace"
+      fi
+      one_run="{\"tracePath\":\"$trace\",${run#'{'}"
+      if [ -z "$runs" ]; then runs=$one_run; else runs="$runs,$one_run"; fi
+    done
+  fi
+  one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$runs]}}"
   if [ -z "$cases" ]; then cases=$one; else cases="$cases,$one"; fi
 done
 if [ -n "${FAKE_DUPLICATES:-}" ]; then cases="$cases,$cases"; fi

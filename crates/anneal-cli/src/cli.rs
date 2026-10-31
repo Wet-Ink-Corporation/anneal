@@ -329,7 +329,7 @@ fn dispatch<O: Write, E: Write>(
             floor_guard::run(args, &cwd, out)
         }
         Command::Verdict(args) => run_verdict(args, out, err),
-        Command::Eval(args) => eval::run(args, |var| std::env::var_os(var), out),
+        Command::Eval(args) => eval::run(args, |var| std::env::var_os(var), out, err),
         Command::Decide(args) => run_decide(args, out),
         Command::Calibrate(args) => run_calibrate(args, out, err),
         Command::Hook(args) => run_hook(args, out),

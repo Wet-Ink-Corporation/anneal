@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::{
     BaselinePlugin, ClaudeEvaluator, LauncherTarget, Placement, Plugins, arguments, case_file,
-    scaffold, trials, write_cases,
+    scaffold, traces, trials, write_cases,
 };
 use crate::eval::real::claude::Options;
 use crate::eval::real::result::{ResultError, parse};
@@ -757,6 +757,72 @@ fn a_baseline_that_cannot_be_copied_is_a_workspace_error() -> TestResult {
     assert!(
         matches!(&refused, Err(RouterError::Workspace(_))),
         "{refused:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_trace_is_named_by_its_batch_arm_case_and_run() {
+    let flaky = case(&json!(["Skill"]));
+    let batches = [
+        (1, Arm::With),
+        (2, Arm::Without("plan")),
+        (3, Arm::Baseline),
+    ]
+    .map(|(index, arm)| Batch {
+        index,
+        arm,
+        ..batch(vec![&flaky])
+    });
+
+    let names = batches.map(|batch| traces::trace_name(&batch, "plan--regression--x", 2));
+
+    assert_eq!(
+        names,
+        [
+            "traces/1-with/plan--regression--x-2.jsonl",
+            "traces/2-without-plan/plan--regression--x-2.jsonl",
+            "traces/3-baseline/plan--regression--x-2.jsonl",
+        ]
+        .map(str::to_owned)
+    );
+}
+
+#[test]
+fn the_traces_kept_are_the_asked_cases_runs_that_name_one() -> TestResult {
+    let flaky = case(&json!(["Skill"]));
+    let run = |trace: Option<&str>| json!({"error": null, "graders": [], "tracePath": trace});
+    let result = parse(json!({
+        "schemaVersion": 1,
+        "costUsd": 0.3,
+        "partial": false,
+        "suite": {"plugins": [{"name": "anneal", "path": "/p"}]},
+        "cases": [
+            {"name": "diagnose--regression--flaky", "arms": {"with": [
+                run(Some("/w/tmp/a/out/trace.jsonl")), run(None), run(Some("/w/tmp/c/out/trace.jsonl"))
+            ]}},
+            {"name": "other--regression--unasked", "arms": {"with": [run(Some("/w/x"))]}}
+        ]
+    }))?;
+
+    let traces: Vec<(String, String)> = traces::traces(&result, &batch(vec![&flaky]))
+        .into_iter()
+        .map(|trace| (trace.name, trace.path))
+        .collect();
+
+    assert_eq!(
+        traces,
+        [
+            (
+                "traces/1-with/diagnose--regression--flaky-1.jsonl",
+                "/w/tmp/a/out/trace.jsonl"
+            ),
+            (
+                "traces/1-with/diagnose--regression--flaky-3.jsonl",
+                "/w/tmp/c/out/trace.jsonl"
+            ),
+        ]
+        .map(|(name, path)| (name.to_owned(), path.to_owned()))
     );
     Ok(())
 }
