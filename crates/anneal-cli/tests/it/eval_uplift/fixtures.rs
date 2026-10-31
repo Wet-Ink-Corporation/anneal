@@ -212,7 +212,7 @@ fn with_allow_scaffolds_seeded_batches_run_scaffolds_and_every_copy_holds_the_ru
         (seeds, &envelope["data"]["libexec_target"]),
         (
             format!(
-                "plugin --scaffold scripts=1 anneal={placed}\n\
+                "with --scaffold scripts=1 anneal={placed}\n\
                  without-plan --scaffold scripts=1 anneal={placed}\n\
                  without-spec --no-scaffold scripts=0 anneal={placed}\n"
             ),
@@ -245,7 +245,7 @@ fn a_baseline_plugin_copy_holds_the_running_anneal_too() -> TestResult {
     assert_eq!(
         seeds,
         format!(
-            "plugin --no-scaffold scripts=0 anneal={placed}\n\
+            "with --no-scaffold scripts=0 anneal={placed}\n\
              baseline --no-scaffold scripts=0 anneal={placed}\n"
         )
     );

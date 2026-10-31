@@ -634,6 +634,31 @@ fn with_no_time_left_a_batch_launches_nothing_and_its_spend_is_exact() -> TestRe
     Ok(())
 }
 
+/// The anneal repository has `plugin/` at its root, so a with-arm copy named `plugin` makes
+/// the workspace look like that repository to the model (Tier 3 r6, X2).
+#[test]
+fn the_with_arm_runs_against_a_copy_named_with_beside_the_without_copies() -> TestResult {
+    let plugin = tempfile::tempdir()?;
+    fs::write(plugin.path().join("README.md"), "plugin")?;
+    let mut evaluator = evaluator(options(), plugin.path(), "skills", None)?;
+
+    let with = evaluator.target(Arm::With)?;
+
+    let root = with.parent().map(Path::to_path_buf);
+    let shape = (
+        with.file_name().map(OsStr::to_os_string),
+        with.join("README.md").is_file(),
+        root.as_ref().map(|root| root.join("plugin").exists()),
+        root.as_ref().map(|root| root.join("t").is_dir()),
+    );
+    evaluator.finish()?;
+    assert_eq!(
+        shape,
+        (Some(OsString::from("with")), true, Some(false), Some(true))
+    );
+    Ok(())
+}
+
 #[test]
 fn the_baseline_copy_for_a_skill_has_only_that_skill_removed() -> TestResult {
     let plugin = tempfile::tempdir()?;

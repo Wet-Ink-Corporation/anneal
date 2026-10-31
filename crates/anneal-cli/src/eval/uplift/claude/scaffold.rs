@@ -18,7 +18,7 @@ pub(crate) fn script(fixture: &str) -> String {
          # Written by anneal eval uplift: seeds the run's empty workspace with the case's fixture.\n\
          set -eu\n\
          cp -RL {source} .\n\
-         git init -q\n\
+         git init -q -b main\n\
          git add -A\n\
          git -c user.name=eval -c user.email=eval@invalid -c commit.gpgsign=false \
          commit -qm fixture\n"
