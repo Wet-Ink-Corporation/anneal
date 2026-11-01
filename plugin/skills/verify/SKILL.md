@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Use when asked "is it fixed?" or "is it verified?", or before calling work done, fixed or passing, even if the fix is one line or tests ran earlier; prove it with a fresh test run and a doubt pass. Do NOT use for a failure with an unknown cause (use `diagnose`) or the pull request (use `ship`).
+description: Use when asked "is it fixed?", "verified?", "tested?" or "ready to call done?", or to check a claim, and before calling work done or passing, even if the fix is one line; prove it with a fresh test run and a doubt pass. Do NOT use for an unknown failure (use `diagnose`) or the PR (use `ship`).
 ---
 
 # Verify
@@ -33,16 +33,15 @@ Verification comes before completion: "done" or "passing" in a reply needs fresh
 |---|---|
 | "The tests passed an hour ago" | An edit since then makes that run stale. Run them again. |
 | "I'll tell the reviewer what I changed, it saves time" | A reviewer told the conclusion looks for it. Give the diff and the contract. |
-| "That finding is vague but probably right" | Without `file:line` nobody can check it. Reject it. |
 | "One more doubt cycle will settle it" | Three cycles without agreement is a question for the human. |
 | "CI will catch it" | CI runs after the claim. The claim needs evidence now. |
+| "The lead said skip the tests" | A claim still needs a fresh run. |
 
 ## Red flags
 
 - "Done" or "all tests pass" with no `test_run` in the ledger since the last edit.
 - A reviewer prompt that contains your summary or says the work is finished.
 - A finding accepted, or argued over, without a `file:line`.
-- A fourth doubt cycle.
 
 ## Verification
 
