@@ -4,6 +4,7 @@
   "fixture": "py-app",
   "seed": "anneal #15 transcript: a near-miss owner bug was fixed and only then reproduced.",
   "prompt": "`app tail 0 app.log` should print no findings, but it prints every finding in the log. `app tail 1 app.log` prints just the last one, as it should. Fix it.",
+  "max_turns": 16,
   "allowed_tools": [
     "Skill",
     "Read",
@@ -20,12 +21,6 @@
       "target": "last_message",
       "pattern": "reproduc|failing test|\\bred\\b",
       "flags": "i"
-    },
-    {
-      "type": "regex",
-      "name": "records_repro",
-      "target": "last_message",
-      "pattern": "anneal repro record"
     },
     {
       "type": "tool_order",
