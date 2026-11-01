@@ -239,7 +239,11 @@ impl Evaluator for ClaudeEvaluator<'_> {
             return Ok(stopped(false));
         }
         let target = self.target(batch.arm)?;
-        write_cases(&target.join(eval_dir(batch.index)), batch)?;
+        write_cases(
+            &target.join(eval_dir(batch.index)),
+            &target.join("libexec"),
+            batch,
+        )?;
         // The copy took time too: `claude` gets only what is left after it.
         let left = self.time_left();
         if left.is_zero() {
@@ -395,8 +399,9 @@ fn granted(batch: &Batch<'_>) -> BTreeSet<Tool> {
 
 /// Writes each case of `batch` to `<dir>/<case>/case.yaml`, as JSON, withholding the gated
 /// tools the batch grants that the case does not name, with the scaffold script beside it
-/// ([`scaffold::SCRIPT_FILE`]) for a case seeded from a fixture.
-fn write_cases(dir: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
+/// ([`scaffold::SCRIPT_FILE`]) for a case seeded from a fixture, its setup commands last with
+/// the plugin copy's `libexec` (absolute) first on their `PATH`.
+fn write_cases(dir: &Path, libexec: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
     let granted = granted(batch);
     for case in &batch.cases {
         let case_dir = dir.join(case.name());
@@ -410,10 +415,36 @@ fn write_cases(dir: &Path, batch: &Batch<'_>) -> Result<(), RouterError> {
             .map_err(|error| RouterError::Workspace(io::Error::other(error)))?;
         fs::write(case_dir.join("case.yaml"), text).map_err(RouterError::Workspace)?;
         if let Some(fixture) = &case.fixture {
-            scaffold::write(&case_dir, &fixture.dir).map_err(RouterError::Workspace)?;
+            let setup = setup_of(case, libexec)?;
+            scaffold::write(&case_dir, &fixture.dir, setup.as_ref())
+                .map_err(RouterError::Workspace)?;
         }
     }
     Ok(())
+}
+
+/// `case`'s setup commands with `libexec` for their `anneal`, or `None` when it has none.
+///
+/// # Errors
+/// [`RouterError::Workspace`] when `libexec` is not UTF-8, so it cannot be written into the
+/// script.
+fn setup_of<'a>(
+    case: &'a Case,
+    libexec: &'a Path,
+) -> Result<Option<scaffold::Setup<'a>>, RouterError> {
+    if case.body.setup.is_empty() {
+        return Ok(None);
+    }
+    let libexec = libexec.to_str().ok_or_else(|| {
+        RouterError::Workspace(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("plugin copy path {} is not UTF-8", libexec.display()),
+        ))
+    })?;
+    Ok(Some(scaffold::Setup {
+        libexec,
+        commands: &case.body.setup,
+    }))
 }
 
 /// The arguments of `claude` for `batch` against the plugin copy `target` in the workspace at

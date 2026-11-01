@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{Behaviour, Fault, Pressure, Tool, parse};
+use super::{Argv, ArgvFault, Behaviour, Fault, Pressure, Tool, parse};
 use crate::eval::uplift::fixture::FixtureName;
 
 /// A valid case with one deterministic grader and one llm grader, as JSON.
@@ -242,4 +242,80 @@ fn a_fixture_name_with_a_separator_a_dot_start_or_outside_the_alphabet_is_refuse
         .map(|name| Some(Fault::Fixture((*name).to_owned())))
         .collect();
     assert_eq!(faults, expected);
+}
+
+/// `valid()` seeded from a fixture, with `setup` set to `commands`.
+fn with_setup(commands: Value) -> Value {
+    let mut value = valid();
+    value["fixture"] = json!("py-app");
+    value["setup"] = commands;
+    value
+}
+
+#[test]
+fn a_fixture_case_reads_its_setup_commands_in_order() {
+    let value = with_setup(json!([
+        ["anneal", "grill", "confirm", "--quote", "Yes, that's it."],
+        ["anneal", "plan", "approve", "docs/plans/p.md"]
+    ]));
+
+    let case = read(&value).expect("valid");
+
+    let words: Vec<Vec<&str>> = case
+        .setup
+        .iter()
+        .map(|argv| argv.words().iter().map(String::as_str).collect())
+        .collect();
+    assert_eq!(
+        words,
+        [
+            vec!["anneal", "grill", "confirm", "--quote", "Yes, that's it."],
+            vec!["anneal", "plan", "approve", "docs/plans/p.md"],
+        ]
+    );
+}
+
+#[test]
+fn a_case_without_setup_has_none() {
+    let case = read(&valid()).expect("valid");
+
+    assert_eq!(case.setup, Vec::<Argv>::new());
+}
+
+#[test]
+fn setup_without_a_fixture_is_refused() {
+    let mut value = valid();
+    value["setup"] = json!([["true"]]);
+
+    assert_eq!(read(&value).err(), Some(Fault::SetupWithoutFixture));
+}
+
+#[test]
+fn more_than_eight_setup_commands_are_refused() {
+    let value = with_setup(json!(vec![vec!["true"]; 9]));
+
+    assert_eq!(read(&value).err(), Some(Fault::TooManySetup(9)));
+}
+
+#[test]
+fn a_bad_setup_command_is_refused_with_its_position() {
+    let value = with_setup(json!([["true"], []]));
+
+    assert_eq!(
+        read(&value).err(),
+        Some(Fault::SetupCommand {
+            index: 2,
+            fault: ArgvFault::Empty,
+        })
+    );
+}
+
+#[test]
+fn a_setup_fault_names_the_command_and_why() {
+    let fault = Fault::SetupCommand {
+        index: 2,
+        fault: ArgvFault::Empty,
+    };
+
+    assert_eq!(fault.to_string(), "setup command 2: the command is empty");
 }

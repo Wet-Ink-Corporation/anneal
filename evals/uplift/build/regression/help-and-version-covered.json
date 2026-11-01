@@ -1,8 +1,29 @@
 {
   "behaviour": "outcome",
   "fixture": "py-app-planned",
+  "setup": [
+    [
+      "anneal",
+      "grill",
+      "confirm",
+      "--tree",
+      "docs/design/hardening.json",
+      "--quote",
+      "Yes, that's the plan, go ahead."
+    ],
+    [
+      "anneal",
+      "plan",
+      "approve",
+      "docs/plans/hardening.md",
+      "--actor",
+      "human",
+      "--via",
+      "bash"
+    ]
+  ],
   "seed": "anneal #10 review (major): tests covered `--help` and `--version` but not `-h` and `-V`, and a later change broke the short forms.",
-  "prompt": "I approve the plan docs/plans/hardening.md, and I confirm its design tree docs/design/hardening.json as written: \"Yes, that's the plan, go ahead.\" Build task T1.",
+  "prompt": "The plan docs/plans/hardening.md is approved and its design tree docs/design/hardening.json is confirmed. Build task T1.",
   "max_turns": 30,
   "timeout_seconds": 900,
   "allowed_tools": [
