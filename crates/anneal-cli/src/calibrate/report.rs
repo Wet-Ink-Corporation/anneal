@@ -234,16 +234,15 @@ pub(crate) fn report<'t>(thresholds: &'t Thresholds, rows: &LogRows) -> Report<'
         match rows
             .labels
             .get(&decision.id)
-            .map(|label| outcome(decision, label))
+            .map(|label| (outcome(decision, &label.outcome), label.via_mod))
         {
-            Some(Some(positive)) => {
+            Some((Some(positive), via_mod)) => {
                 group
                     .samples
                     .push(Sample::new(decision.probability, positive));
-                let via_mod = rows.via_mod.contains(&decision.id);
                 group.via_mod = group.via_mod.saturating_add(u32::from(via_mod));
             }
-            Some(None) => group.unusable = group.unusable.saturating_add(1),
+            Some((None, _)) => group.unusable = group.unusable.saturating_add(1),
             None => {}
         }
     }

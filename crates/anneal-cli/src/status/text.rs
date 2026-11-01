@@ -148,12 +148,40 @@ fn ledger_tail(events: &[TailEvent]) -> String {
 /// A verdict as the ledger writes it: serde's `snake_case` name of the variant, kept as a
 /// `const` match because the serde name is reachable only through a fallible, allocating
 /// `serde_json::to_value`, and the text form has no error path. A test pins the two together.
-pub(super) const fn verdict_name(verdict: Verdict) -> &'static str {
+const fn verdict_name(verdict: Verdict) -> &'static str {
     match verdict {
         Verdict::TestsVerified => "tests_verified",
         Verdict::Reviewed => "reviewed",
         Verdict::Approved => "approved",
         Verdict::ChangesRequested => "changes_requested",
         Verdict::NoiseOnly => "noise_only",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anneal_ledger::event::Verdict;
+    use serde_json::json;
+
+    use super::verdict_name;
+    use crate::test_repo::Setup;
+
+    #[test]
+    fn verdict_names_are_the_ledger_serde_names() -> Setup<()> {
+        let all = [
+            Verdict::TestsVerified,
+            Verdict::Reviewed,
+            Verdict::Approved,
+            Verdict::ChangesRequested,
+            Verdict::NoiseOnly,
+        ];
+        for verdict in all {
+            assert_eq!(
+                json!(verdict_name(verdict)),
+                serde_json::to_value(verdict)?,
+                "the text form names {verdict:?} as the ledger writes it"
+            );
+        }
+        Ok(())
     }
 }

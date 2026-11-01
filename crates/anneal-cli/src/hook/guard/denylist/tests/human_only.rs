@@ -358,8 +358,10 @@ fn a_human_actor_known_only_at_run_time_reaching_an_unread_call_is_denied() {
 
 #[test]
 fn a_flag_half_that_is_not_a_literal_actor_is_the_documented_limit() {
-    // docs/guard.md, Limits: only a literal `--actor` is the flag half beside an unread call.
-    // A later change that denies this row is an intended flip.
+    // docs/guard.md, Limits: beside an unread call, only a word that is `--actor` as written or
+    // with its expansions empty (`--actor`, `"$a"--actor`, `--act"$x"or`; #125), or one whose
+    // written start is `--actor=`, is the flag half; `"$F"` is none of these. A later change
+    // that denies this row is an intended flip.
     assert_table(&[(
         "v() { anneal decide label \"$@\"; }; v d1 yes \"$F\" human",
         ALLOW,
