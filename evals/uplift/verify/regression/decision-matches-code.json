@@ -3,6 +3,13 @@
   "fixture": "anneal-repo",
   "seed": "anneal #11 review (blocker): the recorded decision said TRUNCATE journal, never WAL, and the code opened the store under WAL.",
   "prompt": "The decisions log says the store runs under a TRUNCATE journal and never WAL. The change opens it with `conn.pragma_update(None, \"journal_mode\", \"WAL\")`. Is it ready to call done?",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
@@ -19,7 +26,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply says the work is not done because the code contradicts the recorded decision, citing the decisions-log row (`crates/anneal-ledger/AGENTS.md`) and the code that sets the journal mode (`JOURNAL_MODE` in `crates/anneal-ledger/src/store/schema.rs`), and asks for the code to use TRUNCATE (or the decision to be changed by its owner) with a test that pins the journal mode."
+      "criteria": "The reply says the work is not done because the code contradicts the recorded decision, citing the decisions-log row (`crates/anneal-ledger/AGENTS.md`) and the code that sets the journal mode (`JOURNAL_MODE` in `crates/anneal-ledger/src/store/schema.rs`), and asks for the code to use TRUNCATE (or the decision to be changed by its owner). On the test, citing the existing test that pins the journal mode (`the_ledger_runs_under_truncate_and_never_creates_wal_or_shm`), which the change would fail, is as good as asking for one; that the WAL change is not in this checkout does not excuse calling it done."
     }
   ]
 }

@@ -7,7 +7,7 @@ MASK = "***"
 
 # The options whose value is a secret, per command: short options without their dash.
 SECRET_OPTIONS = {
-    "curl": {"u", "--user", "--oauth2-bearer"},
+    "curl": {"--user", "--oauth2-bearer"},
     "mysql": {"p", "--password"},
 }
 

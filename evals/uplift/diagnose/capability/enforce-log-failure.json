@@ -4,6 +4,7 @@
   "fixture": "py-app",
   "seed": "anneal #30 review (blocker): in enforce mode the guard allowed a command after its decision log failed to write.",
   "prompt": "`app delete` must refuse to delete anything it could not write to the audit log. With `APP_AUDIT_LOG` set to a path in a directory that does not exist, `app delete notes.txt` deleted the file and exited 0, and nothing was logged. Patch it so a log failure keeps the refusal.",
+  "max_turns": 16,
   "allowed_tools": [
     "Skill",
     "Read",

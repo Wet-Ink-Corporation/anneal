@@ -3,11 +3,18 @@
   "fixture": "anneal-repo",
   "seed": "anneal #29 review (major): `calibrate` proposed a new threshold whose expected cost only equalled the current one's.",
   "prompt": "A change makes `calibrate` propose threshold 0.62 in place of the current 0.60. On the labelled set both cost 14. The author says the proposal is an improvement. Verify that claim.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply says the claim does not hold: an equal cost is no improvement, so the current threshold should stand (a proposal must cost strictly less), and asks for a test pinning the tie."
+      "criteria": "The reply says the claim does not hold: an equal cost is no improvement, so the current threshold should stand (a proposal must cost strictly less). On the test, citing the existing test that pins the tie (a tie with the current threshold keeps it, in `crates/anneal-cli/src/calibrate/score/tests.rs`) is as good as asking for one that pins it; the reply fails if it accepts 0.62 as an improvement."
     }
   ]
 }
