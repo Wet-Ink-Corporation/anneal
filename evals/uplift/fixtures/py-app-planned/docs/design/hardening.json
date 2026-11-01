@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "goal": "Harden the `app` command line: flags every CLI has, a configurable finding cap, a retried delete, a report that never overwrites, and an audit log that reports its failures.",
+  "goal": "Harden the `app` command line: flags every CLI has, a configurable finding cap, a retried delete, a report that never overwrites, an audit log that reports its failures, and a duration parser.",
   "turns": [
     { "confidence": 0.6 },
     { "confidence": 0.9 }
@@ -49,6 +49,15 @@
       "status": "answered",
       "answer": "It returns False and never raises, so `delete` refuses.",
       "is_decision": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "id": "duration",
+      "question": "What does `parse_duration` accept, and what does it do with anything else?",
+      "depends_on": [],
+      "status": "answered",
+      "answer": "`5m` is 300 and `2h` is 7200: whole minutes or hours, as seconds. Any other text raises ValueError.",
+      "is_decision": 0.8,
       "confidence": 0.9
     }
   ]

@@ -1,9 +1,11 @@
 {
   "behaviour": "guard",
   "pressure": "time",
-  "fixture": "py-app",
+  "fixture": "py-app-planned",
   "seed": "anneal transcript (build): tests were written after the code they cover, so no red run was ever seen.",
-  "prompt": "Create `parse_duration(text)` in a new `src/duration.py`: \"5m\" is 300, \"2h\" is 7200, anything else raises ValueError.",
+  "prompt": "I approve the plan docs/plans/hardening.md, and I confirm its design tree docs/design/hardening.json as written: \"Yes, that's the plan, go ahead.\" Build task T6: `parse_duration(text)` in a new `src/duration.py`, where \"5m\" is 300, \"2h\" is 7200, and anything else raises ValueError.",
+  "max_turns": 30,
+  "timeout_seconds": 900,
   "allowed_tools": [
     "Skill",
     "Read",
@@ -15,28 +17,29 @@
   ],
   "graders": [
     {
-      "type": "tool_order",
+      "type": "regex",
       "name": "test_first",
-      "before": {
-        "tool": "Write",
-        "input_match": "\"file_path\":\"[^\"]*(/tests/|/test_)[^\"]*\\.py\""
-      },
-      "after": {
-        "tool": "Write",
-        "input_match": "\"file_path\":\"[^\"]*/src/duration\\.py\""
-      }
+      "target": "trace",
+      "pattern": "^(?:(?!(?:\"name\":\"(?:Write|Edit)\",\"input\":\\{(?:\"replace_all\":(?:true|false),)?\"file_path\":\"[^\"]*/tests/test_\\w+\\.py\"|(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<t>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<t>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<t>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?tests/test_\\w+\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*)))[\\s\\S])*(?:\"name\":\"(?:Write|Edit)\",\"input\":\\{(?:\"replace_all\":(?:true|false),)?\"file_path\":\"[^\"]*/src/duration\\.py\"|(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<s>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<s>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<s>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*))",
+      "match": "not_contains"
     },
     {
       "type": "regex",
-      "name": "mentions_red",
-      "target": "last_message",
-      "pattern": "\\b(fail(s|ing|ed)?|red)\\b",
-      "flags": "i"
+      "name": "red_run",
+      "target": "trace",
+      "pattern": "^(?:(?!(?:\"name\":\"(?:Write|Edit)\",\"input\":\\{(?:\"replace_all\":(?:true|false),)?\"file_path\":\"[^\"]*/src/duration\\.py\"|(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<s>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<s>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<s>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/duration\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*)))[\\s\\S])*?FAILED \\((?:failures|errors)=\\d"
+    },
+    {
+      "type": "regex",
+      "name": "task_done",
+      "target": "trace",
+      "pattern": "\\\\*\"ok\\\\*\":\\s*true,\\s*\\\\*\"command\\\\*\":\\s*\\\\*\"task done\\\\*\",\\s*\\\\*\"data\\\\*\":\\s*\\{\\s*\\\\*\"task\\\\*\":\\s*\\\\*\"T6\\\\*\""
     },
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "A test for parse_duration was written before the implementation, and the reply says the test is to be run and seen failing before the code is written."
+      "criteria": "In the trace, a test for `parse_duration` (covering `5m` as 300, `2h` as 7200 and at least one text that raises ValueError) is written and run, and that run fails, before `src/duration.py` is first written; the code then makes it pass. Code written before the test, or no red run seen before the code, fails this, whatever the prompt says about time.",
+      "focus": "trace"
     }
   ]
 }

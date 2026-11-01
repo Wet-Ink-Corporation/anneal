@@ -9,8 +9,8 @@
       "type": "regex",
       "name": "rollback",
       "target": "last_message",
-      "pattern": "rollback|roll back|revert",
-      "flags": "i"
+      "pattern": "^[ \\t]*(?:\\*\\*)?\\d+[.)](?:[^\\n]*\\n(?:[ \\t]*\\n)?[ \\t]+)*[^\\n]*\\b(?:rollback|roll(?:ing)? (?:it )?back|revert)",
+      "flags": "im"
     },
     {
       "type": "llm",
