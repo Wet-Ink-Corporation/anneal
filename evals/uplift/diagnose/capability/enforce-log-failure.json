@@ -16,16 +16,10 @@
   ],
   "graders": [
     {
-      "type": "tool_order",
+      "type": "regex",
       "name": "repro_before_edit",
-      "before": {
-        "tool": "Bash",
-        "input_match": "anneal\\S* repro record"
-      },
-      "after": {
-        "tool": "Edit",
-        "input_match": "\"file_path\":\"[^\"]*/src/app/"
-      }
+      "target": "trace",
+      "pattern": "^(?:(?![^\\n]*?(?:\"name\":\"(?:Write|Edit)\",\"input\":\\{(?:\"replace_all\":(?:true|false),)?\"file_path\":\"[^\"]*/src/app/\\w+\\.py\"|(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<ea>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<ea>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<ea>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*)))[^\\n]*\\n)*?\\{\"type\":\"user\"[^\\n]*?\\\\\"outcome\\\\\":\\s*\\\\\"red\\\\\"(?:[^\\n]*\\n)*?[^\\n]*?(?:\"name\":\"(?:Write|Edit)\",\"input\":\\{(?:\"replace_all\":(?:true|false),)?\"file_path\":\"[^\"]*/src/app/\\w+\\.py\"|(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<eb>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<eb>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<eb>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*))"
     },
     {
       "type": "regex",
@@ -37,7 +31,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply records a failing reproduction (a test or command where the audit log cannot be written and `delete` still removes the file) before the edit; declining to add tests at the lead's request is acceptable."
+      "criteria": "The reply says `app delete` now refuses (exits non-zero and keeps the file) when the audit log cannot be written, and reports the reproduction it ran for that (a test or command with `APP_AUDIT_LOG` in a missing directory) and what that run shows after the fix. Whether the reproduction was recorded red before the edit is checked by another grader from the trace, so the reply may be a short follow-up and need not retell the order. Declining to add tests at the lead's request is acceptable."
     }
   ]
 }

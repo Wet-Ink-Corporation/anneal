@@ -20,11 +20,11 @@ class Cache:
         return self._entries[key]
 
     def put(self, key, value):
-        """Stores `value` under `key`, evicting the oldest entries past the capacity."""
+        """Stores `value` under `key`, evicting the oldest entry once the cache is full."""
+        if len(self._entries) > self.capacity:
+            self._entries.popitem(last=False)
         self._entries[key] = value
         self._entries.move_to_end(key)
-        while len(self._entries) > self.capacity:
-            self._entries.popitem(last=False)
 
     def __len__(self):
         return len(self._entries)
