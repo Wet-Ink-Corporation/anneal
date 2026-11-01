@@ -65,6 +65,13 @@ const GROWTH_BYTES: u64 = 16 * 1024 * 1024;
 /// The `point` of the hook's `stop_blocked` events, before the gate's id.
 const POINT_PREFIX: &str = "completeness.";
 
+/// What a block asks of the reply it makes the model write. That reply is the one read last,
+/// by the user and by anything grading the turn, so a report given only before the block
+/// would be lost behind a short answer about the missing step.
+const REPORT_AGAIN: &str = "then give your complete report again in your next reply (what you \
+                            did, what you found and what the run shows), not only the missing \
+                            step";
+
 /// The fields of Claude Code's `Stop` input the hook uses; the rest are ignored.
 #[derive(Debug, Deserialize)]
 struct Input {
@@ -328,7 +335,10 @@ fn output(found: Findings, blocked: bool) -> StopOutput {
     let mut output = StopOutput::new("Stop");
     if blocked {
         let lines: Vec<String> = found.gates.into_iter().map(|(_, line)| line).collect();
-        output = output.block(format!("anneal completeness: {}", lines.join("; ")));
+        output = output.block(format!(
+            "anneal completeness: {}; {REPORT_AGAIN}",
+            lines.join("; ")
+        ));
     }
     if !found.nudges.is_empty() {
         output = output.context(format!("anneal completeness: {}", found.nudges.join("; ")));

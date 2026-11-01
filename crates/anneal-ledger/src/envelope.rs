@@ -67,6 +67,22 @@ impl Timestamp {
             .map_err(TimestampError::Clock)
     }
 
+    /// The current UTC time to the millisecond, e.g. `2026-10-11T09:30:00.25Z` (RFC 3339
+    /// drops the fraction's trailing zeros, and the whole fraction at a whole second). For an
+    /// event whose time is compared with file times, which a whole second would blur. Like
+    /// [`Timestamp::now`], it reads the wall clock here because `Timestamp` is the ledger's
+    /// clock adapter.
+    ///
+    /// # Errors
+    /// [`TimestampError::Clock`] when the clock reads past the year 9999.
+    pub fn now_millis() -> Result<Self, TimestampError> {
+        OffsetDateTime::now_utc()
+            .truncate_to_millisecond()
+            .format(&Rfc3339)
+            .map(Self)
+            .map_err(TimestampError::Clock)
+    }
+
     /// The timestamp as written.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -381,6 +397,33 @@ mod tests {
         assert!(
             Timestamp::try_from(now.as_str().to_owned()).is_ok(),
             "now parses back"
+        );
+    }
+
+    /// The system clock in whole Unix milliseconds, as the test reads it.
+    fn clock_millis() -> i64 {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is after 1970");
+        i64::try_from(since.as_millis()).expect("milliseconds fit an i64")
+    }
+
+    #[test]
+    fn now_millis_is_the_clock_s_millisecond_in_utc() {
+        let before = clock_millis();
+        let now = Timestamp::now_millis().expect("the clock is before 9999");
+        let after = clock_millis();
+
+        let stamped = now.unix_millis().expect("it fits an i64");
+        assert!(now.as_str().ends_with('Z'), "UTC: {}", now.as_str());
+        assert!(
+            (before..=after).contains(&stamped),
+            "{before} <= {stamped} <= {after}: {}",
+            now.as_str()
+        );
+        assert!(
+            Timestamp::try_from(now.as_str().to_owned()).is_ok(),
+            "it parses back"
         );
     }
 }
