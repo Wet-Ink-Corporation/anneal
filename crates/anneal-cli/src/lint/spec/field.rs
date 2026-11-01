@@ -90,7 +90,7 @@ pub(crate) fn linked_path(from: &str, target: &str, separator: char) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::spec_target;
+    use super::{linked_path, spec_target};
 
     #[test]
     fn a_link_destination_in_angle_brackets_is_what_lies_inside_them() {
@@ -117,6 +117,46 @@ mod tests {
                 Some("<the design tree, relative to this spec>")
             ),
             "no closing `>` is a plain destination; a value that is no link is whole"
+        );
+    }
+
+    #[test]
+    fn a_relative_spec_joins_the_plan_directory_with_forward_slashes() {
+        assert_eq!(
+            linked_path("docs/plans/p.md", "../specs/s.md", '/'),
+            "docs/plans/../specs/s.md",
+            "unix"
+        );
+        assert_eq!(
+            linked_path(r"docs\plans\p.md", "../specs/s.md", '\\'),
+            "docs/plans/../specs/s.md",
+            "Windows separators become `/`"
+        );
+        assert_eq!(linked_path("p.md", "s.md", '/'), "s.md", "no directory");
+        assert_eq!(linked_path("/p.md", "s.md", '/'), "/s.md", "the root");
+    }
+
+    #[test]
+    fn an_absolute_spec_is_used_as_written() {
+        assert_eq!(
+            linked_path("docs/p.md", "/srv/specs/s.md", '/'),
+            "/srv/specs/s.md",
+            "unix absolute"
+        );
+        assert_eq!(
+            linked_path(r"docs\p.md", r"C:\specs\s.md", '\\'),
+            r"C:\specs\s.md",
+            "a Windows drive"
+        );
+        assert_eq!(
+            linked_path(r"docs\p.md", r"\specs\s.md", '\\'),
+            r"\specs\s.md",
+            "a Windows rooted path"
+        );
+        assert_eq!(
+            linked_path("docs/p.md", "C:/specs/s.md", '/'),
+            "docs/C:/specs/s.md",
+            "a drive means nothing on unix"
         );
     }
 }

@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_joined() {
+    fn a_child_that_never_reads_and_outlives_the_timeout_is_killed_and_the_writer_abandoned() {
         // `exec` leaves no shell holding the pipes; 2 MiB is far past any pipe buffer, so the
         // writer blocks until the kill closes the read end. It then ends within the grace the
         // threads of a killed child get, and the call returns without waiting for it longer.

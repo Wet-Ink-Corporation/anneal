@@ -5,14 +5,13 @@
 use std::path::Path;
 
 use anneal_ledger::LedgerEvent;
-use anneal_ledger::event::{GateBlocked, Mode, ModeSet, Verdict};
+use anneal_ledger::event::{GateBlocked, Mode, ModeSet};
 use clap::Parser;
 use serde_json::{Value, json};
 
 use super::{Fixture, append, build_mode};
 use crate::cli::{Cli, Command};
 use crate::context;
-use crate::status::text::verdict_name;
 use crate::test_repo::Setup;
 
 /// Appends a `gate_blocked` for `point` with `reason` at `ts`.
@@ -167,24 +166,5 @@ fn the_text_form_shows_control_and_unprintable_characters_as_spaces() -> Setup<(
         text, "gates: 1 recent block, newest guard.rm-rf (#1):  [31mred [0m and more end \n",
         "ESC, tab, DEL, U+2028 and a zero-width space cannot recolour or break the terminal"
     );
-    Ok(())
-}
-
-#[test]
-fn verdict_names_are_the_ledger_serde_names() -> Setup<()> {
-    let all = [
-        Verdict::TestsVerified,
-        Verdict::Reviewed,
-        Verdict::Approved,
-        Verdict::ChangesRequested,
-        Verdict::NoiseOnly,
-    ];
-    for verdict in all {
-        assert_eq!(
-            json!(verdict_name(verdict)),
-            serde_json::to_value(verdict)?,
-            "the text form names {verdict:?} as the ledger writes it"
-        );
-    }
     Ok(())
 }

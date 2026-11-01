@@ -1,5 +1,5 @@
 use super::{DAY_MS, DayScore, HISTORY_DAYS, history};
-use crate::calibrate::read::{Answered, LogRows};
+use crate::calibrate::read::{Answered, Label, LogRows};
 use crate::calibrate::report::report;
 use crate::decide::point::{Point, Question};
 use crate::decide::thresholds::Thresholds;
@@ -40,7 +40,13 @@ fn d1_noul_n(rows: &LogRows) -> u32 {
 }
 
 fn label(rows: &mut LogRows, id: &str, outcome: &str) {
-    rows.labels.insert(id.to_owned(), outcome.to_owned());
+    rows.labels.insert(
+        id.to_owned(),
+        Label {
+            outcome: outcome.to_owned(),
+            via_mod: false,
+        },
+    );
 }
 
 #[test]

@@ -78,7 +78,9 @@ fn rows_are_read_from_the_rotated_files_then_the_live_one_and_the_last_label_win
         ]
     );
     assert_eq!(
-        rows.labels.get("d1-1-0").map(String::as_str),
+        rows.labels
+            .get("d1-1-0")
+            .map(|latest| latest.outcome.as_str()),
         Some("no"),
         "later wins"
     );
@@ -236,8 +238,10 @@ fn a_label_row_without_actor_or_via_still_reads_and_is_not_via_mod() -> TestResu
 
     assert_eq!(
         (
-            rows.labels.get("d1-1-0").map(String::as_str),
-            rows.via_mod.len(),
+            rows.labels
+                .get("d1-1-0")
+                .map(|latest| latest.outcome.as_str()),
+            rows.labels.values().filter(|latest| latest.via_mod).count(),
             rows.skipped_rows
         ),
         (Some("yes"), 0, 0)
@@ -254,8 +258,10 @@ fn a_via_this_build_does_not_know_still_reads_as_a_label() -> TestResult {
 
     assert_eq!(
         (
-            rows.labels.get("d1-1-0").map(String::as_str),
-            rows.via_mod.len(),
+            rows.labels
+                .get("d1-1-0")
+                .map(|latest| latest.outcome.as_str()),
+            rows.labels.values().filter(|latest| latest.via_mod).count(),
             rows.skipped_rows
         ),
         (Some("no"), 0, 0)
@@ -276,14 +282,22 @@ fn the_last_label_of_an_id_decides_whether_it_came_via_the_mod() -> TestResult {
 
     assert_eq!(
         (
-            rows.labels.get("d1-1-0").map(String::as_str),
-            rows.labels.get("d1-1-1").map(String::as_str)
+            rows.labels
+                .get("d1-1-0")
+                .map(|latest| latest.outcome.as_str()),
+            rows.labels
+                .get("d1-1-1")
+                .map(|latest| latest.outcome.as_str())
         ),
         (Some("yes"), Some("no")),
         "the later label wins"
     );
     assert_eq!(
-        rows.via_mod.iter().map(String::as_str).collect::<Vec<_>>(),
+        rows.labels
+            .iter()
+            .filter(|(_, latest)| latest.via_mod)
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>(),
         ["d1-1-0"],
         "only an id whose last label came via the mod"
     );

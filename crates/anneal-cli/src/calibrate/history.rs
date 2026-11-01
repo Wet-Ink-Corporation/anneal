@@ -57,7 +57,7 @@ pub(crate) fn history(rows: &LogRows) -> BTreeMap<Point, Vec<DayScore>> {
         if let Some(positive) = rows
             .labels
             .get(&decision.id)
-            .and_then(|label| outcome(decision, label))
+            .and_then(|label| outcome(decision, &label.outcome))
         {
             tally
                 .samples

@@ -1,5 +1,5 @@
 use super::{NoProposal, PointReport, Reason, Report, Verdict, outcome, report, verdict};
-use crate::calibrate::read::{Answered, LogRows};
+use crate::calibrate::read::{Answered, Label, LogRows};
 use crate::decide::point::{Point, Question};
 use crate::decide::thresholds::Thresholds;
 
@@ -47,8 +47,13 @@ fn perfect(point: Point, n: u32) -> LogRows {
         let positive = k % 2 == 0;
         rows.answered
             .push(noul(&id, point, if positive { 1.0 } else { 0.0 }, false));
-        rows.labels
-            .insert(id, if positive { "yes" } else { "no" }.to_owned());
+        rows.labels.insert(
+            id,
+            Label {
+                outcome: if positive { "yes" } else { "no" }.to_owned(),
+                via_mod: false,
+            },
+        );
     }
     rows
 }
@@ -165,12 +170,30 @@ fn hand_rows() -> LogRows {
             probability,
             (0.4..0.9).contains(&probability),
         ));
-        rows.labels.insert(id, label.to_owned());
+        rows.labels.insert(
+            id,
+            Label {
+                outcome: label.to_owned(),
+                via_mod: false,
+            },
+        );
     }
     rows.answered.push(noul("d1-1-5", Point::D1, 0.5, true));
     rows.answered.push(noul("d1-1-6", Point::D1, 0.2, false));
-    rows.labels.insert("d1-1-6".to_owned(), "maybe".to_owned());
-    rows.labels.insert("d9-9-9".to_owned(), "yes".to_owned());
+    rows.labels.insert(
+        "d1-1-6".to_owned(),
+        Label {
+            outcome: "maybe".to_owned(),
+            via_mod: false,
+        },
+    );
+    rows.labels.insert(
+        "d9-9-9".to_owned(),
+        Label {
+            outcome: "yes".to_owned(),
+            via_mod: false,
+        },
+    );
     rows.unanswered.insert((Point::D1, Question::Noul), 2);
     rows
 }
@@ -285,7 +308,13 @@ fn a_point_is_eligible_only_when_every_question_with_decisions_is() {
     for k in 0..50 {
         let id = format!("d1-1-{k}");
         rows.answered.push(choice(&id, Point::D3, 1.0, "plan"));
-        rows.labels.insert(id, "plan".to_owned());
+        rows.labels.insert(
+            id,
+            Label {
+                outcome: "plan".to_owned(),
+                via_mod: false,
+            },
+        );
     }
 
     let eligible = report_verdict(&thresholds, &rows, Point::D3);
@@ -313,7 +342,13 @@ fn unlabelled_rows_of_a_bandless_question_do_not_hold_a_passing_point_back() {
     for k in 0..50 {
         let id = format!("d1-1-{k}");
         rows.answered.push(choice(&id, Point::D3, 1.0, "plan"));
-        rows.labels.insert(id, "plan".to_owned());
+        rows.labels.insert(
+            id,
+            Label {
+                outcome: "plan".to_owned(),
+                via_mod: false,
+            },
+        );
         // Route logs a size score beside every phase choice; D3's score rule has no bands.
         rows.answered.push(Answered {
             question: Question::Score,
@@ -360,7 +395,10 @@ fn labelled_via_mod_counts_the_usable_labels_that_came_through_the_mod() {
     let mut rows = hand_rows();
     // Two usable labels, one unusable label and one label of no decision, all via the mod.
     for id in ["d1-1-0", "d1-1-3", "d1-1-6", "d9-9-9"] {
-        rows.via_mod.insert(id.to_owned());
+        rows.labels
+            .get_mut(id)
+            .expect("hand_rows labels each of these ids")
+            .via_mod = true;
     }
 
     let report = report(&thresholds, &rows);

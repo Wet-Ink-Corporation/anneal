@@ -79,7 +79,8 @@ fn is_temporary(cwd: &Path) -> bool {
 /// account finds Clef unreachable and never reaches the network; [`with_fake_clef`] gives a URL
 /// that answers. `GH_TOKEN`, `GITHUB_TOKEN` and `ANNEAL_GITHUB_API` are removed too, so
 /// `verdict set` never posts a commit status to GitHub; [`with_fake_http`] gives a test a fake
-/// to post to.
+/// to post to. The proxy variables and `SSL_CERT_FILE`, which that post reads, are removed so
+/// an ambient proxy or bundle cannot change a test's outcome; a test that needs one sets it.
 pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_anneal"));
     command
@@ -96,6 +97,13 @@ pub(crate) fn anneal_with_home(cwd: &Path, home: &Path) -> Command {
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .env_remove("ANNEAL_GITHUB_API")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .env_remove("SSL_CERT_FILE")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")

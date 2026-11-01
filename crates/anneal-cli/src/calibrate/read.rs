@@ -11,7 +11,7 @@
 //! row this build reads, or a probability outside 0..=1, is counted in `skipped_rows`, not
 //! dropped silently and not fatal, since one torn line must not stop calibration.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -53,6 +53,15 @@ pub(crate) struct Answered {
     pub(crate) asked: bool,
 }
 
+/// The latest label of a decision id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Label {
+    /// The outcome it records.
+    pub(crate) outcome: String,
+    /// Whether it came through a mod (`via: mod`).
+    pub(crate) via_mod: bool,
+}
+
 /// What the log holds, as calibration needs it.
 #[derive(Debug, Default)]
 pub(crate) struct LogRows {
@@ -62,10 +71,8 @@ pub(crate) struct LogRows {
     pub(crate) answered: Vec<Answered>,
     /// Decisions without an answer, per point and question.
     pub(crate) unanswered: BTreeMap<(Point, Question), u32>,
-    /// The latest outcome label of each decision id.
-    pub(crate) labels: HashMap<String, String>,
-    /// The decision ids whose latest label came through a mod (`via: mod`).
-    pub(crate) via_mod: HashSet<String>,
+    /// The latest label of each decision id.
+    pub(crate) labels: HashMap<String, Label>,
     /// Lines that are not a row this build reads.
     pub(crate) skipped_rows: u32,
     /// When each of `answered` was decided (its `ts_ms`), by index: `read_log` pushes one entry
@@ -178,13 +185,14 @@ fn read_into(bytes: &[u8], rows: &mut LogRows) {
 /// Records `label` as its id's latest, with where it came from: a later label replaces an
 /// earlier one's outcome and its `via` alike.
 fn add_label(label: LabelDto, rows: &mut LogRows) {
-    if label.via.as_deref() == Some(Via::Mod.as_str()) {
-        // The set and the map each own their copy of the id.
-        rows.via_mod.insert(label.id.clone());
-    } else {
-        rows.via_mod.remove(&label.id);
-    }
-    rows.labels.insert(label.id, label.outcome);
+    let via_mod = label.via.as_deref() == Some(Via::Mod.as_str());
+    rows.labels.insert(
+        label.id,
+        Label {
+            outcome: label.outcome,
+            via_mod,
+        },
+    );
 }
 
 fn add_decision(decision: DecisionDto, rows: &mut LogRows) {
