@@ -35,7 +35,11 @@ folder; [ledger.md](ledger.md)).
 - `--plan` and `--tree` must be regular files inside the worktree. They are recorded relative to
   the worktree root, separated by `/`, so the hook finds them from any directory.
 - `clean` is whether `git status --porcelain` printed nothing when the mode was entered:
-  untracked files count, ignored ones do not. A dirty tree is still recorded, with
+  untracked files count, ignored ones do not, and neither do untracked character devices. git
+  cannot commit a device, and Claude Code's Bash sandbox mounts `/dev/null` over the dotfiles it
+  protects in the working directory (`.bashrc`, `.gitconfig`, `.claude/settings.json` and
+  others), so without that exception a sandboxed session always entered build mode dirty. A
+  symlink to a device still counts. A dirty tree is still recorded, with
   `clean: false` and a `mode/dirty` finding, and exit 0; the hook then denies source edits until
   build mode is entered again on a clean tree.
 - Exit 0 when the mode is recorded. Outside a git worktree, or with a `--plan` or `--tree` that

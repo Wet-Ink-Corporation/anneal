@@ -4,13 +4,16 @@
 //! Each command appends one `mode_set` event whose envelope names the worktree (its key,
 //! `scope::worktree_key` of the top-level directory git prints), so the latest `mode_set`
 //! tagged with a worktree is its mode. `build` records the plan and design tree, relative to
-//! the worktree root, and whether the working tree was clean (untracked files included); a
-//! dirty tree is still recorded, with a finding, and the hook then denies source edits until
-//! build mode is entered clean. See `docs/preconditions.md`.
+//! the worktree root, and whether the working tree was clean (untracked files included, apart
+//! from character devices: see `clean`); a dirty tree is still recorded, with a finding, and
+//! the hook then denies source edits until build mode is entered clean. See
+//! `docs/preconditions.md`.
 //!
+//! - `clean`: whether the working tree is clean when build mode is entered.
 //! - `resolve`: where the OS will write a path that may not exist yet.
 //! - `scope`: which paths the hook guards.
 
+pub(crate) mod clean;
 pub(crate) mod resolve;
 pub(crate) mod scope;
 
@@ -32,10 +35,6 @@ use crate::envelope::{Envelope, Finding};
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
 use crate::paths::{self, GIT_TIMEOUT, PathError, StoreLocation, StoreSource};
-
-/// Most bytes of `git status --porcelain` kept: one is enough to know the tree is dirty; the
-/// rest of the cap keeps git's error message readable.
-const STATUS_CAP_BYTES: u64 = 4096;
 
 /// `anneal mode`.
 #[derive(Debug, Args)]
@@ -149,7 +148,7 @@ pub(crate) fn run<O: Write>(
         ),
         ModeAction::Diagnose(_) | ModeAction::Off(_) => (None, None),
     };
-    let clean = is_clean(Path::new(&root))?;
+    let clean = clean::is_clean(Path::new(&root))?;
     let event = LedgerEvent::ModeSet(ModeSet {
         mode,
         clean,
@@ -255,21 +254,6 @@ fn artifact(root: &str, cwd: &Path, flag: &'static str, path: &Path) -> Result<S
         Ok(None) => Err(outside()),
         Err(source) => Err(ModeError::Resolve { path: full, source }),
     }
-}
-
-/// Whether the worktree at `root` has no change git reports: `git status --porcelain` with
-/// untracked (not ignored) files, empty.
-fn is_clean(root: &Path) -> Result<bool, PathError> {
-    let output = paths::run_git_capped(
-        root,
-        &["status", "--porcelain", "--untracked-files=normal"],
-        GIT_TIMEOUT,
-        STATUS_CAP_BYTES,
-    )?;
-    if !output.status.success() {
-        return Err(paths::git_failure(root, &output.stderr));
-    }
-    Ok(output.stdout.is_empty())
 }
 
 /// `path` (absolute) relative to the worktree `root`, `/`-separated, `None` outside it.
