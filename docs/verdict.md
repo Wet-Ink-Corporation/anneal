@@ -75,11 +75,28 @@ GitHub keeps the latest status of a context per commit, so a human `approved` re
   `ssh://` or `git@github.com:owner/repo.git`); it must be on `github.com`.
 - **Request.** `POST https://api.github.com/repos/<owner>/<repo>/statuses/<sha>` with
   `{state, context, description}`, at most 10 s from DNS to the last byte, no redirect
-  followed, no proxy taken from the environment; a refusal's body is read within 16 KiB for
-  GitHub's `message`.
+  followed; a refusal's body is read within 16 KiB for GitHub's `message`.
+- **Proxy and roots.** The request goes the way the environment names, so it works behind a
+  proxy that terminates TLS with its own CA, as in claude.ai cloud sessions (weigh-in
+  wi-077990; this closes the proxy gap #175 left open):
+  - The proxy is the first non-empty of `HTTPS_PROXY`, `https_proxy`, `ALL_PROXY` and
+    `all_proxy` (`HTTP_PROXY` is not read: the API is `https://`). It must be an `http://` or
+    `https://` proxy, used with `CONNECT`; a value without a scheme is `http://`. A SOCKS
+    proxy or a value that is not a proxy URL fails the post with
+    `<variable> does not name an http:// or https:// proxy`; the value itself, which may hold
+    credentials, is never shown.
+  - Hosts in `NO_PROXY` (else `no_proxy`), comma-separated (`host`, `.suffix`, `*.suffix`,
+    `*`), and loopback are reached directly. Without a proxy variable the request is direct.
+  - With `SSL_CERT_FILE` set, the PEM certificates in that file are the trusted roots, in
+    place of the Mozilla roots built in: the HTTP library takes one set of roots, and the file
+    is the system's chosen bundle (a TLS-terminating proxy's bundle includes the public roots).
+    A file that cannot be read, is over 4 MiB, holds a malformed PEM section or no certificate
+    fails the post with `SSL_CERT_FILE (<path>) ...`; certificate checking is never turned
+    off. Without it the built-in roots are used.
+  - Clef's transport (`anneal decide` and the hooks) is unchanged: no proxy, built-in roots.
 - **Failure.** The verdict stays recorded: the ledger is written first and nothing undoes it.
-  A status that was asked for and not posted (an unfit token, no `github.com` origin, GitHub
-  unreachable, a timeout, a non-2xx answer) exits 4 with the envelope (`ok: false`,
+  A status that was asked for and not posted (an unfit token, no `github.com` origin, an
+  unusable proxy or `SSL_CERT_FILE`, GitHub unreachable, a timeout, a non-2xx answer) exits 4 with the envelope (`ok: false`,
   `data.commit_status` `{"outcome": "failed", "state"?, "reason"}` and a `verdict/status:<n>`
   finding), then one `WARNING verdict set: ...` line on stderr. Run `verdict set` again to
   post it, or pass `--no-status`.

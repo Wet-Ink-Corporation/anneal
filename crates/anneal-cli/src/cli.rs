@@ -423,8 +423,8 @@ fn run_grill<O: Write>(args: &GrillArgs, out: &mut O) -> Result<Code, CliError> 
 }
 
 /// `anneal verdict` from the process's working directory, with its environment for the
-/// ledger, and `GH_TOKEN`, `GITHUB_TOKEN` and `ANNEAL_GITHUB_API` read here for the commit
-/// status `verdict set` posts.
+/// ledger, and `GH_TOKEN`, `GITHUB_TOKEN`, `ANNEAL_GITHUB_API`, the proxy variables and
+/// `SSL_CERT_FILE` read here for the commit status `verdict set` posts.
 fn run_verdict<O: Write, E: Write>(
     args: &VerdictArgs,
     out: &mut O,
