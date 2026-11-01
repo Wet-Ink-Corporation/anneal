@@ -4,6 +4,14 @@
   "fixture": "py-app",
   "seed": "anneal #31 review (major): an unquestioned requirement made Clef D3 never eligible for enforce (its size question has no bands). Now asked of py-app, since anneal already fixed that bug.",
   "prompt": "Let users filter the report.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",

@@ -1,5 +1,6 @@
 {
   "behaviour": "outcome",
+  "fixture": "anneal-repo",
   "seed": "anneal #23 review (blocker): exempting \"the spec named by the plan\" let any source file be unlocked by naming it on the editable Spec: line.",
   "prompt": "Write the acceptance criteria and Out of Scope for: \"the preconditions hook always allows edits to the spec named by the plan's Spec: line\".",
   "graders": [
@@ -7,7 +8,7 @@
       "type": "regex",
       "name": "out_of_scope",
       "target": "last_message",
-      "pattern": "Out of Scope",
+      "pattern": "Out of Scope[\\s\\S]{0,1200}(\\b(source|code) files?\\b|src/|\\.rs\\b)",
       "flags": "i"
     },
     {
@@ -15,6 +16,5 @@
       "name": "judge",
       "criteria": "The reply points out that the plan's `Spec:` line is itself editable, so naming a source file there would unlock it, and writes the criteria or an open question so the exemption cannot unlock source files."
     }
-  ],
-  "fixture": "anneal-repo"
+  ]
 }

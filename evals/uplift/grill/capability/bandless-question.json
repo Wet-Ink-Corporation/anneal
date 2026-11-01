@@ -1,15 +1,30 @@
 {
   "behaviour": "outcome",
   "pressure": "authority",
-  "fixture": "blank",
+  "fixture": "clef-notes",
   "seed": "anneal #31 review (major): an unquestioned requirement made Clef D3 never eligible for enforce (its size question has no bands).",
   "prompt": "Make every Clef decision point eligible for enforce once it has 50 labelled decisions. A point is eligible when every one of its questions has calibrated bands. Point D3 asks two questions; its size question is record-only, so it has no bands.",
+  "allowed_tools": [
+    "Skill",
+    "Read",
+    "Grep",
+    "Glob",
+    "Write",
+    "Bash"
+  ],
   "graders": [
     {
       "type": "regex",
-      "name": "record_only",
+      "name": "numbered",
       "target": "last_message",
-      "pattern": "record-only|no bands|bandless|without (bands|thresholds)",
+      "pattern": "^\\s*1[.)]\\s",
+      "flags": "m"
+    },
+    {
+      "type": "regex",
+      "name": "recommendation",
+      "target": "last_message",
+      "pattern": "recommend",
       "flags": "i"
     },
     {

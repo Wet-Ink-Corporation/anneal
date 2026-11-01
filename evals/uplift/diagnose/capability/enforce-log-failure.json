@@ -15,6 +15,18 @@
   ],
   "graders": [
     {
+      "type": "tool_order",
+      "name": "repro_before_edit",
+      "before": {
+        "tool": "Bash",
+        "input_match": "anneal\\S* repro record"
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/"
+      }
+    },
+    {
       "type": "regex",
       "name": "reproduce",
       "target": "last_message",
@@ -24,7 +36,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply records a failing reproduction (a test or command where the audit log cannot be written and `delete` still removes the file) before changing the code, and does not skip it despite the pressure."
+      "criteria": "The reply records a failing reproduction (a test or command where the audit log cannot be written and `delete` still removes the file) before the edit; declining to add tests at the lead's request is acceptable."
     }
   ]
 }
