@@ -6,10 +6,12 @@
 //! The graders themselves are `claude plugin eval`'s ([`grader`]) and are written back as read.
 
 pub(crate) mod grader;
+pub(crate) mod setup;
 
 use serde::{Deserialize, Serialize};
 
 pub(crate) use grader::Grader;
+pub(crate) use setup::{Argv, ArgvFault};
 
 use super::fixture::FixtureName;
 
@@ -121,6 +123,9 @@ struct CaseDto {
     /// The fixture under `<suites>/fixtures/` that seeds each run's workspace.
     #[serde(default)]
     fixture: Option<String>,
+    /// Commands the fixture's scaffold runs after its commit, each an argument vector.
+    #[serde(default)]
+    setup: Option<Vec<Vec<String>>>,
     graders: Vec<Grader>,
 }
 
@@ -141,6 +146,8 @@ pub(crate) struct Parsed {
     pub(crate) allowed_tools: Vec<Tool>,
     /// The fixture that seeds each run's workspace, if any.
     pub(crate) fixture: Option<FixtureName>,
+    /// The commands the fixture's scaffold runs after its commit, in order; empty when none.
+    pub(crate) setup: Vec<Argv>,
     /// Its graders, deterministic ones first.
     pub(crate) graders: Vec<Grader>,
 }
@@ -195,6 +202,20 @@ pub(crate) enum Fault {
          starting with ."
     )]
     Fixture(String),
+    /// `setup` is given with no `fixture`, so no scaffold would run it.
+    #[error("setup needs a fixture: only a fixture's scaffold runs it")]
+    SetupWithoutFixture,
+    /// `setup` lists more than 8 commands.
+    #[error("setup lists {0} commands, more than {max}", max = setup::MAX_COMMANDS)]
+    TooManySetup(usize),
+    /// A setup command, counted from 1, is refused.
+    #[error("setup command {index}: {fault}")]
+    SetupCommand {
+        /// Its position in `setup`, from 1.
+        index: usize,
+        /// Why.
+        fault: ArgvFault,
+    },
 }
 
 /// The case in `bytes`.
@@ -233,6 +254,11 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, Fault> {
         .map(FixtureName::try_from)
         .transpose()
         .map_err(Fault::Fixture)?;
+    let setup = match (dto.setup, &fixture) {
+        (None, _) => Vec::new(),
+        (Some(_), None) => return Err(Fault::SetupWithoutFixture),
+        (Some(commands), Some(_)) => setup_commands(commands)?,
+    };
     check_graders(&dto.graders)?;
     Ok(Parsed {
         behaviour: dto.behaviour,
@@ -242,8 +268,22 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Parsed, Fault> {
         timeout_seconds,
         allowed_tools,
         fixture,
+        setup,
         graders: dto.graders,
     })
+}
+
+/// The setup `commands` as argument vectors: at most [`setup::MAX_COMMANDS`], each valid.
+fn setup_commands(commands: Vec<Vec<String>>) -> Result<Vec<Argv>, Fault> {
+    if commands.len() > setup::MAX_COMMANDS {
+        return Err(Fault::TooManySetup(commands.len()));
+    }
+    (1..)
+        .zip(commands)
+        .map(|(index, words)| {
+            Argv::try_from(words).map_err(|fault| Fault::SetupCommand { index, fault })
+        })
+        .collect()
 }
 
 /// The grader rules: at least one, one outcome grader, unique names, `llm` last, valid

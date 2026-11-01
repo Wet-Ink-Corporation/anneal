@@ -244,7 +244,7 @@ fn each_case_withholds_the_gated_tools_its_batch_grants_that_it_does_not_name() 
     };
     let dir = tempfile::tempdir()?;
 
-    write_cases(dir.path(), &batch)?;
+    write_cases(dir.path(), Path::new("/ws/with/libexec"), &batch)?;
 
     let withheld = |slug: &str| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let text = fs::read(
@@ -270,7 +270,11 @@ fn a_case_alone_in_its_batch_withholds_nothing() -> TestResult {
     let bash = case(&json!(["Skill", "Bash"]));
     let dir = tempfile::tempdir()?;
 
-    write_cases(dir.path(), &batch(vec![&bash]))?;
+    write_cases(
+        dir.path(),
+        Path::new("/ws/with/libexec"),
+        &batch(vec![&bash]),
+    )?;
 
     let text = fs::read(dir.path().join("diagnose--regression--flaky/case.yaml"))?;
     let value: serde_json::Value = serde_json::from_slice(&text)?;
@@ -369,7 +373,7 @@ fn a_fixture_case_s_scaffold_script_is_written_beside_its_case_file() -> TestRes
     };
     let dir = tempfile::tempdir()?;
 
-    write_cases(dir.path(), &batch)?;
+    write_cases(dir.path(), Path::new("/ws/with/libexec"), &batch)?;
 
     assert_eq!(
         (
@@ -379,6 +383,48 @@ fn a_fixture_case_s_scaffold_script_is_written_beside_its_case_file() -> TestRes
                 .exists(),
         ),
         (scaffold::script("/repo/evals/uplift/fixtures/crate"), false)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fixture_case_s_setup_follows_its_scaffold_with_the_copy_s_libexec() -> TestResult {
+    let base = seeded();
+    let commands = parse_case(
+        json!({
+            "behaviour": "outcome",
+            "seed": "s",
+            "prompt": "p",
+            "fixture": "crate",
+            "setup": [["anneal", "plan", "approve", "docs/plans/p.md"]],
+            "graders": [{"type": "regex", "name": "r", "pattern": "x"}]
+        })
+        .to_string()
+        .as_bytes(),
+    )?
+    .setup;
+    let seeded = Case {
+        body: crate::eval::uplift::case::Parsed {
+            setup: commands,
+            ..base.body
+        },
+        ..base
+    };
+    let dir = tempfile::tempdir()?;
+
+    write_cases(
+        dir.path(),
+        Path::new("/ws/with/libexec"),
+        &batch(vec![&seeded]),
+    )?;
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("diagnose--regression--flaky/scaffold.sh"))?,
+        format!(
+            "{}PATH='/ws/with/libexec':\"$PATH\"\nexport PATH\n\
+             'anneal' 'plan' 'approve' 'docs/plans/p.md'\n",
+            scaffold::script("/repo/evals/uplift/fixtures/crate")
+        )
     );
     Ok(())
 }

@@ -1,8 +1,29 @@
 {
   "behaviour": "outcome",
   "fixture": "py-app-planned",
+  "setup": [
+    [
+      "anneal",
+      "grill",
+      "confirm",
+      "--tree",
+      "docs/design/hardening.json",
+      "--quote",
+      "Yes, that's the plan, go ahead."
+    ],
+    [
+      "anneal",
+      "plan",
+      "approve",
+      "docs/plans/hardening.md",
+      "--actor",
+      "human",
+      "--via",
+      "bash"
+    ]
+  ],
   "seed": "anneal #20 review (major): `plan approve`'s conditioned append had no test for the branch where another approval wins the race.",
-  "prompt": "I approve the plan docs/plans/hardening.md, and I confirm its design tree docs/design/hardening.json as written: \"Yes, that's the plan, go ahead.\" Build task T4.",
+  "prompt": "The plan docs/plans/hardening.md is approved and its design tree docs/design/hardening.json is confirmed. Build task T4.",
   "max_turns": 30,
   "timeout_seconds": 900,
   "allowed_tools": [
