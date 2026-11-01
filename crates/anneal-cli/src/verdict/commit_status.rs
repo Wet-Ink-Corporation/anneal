@@ -275,6 +275,13 @@ pub(crate) enum PostError {
         #[source]
         source: io::Error,
     },
+    /// The trust-root bundle's path is not a regular file (a directory, a FIFO, a device), so
+    /// it is not opened: a FIFO would block past the post's timeout.
+    #[error("{CERT_FILE_VAR} ({}) is not a file", path.display())]
+    CertFileNotAFile {
+        /// Its path.
+        path: PathBuf,
+    },
     /// The trust-root bundle is over the cap read.
     #[error("{CERT_FILE_VAR} ({}) is over {CERT_FILE_KIB} KiB", path.display())]
     CertFileTooLarge {

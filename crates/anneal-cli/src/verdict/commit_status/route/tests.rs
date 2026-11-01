@@ -2,12 +2,14 @@ mod through_proxy;
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
 use ureq::tls::RootCerts;
 
 use super::{CERT_FILE_BYTES, Network};
 use crate::error_chain::reason;
 use crate::verdict::commit_status::PostError;
+use crate::verdict::commit_status::http::Client;
 
 /// A lookup over `pairs`, as `std::env::var_os` would answer.
 fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
@@ -203,6 +205,96 @@ fn a_cert_file_over_the_cap_fails() {
     assert_eq!(
         reason(&error),
         format!("SSL_CERT_FILE ({}) is over 4096 KiB", path.display())
+    );
+}
+
+#[test]
+fn the_client_takes_the_route_s_roots_and_proxy() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("bundle.crt");
+    std::fs::write(&path, format!("{TEST_ROOT}{TEST_ROOT}{TEST_ROOT}"))
+        .expect("the bundle is written");
+    let path = path.to_str().expect("a UTF-8 temporary path");
+    let route = Network::read(lookup(&[
+        ("SSL_CERT_FILE", path),
+        ("HTTPS_PROXY", "http://10.0.0.1:3128"),
+    ]))
+    .route()
+    .expect("a route");
+
+    let client = Client::with_route(Duration::from_secs(10), route);
+
+    let config = client.config();
+    match config.tls_config().root_certs() {
+        RootCerts::Specific(certs) => assert_eq!(certs.len(), 3),
+        other => panic!("expected the file's certificates, got {other:?}"),
+    }
+    let proxy = config.proxy().expect("the route's proxy");
+    assert_eq!((proxy.host(), proxy.port()), ("10.0.0.1", 3128));
+}
+
+#[test]
+fn the_client_with_no_variable_takes_no_proxy_and_the_bundled_roots() {
+    let route = Network::read(lookup(&[])).route().expect("a route");
+
+    let client = Client::with_route(Duration::from_secs(10), route);
+
+    let config = client.config();
+    assert!(
+        matches!(config.tls_config().root_certs(), RootCerts::WebPki),
+        "{:?}",
+        config.tls_config().root_certs()
+    );
+    assert_eq!(config.proxy().map(|proxy| proxy.uri().to_string()), None);
+}
+
+#[test]
+fn a_cert_file_that_is_a_directory_fails_as_not_a_file() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+
+    let error = route_with_cert_file(dir.path()).expect_err("a directory");
+
+    assert_eq!(
+        reason(&error),
+        format!("SSL_CERT_FILE ({}) is not a file", dir.path().display())
+    );
+}
+
+/// A FIFO with no writer would block `open` past the post's timeout: it is refused unopened.
+#[cfg(unix)]
+#[test]
+fn a_cert_file_that_is_a_fifo_fails_as_not_a_file() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("bundle.fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "mkfifo failed: {made}");
+
+    let error = route_with_cert_file(&path).expect_err("a FIFO");
+
+    assert_eq!(
+        reason(&error),
+        format!("SSL_CERT_FILE ({}) is not a file", path.display())
+    );
+}
+
+/// `SSL_CERT_FILE` is often a link to the system bundle: the check follows it.
+#[cfg(unix)]
+#[test]
+fn a_cert_file_symlinked_to_a_bundle_is_read() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let target = dir.path().join("bundle.crt");
+    std::fs::write(&target, TEST_ROOT).expect("the bundle is written");
+    let link = dir.path().join("ca-certificates.crt");
+    std::os::unix::fs::symlink(&target, &link).expect("the link is made");
+
+    let route = route_with_cert_file(&link).expect("a route");
+
+    assert!(
+        matches!(&route.roots, RootCerts::Specific(certs) if certs.len() == 1),
+        "{route:?}"
     );
 }
 

@@ -15,16 +15,18 @@
 //!   API's certificate must chain to, in place of the bundled Mozilla roots: ureq takes one set
 //!   of roots and cannot add to its bundled ones, and the file is the system's chosen bundle
 //!   (a TLS-terminating proxy's bundle carries the public roots as well). The file is read
-//!   within [`CERT_FILE_BYTES`] (H-13). A file that cannot be read, is over that cap, holds a
-//!   malformed PEM section or no certificate fails the post, naming the variable and the path;
-//!   verification is never dropped. A certificate rustls cannot parse is skipped by rustls, so
-//!   a bundle of only such entries trusts nothing and every TLS handshake fails. Without
-//!   `SSL_CERT_FILE` the roots are the bundled ones, as before.
+//!   within [`CERT_FILE_BYTES`] (H-13), and only when it is a regular file (a link to one
+//!   included), so a FIFO cannot block the post. A path that is not a file, or a file that
+//!   cannot be read, is over that cap, holds a malformed PEM section or no certificate, fails
+//!   the post, naming the variable and the path; verification is never dropped. A certificate
+//!   rustls cannot parse is skipped by rustls, so a bundle of only such entries trusts nothing
+//!   and every TLS handshake fails. Without `SSL_CERT_FILE` the roots are the bundled ones, as
+//!   before.
 
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
@@ -169,19 +171,28 @@ fn proxy(var: &'static str, value: &OsStr, no_proxy: Option<&OsStr>) -> Result<P
 /// The certificates of the PEM bundle at `path`, as the only roots.
 ///
 /// # Errors
-/// [`PostError::CertFileUnreadable`], [`PostError::CertFileTooLarge`],
-/// [`PostError::CertFileMalformed`] or [`PostError::CertFileEmpty`].
+/// [`PostError::CertFileUnreadable`], [`PostError::CertFileNotAFile`],
+/// [`PostError::CertFileTooLarge`], [`PostError::CertFileMalformed`] or
+/// [`PostError::CertFileEmpty`].
 fn roots(path: &Path) -> Result<RootCerts, PostError> {
+    let unreadable = |source| PostError::CertFileUnreadable {
+        path: path.to_path_buf(),
+        source,
+    };
+    // Checked before opening, following a link (the variable often names a link to the system
+    // bundle): a FIFO would block past the post's timeout (H-13), a directory opens on unix.
+    if !fs::metadata(path).map_err(unreadable)?.is_file() {
+        return Err(PostError::CertFileNotAFile {
+            path: path.to_path_buf(),
+        });
+    }
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|file| {
             file.take(CERT_FILE_BYTES.saturating_add(1))
                 .read_to_end(&mut bytes)
         })
-        .map_err(|source| PostError::CertFileUnreadable {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        .map_err(unreadable)?;
     if u64::try_from(bytes.len()).map_or(true, |len| len > CERT_FILE_BYTES) {
         return Err(PostError::CertFileTooLarge {
             path: path.to_path_buf(),

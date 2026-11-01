@@ -87,19 +87,24 @@ GitHub keeps the latest status of a context per commit, so a human `approved` re
     credentials, is never shown.
   - Hosts in `NO_PROXY` (else `no_proxy`), comma-separated (`host`, `.suffix`, `*.suffix`,
     `*`), and loopback are reached directly. Without a proxy variable the request is direct.
+  - A proxy that refuses the tunnel (such as `407 Proxy Authentication Required`) fails the
+    post with `GitHub could not be reached: the proxy refused the tunnel`, naming neither the
+    proxy nor its credentials.
   - With `SSL_CERT_FILE` set, the PEM certificates in that file are the trusted roots, in
     place of the Mozilla roots built in: the HTTP library takes one set of roots, and the file
     is the system's chosen bundle (a TLS-terminating proxy's bundle includes the public roots).
-    A file that cannot be read, is over 4 MiB, holds a malformed PEM section or no certificate
-    fails the post with `SSL_CERT_FILE (<path>) ...`; certificate checking is never turned
-    off. Without it the built-in roots are used.
+    A path that is not a regular file (a directory or a FIFO; a link to a file is followed),
+    or a file that cannot be read, is over 4 MiB, holds a malformed PEM section or no
+    certificate, fails the post with `SSL_CERT_FILE (<path>) ...`; certificate checking is
+    never turned off. Without it the built-in roots are used.
   - Clef's transport (`anneal decide` and the hooks) is unchanged: no proxy, built-in roots.
 - **Failure.** The verdict stays recorded: the ledger is written first and nothing undoes it.
   A status that was asked for and not posted (an unfit token, no `github.com` origin, an
-  unusable proxy or `SSL_CERT_FILE`, GitHub unreachable, a timeout, a non-2xx answer) exits 4 with the envelope (`ok: false`,
-  `data.commit_status` `{"outcome": "failed", "state"?, "reason"}` and a `verdict/status:<n>`
-  finding), then one `WARNING verdict set: ...` line on stderr. Run `verdict set` again to
-  post it, or pass `--no-status`.
+  unusable proxy or `SSL_CERT_FILE`, a proxy that refused the tunnel, GitHub unreachable, a
+  timeout, a non-2xx answer) exits 4 with the envelope (`ok: false`, `data.commit_status`
+  `{"outcome": "failed", "state"?, "reason"}` and a `verdict/status:<n>` finding), then one
+  `WARNING verdict set: ...` line on stderr. Run `verdict set` again to post it, or pass
+  `--no-status`.
 - **Tests.** `ANNEAL_GITHUB_API` replaces the API base, honoured only by a debug build and
   only as `http://` on `127.0.0.1` or `[::1]` (as `ANNEAL_CLEF_URL`), so a released binary
   never sends the token elsewhere.

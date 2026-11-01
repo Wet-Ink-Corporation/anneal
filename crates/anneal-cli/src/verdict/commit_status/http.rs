@@ -7,11 +7,13 @@
 //! (weigh-in wi-077990 A): through the `CONNECT` proxy and with the trust roots of the
 //! [`Route`] it is built with (`route`), never from ureq's own reading of the process's
 //! environment; with no proxy or root variable set that is direct, with the bundled Mozilla
-//! roots, as Clef's. A refusal's
-//! body is read through a cap of [`ERROR_BODY_BYTES`] for GitHub's `message`, which is shown
-//! printable and cut to [`MESSAGE_CHARS`]; no error carries the token, the URL or a ureq
-//! message. ureq's resolver thread may outlive a call that times out, as documented there; a
-//! `verdict set` process exits soon after.
+//! roots, as Clef's. A proxy that refuses the tunnel is [`PostError::Unreachable`] with a fixed
+//! reason that names neither the proxy nor its credentials.
+//!
+//! A refusal's body is read through a cap of [`ERROR_BODY_BYTES`] for GitHub's `message`,
+//! which is shown printable and cut to [`MESSAGE_CHARS`]; no error carries the token, the URL
+//! or a ureq message. ureq's resolver thread may outlive a call that times out, as documented
+//! there; a `verdict set` process exits soon after.
 
 use std::io::Read as _;
 use std::time::Duration;
@@ -95,6 +97,12 @@ impl Client {
         Self::with_route(timeout, Route::direct())
     }
 
+    /// The agent's configuration, for tests that pin what a [`Route`] made of it.
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> &ureq::config::Config {
+        self.agent.config()
+    }
+
     /// Sends `request`.
     ///
     /// # Errors
@@ -149,6 +157,7 @@ impl Client {
             UreqFailure::ConnectionFailed { .. } => unreachable("the connection failed"),
             UreqFailure::HostNotFound => unreachable("the host was not found"),
             UreqFailure::Tls => unreachable("TLS failed"),
+            UreqFailure::ProxyRefused => unreachable("the proxy refused the tunnel"),
             UreqFailure::InvalidRequest => PostError::Request,
             UreqFailure::Status(code) => PostError::Status {
                 code,

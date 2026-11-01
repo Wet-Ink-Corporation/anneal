@@ -30,6 +30,9 @@ pub(crate) enum UreqFailure {
     Status(u16),
     /// A redirect was refused or failed.
     Redirect,
+    /// The `CONNECT` proxy refused the tunnel (a non-200 answer, such as 407) or did not
+    /// answer it. ureq's message, which this drops, names the proxy's status.
+    ProxyRefused,
     /// Anything else, including kinds a later ureq adds.
     Other,
 }
@@ -59,6 +62,7 @@ impl UreqFailure {
             ureq::Error::BodyExceedsLimit(_) => Self::BodyTooLarge,
             ureq::Error::StatusCode(code) => Self::Status(*code),
             ureq::Error::TooManyRedirects | ureq::Error::RedirectFailed => Self::Redirect,
+            ureq::Error::ConnectProxyFailed(_) => Self::ProxyRefused,
             _ => Self::Other,
         }
     }

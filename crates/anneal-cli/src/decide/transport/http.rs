@@ -111,7 +111,8 @@ fn failure(error: &ureq::Error, after: Duration) -> TransportError {
         UreqFailure::BodyTooLarge => bad(format!("response body over {MAX_RESPONSE_BYTES} bytes")),
         UreqFailure::Status(code) => bad(format!("HTTP {code}")),
         UreqFailure::Redirect => bad("redirect refused".to_owned()),
-        UreqFailure::Other => unreachable_because("request failed"),
+        // Clef's agent takes no proxy, so a refused tunnel is only another failed request.
+        UreqFailure::ProxyRefused | UreqFailure::Other => unreachable_because("request failed"),
     }
 }
 

@@ -8,6 +8,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
 use crate::decide::transport::ApiToken;
+use crate::error_chain::reason;
 use crate::verdict::commit_status::http::{Client, Request};
 use crate::verdict::commit_status::route::Network;
 use crate::verdict::commit_status::{PostError, State};
@@ -167,4 +168,48 @@ fn with_no_proxy_variable_the_status_goes_directly() {
 
     assert!(result.is_ok(), "{result:?}");
     assert!(head.starts_with("POST /repos/owner/repo/"), "{head}");
+}
+
+/// A `CONNECT` proxy that refuses the tunnel with `407`: returns the `CONNECT` request's head.
+fn refuse_one(listener: &TcpListener) -> String {
+    let (stream, _) = listener.accept().expect("a connection");
+    let mut reader = BufReader::new(stream.try_clone().expect("a second handle"));
+    let connect = read_request(&mut reader);
+    let mut writer = stream;
+    writer
+        .write_all(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .expect("the tunnel is refused");
+    connect
+}
+
+#[test]
+fn a_proxy_refusing_the_tunnel_is_unreachable_naming_neither_proxy_nor_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("its address");
+    let route = Network::read(with_proxy(format!("http://user:s3cret@{addr}")))
+        .route()
+        .expect("a route");
+    let client = Client::with_route(Duration::from_secs(10), route);
+    let url = "http://github.test/repos/owner/repo/statuses/abc123".to_owned();
+
+    let (result, connect) = post_while(&client, url, &listener, refuse_one);
+
+    assert!(connect.starts_with("CONNECT github.test:80 "), "{connect}");
+    let error = result.expect_err("the proxy refused the tunnel");
+    let shown = reason(&error);
+    assert_eq!(
+        shown,
+        "GitHub could not be reached: the proxy refused the tunnel"
+    );
+    assert!(
+        matches!(
+            error,
+            PostError::Unreachable {
+                reason: "the proxy refused the tunnel"
+            }
+        ),
+        "{error:?}"
+    );
 }
