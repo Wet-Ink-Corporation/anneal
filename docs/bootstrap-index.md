@@ -7,7 +7,7 @@ hooks check that it was done, and the ledger records what happened.
 
 Load the skill whose trigger matches before acting:
 
-- `grill`: new behaviour or a vague request; question it until the requirements are confirmed.
+- `grill`: new behaviour without saying how it works, or a vague request; question it until the requirements are confirmed.
 - `spec`: requirements are agreed; write the spec and its criteria.
 - `plan`: a spec is ready; split it into tasks and get the plan approved.
 - `build`: code to add or change, or an approved task; build it test-first.

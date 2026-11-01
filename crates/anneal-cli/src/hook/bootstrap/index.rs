@@ -12,7 +12,7 @@ use std::fmt::{self, Display, Formatter};
 const ENTRY_TRIGGERS: [(&str, &str); 7] = [
     (
         "grill",
-        "new behaviour or a vague request; question it until the requirements are confirmed.",
+        "new behaviour without saying how it works, or a vague request; question it until the requirements are confirmed.",
     ),
     (
         "spec",

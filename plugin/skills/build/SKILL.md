@@ -12,7 +12,7 @@ Builds one approved task test-first with a single approval up front and hard sto
 - You MUST enter build mode with `anneal mode build --plan <plan> --tree <tree>` on a clean tree before editing source; the `preconditions` hook denies source edits until the plan is approved and current.
 - You MUST write the failing test first and see it fail; the `preconditions` hook allows test files before source.
 - You MUST mark a task done only with `anneal task done <id> -- <test command>`; it records `task_done` only when the command exits 0.
-- You MUST NOT lower a floor in `.anneal/ratchets.json` or remove a test; the `fast-check` hook blocks the batch and `anneal floor-guard` fails the diff.
+- You MUST NOT lower a floor in `.anneal/ratchets.json` or remove or loosen a test; the `fast-check` hook blocks the batch and `anneal floor-guard` fails the diff.
 - You MUST NOT write source through Bash to get past a `preconditions` denial.
 
 ## When to use
