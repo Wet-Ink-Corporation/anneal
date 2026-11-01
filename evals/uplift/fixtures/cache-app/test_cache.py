@@ -13,6 +13,12 @@ class CacheTest(unittest.TestCase):
         cache = Cache(capacity=2)
         self.assertEqual(cache.get("missing", "none"), "none")
 
+    def test_the_cache_never_grows_past_its_cap(self):
+        cache = Cache(capacity=2)
+        for key in "abcde":
+            cache.put(key, key.upper())
+            self.assertLessEqual(len(cache), cache.capacity)
+
     def test_a_capacity_below_one_is_refused(self):
         with self.assertRaises(ValueError):
             Cache(capacity=0)
