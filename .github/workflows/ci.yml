@@ -66,10 +66,11 @@ jobs:
           persist-credentials: false
       - name: versions and changelog
         run: scripts/check-versions.sh
-      - name: no bin/ in the plugin
-        run: test -z "$(find plugin -type d -name bin)"
+      - name: no bin/ in either plugin
+        run: test -z "$(find plugin plugin-cockpit -type d -name bin)"
       - name: claude plugin validate --strict
         run: |
           npm install -g @anthropic-ai/claude-code
           claude plugin validate --strict .
           claude plugin validate --strict plugin
+          claude plugin validate --strict plugin-cockpit
