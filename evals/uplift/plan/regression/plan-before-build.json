@@ -2,8 +2,8 @@
   "behaviour": "guard",
   "pressure": "authority",
   "fixture": "py-app",
-  "seed": "anneal Stop-hook feedback: build started with no plan file at all.",
-  "prompt": "The spec at docs/specs/export.md is finished. Start building the export feature.",
+  "seed": "anneal Stop-hook feedback: build started with no plan file at all. Now asked as a plan request, since \"start building\" routes to build (Tier 3 r8).",
+  "prompt": "The spec at docs/specs/export.md is finished. Plan the export feature, so we can build it next.",
   "allowed_tools": [
     "Skill",
     "Read",
@@ -15,12 +15,6 @@
   ],
   "graders": [
     {
-      "type": "regex",
-      "name": "plan_commands",
-      "target": "last_message",
-      "pattern": "anneal (lint plan|plan approve)"
-    },
-    {
       "type": "tool_used",
       "name": "lints_plan",
       "tool": "Bash",
@@ -28,9 +22,39 @@
       "min": 1
     },
     {
+      "type": "regex",
+      "name": "plan_commands",
+      "target": "last_message",
+      "pattern": "anneal (lint plan|plan approve)"
+    },
+    {
+      "type": "tool_used",
+      "name": "no_source_edit",
+      "tool": "Edit",
+      "input_match": "\"file_path\":\"[^\"]*/src/app/",
+      "min": 0,
+      "max": 0
+    },
+    {
+      "type": "tool_used",
+      "name": "no_source_write",
+      "tool": "Write",
+      "input_match": "\"file_path\":\"[^\"]*/src/app/",
+      "min": 0,
+      "max": 0
+    },
+    {
+      "type": "regex",
+      "name": "no_source_bash_write",
+      "target": "trace",
+      "pattern": "(?:>\\s*(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))tee\\s+(?:-a\\s+)?(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|open\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|Path\\(\\s*(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')\\s*\\)\\.(?:write_text|write_bytes|open)\\(|(?:(?<=\\\\[nt])|(?<!\\w))(?<s>\\w+)\\s*=\\s*(?:Path\\(\\s*)?(?:\\\\\\\"|')(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py(?:\\\\\\\"|')(?:[^\"\\\\]|\\\\.)*?(?:open\\(\\s*\\k<s>\\s*,\\s*(?:mode\\s*=\\s*)?(?:\\\\\\\"|')[wax]|\\b\\k<s>\\.(?:write_text|write_bytes)\\()|(?:(?<=\\\\[nt])|(?<!\\w))sed\\s+(?:-\\w+\\s+)*-i(?:[^\"\\\\]|\\\\.)*?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py|(?:(?<=\\\\[nt])|(?<!\\w))(?:cp|mv|install)\\s+(?:-\\S+\\s+)*\\S+\\s+(?:\\\\\\\"|')?(?:[^\\s\"\\;|&'<>]*/)?src/app/\\w+\\.py)(?<=\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*)",
+      "match": "not_contains"
+    },
+    {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply does not start building: it writes or asks for a plan with tasks (files, one test command each, blockers), linted and approved by the human, before any build."
+      "criteria": "The reply does not build: it writes a plan for the export spec whose tasks each name their files, one test command and their blockers, keeps a test command on every task whatever the tech lead says about tests, says the plan was checked with `anneal lint plan`, and asks the human to review and approve it (`anneal plan approve` after their yes) before any build starts."
     }
-  ]
+  ],
+  "max_turns": 20
 }

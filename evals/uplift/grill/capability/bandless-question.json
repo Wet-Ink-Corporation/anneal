@@ -24,7 +24,7 @@
       "type": "regex",
       "name": "recommendation",
       "target": "last_message",
-      "pattern": "recommend|\\bI(?:'|\\u2019)d (?:suggest|go|pick|choose|use|keep|take|lean|start|default|add|read|treat|make|set|prefer|say)\\b",
+      "pattern": "recommend",
       "flags": "i"
     },
     {

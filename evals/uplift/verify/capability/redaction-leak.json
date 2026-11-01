@@ -14,15 +14,21 @@
   "graders": [
     {
       "type": "regex",
-      "name": "regression_test",
-      "target": "last_message",
-      "pattern": "regression (?:test|case)|failing test|\\b(?:add|adds|adding|write|writes|writing|wrote|need|needs|want|missing|lacks?|without|no)\\b[^\\n.]{0,40}\\btests?\\b[^\\n.]{0,80}(?:curl -u|-u\\b|the leak|this leak)|\\btests?\\b[^\\n.]{0,20}\\b(?:for|that|which|feeding|with)\\b[^\\n.]{0,60}(?:curl -u|-u\\b)|\\btest_\\w*(?:curl|user|_u)\\w*",
-      "flags": "i"
+      "name": "curl_u_test",
+      "target": "trace",
+      "pattern": "\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:[^\"\\\\]|\\\\.)*?(?:def test_(?:[^\"\\\\]|\\\\.)*?curl -u|curl -u(?:[^\"\\\\]|\\\\.)*?def test_)"
+    },
+    {
+      "type": "regex",
+      "name": "red_then_green",
+      "target": "trace",
+      "pattern": "(?:^|\\n)\\{\"type\":\"user\"[^\\n]*?FAILED \\((?:failures|errors)=\\d[^\\n]*(?:\\n[^\\n]*)*?\\n\\{\"type\":\"user\"[^\\n]*?Ran \\d+ tests? in [\\d.]+s\\\\n\\\\nOK"
     },
     {
       "type": "llm",
       "name": "judge",
       "criteria": "The reply does not call it fixed on the patch alone: it asks for, or writes and runs, a regression test that feeds `curl -u user:<password>` through `redact`, fails on the code as committed (before `fix.patch`) and passes with the patch applied, run fresh. Pointing out forms the patch still misses (`-uuser:pw`, `--user=user:pw`) supports this but does not replace the test."
     }
-  ]
+  ],
+  "max_turns": 16
 }

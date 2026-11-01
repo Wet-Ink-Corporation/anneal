@@ -270,7 +270,13 @@ schema; without `last_assistant_message`, the last assistant message in the tran
 final assistant message is judged: a claim made in an earlier message of the same turn, before
 more tool calls, is not seen.
 
-**Hard gates** block with `{"decision": "block", "reason": "anneal completeness: ..."}`:
+**Hard gates** block with `{"decision": "block", "reason": "anneal completeness: ..."}`. The
+reason joins the failed gates' lines with `; ` and ends by asking for the complete report again
+in the next reply (what was done, what was found and what the run shows), not only the missing
+step: that reply is the last one, which the user reads and an eval grades, so a report written
+before the block would otherwise be lost behind a short answer. The claim gate's line says to
+run `anneal task done <name> -- <test command>`, where `<name>` is the plan's task id or, with
+no plan or task, any short name for the change; `task done` needs nothing to exist first.
 
 | Gate | Blocks when | Point |
 |---|---|---|
@@ -347,10 +353,17 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   (tracked changes and untracked files git does not ignore) that the preconditions hook counts
   as source (not tests, prose documents or scratch paths). Their latest modification time, in
   milliseconds, must be earlier than the start of the latest `test_run` tagged with the worktree
-  (`anneal task done` tags it): its `ts` minus its `duration_ms`. `task done` stamps `ts` after
-  the command ends, truncated to the second, so the computed start is never later than the real
-  one and up to a second earlier: an edit made while the tests ran always counts as untested,
-  and one made in the second before they started may too (a block, never a pass). Runs stamped
+  (`anneal task done` tags it): its `ts` minus its `duration_ms` and 2 ms more (1 ms for the
+  duration rounded down, 1 ms for the moment between the command's end and the stamp). `task
+  done` stamps `ts` as the command ends, to the millisecond, so the computed start is not later
+  than the real one and at most a few milliseconds earlier: an edit made while the tests ran
+  counts as untested, and one made in the moment before they started may too (a block, never a
+  pass). This assumes file modification times are as fine as the wall clock; a file system
+  with coarser times can round an edit made early in the run back to before its start. Runs
+  recorded before millisecond stamps carry a `ts` truncated to the second and taken after the
+  ledger was found and opened, so their computed start is earlier by the truncation and later
+  by that delay: an edit in their first milliseconds may count as tested. They are read as
+  they are. Runs stamped
   more than 60 s in the future are passed over (of the latest 16). There is no ledger edit event
   to use instead. A claim with no changed source file needs nothing. Not seen: changes already
   committed (git no longer lists them) and deleted files (they have no time). Not checked: what

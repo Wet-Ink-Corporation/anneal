@@ -19,6 +19,10 @@ finished, so a command that cannot start leaves no file. The task id and `--sess
 checked as ledger tags before the command runs: one the ledger would refuse is a usage error
 and nothing runs. A failure to wait on the command, or to write the ledger, exits 70.
 
+Both events are stamped (`ts`) once, as the command ends, to the millisecond
+(`2026-11-01T06:38:44.512Z`), so the Stop hook can tell an edit made just before the run from
+one made during it (`docs/hooks.md`); other commands stamp to the second.
+
 `test_run` carries `task`, `command` (the words joined by spaces, for reading rather than
 re-running), `outcome`, `exit` (`null` when the command was killed), `duration_ms` (from a
 monotonic clock) and `timeout_secs` (set only when the timeout killed it); see
