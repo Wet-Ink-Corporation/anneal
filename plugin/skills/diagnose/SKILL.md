@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Use when something is broken or a test fails unexpectedly, even if the cause looks obvious; reproduce it red, then find the root cause before fixing it. Do NOT use for a new or vague request (use `grill`), splitting a spec into tasks (use `plan`) or building an approved task (use `build`).
+description: Use for a bug report ("X should do Y but does Z, fix it"), something broken or a test failing unexpectedly, even if rushed or the bug looks trivial; reproduce it red, then find the root cause before fixing it. Do NOT use for a vague request (use `grill`) or an approved task (use `build`).
 ---
 
 # Diagnose

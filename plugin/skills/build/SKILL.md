@@ -1,6 +1,6 @@
 ---
 name: build
-description: Use when an approved task is next, even if it looks small; build it test-first, red then green, and mark it done only by its test command. Do NOT use for splitting a spec into tasks (use `plan`), writing the spec (use `spec`) or a failure with an unknown cause (use `diagnose`).
+description: Use when told what code to add, create or change (a flag, a function), even if it looks small; build the next approved task test-first, red then green, done only by its test command; with no approved task, stop and route to `plan`. Do NOT use for a vague ask (use `grill`) or a bug (use `diagnose`).
 ---
 
 # Build
@@ -17,7 +17,8 @@ Builds one approved task test-first with a single approval up front and hard sto
 ## When to use
 
 - A plan passes `anneal plan check` (exit 0) and one of its tasks has every blocker done.
-- Not when the task list is missing (use `plan`), the spec is missing (use `spec`), or something broke and nobody knows why (use `diagnose`).
+- Told to add or change code with no approved task: stop before any edit, say so, and route to `plan`.
+- Not when something broke and nobody knows why (use `diagnose`).
 
 ## Process
 
