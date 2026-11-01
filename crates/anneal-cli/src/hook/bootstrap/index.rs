@@ -12,7 +12,7 @@ use std::fmt::{self, Display, Formatter};
 const ENTRY_TRIGGERS: [(&str, &str); 7] = [
     (
         "grill",
-        "new behaviour without saying how it works, or a vague request; question it until the requirements are confirmed.",
+        "new behaviour, even a precise rule, without saying how it works, or a vague request; question it until confirmed.",
     ),
     (
         "spec",
@@ -28,11 +28,11 @@ const ENTRY_TRIGGERS: [(&str, &str); 7] = [
     ),
     (
         "diagnose",
-        "a bug report, something broken or a failing test; reproduce it red before fixing.",
+        "told to fix wrong behaviour or a failing test; reproduce it red before any edit.",
     ),
     (
         "verify",
-        "is it fixed or tested, or work looks done; prove it before claiming it.",
+        "is it fixed or tested, or work looks done; prove it first.",
     ),
     (
         "ship",
@@ -63,7 +63,7 @@ hooks check that it was done, and the ledger records what happened.
 
 ## Entry skills
 
-Load the skill whose trigger matches before acting:
+Load the matching skill before your first tool call:
 
 ";
 

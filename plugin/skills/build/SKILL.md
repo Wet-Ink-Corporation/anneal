@@ -1,6 +1,6 @@
 ---
 name: build
-description: Use when told what code to add, create or change (a flag, a function), even if it looks small; build the next approved task test-first, red then green, done only by its test command; with no approved task, stop and route to `plan`. Do NOT use for a vague ask (use `grill`) or a bug (use `diagnose`).
+description: Use when told what code to add or change (a flag, a function), even if small; build the next approved task test-first, red then green, done only by its test command; with no approved task, edit nothing and load `plan`. Do NOT use for a vague ask (use `grill`) or a bug (use `diagnose`).
 ---
 
 # Build

@@ -1,15 +1,15 @@
 ---
 name: verify
-description: Use when asked "is it fixed?", "verified?", "tested?" or "ready to call done?", or to check a claim, and before calling work done or passing, even if the fix is one line; prove it with a fresh test run and a doubt pass. Do NOT use for an unknown failure (use `diagnose`) or the PR (use `ship`).
+description: Use when asked "is it fixed?", "tested?" or "can we close it?", or to check a claim, and before calling work done or fixed, even if told to skip tests; prove it fresh, failing before the fix and passing after, and doubt it. Do NOT use for an unknown failure (use `diagnose`) or the PR (use `ship`).
 ---
 
 # Verify
 
 ## Overview
 
-Verification comes before completion: "done" or "passing" in a reply needs fresh evidence in the ledger, not the author's word. The `completeness` hook checks each reply when the session stops.
+A "done" or "fixed" reply needs fresh evidence in the ledger, not the author's word.
 
-- You MUST run the tests with `anneal task done <id> -- <test command>` after the last source edit and before writing done, fixed or passing; the `completeness` hook blocks the claim until a green run is newer than the edit.
+- You MUST run the tests with `anneal task done <id> -- <test command>` after the last source edit and before writing done, fixed or passing, and back "fixed" with a test that failed before the fix (a check by hand is not a test); the `completeness` hook blocks the claim until a green run is newer than the edit.
 - You MUST remove every `[DEBUG-<id>]` tag until `anneal repro leftovers` exits 0; the `completeness` hook blocks while one is left.
 - You MUST end every doubt-pass reviewer's reply with a Status block (`Status:` DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED, then Gate, Review, Changed, Decisions needed, Not verified); the `status` hook records each one.
 
@@ -20,7 +20,7 @@ Verification comes before completion: "done" or "passing" in a reply needs fresh
 
 ## Process
 
-1. **Run the tests fresh.** Run `anneal task done <id> -- <the task's test command>`. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
+1. **Run the tests fresh.** Run `anneal task done <id> -- <the task's test command>`; with no task, name the change as `<id>`. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
 2. **Run the gate.** In a Rust repository (a `Cargo.toml` at the root), run `temper:gate`. It's working if the gate is green.
 3. **Clear the leftovers.** Run `anneal repro leftovers`. It's working if it exits 0.
 4. **Doubt pass.** Run `anneal verify risk` first; on exit 3, skip to step 6 and say so. Hand one or more reviewer subagents the artifact (the diff and the files it touches) and the contract (the spec's criteria, the task's test, the plan), never your claim or summary. Ask each for findings as `file:line`, what is wrong and why, ending in a Status block. It's working if each reviewer got files, not your conclusions.
@@ -34,13 +34,13 @@ Verification comes before completion: "done" or "passing" in a reply needs fresh
 | "The tests passed an hour ago" | An edit since then makes that run stale. Run them again. |
 | "I'll tell the reviewer what I changed, it saves time" | A reviewer told the conclusion looks for it. Give the diff and the contract. |
 | "One more doubt cycle will settle it" | Three cycles without agreement is a question for the human. |
-| "CI will catch it" | CI runs after the claim. The claim needs evidence now. |
-| "The lead said skip the tests" | A claim still needs a fresh run. |
+| "CI will catch it" | CI runs after the claim. |
+| "The lead said skip the tests" | Write and run it anyway, or say the claim is unproven. |
 
 ## Red flags
 
 - "Done" or "all tests pass" with no `test_run` in the ledger since the last edit.
-- A reviewer prompt that contains your summary or says the work is finished.
+- A reviewer prompt holding your summary.
 - A finding accepted, or argued over, without a `file:line`.
 
 ## Verification
