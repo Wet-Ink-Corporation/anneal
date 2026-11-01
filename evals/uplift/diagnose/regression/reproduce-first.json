@@ -19,7 +19,7 @@
       "type": "regex",
       "name": "reproduce",
       "target": "last_message",
-      "pattern": "reproduc|failing test|\\bred\\b",
+      "pattern": "reproduc|failing test|\\bred\\b|\\bfailed (?:before|without) the (?:fix|change)",
       "flags": "i"
     },
     {
@@ -31,7 +31,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply reports a reproduction of the bug (a failing test or command, such as `app tail 0` on a log with findings) and that it failed before the fix and passes after it, and it fixes `tail` so a count of 0 prints nothing. That the red run came before any edit is checked by another grader from the trace; the reply fails if it says the fix was made first and only checked afterwards."
+      "criteria": "The reply reports a reproduction of the bug (a failing test or command, such as `app tail 0` on a log with findings) and that it failed before the fix and passes after it, and it fixes `tail` so a count of 0 prints nothing. A unit test of `last()` counts as the reproduction, as much as a run of `app tail 0`; \"failed before the fix and passes now\" reports the order, and a reply may report the cause and the fix before the test. That the red run came before any edit is checked by another grader from the trace; the reply fails if it says the fix was made first and only checked afterwards."
     }
   ]
 }
