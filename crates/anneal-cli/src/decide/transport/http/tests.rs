@@ -445,3 +445,16 @@ fn the_agent_takes_no_proxy_follows_no_redirect_and_returns_error_statuses() {
     assert_eq!(config.max_redirects(), 0);
     assert!(!config.http_status_as_error());
 }
+
+#[test]
+fn a_proxy_refusing_the_tunnel_is_a_failed_request() {
+    // Clef's agent takes no proxy, so only the mapping is pinned: as any other failed request.
+    let error = ureq::Error::ConnectProxyFailed("proxy server responded 403/Forbidden".to_owned());
+
+    assert_eq!(
+        super::failure(&error, TIMEOUT),
+        TransportError::Unreachable {
+            reason: "request failed".to_owned()
+        }
+    );
+}

@@ -66,3 +66,19 @@ fn every_other_named_kind_has_its_own_class() {
         assert_eq!(UreqFailure::of(&error), class, "{error:?}");
     }
 }
+
+#[test]
+fn a_proxy_refusing_the_tunnel_is_proxy_refused() {
+    for reason in [
+        "proxy server responded 407/Proxy Authentication Required",
+        "proxy server did not respond",
+    ] {
+        let error = ureq::Error::ConnectProxyFailed(reason.to_owned());
+
+        assert_eq!(
+            UreqFailure::of(&error),
+            UreqFailure::ProxyRefused,
+            "{error:?}"
+        );
+    }
+}

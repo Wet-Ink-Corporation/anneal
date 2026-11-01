@@ -11,14 +11,20 @@
 //! reads it, and only as `http://` on `127.0.0.1` or `[::1]` (`decide::config`'s rule for
 //! `ANNEAL_CLEF_URL`), so a shipped binary never sends the token anywhere but GitHub.
 //!
+//! The way there is the environment's ([`route`]): a proxy from `HTTPS_PROXY` (or
+//! `https_proxy`, `ALL_PROXY`, `all_proxy`) with `NO_PROXY`, and the trust roots in
+//! `SSL_CERT_FILE` in place of the bundled ones, read at the binary edge with the token.
+//!
 //! - `http`: the ureq adapter that sends one status.
+//! - `route`: the proxy and trust roots the environment names.
 
 pub(super) mod http;
+mod route;
 
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -32,6 +38,7 @@ use crate::paths::{self, GIT_TIMEOUT, PathError};
 use crate::pr_diff::Budget;
 use crate::process::whole_millis;
 use http::{Client, Request};
+use route::{CERT_FILE_KIB, CERT_FILE_VAR, Network};
 
 /// The status context branch protection requires.
 const CONTEXT: &str = "anneal/verdict";
@@ -67,17 +74,21 @@ enum Token {
     },
 }
 
-/// What the environment says about posting: the token and the API override, read once at the
-/// binary edge and passed in. Its `Debug` never shows the token.
+/// What the environment says about posting: the token, the API override and the way to the
+/// API, read once at the binary edge and passed in. Its `Debug` never shows the token or the
+/// proxy's value.
 #[derive(Debug, Default)]
 pub(crate) struct GithubEnv {
     token: Option<Token>,
     api: Option<OsString>,
+    network: Network,
 }
 
 impl GithubEnv {
-    /// The first non-empty of [`TOKEN_VARS`], and [`API_VAR`] when set and non-empty.
+    /// The first non-empty of [`TOKEN_VARS`], [`API_VAR`] when set and non-empty, and the
+    /// proxy and trust-root variables ([`Network::read`]).
     pub(crate) fn read(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
+        let network = Network::read(&lookup);
         let token = TOKEN_VARS.into_iter().find_map(|var| {
             let value = lookup(var).filter(|value| !value.is_empty())?;
             let token = value.into_string().ok().and_then(ApiToken::new);
@@ -86,6 +97,7 @@ impl GithubEnv {
         Self {
             token,
             api: lookup(API_VAR).filter(|value| !value.is_empty()),
+            network,
         }
     }
 
@@ -247,6 +259,47 @@ pub(crate) enum PostError {
     /// ureq could not build the request from the URL and headers, so nothing was sent.
     #[error("the status request could not be built")]
     Request,
+    /// The proxy variable names no proxy that can be used: not `http://` or `https://`. Its
+    /// value, which may hold credentials, is never shown.
+    #[error("{var} does not name an http:// or https:// proxy")]
+    Proxy {
+        /// The variable.
+        var: &'static str,
+    },
+    /// The trust-root bundle could not be read.
+    #[error("{CERT_FILE_VAR} ({}) cannot be read", path.display())]
+    CertFileUnreadable {
+        /// Its path.
+        path: PathBuf,
+        /// Why.
+        #[source]
+        source: io::Error,
+    },
+    /// The trust-root bundle's path is not a regular file (a directory, a FIFO, a device), so
+    /// it is not opened: a FIFO would block past the post's timeout.
+    #[error("{CERT_FILE_VAR} ({}) is not a file", path.display())]
+    CertFileNotAFile {
+        /// Its path.
+        path: PathBuf,
+    },
+    /// The trust-root bundle is over the cap read.
+    #[error("{CERT_FILE_VAR} ({}) is over {CERT_FILE_KIB} KiB", path.display())]
+    CertFileTooLarge {
+        /// Its path.
+        path: PathBuf,
+    },
+    /// The trust-root bundle has a PEM section that does not decode.
+    #[error("{CERT_FILE_VAR} ({}) holds a malformed PEM section", path.display())]
+    CertFileMalformed {
+        /// Its path.
+        path: PathBuf,
+    },
+    /// The trust-root bundle holds no certificate.
+    #[error("{CERT_FILE_VAR} ({}) holds no PEM certificate", path.display())]
+    CertFileEmpty {
+        /// Its path.
+        path: PathBuf,
+    },
     /// The request body could not be written.
     #[error("writing the status as JSON")]
     Body(#[source] serde_json::Error),
@@ -351,14 +404,14 @@ pub(crate) struct Place<'a, L> {
     pub(crate) lookup: L,
 }
 
-/// Posts the status of `subject`, the verdict just recorded, through `client`: the merge
-/// gate's answer for its commit, on `origin`'s repository. Every failure is an outcome, never
-/// an error: the verdict is recorded whatever becomes of the status.
+/// Posts the status of `subject`, the verdict just recorded, the way `env` names, within
+/// `timeout`: the merge gate's answer for its commit, on `origin`'s repository. Every failure
+/// is an outcome, never an error: the verdict is recorded whatever becomes of the status.
 pub(crate) fn post<L: Fn(&str) -> Option<OsString>>(
     env: &GithubEnv,
     subject: Subject<'_>,
     place: Place<'_, L>,
-    client: &Client,
+    timeout: Duration,
 ) -> CommitStatus {
     let token = match &env.token {
         None => {
@@ -378,10 +431,12 @@ pub(crate) fn post<L: Fn(&str) -> Option<OsString>>(
         .map(|denial| denial.check());
     let state = state_of(check);
     let description = description(subject.level, subject.source, check);
-    let target = env
-        .api_base(HONOUR_API)
-        .and_then(|base| origin(place.root).map(|repo| (base, repo)));
-    let (base, repo) = match target {
+    let target = env.api_base(HONOUR_API).and_then(|base| {
+        let repo = origin(place.root)?;
+        let route = env.network.route()?;
+        Ok((base, repo, Client::with_route(timeout, route)))
+    });
+    let (base, repo, client) = match target {
         Ok(target) => target,
         Err(error) => return failed(Some(state), &error),
     };
