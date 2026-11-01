@@ -27,6 +27,7 @@ Finds the root cause of a failure from evidence, starting from a loop that shows
 5. **Test one at a time.** Change one thing, or add tagged instrumentation, then run the loop and drop what it refutes. It's working if every run removes or confirms a hypothesis.
 6. **Fix the cause.** Make the reproduction pass with one change at the cause, not at the symptom. After three failed fixes, stop and question the design with the human. It's working if the loop and the rest of the suite are green.
 7. **Clean up.** Remove every tagged line and keep the reproduction as a regression test. It's working if `anneal repro leftovers` exits 0.
+8. **Report.** Run `anneal task done <bug> -- <command>`, then report cause, fix and that run together. It's working if it exits 0.
 
 ## Rationalizations
 
@@ -43,10 +44,8 @@ Finds the root cause of a failure from evidence, starting from a loop that shows
 - Editing source before `anneal repro record` has exited 0.
 - Changing several things in one run, so nobody knows which mattered.
 - A fix that hides the symptom: a catch, a retry, a skipped test.
-- Instrumentation without a `[DEBUG-<id>]` tag.
 
 ## Verification
 
 - `anneal ledger query --type repro_red` shows the reproduction, with this worktree.
 - The reproduction passes now and stays in the test suite.
-- `anneal repro leftovers` exits 0.

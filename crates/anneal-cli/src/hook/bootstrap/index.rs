@@ -12,31 +12,31 @@ use std::fmt::{self, Display, Formatter};
 const ENTRY_TRIGGERS: [(&str, &str); 7] = [
     (
         "grill",
-        "a request is new or vague; question it until the requirements are confirmed.",
+        "new behaviour without saying how it works, or a vague request; question it until the requirements are confirmed.",
     ),
     (
         "spec",
-        "requirements are agreed; write the spec and its acceptance criteria.",
+        "requirements are agreed; write the spec and its criteria.",
     ),
     (
         "plan",
-        "a spec is ready; split it into tasks with a dependency graph and get the plan approved.",
+        "a spec is ready; split it into tasks and get the plan approved.",
     ),
     (
         "build",
-        "an approved task is next; implement it test-first.",
+        "code to add or change, or an approved task; build it test-first.",
     ),
     (
         "diagnose",
-        "something is broken or a test fails unexpectedly; reproduce it red before fixing.",
+        "a bug report, something broken or a failing test; reproduce it red before fixing.",
     ),
     (
         "verify",
-        "work looks done; check it against the spec before claiming it.",
+        "is it fixed or tested, or work looks done; prove it before claiming it.",
     ),
     (
         "ship",
-        "verified work needs a pull request, review verdict, merge or rollout.",
+        "verified work needs a pull request, verdict, merge or rollout.",
     ),
 ];
 
@@ -51,10 +51,7 @@ const USER_COMMANDS: [(&str, &str); 5] = [
         "/anneal:correct",
         "record a correction as a standing order.",
     ),
-    (
-        "/anneal:write-skill",
-        "author a skill that passes `anneal lint skills`.",
-    ),
+    ("/anneal:write-skill", "author a skill that lints clean."),
     ("/anneal:calibrate", "calibrate a Clef decision point."),
 ];
 
