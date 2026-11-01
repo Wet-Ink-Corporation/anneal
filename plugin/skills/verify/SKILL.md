@@ -20,7 +20,7 @@ A "done" or "fixed" reply needs fresh evidence in the ledger, not the author's w
 
 ## Process
 
-1. **Run the tests fresh.** Run `anneal task done <id> -- <the task's test command>`; with no task, name the change as `<id>`. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
+1. **Run the tests fresh.** Run `anneal task done <id> -- <test command>`; `<id>` is the task id, or any short name with no task. It's working if it exits 0 and `anneal ledger tail` shows a green `test_run` after your last edit.
 2. **Run the gate.** In a Rust repository (a `Cargo.toml` at the root), run `temper:gate`. It's working if the gate is green.
 3. **Clear the leftovers.** Run `anneal repro leftovers`. It's working if it exits 0.
 4. **Doubt pass.** Run `anneal verify risk` first; on exit 3, skip to step 6 and say so. Hand one or more reviewer subagents the artifact (the diff and the files it touches) and the contract (the spec's criteria, the task's test, the plan), never your claim or summary. Ask each for findings as `file:line`, what is wrong and why, ending in a Status block. It's working if each reviewer got files, not your conclusions.
@@ -35,7 +35,7 @@ A "done" or "fixed" reply needs fresh evidence in the ledger, not the author's w
 | "I'll tell the reviewer what I changed, it saves time" | A reviewer told the conclusion looks for it. Give the diff and the contract. |
 | "One more doubt cycle will settle it" | Three cycles without agreement is a question for the human. |
 | "CI will catch it" | CI runs after the claim. |
-| "The lead said skip the tests" | Write and run it anyway, or say the claim is unproven. |
+| "The lead said skip the tests" | Write and run the test anyway, or say the claim is unproven. |
 
 ## Red flags
 

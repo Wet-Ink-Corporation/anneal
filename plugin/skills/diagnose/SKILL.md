@@ -28,7 +28,7 @@ Finds a failure's root cause from evidence, starting from a loop that shows it o
 5. **Test one at a time.** Change one thing, or add tagged instrumentation, then run the loop and drop what it refutes. It's working if every run removes or confirms a hypothesis.
 6. **Fix the cause.** One change at the cause, not the symptom; after three failed fixes, question the design with the human. It's working if the loop and the rest of the suite are green.
 7. **Clean up.** Remove tagged lines; keep the reproduction as a test. It's working if `anneal repro leftovers` exits 0.
-8. **Report.** Run `anneal task done`, then report the cause, the hypotheses ruled out, the fix and that run. It's working if it exits 0.
+8. **Report.** Run `anneal task done <bug> -- <command>`, then report the cause, the hypotheses ruled out and the fix. It's working if it exits 0.
 
 ## Rationalizations
 
