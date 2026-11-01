@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -343,6 +343,60 @@ fn a_run_stamped_in_the_future_does_not_satisfy_a_claim() -> TestResult {
     assert!(
         decision.block.is_some(),
         "a future stamp is not believed: {decision:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn an_edit_just_before_task_done_in_the_same_second_is_tested() -> TestResult {
+    let session = Session::new()?;
+    // 50 ms before a clock reading taken before the run starts: the edit is before the run,
+    // and nearly always in the second `task done` stamps, which a whole-second stamp blurred
+    // into "after the run started". This test reads the clock, as `task done` stamps with it.
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    session.edit(now.saturating_sub(Duration::from_millis(50)))?;
+    session.task_done(&["--version"])?;
+
+    let decision = session.stop("All tests pass.")?;
+
+    assert!(decision.is_silent(), "edited before the run: {decision:?}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_block_asks_for_the_complete_report_again_not_only_the_missing_step() -> TestResult {
+    let session = Session::new()?;
+    session.edit(PAST)?;
+
+    let reason = session
+        .stop("All tests pass.")?
+        .block
+        .ok_or("no test run at all: blocked")?;
+
+    assert!(
+        reason.contains("complete report again"),
+        "the next reply is read as the report: {reason}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn with_no_task_recorded_the_claim_block_says_what_to_name_the_run() -> TestResult {
+    let session = Session::new()?;
+    session.edit(PAST)?;
+
+    let reason = session
+        .stop("All tests pass.")?
+        .block
+        .ok_or("no test run at all: blocked")?;
+
+    assert!(!reason.contains("<id>"), "no id to guess: {reason}");
+    assert!(
+        reason.contains("any short name"),
+        "says where the name comes from: {reason}"
     );
     Ok(())
 }

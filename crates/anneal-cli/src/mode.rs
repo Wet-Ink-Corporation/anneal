@@ -170,6 +170,7 @@ pub(crate) fn run<O: Write>(
     let location = paths::ledger_store(None, lookup, cwd)?;
     let position = Store::open(&location.path)?.append(&envelope)?;
     let recorded = Recording {
+        mode,
         subcommand,
         envelope: &envelope,
         location: &location,
@@ -180,6 +181,7 @@ pub(crate) fn run<O: Write>(
 
 /// What `anneal mode` appended, and where.
 struct Recording<'a> {
+    mode: Mode,
     subcommand: &'static str,
     envelope: &'a EventEnvelope,
     location: &'a StoreLocation,
@@ -211,9 +213,7 @@ fn emit<O: Write>(recorded: &Recording<'_>, clean: bool, out: &mut O) -> Result<
     } else {
         vec![Finding::new(
             "mode/dirty",
-            "the working tree has changes (untracked files included), so the preconditions \
-             hook denies source edits in build mode. fix: commit or stash them, then run \
-             `anneal mode build` again.",
+            dirty_message(recorded.mode, recorded.subcommand),
         )]
     };
     let subcommand = Some(recorded.subcommand);
@@ -226,6 +226,23 @@ fn emit<O: Write>(recorded: &Recording<'_>, clean: bool, out: &mut O) -> Result<
     .with_findings(&findings)
     .emit(out)
     .map_err(CliError::Output)
+}
+
+/// The `mode/dirty` message for a tree entered dirty in `mode`, which `subcommand` names: only
+/// build mode needs a clean tree.
+fn dirty_message(mode: Mode, subcommand: &str) -> String {
+    let changes = "the working tree has changes (untracked files included)";
+    if mode == Mode::Build {
+        return format!(
+            "{changes}, so the preconditions hook denies source edits in build mode. fix: \
+             commit or stash them, then run `anneal mode build` again."
+        );
+    }
+    format!(
+        "{changes}; `anneal mode {subcommand}` does not need a clean tree, so the preconditions \
+         hook denies nothing for it. fix: none for now; commit or stash them before `anneal \
+         mode build`, which denies source edits when entered on a dirty tree."
+    )
 }
 
 /// `path` (relative to `cwd`) relative to the worktree `root`, `/`-separated: it must be a

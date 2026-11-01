@@ -340,6 +340,34 @@ fn mode_build_on_a_dirty_tree_records_clean_false_with_a_finding_and_exits_0() -
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn mode_diagnose_on_a_dirty_tree_names_diagnose_and_denies_nothing_for_it() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write("notes.rs", "untracked\n")?;
+
+    let envelope = repo.anneal(&["mode", "diagnose"], 0)?;
+
+    assert_eq!(
+        envelope.pointer("/findings/0/key"),
+        Some(&json!("mode/dirty")),
+        "{envelope}"
+    );
+    let message = envelope
+        .pointer("/findings/0/message")
+        .and_then(Value::as_str)
+        .ok_or("the finding has a message")?;
+    assert!(
+        message.contains("`anneal mode diagnose` does not need a clean tree"),
+        "names the mode in use: {message}"
+    );
+    assert!(
+        !message.contains("run `anneal mode build` again"),
+        "does not send diagnose back to build: {message}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_build_refuses_a_plan_that_is_not_a_file() -> TestResult {
     let repo = Repo::new()?;
 

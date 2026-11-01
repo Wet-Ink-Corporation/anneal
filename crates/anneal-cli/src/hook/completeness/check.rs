@@ -27,6 +27,11 @@ const RUNS_READ: usize = 16;
 /// How far past now a `test_run` may be stamped and still be believed (clock skew).
 const FUTURE_SLACK_MS: i64 = 60_000;
 
+/// How much earlier than its stamp minus its duration a `test_run` is taken to have started:
+/// 1 ms for the duration rounded down to the millisecond, 1 ms for the moment between the
+/// run's end and its stamp.
+const STAMP_SLACK_MS: i64 = 2;
+
 /// A hard gate: blocks the stop, until the cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Gate {
@@ -182,8 +187,10 @@ fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Fi
             Gate::Claim,
             format!(
                 "the reply says \"{claim}\", but {} changed after the last green test run \
-                 recorded in this worktree (or none is recorded); run the tests with `anneal \
-                 task done <id> -- <test command>`, then report what it shows",
+                 recorded in this worktree (or none is recorded); run the tests fresh with \
+                 `anneal task done <name> -- <test command>`, where <name> is the plan's task \
+                 id or, with no plan or task, any short name for this change (nothing needs to \
+                 exist first)",
                 edit.file
             ),
         ));
@@ -195,9 +202,11 @@ fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Fi
 ///
 /// A run is believable when it is stamped no later than `now_ms` plus [`FUTURE_SLACK_MS`]: a
 /// later stamp is a clock from elsewhere or a forged event, and is passed over (of the last
-/// [`RUNS_READ`] runs). The start is the stamp minus the run's `duration_ms`. `task done` stamps
-/// after the run ends, to the second, so the start is never later than the real one: an edit
-/// made while the tests ran always counts as untested.
+/// [`RUNS_READ`] runs). The start is the stamp minus the run's `duration_ms` and
+/// [`STAMP_SLACK_MS`]. `task done` stamps as the run ends, to the millisecond (older runs were
+/// stamped to the second, which only moves their start earlier), so the start is
+/// never later than the real one: an edit made while the tests ran always counts as untested,
+/// and one made a few milliseconds before they started counts as tested.
 fn latest_green_start(
     store: &Store,
     tag: &LedgerTag,
@@ -224,7 +233,11 @@ fn latest_green_start(
             }) if playbook::is_green_run(event) => {
                 // A duration past i64 saturates the start to the far past: no edit is before it.
                 let duration = i64::try_from(*duration).unwrap_or(i64::MAX);
-                Some(stamped.saturating_sub(duration))
+                Some(
+                    stamped
+                        .saturating_sub(duration)
+                        .saturating_sub(STAMP_SLACK_MS),
+                )
             }
             _ => None,
         }),

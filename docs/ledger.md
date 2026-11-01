@@ -61,7 +61,7 @@ Every event is one JSON object: the event's `type` and payload, flattened beside
 | `worktree` | string or null | The writer's git worktree; `anneal mode` writes its key: the top-level directory `git rev-parse --show-toplevel` prints, with `/` separators, ASCII-lowercased on Windows and macOS |
 | `branch` | string or null | The checked-out branch |
 | `head` | string or null | The commit at `HEAD` |
-| `ts` | string | When it was written, RFC 3339 (anneal writes UTC seconds: `2026-10-11T09:30:00Z`) |
+| `ts` | string | When it was written, RFC 3339 (anneal writes UTC seconds, `2026-10-11T09:30:00Z`, except `anneal task done`, which stamps UTC milliseconds as its command ends, `2026-10-11T09:30:00.25Z`, trailing zeros dropped) |
 
 ```json
 {"type":"task_done","task":"T1","actor":"cli","session_id":"s1","worktree":null,"branch":null,"head":null,"ts":"2026-10-11T09:30:00Z"}

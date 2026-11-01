@@ -259,6 +259,7 @@ fn done<O: Write>(
     let stamp = Stamp {
         args,
         worktree: worktree.as_deref(),
+        ended: None,
     };
     // The task, session and worktree become ledger tags; check them before anything runs, so
     // an id the store would refuse is a usage error that runs nothing and leaves no file.
@@ -268,6 +269,13 @@ fn done<O: Write>(
         });
     }
     let run = run_command(program, rest, cwd, Duration::from_secs(args.timeout))?;
+    // Stamped as the run ends, before the ledger is found and opened, so the stamp minus the
+    // run's duration is when it started (`docs/task.md`).
+    let ended = Timestamp::now_millis()?;
+    let stamp = Stamp {
+        ended: Some(&ended),
+        ..stamp
+    };
     // Only now, with the command finished, is the ledger opened.
     let location = paths::ledger_store(args.store.as_deref(), lookup, cwd)?;
     let events = record(stamp, &run, &command, &location.path)?;
@@ -312,12 +320,20 @@ struct Stamp<'a> {
     args: &'a DoneArgs,
     /// The worktree key of the working directory's git worktree, if it is in one.
     worktree: Option<&'a str>,
+    /// When the test command ended, to the millisecond; `None` stamps each event as it is made.
+    ended: Option<&'a Timestamp>,
 }
 
 impl Stamp<'_> {
-    /// `event` in an envelope stamped now, with this run's session and worktree.
+    /// `event` in an envelope stamped when the run ended (else now, to the millisecond), with
+    /// this run's session and worktree.
     fn stamp(&self, event: LedgerEvent) -> Result<EventEnvelope, CliError> {
-        let mut envelope = EventEnvelope::new(event, "cli", Timestamp::now()?);
+        let ts = match self.ended {
+            // Each envelope owns its stamp.
+            Some(ended) => ended.clone(),
+            None => Timestamp::now_millis()?,
+        };
+        let mut envelope = EventEnvelope::new(event, "cli", ts);
         envelope.session_id.clone_from(&self.args.session);
         envelope.worktree = self.worktree.map(str::to_owned);
         Ok(envelope)
@@ -330,6 +346,7 @@ impl<'a> From<&'a DoneArgs> for Stamp<'a> {
         Self {
             args,
             worktree: None,
+            ended: None,
         }
     }
 }
