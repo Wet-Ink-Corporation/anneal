@@ -1,7 +1,7 @@
 //! The [`Evaluator`] adapter over `claude plugin eval`, sharing Tier 2's process step
 //! ([`invoke`]), result checks ([`result::check`]) and workspace ([`Workspace`]).
 //!
-//! The plugin is copied once into a fresh `ae-<hex>` workspace as `plugin/`. The
+//! The plugin is copied once into a fresh `ae-<hex>` workspace as `with/`. The
 //! baseline of a skill is a second copy, `without-<skill>/`, made from the first with only
 //! the skill's directory removed from the plugin's skills directory (named as `--skills`
 //! names it), so its hooks and sibling skills stay; a `--baseline` plugin is copied as
@@ -107,8 +107,9 @@ impl<'a> ClaudeEvaluator<'a> {
         work_dir: &Path,
     ) -> Result<Self, RouterError> {
         let started = Instant::now();
-        let workspace = Workspace::create_in(work_dir, WORKSPACE_PREFIX, plugins.dir)
-            .map_err(RouterError::Workspace)?;
+        let workspace =
+            Workspace::create_with_copy(work_dir, WORKSPACE_PREFIX, WITH_COPY, plugins.dir)
+                .map_err(RouterError::Workspace)?;
         if let Err(error) = prepare(
             &workspace,
             plugins.baseline.map(|base| base.dir),
@@ -321,6 +322,11 @@ const CHILD_TMP: &str = "t";
 /// The prefix of the workspace's name, `ae-<6 hex>`: short for the same reason as
 /// [`CHILD_TMP`].
 const WORKSPACE_PREFIX: &str = "ae-";
+
+/// The name of the plugin copy the with arm runs against, beside `without-<skill>/` and
+/// `baseline/`. Not `plugin`: the anneal repository has `plugin/` at its root, so a run that
+/// reads `${CLAUDE_PLUGIN_ROOT}` would take the workspace for that repository.
+const WITH_COPY: &str = "with";
 
 /// What the children's `TMPDIR` adds to the work directory's path, in bytes: `/ae-<hex>/t`,
 /// 12, the same for every workspace.

@@ -12,7 +12,6 @@ use anneal_ledger::event::VerdictSet;
 use anneal_ledger::{EventEnvelope, LedgerEvent, Store, Timestamp};
 use serde::Serialize;
 
-use super::commit_status::http::Client;
 use super::commit_status::{self, CommitStatus, GithubEnv, Skip, Subject};
 use super::{Io, Place, SetArgs, pull_request};
 use crate::command::CommandName;
@@ -152,7 +151,7 @@ fn status<L: Fn(&str) -> Option<OsString>>(
         level: args.level,
         source: args.source,
     };
-    commit_status::post(github, subject, at, &Client::new(STATUS_TIMEOUT))
+    commit_status::post(github, subject, at, STATUS_TIMEOUT)
 }
 
 /// Writes the envelope of `recorded` and its `status` to `out` and, when the status was asked

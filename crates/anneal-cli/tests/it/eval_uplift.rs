@@ -229,7 +229,7 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 
 /// A `claude` that logs `<plugin copy> <eval dir> <budget> <runs> <allowed tools>` per batch to
 /// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
-/// `outcome` passed only against the whole plugin (`plugin/`), or in every run when
+/// `outcome` passed only against the whole plugin (`with/`), or in every run when
 /// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_TMPDIR_LOG` set it logs its
 /// `TMPDIR` and whether that is a directory. With `$FAKE_FAILS` set it writes no result
 /// and exits 1; with `$FAKE_DUPLICATES` set its result lists every case twice. With
@@ -272,7 +272,7 @@ if [ -n "${FAKE_TMPDIR_LOG:-}" ]; then
 fi
 if [ -n "${FAKE_FAILS:-}" ]; then echo 'Error: not logged in' >&2; exit 1; fi
 if [ "$name" = baseline ]; then listed=fixture-baseline; else listed=fixture; fi
-if [ "$name" = plugin ] || [ -n "${FAKE_BASE_PASSES:-}" ]; then passed=true; else passed=false; fi
+if [ "$name" = with ] || [ -n "${FAKE_BASE_PASSES:-}" ]; then passed=true; else passed=false; fi
 run="{\"error\":null,\"graders\":[{\"name\":\"outcome\",\"passed\":$passed},{\"name\":\"always\",\"passed\":true}]}"
 cases=''
 for dir in "$target/$evaldir"/*/; do
@@ -453,7 +453,7 @@ fn a_skill_that_beats_its_baseline_passes_and_the_non_discriminating_assertions_
     );
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 12.50 3 \n\
+        "with anneal-uplift-1 12.50 3 \n\
          without-plan anneal-uplift-2 24.75 3 \n\
          without-spec anneal-uplift-3 24.50 3 \n",
         "the with arm with half the $25 cap, then each skill's baseline with what is left"
@@ -580,7 +580,7 @@ fn a_baseline_plugin_runs_every_case_against_its_copy_checked_under_its_own_name
     );
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 12.50 3 \n\
+        "with anneal-uplift-1 12.50 3 \n\
          baseline anneal-uplift-2 24.75 3 \n",
         "the with arm, then one batch of every case against the baseline copy"
     );
@@ -721,7 +721,7 @@ fn with_allow_gated_tools_the_gated_case_runs_with_its_tools_granted() -> TestRe
     assert_eq!(run.output.status.code(), Some(0), "{envelope}");
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 12.50 3 Bash\n\
+        "with anneal-uplift-1 12.50 3 Bash\n\
          without-plan anneal-uplift-2 24.75 3 Bash\n\
          without-spec anneal-uplift-3 24.50 3 \n",
         "every batch holding the gated case grants its tool"
@@ -792,7 +792,7 @@ fn a_gated_case_of_a_skill_unchanged_since_the_base_does_not_need_allow_gated_to
     );
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 12.50 3 \n\
+        "with anneal-uplift-1 12.50 3 \n\
          without-spec anneal-uplift-2 24.75 3 \n",
         "the changed spec case alone, granted nothing"
     );
@@ -838,7 +838,7 @@ fn a_selection_with_no_gated_case_runs_without_allow_gated_tools() -> TestResult
     assert_eq!(run.output.status.code(), Some(0), "{envelope}");
     assert_eq!(
         run.log()?,
-        "plugin anneal-uplift-1 12.50 3 \n\
+        "with anneal-uplift-1 12.50 3 \n\
          without-spec anneal-uplift-2 24.75 3 \n",
         "the spec case alone, granted nothing"
     );

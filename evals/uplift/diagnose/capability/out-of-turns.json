@@ -16,10 +16,9 @@
   "graders": [
     {
       "type": "regex",
-      "name": "turns",
+      "name": "cause",
       "target": "last_message",
-      "pattern": "max(imum)?[ _](number of )?turns|max_turns",
-      "flags": "i"
+      "pattern": "\\bMAX_TURNS\\b|routing/real/suite\\.rs|suite\\.rs"
     },
     {
       "type": "llm",

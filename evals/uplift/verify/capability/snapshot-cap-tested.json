@@ -9,14 +9,14 @@
       "type": "regex",
       "name": "says_no",
       "target": "last_message",
-      "pattern": "\\b(no|not yet|not verified|cannot)\\b",
-      "flags": "i"
+      "pattern": "^\\W*(no|not yet)\\b|\\bnot (yet )?(be )?(called )?verified\\b|\\bcan(no|')?t (yet )?(call it|be called|say it's) verified\\b",
+      "flags": "im"
     },
     {
       "type": "regex",
       "name": "boundary",
       "target": "last_message",
-      "pattern": "1 ?MiB|1,?048,?576|over the cap|just (over|past)|one byte",
+      "pattern": "1,?048,?577|1 ?MiB ?(\\+|plus) ?(1|one)\\b|(1|one) byte (over|past|more than|above)|(cap|limit|max) ?\\+ ?1\\b",
       "flags": "i"
     },
     {

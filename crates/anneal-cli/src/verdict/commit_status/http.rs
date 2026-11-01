@@ -3,17 +3,24 @@
 //!
 //! The call is bounded by the client's timeout from DNS to the last byte (H-13). As Clef's
 //! transport (`decide::transport::http`), the agent follows no redirect (a 3xx is a refusal, so
-//! the token never goes to another host) and takes no proxy from the environment. A refusal's
-//! body is read through a cap of [`ERROR_BODY_BYTES`] for GitHub's `message`, which is shown
-//! printable and cut to [`MESSAGE_CHARS`]; no error carries the token, the URL or a ureq
-//! message. ureq's resolver thread may outlive a call that times out, as documented there; a
-//! `verdict set` process exits soon after.
+//! the token never goes to another host). Unlike Clef's, it goes the way the environment names
+//! (weigh-in wi-077990 A): through the `CONNECT` proxy and with the trust roots of the
+//! [`Route`] it is built with (`route`), never from ureq's own reading of the process's
+//! environment; with no proxy or root variable set that is direct, with the bundled Mozilla
+//! roots, as Clef's. A proxy that refuses the tunnel is [`PostError::Unreachable`] with a fixed
+//! reason that names neither the proxy nor its credentials.
+//!
+//! A refusal's body is read through a cap of [`ERROR_BODY_BYTES`] for GitHub's `message`,
+//! which is shown printable and cut to [`MESSAGE_CHARS`]; no error carries the token, the URL
+//! or a ureq message. ureq's resolver thread may outlive a call that times out, as documented
+//! there; a `verdict set` process exits soon after.
 
 use std::io::Read as _;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use super::route::Route;
 use super::{CONTEXT, PostError, State};
 use crate::decide::transport::ApiToken;
 use crate::ureq_failure::UreqFailure;
@@ -65,11 +72,14 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    /// A client whose every call ends within `timeout`, with no proxy, no redirects and error
-    /// statuses returned as responses.
-    pub(crate) fn new(timeout: Duration) -> Self {
+    /// A client whose every call ends within `timeout`, going `route`'s way (its proxy, or
+    /// none, and its roots), with no redirects and error statuses returned as responses.
+    pub(super) fn with_route(timeout: Duration, route: Route) -> Self {
+        let Route { proxy, roots } = route;
+        let tls = ureq::tls::TlsConfig::builder().root_certs(roots).build();
         let config = ureq::Agent::config_builder()
-            .proxy(None)
+            .proxy(proxy)
+            .tls_config(tls)
             .max_redirects(0)
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
@@ -79,6 +89,18 @@ impl Client {
             agent: ureq::Agent::new_with_config(config),
             timeout,
         }
+    }
+
+    /// A client with no proxy and the bundled roots, as with no variable set.
+    #[cfg(test)]
+    pub(crate) fn new(timeout: Duration) -> Self {
+        Self::with_route(timeout, Route::direct())
+    }
+
+    /// The agent's configuration, for tests that pin what a [`Route`] made of it.
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> &ureq::config::Config {
+        self.agent.config()
     }
 
     /// Sends `request`.
@@ -135,6 +157,7 @@ impl Client {
             UreqFailure::ConnectionFailed { .. } => unreachable("the connection failed"),
             UreqFailure::HostNotFound => unreachable("the host was not found"),
             UreqFailure::Tls => unreachable("TLS failed"),
+            UreqFailure::ProxyRefused => unreachable("the proxy refused the tunnel"),
             UreqFailure::InvalidRequest => PostError::Request,
             UreqFailure::Status(code) => PostError::Status {
                 code,

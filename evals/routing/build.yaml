@@ -3,12 +3,13 @@ positives:
   - the plan is approved, build the next task test-first
   - implement task T3 red then green
   - write the failing test for the next task, then make it pass
-  - start building the approved task
   - build T2 now, test first
   - the next task is small, just build it
   - make the failing test green and mark the task done
   - mark task T4 done with its test command
-  - implement the next approved task with a red test first
+  - "Task T3 is approved and next: `--help` and `--version` exit 0. Implement it."
+  - "T2 is the next approved task: add a --json flag to the report command"
+  - "do the next approved task: delete refuses when the audit log cannot be written"
 near_misses:
   plan:
     - the spec is ready, split it into tasks

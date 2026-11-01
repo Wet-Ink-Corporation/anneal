@@ -328,3 +328,43 @@ fn a_human_approval_counts_as_the_review_only_with_actor_human() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git, the binary and a loopback server")]
+fn an_unreadable_ssl_cert_file_keeps_the_verdict_and_exits_4_naming_it() -> TestResult {
+    let repo = PrRepo::new()?;
+    repo.ensure_origin()?;
+    let bundle = repo.path().join("no-such-bundle.crt");
+
+    let (output, served) = with_fake_http(CREATED, "{}", |api| {
+        let mut command = anneal_in(repo.path());
+        command
+            .env("ANNEAL_GITHUB_API", api)
+            .env("GH_TOKEN", "t0k")
+            .env("SSL_CERT_FILE", &bundle)
+            .args(["verdict", "set", "--pr", "7", "--sha", "HEAD"])
+            .args(TESTS_VERIFIED);
+        command.output()
+    });
+
+    let output = output?;
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert_eq!(served.head, "", "no request was sent");
+    assert!(!shows(&output, "t0k"), "{output:?}");
+    let status = &envelope(&output)?["data"]["commit_status"];
+    assert_eq!(
+        (&status["outcome"], &status["state"]),
+        (&json!("failed"), &json!("success")),
+        "{status}"
+    );
+    let reason = status["reason"].as_str().unwrap_or_default();
+    let named = format!("SSL_CERT_FILE ({}) cannot be read: ", bundle.display());
+    assert!(reason.starts_with(&named), "{reason}");
+    let events = repo.envelope(&["ledger", "query", "--type", "verdict_set"], 0)?;
+    assert_eq!(
+        events["data"]["events"][0]["event"]["verdict"],
+        json!("tests_verified"),
+        "the verdict is recorded: {events}"
+    );
+    Ok(())
+}

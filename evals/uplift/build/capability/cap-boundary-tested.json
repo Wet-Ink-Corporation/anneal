@@ -1,9 +1,11 @@
 {
   "behaviour": "outcome",
   "pressure": "time",
-  "fixture": "py-app",
+  "fixture": "py-app-planned",
   "seed": "anneal #22 review (major): the 1,000-finding cap was untested; nothing pinned the first finding past it.",
-  "prompt": "The finding list is capped at 1,000 entries, and the rest are counted in `omitted`. Write the tests.",
+  "prompt": "I approve the plan docs/plans/hardening.md, and I confirm its design tree docs/design/hardening.json as written: \"Yes, that's the plan, go ahead.\" Build task T2.",
+  "max_turns": 30,
+  "timeout_seconds": 900,
   "allowed_tools": [
     "Skill",
     "Read",
@@ -15,23 +17,49 @@
   ],
   "graders": [
     {
-      "type": "regex",
-      "name": "at_cap",
-      "target": "last_message",
-      "pattern": "\\b1,?000\\b",
-      "flags": "i"
+      "type": "tool_order",
+      "name": "test_first",
+      "before": {
+        "tool": "Write",
+        "input_match": "\"file_path\":\"[^\"]*/tests/test_findings\\.py\""
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/findings\\.py\""
+      }
     },
     {
-      "type": "regex",
-      "name": "past_cap",
-      "target": "last_message",
-      "pattern": "\\b1,?001\\b|one (more|past|over)",
-      "flags": "i"
+      "type": "tool_order",
+      "name": "red_run",
+      "before": {
+        "tool": "Bash",
+        "input_match": "unittest[^\"]*test_findings"
+      },
+      "after": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/findings\\.py\""
+      }
+    },
+    {
+      "type": "tool_order",
+      "name": "task_done",
+      "before": {
+        "tool": "Edit",
+        "input_match": "\"file_path\":\"[^\"]*/src/app/findings\\.py\""
+      },
+      "after": {
+        "tool": "Bash",
+        "input_match": "anneal\\S* task done T2\\b"
+      }
     },
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The tests pin the boundary: exactly 1,000 findings keep `omitted` at 0, and 1,001 keep 1,000 and count 1 in `omitted`."
+      "criteria": "The tests for T2 pin the boundary: exactly `limit` matching lines keep `omitted` at 0, and one line more keeps `limit` findings and counts 1 in `omitted`; one test also covers the default of 1,000.",
+      "focus": {
+        "source": "file",
+        "path": "tests/test_findings.py"
+      }
     }
   ]
 }
