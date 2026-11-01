@@ -207,9 +207,10 @@ fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Fi
 /// not later than the real one and an edit made while the tests ran counts as untested, as far
 /// as file times are as fine as the wall clock (a coarser file system can round an edit made
 /// during the run back to before it). Older runs were stamped to the second, but after the
-/// ledger was found and opened: truncation moves their start earlier and that delay later, so
-/// an edit in their first milliseconds may count as tested. An edit made a few milliseconds
-/// before a run started counts as tested.
+/// ledger was found and opened. Truncating to the second makes their start earlier, and the
+/// time spent opening the ledger makes it later, so an edit in their first milliseconds may
+/// count as tested. An edit made more than [`STAMP_SLACK_MS`] before a run started counts as
+/// tested; one closer than that may not.
 fn latest_green_start(
     store: &Store,
     tag: &LedgerTag,

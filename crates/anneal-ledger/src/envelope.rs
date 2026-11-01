@@ -69,7 +69,9 @@ impl Timestamp {
 
     /// The current UTC time to the millisecond, e.g. `2026-10-11T09:30:00.25Z` (RFC 3339
     /// drops the fraction's trailing zeros, and the whole fraction at a whole second). For an
-    /// event whose time is compared with file times, which a whole second would blur.
+    /// event whose time is compared with file times, which a whole second would blur. Like
+    /// [`Timestamp::now`], it reads the wall clock here because `Timestamp` is the ledger's
+    /// clock adapter.
     ///
     /// # Errors
     /// [`TimestampError::Clock`] when the clock reads past the year 9999.
