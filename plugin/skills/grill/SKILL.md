@@ -1,6 +1,6 @@
 ---
 name: grill
-description: Use when asked for new behaviour without saying how it works ("let users X", "make every Y do Z") or a request or idea is vague, even if it looks clear; question the human in rounds, each with a recommended answer, until they confirm. Do NOT use for the spec (use `spec`) or a bug (use `diagnose`).
+description: Use when asked for new behaviour without saying how it works ("let users X", "make every Y do Z"), even if it sounds precise, or a request or idea is vague; question the human in rounds, each with a recommended answer, until confirmed. Do NOT use for the spec (use `spec`) or a bug (use `diagnose`).
 ---
 
 # Grill
@@ -17,31 +17,32 @@ Turns a new or vague request into requirements the human confirmed. The question
 
 ## When to use
 
-- A request arrives without agreed requirements: a feature idea, "make X better", a change with unstated scope.
+- A request without agreed requirements: a feature idea, "make X better", an unstated scope.
 - Not when requirements are agreed (use `spec`), nor when a spec exists (use `plan`).
 
 ## Process
 
 1. **Seed the tree.** Write `.anneal/grill/<topic>.json`: `version: 1`, a one-line `goal`, empty `turns`, and the root questions (goal, users, scope, constraints, done-when) with `depends_on`, a recommended `answer`, `is_decision` and `confidence`. It's working if `anneal grill frontier --tree <file>` exits 0.
-2. **Look facts up.** Answer each `look_up` id from the code, docs or tracker (or hand a subagent the paths and the question); mark it `answered`. It's working if no fact reaches the human.
-3. **Builder check.** Of the `ask` ids, keep those where a wrong guess changes what gets built; accept your recommendation for the rest, listed in one line the human can object to. It's working if every question asked would change the build.
-4. **Ask one round.** Number the questions, each with your recommendation and why; "yes" accepts all. Record answers and statuses, and append the round's confidence to `turns`. Label asked nodes (classify's `data.id`): `anneal decide label <id> no` if the human says you could have looked it up, else `yes`. It's working if the next frontier drops the questions just answered.
-5. **Restate at the gate.** When `data.confidence.restate` is true, stop asking: restate the goal, every decision and every deferral, and ask whether it is right. It's working if the human answers the restatement.
+2. **Look facts up.** Answer each `look_up` id from the code, docs or tracker, or a subagent given the paths; mark it `answered`. It's working if no fact reaches the human.
+3. **Builder check.** Ask only the `ask` ids where a wrong guess changes the build; accept your recommendation for the rest, in one line the human can object to. It's working if every question would change the build.
+4. **Ask one round.** Number the questions, each with a recommendation and why; "yes" accepts all. Record answers and statuses, and append the round's confidence to `turns`. Label asked nodes (classify's `data.id`): `anneal decide label <id> no` if the human says you could have looked it up, else `yes`. It's working if the next frontier drops the answered questions.
+5. **Restate at the gate.** When `data.confidence.restate` is true, stop asking: restate the goal, decisions and deferrals, and ask if it is right. It's working if the human answers it.
 6. **Confirm.** Answer or defer every open node, then run `anneal grill confirm` with the human's exact words. It's working if it exits 0 and its event carries the tree's hash.
-7. **Keep language and scope.** Corrected terms go into the glossary (references/domain-language.md); out-of-scope rulings into the ruling store (references/scope-ledger.md). It's working if each has its entry.
+7. **Keep language and scope.** Corrected terms go in references/domain-language.md, out-of-scope rulings in references/scope-ledger.md. It's working if each has its entry.
 
 ## Rationalizations
 
 | Excuse | Reality |
 |---|---|
-| "The request is clear enough" | Clear to you. The tree shows the unanswered branches. |
+| "The request is clear enough" | Clear to you. The tree shows the open branches. |
 | "I'll ask it as an open question" | Without a recommendation the human does your design work. |
 | "They said ok, that counts" | Only an explicit yes to the restatement counts, quoted verbatim. |
 | "Faster to ask which library we use" | That is a fact. Look it up. |
+| "We ship in minutes, just build it" | A wrong guess costs more than one round of questions. |
 
 ## Red flags
 
-- Asking what the repository, docs or tracker already answer.
+- Asking what the code, docs or tracker answer.
 - Running `anneal grill confirm` with words the human did not write, or before the restatement.
 - Editing source before `grill_confirmed` is in the ledger.
 
