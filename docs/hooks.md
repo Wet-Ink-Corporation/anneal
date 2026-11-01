@@ -355,11 +355,15 @@ open) is a nudge naming how many were skipped and pointing at `anneal repro left
   milliseconds, must be earlier than the start of the latest `test_run` tagged with the worktree
   (`anneal task done` tags it): its `ts` minus its `duration_ms` and 2 ms more (1 ms for the
   duration rounded down, 1 ms for the moment between the command's end and the stamp). `task
-  done` stamps `ts` as the command ends, to the millisecond, so the computed start is never
-  later than the real one and at most a few milliseconds earlier: an edit made while the tests
-  ran always counts as untested, and one made in the moment before they started may too (a
-  block, never a pass). Runs recorded before millisecond stamps carry a `ts` truncated to the
-  second, which only moves their start earlier; they are read as they are. Runs stamped
+  done` stamps `ts` as the command ends, to the millisecond, so the computed start is not later
+  than the real one and at most a few milliseconds earlier: an edit made while the tests ran
+  counts as untested, and one made in the moment before they started may too (a block, never a
+  pass). This assumes file modification times are as fine as the wall clock; a file system
+  with coarser times can round an edit made early in the run back to before its start. Runs
+  recorded before millisecond stamps carry a `ts` truncated to the second and taken after the
+  ledger was found and opened, so their computed start is earlier by the truncation and later
+  by that delay: an edit in their first milliseconds may count as tested. They are read as
+  they are. Runs stamped
   more than 60 s in the future are passed over (of the latest 16). There is no ledger edit event
   to use instead. A claim with no changed source file needs nothing. Not seen: changes already
   committed (git no longer lists them) and deleted files (they have no time). Not checked: what

@@ -364,6 +364,49 @@ fn an_edit_just_before_task_done_in_the_same_second_is_tested() -> TestResult {
     Ok(())
 }
 
+/// 2020-01-01T00:10:00Z in Unix milliseconds.
+const TEN_PAST_MS: u64 = 1_577_837_400_000;
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_millisecond_stamp_starts_the_run_its_duration_and_2_ms_before_it() -> TestResult {
+    let session = Session::new()?;
+    // Stamped 00:10:00.500 after 100 ms: taken to have started at .500 - 100 - 2 = .398.
+    session.green_run_at("2020-01-01T00:10:00.500Z", 100)?;
+
+    session.edit(Duration::from_millis(TEN_PAST_MS + 397))?;
+    let before = session.stop("All tests pass.")?;
+    session.edit(Duration::from_millis(TEN_PAST_MS + 398))?;
+    let at_start = session.stop("All tests pass.")?;
+
+    assert!(before.is_silent(), "edited before the start: {before:?}");
+    assert!(
+        at_start.block.is_some(),
+        "edited in the start's millisecond: {at_start:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn a_whole_second_stamp_still_reads_as_its_second() -> TestResult {
+    let session = Session::new()?;
+    // An older run's stamp: 00:10:00 after 100 ms, taken to have started at 00:09:59.898.
+    session.green_run_at("2020-01-01T00:10:00Z", 100)?;
+
+    session.edit(Duration::from_millis(TEN_PAST_MS - 103))?;
+    let before = session.stop("All tests pass.")?;
+    session.edit(Duration::from_millis(TEN_PAST_MS - 102))?;
+    let at_start = session.stop("All tests pass.")?;
+
+    assert!(before.is_silent(), "edited before the start: {before:?}");
+    assert!(
+        at_start.block.is_some(),
+        "edited in the start's millisecond: {at_start:?}"
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn a_block_asks_for_the_complete_report_again_not_only_the_missing_step() -> TestResult {

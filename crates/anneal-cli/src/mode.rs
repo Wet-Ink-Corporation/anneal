@@ -232,16 +232,22 @@ fn emit<O: Write>(recorded: &Recording<'_>, clean: bool, out: &mut O) -> Result<
 /// build mode needs a clean tree.
 fn dirty_message(mode: Mode, subcommand: &str) -> String {
     let changes = "the working tree has changes (untracked files included)";
-    if mode == Mode::Build {
-        return format!(
-            "{changes}, so the preconditions hook denies source edits in build mode. fix: \
-             commit or stash them, then run `anneal mode build` again."
-        );
-    }
+    let still = match mode {
+        Mode::Build => {
+            return format!(
+                "{changes}, so the preconditions hook denies source edits in build mode. fix: \
+                 commit or stash them, then run `anneal mode build` again."
+            );
+        }
+        Mode::Diagnose => {
+            " (source edits still need a red reproduction, recorded with `anneal repro record`)"
+        }
+        Mode::Off => "",
+    };
     format!(
         "{changes}; `anneal mode {subcommand}` does not need a clean tree, so the preconditions \
-         hook denies nothing for it. fix: none for now; commit or stash them before `anneal \
-         mode build`, which denies source edits when entered on a dirty tree."
+         hook denies nothing because of them{still}. fix: none for now; commit or stash them \
+         before `anneal mode build`, which denies source edits when entered on a dirty tree."
     )
 }
 

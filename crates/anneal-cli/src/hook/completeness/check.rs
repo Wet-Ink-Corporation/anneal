@@ -203,10 +203,13 @@ fn check_claim(claim: &str, edit: &Edit, tag: Option<&LedgerTag>, found: &mut Fi
 /// A run is believable when it is stamped no later than `now_ms` plus [`FUTURE_SLACK_MS`]: a
 /// later stamp is a clock from elsewhere or a forged event, and is passed over (of the last
 /// [`RUNS_READ`] runs). The start is the stamp minus the run's `duration_ms` and
-/// [`STAMP_SLACK_MS`]. `task done` stamps as the run ends, to the millisecond (older runs were
-/// stamped to the second, which only moves their start earlier), so the start is
-/// never later than the real one: an edit made while the tests ran always counts as untested,
-/// and one made a few milliseconds before they started counts as tested.
+/// [`STAMP_SLACK_MS`]. `task done` stamps as the run ends, to the millisecond, so the start is
+/// not later than the real one and an edit made while the tests ran counts as untested, as far
+/// as file times are as fine as the wall clock (a coarser file system can round an edit made
+/// during the run back to before it). Older runs were stamped to the second, but after the
+/// ledger was found and opened: truncation moves their start earlier and that delay later, so
+/// an edit in their first milliseconds may count as tested. An edit made a few milliseconds
+/// before a run started counts as tested.
 fn latest_green_start(
     store: &Store,
     tag: &LedgerTag,

@@ -42,8 +42,9 @@ folder; [ledger.md](ledger.md)).
   symlink to a device still counts. A dirty tree is still recorded, with
   `clean: false` and a `mode/dirty` finding, and exit 0; the hook then denies source edits until
   build mode is entered again on a clean tree. `clean` is recorded for `diagnose` and `off` too,
-  where the hook does not read it: their `mode/dirty` finding names the mode and says nothing is
-  denied for it, only `anneal mode build` needs a clean tree.
+  where the hook does not read it: their `mode/dirty` finding names the mode and says the dirty
+  tree denies nothing there (in diagnose mode source edits still need a red reproduction); only
+  `anneal mode build` needs a clean tree.
 - Exit 0 when the mode is recorded. Outside a git worktree, or with a `--plan` or `--tree` that
   is not a file inside the worktree, it is a usage error (2) and nothing is recorded.
 

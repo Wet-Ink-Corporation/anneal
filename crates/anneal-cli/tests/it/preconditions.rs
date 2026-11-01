@@ -368,6 +368,39 @@ fn mode_diagnose_on_a_dirty_tree_names_diagnose_and_denies_nothing_for_it() -> T
 
 #[test]
 #[cfg_attr(miri, ignore = "runs git and the binary")]
+fn a_dirty_tree_finding_outside_build_says_only_the_dirty_tree_denies_nothing() -> TestResult {
+    let repo = Repo::new()?;
+    repo.write("notes.rs", "untracked\n")?;
+
+    let message = |mode: &str| -> Result<String, Box<dyn Error>> {
+        let envelope = repo.anneal(&["mode", mode], 0)?;
+        Ok(envelope
+            .pointer("/findings/0/message")
+            .and_then(Value::as_str)
+            .ok_or("the finding has a message")?
+            .to_owned())
+    };
+    let diagnose = message("diagnose")?;
+    let off = message("off")?;
+
+    assert!(
+        diagnose.contains("denies nothing because of them"),
+        "{diagnose}"
+    );
+    assert!(
+        diagnose.contains("still need a red reproduction"),
+        "diagnose still guards source edits: {diagnose}"
+    );
+    assert!(off.contains("`anneal mode off` does not need"), "{off}");
+    assert!(
+        !off.contains("red reproduction"),
+        "off guards nothing: {off}"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs git and the binary")]
 fn mode_build_refuses_a_plan_that_is_not_a_file() -> TestResult {
     let repo = Repo::new()?;
 
