@@ -25,6 +25,18 @@ fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
     }
 }
 
+/// Names which root set `roots` is, never its certificates, so a failing
+/// assertion does not print certificate bytes (code scanning reads any
+/// certificate in a message as sensitive).
+fn kind(roots: &RootCerts) -> String {
+    match roots {
+        RootCerts::Specific(certs) => format!("{} specific certificate(s)", certs.len()),
+        RootCerts::PlatformVerifier => "the platform verifier".to_owned(),
+        RootCerts::WebPki => "the bundled webpki roots".to_owned(),
+        _ => "another root set".to_owned(),
+    }
+}
+
 /// A self-signed P-256 test root (`CN=anneal test root`), trusted by nothing.
 const TEST_ROOT: &str = "-----BEGIN CERTIFICATE-----
 MIIBjDCCATOgAwIBAgIUXsNASfSzB4BWkYFZI76oQxxUz1wwCgYIKoZIzj0EAwIw
@@ -51,8 +63,12 @@ fn with_no_proxy_or_cert_variable_the_route_is_direct_with_the_bundled_roots() {
         .route()
         .expect("a route");
 
-    assert!(route.proxy.is_none(), "{route:?}");
-    assert!(matches!(route.roots, RootCerts::WebPki), "{route:?}");
+    assert!(route.proxy.is_none(), "a proxy was taken");
+    assert!(
+        matches!(route.roots, RootCerts::WebPki),
+        "{}",
+        kind(&route.roots)
+    );
 }
 
 #[test]
@@ -142,7 +158,7 @@ fn a_cert_file_s_certificates_replace_the_bundled_roots() {
 
     match route.roots {
         RootCerts::Specific(certs) => assert_eq!(certs.len(), 2),
-        other => panic!("expected the file's certificates, got {other:?}"),
+        other => panic!("expected the file's certificates, got {}", kind(&other)),
     }
 }
 
@@ -227,7 +243,7 @@ fn the_client_takes_the_route_s_roots_and_proxy() {
     let config = client.config();
     match config.tls_config().root_certs() {
         RootCerts::Specific(certs) => assert_eq!(certs.len(), 3),
-        other => panic!("expected the file's certificates, got {other:?}"),
+        other => panic!("expected the file's certificates, got {}", kind(other)),
     }
     let proxy = config.proxy().expect("the route's proxy");
     assert_eq!((proxy.host(), proxy.port()), ("10.0.0.1", 3128));
@@ -242,8 +258,8 @@ fn the_client_with_no_variable_takes_no_proxy_and_the_bundled_roots() {
     let config = client.config();
     assert!(
         matches!(config.tls_config().root_certs(), RootCerts::WebPki),
-        "{:?}",
-        config.tls_config().root_certs()
+        "{}",
+        kind(config.tls_config().root_certs())
     );
     assert_eq!(config.proxy().map(|proxy| proxy.uri().to_string()), None);
 }
@@ -294,7 +310,8 @@ fn a_cert_file_symlinked_to_a_bundle_is_read() {
 
     assert!(
         matches!(&route.roots, RootCerts::Specific(certs) if certs.len() == 1),
-        "{route:?}"
+        "{}",
+        kind(&route.roots)
     );
 }
 
