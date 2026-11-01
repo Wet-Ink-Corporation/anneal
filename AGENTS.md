@@ -47,10 +47,13 @@ Process: explore, frame, plan (`.temper/plans/`), red, green, refactor, self-rev
 | 2026-10-11 | Ship the CLI as prebuilt binaries in `plugin/libexec/<target>/` behind a launcher, not on PATH and no `plugin/bin/` | ARC | Ryan (#9) |
 | 2026-10-11 | Toolchain and MSRV pinned to 1.98.1, matching weigh-in | MOD-01 | Ryan (#9) |
 | 2026-10-11 | Split the ledger into `crates/anneal-ledger` (dependency profile, reuse by hooks and commands); happenstance 0.3.2, tokio, time added as weigh-in has them; dependabot ignores `happenstance-*` | ARC-07, H-16 | story #11 |
+| 2026-10-31 | Move the cockpit mod out of `plugin/` into its own plugin, `anneal-cockpit` (`plugin-cockpit/`), with its own launcher copy; add a human surface check to the release checklist | ARC, H-16 | Ryan (project thread, after Weigh-In's mod-in-chat finding) |
 
 ## Plugin rules
 
 - **No `plugin/bin/`.** claude.ai rejects hosted plugins that ship one. Binaries live in `plugin/libexec/<target>/` and hooks call `${CLAUDE_PLUGIN_ROOT}/libexec/anneal` by path, in exec form.
 - **Hooks fail open, guards fail closed, a missing install warns.** A guard (`--fail-closed`, `onFailure: block`) blocks when its binary fails. With no binary anywhere every hook exits 0, guards included, and `hook bootstrap` warns that anneal is off (Ryan, PR 140).
-- **Versions move together.** `Cargo.toml` and `plugin/.claude-plugin/plugin.json` carry one version (`scripts/check-versions.sh`); note user-visible changes under `## Unreleased` in `CHANGELOG.md`.
+- **No mod in the `anneal` plugin.** The Claude desktop app's chats turn off a whole plugin whose hooks name a mod (`modules`), skills included, although the docs say chat ignores hooks. Mods ship in `plugin-cockpit/` (the `anneal-cockpit` plugin, same marketplace); `plugin/` keeps skills and command hooks only. The cockpit carries its own copy of the `libexec/` launchers, because a plugin cannot reach another plugin's root (Ryan, 2026-10-31, from Weigh-In's isolation of the bug).
+- **Versions move together.** `Cargo.toml`, `plugin/.claude-plugin/plugin.json` and `plugin-cockpit/.claude-plugin/plugin.json` carry one version, and the two plugins' launchers stay identical (`scripts/check-versions.sh`); note user-visible changes under `## Unreleased` in `CHANGELOG.md`.
+- **A release is checked on every surface a person uses**, not only where we automate. CI and AFK sessions run in Claude Code and cloud sessions only, so the release checklist (`docs/release-0.1.0.md`) has a human surface check.
 - **Line endings are LF** everywhere except `*.cmd` (`.gitattributes`).

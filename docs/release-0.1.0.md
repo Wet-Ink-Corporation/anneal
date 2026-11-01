@@ -37,8 +37,9 @@ belongs in this table's row.
 
 ## Release checklist
 
-- [ ] Version bumped to `0.1.0` in `plugin/.claude-plugin/plugin.json` and `Cargo.toml`,
-      together (`scripts/check-versions.sh` fails when they differ).
+- [ ] Version bumped to `0.1.0` in `plugin/.claude-plugin/plugin.json`,
+      `plugin-cockpit/.claude-plugin/plugin.json` and `Cargo.toml`, together
+      (`scripts/check-versions.sh` fails when they differ).
 - [ ] `CHANGELOG.md`: `## Unreleased` moved to `## 0.1.0 — <date>`. The release workflow refuses a
       tag whose version has no section, and publishes that section as the release notes.
 - [ ] README: install from the marketplace, minimum Claude Code 2.1.295, the one-time status line
@@ -54,6 +55,17 @@ belongs in this table's row.
       `Bash`, so without the flag the run is refused before anything is spent).
 - [ ] The 7 model-invoked descriptions total 2,100 characters or fewer (`anneal lint skills`).
 - [ ] The Clef verdict table above is filled in, and any promoted point's mode is recorded.
+- [ ] Surface check, by Ryan, on a build of the release candidate (CI and AFK sessions run only in
+      Claude Code and cloud sessions, which is how a plugin that chats turn off went unnoticed).
+      On each surface, ask for one anneal skill by name and note whether it loads:
+      - Claude Code CLI with `anneal` and `anneal-cockpit` installed: the skill loads, the band
+        draws, `/anneal` opens the pane, and `rm -rf /` through Bash is denied by the guard.
+      - Claude desktop app, Code tab: the same.
+      - A cloud session with the plugin added in claude.ai: the skill loads and the session start
+        reports the launcher's download (or a working CLI).
+      - Claude desktop app, a new chat with a folder connected (not a project): the skill loads, with
+        no "this plugin entry is off here" error.
+      - Cowork with the release zip uploaded: the skill loads.
 - [ ] `v0.1.0` tagged on `main` and pushed, by Ryan.
 - [ ] The release workflow publishes the GitHub release with the zip, the binaries and
       `SHA256SUMS`.

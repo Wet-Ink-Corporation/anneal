@@ -1,0 +1,11 @@
+{
+  "name": "anneal-cockpit",
+  "version": "0.0.5",
+  "description": "The anneal cockpit for Claude Code: a band above the prompt and an /anneal pane that show anneal's gates, plan, tasks and Clef calibration. Display only; install it next to anneal.",
+  "author": { "name": "Ryan Britton", "email": "ryan.britton@wet-ink.net" },
+  "homepage": "https://github.com/Wet-Ink-Corporation/anneal",
+  "repository": "https://github.com/Wet-Ink-Corporation/anneal",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["sdlc", "gates", "mod", "cockpit"],
+  "types": "./types/index.d.ts"
+}

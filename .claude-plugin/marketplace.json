@@ -1,6 +1,6 @@
 {
   "name": "anneal",
-  "description": "anneal: enforced SDLC gates for Claude Code. Install anneal@anneal.",
+  "description": "anneal: enforced SDLC gates for Claude Code. Install anneal@anneal, and anneal-cockpit@anneal for the Claude Code band and pane.",
   "owner": {
     "name": "Ryan Britton",
     "email": "ryan.britton@wet-ink.net"
@@ -10,6 +10,11 @@
       "name": "anneal",
       "source": "./plugin",
       "description": "Turns prose SDLC gates into enforced checks: skills, a deterministic CLI behind hooks, and calibrated judgement calls."
+    },
+    {
+      "name": "anneal-cockpit",
+      "source": "./plugin-cockpit",
+      "description": "The cockpit mod for Claude Code: a band and an /anneal pane showing anneal's state. Kept apart from anneal because desktop chats turn off any plugin that ships a mod."
     }
   ]
 }

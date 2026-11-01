@@ -22,6 +22,7 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#v}"
           grep -q "\"version\": \"$v\"" plugin/.claude-plugin/plugin.json
+          grep -q "\"version\": \"$v\"" plugin-cockpit/.claude-plugin/plugin.json
           grep -q "^version = \"$v\"" Cargo.toml
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
             || { echo "tag $GITHUB_REF_NAME is not on main; merge first, then tag" >&2; exit 1; }
@@ -83,6 +84,10 @@ jobs:
             done
           done
           (cd plugin && zip -qr "../assets/anneal-plugin-$v.zip" .)
+          # anneal-cockpit carries its own copy of the builds: a plugin cannot reach another's root.
+          for d in plugin/libexec/*/; do mkdir -p "plugin-cockpit/libexec/$(basename "$d")" && cp -p "$d"* "plugin-cockpit/libexec/$(basename "$d")/"; done
+          cp plugin/libexec/anneal.exe plugin-cockpit/libexec/anneal.exe
+          (cd plugin-cockpit && zip -qr "../assets/anneal-cockpit-plugin-$v.zip" .)
           (cd assets && sha256sum * > SHA256SUMS && cat SHA256SUMS)
       - name: publish
         env:
@@ -118,10 +123,12 @@ jobs:
         run: |
           chmod +x plugin/libexec/*/anneal
           cp plugin/libexec/x86_64-pc-windows-msvc/anneal.exe plugin/libexec/anneal.exe
+          for d in plugin/libexec/*/; do mkdir -p "plugin-cockpit/libexec/$(basename "$d")" && cp -p "$d"* "plugin-cockpit/libexec/$(basename "$d")/"; done
+          cp plugin/libexec/anneal.exe plugin-cockpit/libexec/anneal.exe
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --orphan marketplace
           git add -A
-          git add -f plugin/libexec
+          git add -f plugin/libexec plugin-cockpit/libexec
           git commit -q -m "marketplace: ${GITHUB_REF_NAME} ($(git rev-parse --short "$GITHUB_SHA"))"
           git push --force origin marketplace

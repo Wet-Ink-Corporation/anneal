@@ -1,5 +1,5 @@
 // The cockpit's band, pane, refresh, `/anneal` and its calibration dashboard. `claude plugin
-// test plugin` runs it; the test's own hooks stand for the host (`$.process.run`, the clock,
+// test plugin-cockpit` runs it; the test's own hooks stand for the host (`$.process.run`, the clock,
 // the surfaces), so nothing runs and no model is called. Fixtures are `anneal status --json`
 // and `anneal calibrate` envelopes as the CLI prints them (docs/status.md, docs/calibrate.md).
 
@@ -261,10 +261,10 @@ const refreshed = async ($: Engine, state: Host): Promise<void> => {
 }
 
 const band = async ($: Engine, surface: (typeof SURFACES)[number]) =>
-  $.ui.mount({ plugin: 'anneal', surface, component: 'AbovePrompt', props: BAND_PROPS })
+  $.ui.mount({ plugin: 'anneal-cockpit', surface, component: 'AbovePrompt', props: BAND_PROPS })
 
 const pane = async ($: Engine, surface: (typeof SURFACES)[number]) =>
-  $.ui.mount({ plugin: 'anneal', surface, component: 'Pane', requestId: 'anneal', props: PANE_PROPS })
+  $.ui.mount({ plugin: 'anneal-cockpit', surface, component: 'Pane', requestId: 'anneal', props: PANE_PROPS })
 
 test('the band and pane draw nothing of anneal while there is no ledger', async ($, on) => {
   const state = host(on, EMPTY)
@@ -309,7 +309,7 @@ test('the band is cut to the columns it is given', async ($, on) => {
   await refreshed($, state)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({
-      plugin: 'anneal',
+      plugin: 'anneal-cockpit',
       surface,
       component: 'AbovePrompt',
       props: { ...BAND_PROPS, bodyColumns: 20 },
@@ -650,7 +650,7 @@ const CAL_STATUS = {
 
 const calibrationPane = async ($: Engine, surface: (typeof SURFACES)[number]) =>
   $.ui.mount({
-    plugin: 'anneal',
+    plugin: 'anneal-cockpit',
     surface,
     component: 'Pane',
     requestId: 'anneal-calibration',
@@ -1002,14 +1002,15 @@ test('a run that times out is not retried through the other launcher, and the ti
   const state = host(on, MID_BUILD, { surfaces: [] })
   await primeLaunchers($, state)
   state.launchers = { anneal: 'timeout' }
-  expect((await $.command.run(ANNEAL)).text).toBe('anneal status unavailable (anneal: $.process.run: timed out after 10000 ms).')
+  expect((await $.command.run(ANNEAL)).text).toBe('anneal status unavailable (anneal-cockpit: $.process.run: timed out after 10000 ms).')
   expect(state.launched).toEqual(['anneal'])
   await refreshed($, state)
   expect(state.launched).toEqual(['anneal', 'anneal'])
   expect(state.runs.length).toBe(0)
   const ui = await pane($, 'terminal')
   expect((await ui.find({ key: 'note' }))?.text).toBe(
-    'anneal status unavailable: anneal: $.process.run: timed out after 2000 ms',
+    // The note is cut to the pane's 80 columns; the host's reason now carries the plugin's longer name.
+    'anneal status unavailable: anneal-cockpit: $.process.run: timed out after 2000 …',
   )
   await ui.unmount()
   const shown = await band($, 'terminal')
@@ -1022,7 +1023,7 @@ test('no launcher starts: /anneal says anneal status is not built yet, with each
   await primeLaunchers($, state)
   state.launchers = { anneal: 'ENOENT', 'anneal.cmd': 'EACCES' }
   expect((await $.command.run(ANNEAL)).text).toBe(
-    'anneal status is not built yet (anneal: $.process.run: spawn anneal ENOENT; anneal: $.process.run: spawn anneal.cmd EACCES).',
+    'anneal status is not built yet (anneal-cockpit: $.process.run: spawn anneal ENOENT; anneal-cockpit: $.process.run: spawn anneal.cmd EACCES).',
   )
   expect(state.launched).toEqual(['anneal', 'anneal.cmd'])
 })
@@ -1039,7 +1040,7 @@ test('a clock the host refuses leaves nothing scheduled, so the next ask refresh
   await state.clock.settle()
   expect(refusals.now).toBe(0)
   expect(state.runs.length).toBe(0)
-  expect(state.logged).toEqual(['anneal cockpit: refresh not scheduled: anneal: $.clock.now: the clock is unavailable'])
+  expect(state.logged).toEqual(['anneal cockpit: refresh not scheduled: anneal-cockpit: $.clock.now: the clock is unavailable'])
   await state.clock.advance(1_000)
   await turnComplete($)
   await state.clock.settle()
@@ -1054,10 +1055,10 @@ test('a refresh the host refuses records why as the reading, and the next refres
   state.refuse.panes = 'the pane list is unavailable'
   await refreshed($, state)
   expect(state.runs.length).toBe(0)
-  expect(state.logged).toEqual(['anneal cockpit: refresh failed: anneal: $.ui.panes: the pane list is unavailable'])
+  expect(state.logged).toEqual(['anneal cockpit: refresh failed: anneal-cockpit: $.ui.panes: the pane list is unavailable'])
   const ui = await pane($, 'terminal')
   expect((await ui.find({ key: 'note' }))?.text).toBe(
-    'anneal status unavailable: anneal: $.ui.panes: the pane list is unavailable',
+    'anneal status unavailable: anneal-cockpit: $.ui.panes: the pane list is unavail…',
   )
   await ui.unmount()
   state.refuse.panes = undefined
@@ -1079,13 +1080,13 @@ test('a calibration refresh the host refuses records why, and the next refresh r
     },
   })
   expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe(
-    'anneal: calibration refresh failed (anneal: $.state.get: the store is unavailable).',
+    'anneal: calibration refresh failed (anneal-cockpit: $.state.get: the store is unavailable).',
   )
   expect(state.calibrateRuns.length).toBe(0)
-  expect(state.logged).toEqual(['anneal cockpit: calibration refresh failed: anneal: $.state.get: the store is unavailable'])
+  expect(state.logged).toEqual(['anneal cockpit: calibration refresh failed: anneal-cockpit: $.state.get: the store is unavailable'])
   const ui = await calibrationPane($, 'terminal')
   expect((await ui.find({ key: 'cal-note' }))?.text).toBe(
-    'anneal calibrate unavailable: anneal: $.state.get: the store is unavailable',
+    'anneal calibrate unavailable: anneal-cockpit: $.state.get: the store is unavail…',
   )
   await ui.unmount()
   expect((await $.command.run(CALIBRATION_REFRESH)).text).toBe('anneal: calibration refreshed.')

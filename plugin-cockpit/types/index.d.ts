@@ -203,7 +203,7 @@ export type AnnealCalibrationReading =
 
 declare module 'claude-code' {
   interface PluginState {
-    anneal: {
+    'anneal-cockpit': {
       /** What the cockpit last learned from `anneal status --json`. */
       reading: AnnealReading
       /** The ledger position of the gate row the pane shows expanded, or `null` for none. */

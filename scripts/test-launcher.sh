@@ -86,6 +86,8 @@ set -e
 # 4. No bin/ anywhere in the plugin, and the launcher keeps its executable bit.
 [ -z "$(find "$root/plugin" -type d -name bin)" ] || fail "plugin ships a bin/ directory"
 [ -x "$root/plugin/libexec/anneal" ] || fail "plugin/libexec/anneal is not executable"
+[ -z "$(find "$root/plugin-cockpit" -type d -name bin)" ] || fail "plugin-cockpit ships a bin/ directory"
+[ -x "$root/plugin-cockpit/libexec/anneal" ] || fail "plugin-cockpit/libexec/anneal is not executable"
 
 # 5. Neither, but a release to download.
 sha256() {
