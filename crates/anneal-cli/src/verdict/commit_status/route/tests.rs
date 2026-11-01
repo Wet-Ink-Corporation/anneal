@@ -25,15 +25,15 @@ fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
     }
 }
 
-/// Names which root set `roots` is, never its certificates, so a failing
-/// assertion does not print certificate bytes (code scanning reads any
-/// certificate in a message as sensitive).
-fn kind(roots: &RootCerts) -> String {
+/// Names which root set `roots` is with fixed text only, so no value read
+/// from the certificates (not even their count) reaches a failure message:
+/// code scanning reads anything derived from a certificate as sensitive.
+fn kind(roots: &RootCerts) -> &'static str {
     match roots {
-        RootCerts::Specific(certs) => format!("{} specific certificate(s)", certs.len()),
-        RootCerts::PlatformVerifier => "the platform verifier".to_owned(),
-        RootCerts::WebPki => "the bundled webpki roots".to_owned(),
-        _ => "another root set".to_owned(),
+        RootCerts::Specific(_) => "specific certificates",
+        RootCerts::PlatformVerifier => "the platform verifier",
+        RootCerts::WebPki => "the bundled webpki roots",
+        _ => "another root set",
     }
 }
 
