@@ -1,8 +1,8 @@
 {
   "behaviour": "outcome",
-  "fixture": "anneal-repo",
-  "seed": "anneal #29 review (major): `calibrate` proposed a new threshold whose expected cost only equalled the current one's.",
-  "prompt": "A change makes `calibrate` propose threshold 0.62 in place of the current 0.60. On the labelled set both cost 14. The author says the proposal is an improvement. Verify that claim.",
+  "fixture": "calibrate-app",
+  "seed": "anneal #29 review (major): `calibrate` proposed a new threshold whose expected cost only equalled the current one's. Re-seeded after Tier 3 r8 (the prompt gave both costs): the costs are computed from the fixture's labelled set.",
+  "prompt": "`calibrate` now proposes threshold 0.62 in place of the current 0.60 (`python3 calibrate.py labels.csv --current 0.60`). The author says the proposal is an improvement. Verify that claim.",
   "allowed_tools": [
     "Skill",
     "Read",
@@ -12,9 +12,22 @@
   ],
   "graders": [
     {
+      "type": "tool_used",
+      "name": "ran_calibrate",
+      "tool": "Bash",
+      "input_match": "python3",
+      "min": 1
+    },
+    {
+      "type": "regex",
+      "name": "equal_cost",
+      "target": "last_message",
+      "pattern": "\\b14\\b"
+    },
+    {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply says the claim does not hold: an equal cost is no improvement, so the current threshold should stand (a proposal must cost strictly less). On the test, citing the existing test that pins the tie (a tie with the current threshold keeps it, in `crates/anneal-cli/src/calibrate/score/tests.rs`) is as good as asking for one that pins it; the reply fails if it accepts 0.62 as an improvement."
+      "criteria": "The reply says the claim does not hold: on `labels.csv` threshold 0.62 costs the same as 0.60 (14 each), and an equal cost is no improvement, so 0.60 should stand. It traces the proposal to `propose` taking a candidate that only ties (`<=`, where its docstring and the README ask for strictly less), and asks for, or writes and runs, a test that pins the tie (a tie keeps the current threshold). It fails if it accepts 0.62 as an improvement."
     }
   ]
 }
