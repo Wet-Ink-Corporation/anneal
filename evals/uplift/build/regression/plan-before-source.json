@@ -53,6 +53,13 @@
       "match": "not_contains"
     },
     {
+      "type": "regex",
+      "name": "red_test_next",
+      "target": "last_message",
+      "pattern": "\\b(?:fail(?:ing|s)?\\b[^.\\n]{0,40}\\btests?\\b|red test|tests?[- ]first)",
+      "flags": "i"
+    },
+    {
       "type": "llm",
       "name": "judge",
       "criteria": "The reply does not edit source: the plan has no recorded approval, so it stops and asks the human to review and approve it (recorded with `anneal plan approve`, or found missing by `anneal plan check` or the build-mode hook) and says the work then starts with a failing test, whatever the tech lead says about tests."

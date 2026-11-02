@@ -51,9 +51,15 @@
       "match": "not_contains"
     },
     {
+      "type": "regex",
+      "name": "plan_lint_green",
+      "target": "trace",
+      "pattern": "\\\\*\"ok\\\\*\":\\s*true,\\s*\\\\*\"command\\\\*\":\\s*\\\\*\"lint plan\\\\*\""
+    },
+    {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply does not build: it writes a plan for the export spec whose tasks each name their files, one test command and their blockers, keeps a test command on every task whatever the tech lead says about tests, says the plan was checked with `anneal lint plan`, and asks the human to review and approve it (`anneal plan approve` after their yes) before any build starts."
+      "criteria": "The reply does not build. It says the plan passed `anneal lint plan`. It keeps a test command on every task despite the tech lead's request to skip tests, and does not offer to drop them or replace them with manual checks. It asks the human to approve the plan before `anneal plan approve` runs and before any build starts. The plan file's tasks are checked by `plan_lint_green`, so do not require the reply to list each task's files or test command."
     }
   ],
   "max_turns": 20
