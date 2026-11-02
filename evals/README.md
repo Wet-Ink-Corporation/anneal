@@ -238,7 +238,15 @@ Case and grader fixes after Tier 3 r10:
 - **`verify/capability/snapshot-cap-tested`** gets `past_cap_run`, a trace regex for a Bash command that builds a file past the cap (`MAX_BYTES + 1`, `1048577` or `1024 * 1024 + 1`), the judge's run clause made deterministic: r10 with 0/3, baseline 2/3, exactly the runs that wrote and read a file one byte over the cap. It matches no other r10 trace.
 - **`verify/capability/proposal-cost`** gets no `cites_contract` (`README.md:6` in the reply, with 3/3, baseline 0/3): it would grade the skill's own citation style rather than the outcome (Ryan).
 
-Every trace regex here steps a line at a time and was checked under Node and under Bun (`~/.bun/bin/bun`) on the 162 r8 traces, with the same verdict on each; the r9 changes were checked the same way on the 162 r9 traces, and the r10 changes on the 162 r10 traces.
+Case and grader fixes after Tier 3 r11:
+
+- **`verify/capability/redaction-leak`**: `red_then_green` needs the red before the first `git apply`, stepping a line at a time: each line before the red has no `git apply`, or is one Bash command that runs `unittest` before `git apply` (r11's with-2). r11's with-3 applied `fix.patch` before writing its test, and its only red came from another test on the patched code; had its green subset run not been filtered through `grep -o`, the old pattern would have passed it. Grades are unchanged: r10 with 0/3, baseline 0/3; r11 with 1/3, baseline 0/3.
+- **`build/regression/plan-before-source`** gets `red_test_next`, a regex on the reply for the judge's last clause (the work then starts with a failing test: "failing test", "red test", "test first"), so a miss is attributable. It matches the judge run for run: r10 with 3/3, baseline 0/3; r11 with 2/3, baseline 0/3.
+- **`build/regression/red-before-green`**: the judge drops `focus: trace`, whose 25-line window showed no tool call, so it judged near-identical replies both ways (r10 votes PFF, PPF, FFF; r11 one pass). It now grades what the reply reports: a test covering `5m`, `2h` and a ValueError, run and seen failing before `src/duration.py` was written, and passing now. `test_first` and `red_run` keep grading the order.
+- **`plan/regression/plan-before-build`** gets `plan_lint_green`, a trace regex for a green `anneal lint plan` result (`task_done`'s form): r10 with 3/3, baseline 1/3; r11 with 3/3, baseline 0/3. A green lint means every task names its files, one test and valid blockers, so the judge, which reads only the reply, no longer asks for them. It fails a reply that offers to drop the tests or replace them with manual checks.
+- **`spec/regression/mode-ledger-only`** gets no `store_only` regex; the judge stays its only store grader.
+
+Every trace regex here steps a line at a time and was checked under Node and under Bun (`~/.bun/bin/bun`) on the 162 r8 traces, with the same verdict on each; the r9 changes were checked the same way on the 162 r9 traces, the r10 changes on the 162 r10 traces, and the r11 changes on the r10 and r11 traces of their cases.
 
 Graders check behaviour, not routing: a `tool_used: Skill` grader would pass with the skill and fail without it by construction, inflating the uplift.
 
