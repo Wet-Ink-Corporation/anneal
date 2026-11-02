@@ -7,25 +7,23 @@ description: Use when asked "is it fixed?", "tested?" or "can we close it?", or 
 
 ## Overview
 
-A "done" or "fixed" reply needs fresh evidence in the ledger, not the author's word.
-
-- You MUST run `anneal task done <id> -- <test command>` after the last source edit and before writing done, fixed or passing, and back "fixed" with a test that failed before the fix; the `completeness` hook blocks the claim until a green run is newer than the edit.
+- You MUST run `anneal task done <id> -- <test command>` after the last source edit and before writing done, fixed or passing, and back "fixed" with a test that failed before the fix (a check by hand is not a test); the `completeness` hook blocks the claim until a green run is newer than the edit.
 - You MUST remove every `[DEBUG-<id>]` tag until `anneal repro leftovers` exits 0; the `completeness` hook blocks while one is left.
 - You MUST end every doubt-pass reviewer's reply with a Status block (`Status:` DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED, then Gate, Review, Changed, Decisions needed, Not verified); the `status` hook records each one.
 
 ## When to use
 
 - Work looks finished and you are about to say so.
-- Not for an unknown failure (use `diagnose`), planning (use `plan`) or the pull request (use `ship`): this skill stops at the local pass.
+- Not for an unknown failure (`diagnose`), planning (`plan`) or the pull request (`ship`).
 
 ## Process
 
 1. **Find the contract.** Read the decision and spec rows the claim depends on (a decisions-log row in an `AGENTS.md`, say) and cite each by `file:line`. Search for the exact row; a broad `grep | head` can bury it. It's working if every row you judge against is cited.
-2. **Run the tests fresh.** Run `anneal task done <id> -- <test command>`; `<id>` is the task id, or any short name with no task. A run that never reached a test (`No module named pytest`, say) is not evidence: use the project's own runner, such as `python3 -m unittest`. It's working if it exits 0 after your last edit.
+2. **Run the tests fresh.** Run `anneal task done <id> -- <test command>`; `<id>` is the task id, or any short name with no task. A run that reached no test (`No module named pytest`) is not evidence; use the project's own runner (`python3 -m unittest`). The suite is not enough: run the claim's own case (for a cap, a file one past it), writing a test if none covers it. A "not fixed" or "not verified" verdict rests on that case's red run, not on reading code. It's working if a fresh run after your last edit exercised the claim's case.
 3. **Clear leftovers, run the gate.** Run `anneal repro leftovers`, and `temper:gate` in a Rust repository. It's working if both pass.
-4. **Doubt pass.** Run `anneal verify risk` first; on exit 3, skip to step 6 and say so. Hand reviewer subagents the diff, the files it touches and the contract (step 1's rows, the task's test, the plan), never your claim. Ask each for findings as `file:line`, what is wrong and why, and a Status block. It's working if each reviewer got files, not your conclusions.
+4. **Doubt pass.** Run `anneal verify risk` first; on exit 3, skip to step 6 and say so. Hand reviewer subagents the diff, its files and the contract (step 1's rows, the task's test, the plan), never your claim. Ask each for findings as `file:line`, what is wrong and why. It's working if each reviewer got files, not your conclusions.
 5. **Triage.** Reject every finding without a `file:line`. Fix each one you accept, then go back to step 2. It's working if a cycle ends with no accepted finding within 3; after the third, hand the open findings to the human.
-6. **Report.** Claim only what the ledger shows: name the green `test_run`, the gate result and any finding left open. It's working if every claim points to evidence.
+6. **Report.** Claim only what the ledger shows: name the green `test_run`, the gate result and any open finding. It's working if every claim points to evidence.
 
 ## Rationalizations
 
@@ -34,12 +32,12 @@ A "done" or "fixed" reply needs fresh evidence in the ledger, not the author's w
 | "The tests passed an hour ago" | An edit since makes it stale. |
 | "I'll tell the reviewer what I changed" | A reviewer told the conclusion looks for it. |
 | "CI will catch it" | CI runs after the claim. |
-| "The lead said skip the tests" | Write and run the test anyway, or say the claim is unproven. |
-| "We ship in 5 minutes" | A run takes seconds; a verdict without one is unproven. |
+| "The lead said skip the tests" | Write and run the test anyway; a skip does not prove the claim. |
+| "We ship in 5 minutes" | A run takes seconds. |
 
 ## Red flags
 
-- "Done" or "all tests pass" with no `test_run` in the ledger since the last edit.
+- A "not fixed" argued from the code, with no run of the case.
 - A finding accepted, or argued over, without a `file:line`.
 
 ## Verification
