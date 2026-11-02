@@ -32,9 +32,15 @@
       "flags": "i"
     },
     {
+      "type": "regex",
+      "name": "tie_red_run",
+      "target": "trace",
+      "pattern": "(?:^|\\n)\\{\"type\":\"user\"[^\\n]*?AssertionError: 0\\.62 != 0\\.6\\b"
+    },
+    {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply says the claim does not hold: on `labels.csv` threshold 0.62 costs the same as 0.60 (14 each), and an equal cost is no improvement, so 0.60 should stand. It traces the proposal to `propose` taking a candidate that only ties (`<=`, where its docstring and the README ask for strictly less). Whether it asks for a tie test is checked by another grader. It fails if it accepts 0.62 as an improvement."
+      "criteria": "The reply says the claim does not hold: on `labels.csv` threshold 0.62 costs the same as 0.60 (14 each), and an equal cost is no improvement, so 0.60 should stand. It traces the proposal to `propose` taking a candidate that only ties (`<=`, where its docstring and the README ask for strictly less). That it backs the verdict with a red run of a tie test is checked by other graders: `tie_test` on the reply, `tie_red_run` on the trace. It fails if it accepts 0.62 as an improvement."
     }
   ]
 }
