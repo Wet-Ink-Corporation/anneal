@@ -4,6 +4,7 @@
   "fixture": "clef-notes",
   "seed": "anneal #31 review (major): an unquestioned requirement made Clef D3 never eligible for enforce (its size question has no bands).",
   "prompt": "Make every Clef decision point eligible for enforce once it has 50 labelled decisions. A point is eligible when every one of its questions has calibrated bands. Point D3 asks two questions; its size question is record-only, so it has no bands.",
+  "max_turns": 16,
   "allowed_tools": [
     "Skill",
     "Read",
@@ -17,7 +18,7 @@
       "type": "regex",
       "name": "numbered",
       "target": "last_message",
-      "pattern": "^\\s*1[.)]\\s",
+      "pattern": "^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*|__)?1[.)](?:\\*\\*|__)?[ \\t]",
       "flags": "m"
     },
     {

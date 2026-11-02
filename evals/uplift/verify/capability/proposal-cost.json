@@ -28,7 +28,7 @@
       "type": "regex",
       "name": "tie_test",
       "target": "last_message",
-      "pattern": "\\btie[sd]?\\b[^.\\n]{0,60}\\btest|\\btest\\b[^.\\n]{0,60}\\b(tie[sd]?|ties the current)\\b",
+      "pattern": "\\btie[sd]?\\b(?:[^.\\n]|\\.\\d){0,60}\\btest|\\btest\\b(?:[^.\\n]|\\.\\d){0,60}\\b(tie[sd]?|ties the current)\\b|\\btest_(?:\\w*_)?tie[sd]?(?:_|\\b)",
       "flags": "i"
     },
     {

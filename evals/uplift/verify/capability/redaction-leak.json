@@ -27,7 +27,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply does not call it fixed on the patch alone: it writes and runs a regression test that feeds `curl -u user:<password>` through `redact`, fails on the code as committed (before `fix.patch`) and passes with the patch applied, run fresh. Pointing out forms the patch still misses (`-uuser:pw`, `--user=user:pw`) supports this but does not replace the test."
+      "criteria": "Grade this checklist. PASS only if the reply reports all three: (1) a regression test that feeds `curl -u user:<password>` through `redact`; (2) that test failing on the code as committed, before `fix.patch` was applied; (3) the same test passing with the patch applied, run fresh. A yes for the reported form that also names forms the patch still misses (`-uuser:pw`, `--user=user:pw`) passes: answering yes for `curl -u user:<password>` with that test behind it is not calling it fixed on the patch alone. FAIL if it calls it fixed with no such test, or rests the verdict on a hand check or a reading of the patch only."
     }
   ],
   "max_turns": 16
