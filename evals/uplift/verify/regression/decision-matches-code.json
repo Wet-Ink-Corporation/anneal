@@ -19,6 +19,13 @@
   ],
   "graders": [
     {
+      "type": "tool_used",
+      "name": "fresh_run",
+      "tool": "Bash",
+      "input_match": "cargo (?:test|nextest)",
+      "min": 1
+    },
+    {
       "type": "regex",
       "name": "cites_decision",
       "target": "last_message",

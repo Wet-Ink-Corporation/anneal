@@ -230,7 +230,15 @@ Case and grader fixes after Tier 3 r9:
 - **`verify/capability/snapshot-cap-tested`**: `boundary` also takes `MAX_BYTES + 1`, which every r9 reply wrote. Its judge no longer accepts reading the code in place of a fresh run past the cap, and says a run that never reached a test (`No module named pytest`) shows nothing.
 - **`verify/capability/proposal-cost`**: the judge's test clause is now the `tie_test` regex on the reply (a tie test, or a test where a candidate ties the current threshold), since r9's judge failed two replies that asked for one. Both arms ask for one, so the case still does not discriminate; that needs a tie test seen red in the trace.
 
-Every trace regex here steps a line at a time and was checked under Node and under Bun (`~/.bun/bin/bun`) on the 162 r8 traces, with the same verdict on each; the r9 changes were checked the same way on the 162 r9 traces.
+Case and grader fixes after Tier 3 r10:
+
+- **`verify/regression/claimed-test-exists`**: the judge grades the verdict and its evidence only, not a fix the reply proposes. r10's with-3 met every clause (a fresh red run, "the ticket shouldn't be closed") and was failed, likely for an aside on how to fix the cache.
+- **`verify/capability/redaction-leak`**: the judge no longer passes a reply that only asks for the test ("asks for, or" is gone), so it matches `curl_u_test` and `red_then_green`, which need a written test seen red, then green.
+- **`verify/regression/decision-matches-code`** gets `fresh_run`, a `tool_used` Bash grader matching `cargo (?:test|nextest)`: r10 with 3/3, baseline 0/3. It rewards only the attempt: rustup cannot download the pinned toolchain in the eval sandbox, so no test runs, and the with arm says so. A red guard test (`the_ledger_runs_under_truncate_and_never_creates_wal_or_shm`) needs a cached toolchain in the sandbox.
+- **`verify/capability/snapshot-cap-tested`** gets `past_cap_run`, a trace regex for a Bash command that builds a file past the cap (`MAX_BYTES + 1`, `1048577` or `1024 * 1024 + 1`), the judge's run clause made deterministic: r10 with 0/3, baseline 2/3, exactly the runs that wrote and read a file one byte over the cap. It matches no other r10 trace.
+- **`verify/capability/proposal-cost`** gets no `cites_contract` (`README.md:6` in the reply, with 3/3, baseline 0/3): it would grade the skill's own citation style rather than the outcome (Ryan).
+
+Every trace regex here steps a line at a time and was checked under Node and under Bun (`~/.bun/bin/bun`) on the 162 r8 traces, with the same verdict on each; the r9 changes were checked the same way on the 162 r9 traces, and the r10 changes on the 162 r10 traces.
 
 Graders check behaviour, not routing: a `tool_used: Skill` grader would pass with the skill and fail without it by construction, inflating the uplift.
 
