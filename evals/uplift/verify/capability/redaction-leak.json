@@ -22,7 +22,7 @@
       "type": "regex",
       "name": "red_then_green",
       "target": "trace",
-      "pattern": "(?:^|\\n)\\{\"type\":\"user\"[^\\n]*?FAILED \\((?:failures|errors)=\\d(?:[^\\n]*?|[^\\n]*(?:\\n[^\\n]*)*?\\n\\{\"type\":\"user\"[^\\n]*?)Ran \\d+ tests? in [\\d.]+s\\\\n\\\\nOK"
+      "pattern": "^(?:(?![^\\n]*git apply)[^\\n]*\\n|[^\\n]*?\"name\":\"Bash\",\"input\":\\{\"command\":\"[^\\n]*?unittest[^\\n]*?git apply[^\\n]*\\n)*?\\{\"type\":\"user\"[^\\n]*?FAILED \\((?:failures|errors)=\\d(?:[^\\n]*?|[^\\n]*(?:\\n[^\\n]*)*?\\n\\{\"type\":\"user\"[^\\n]*?)Ran \\d+ tests? in [\\d.]+s\\\\n\\\\nOK"
     },
     {
       "type": "llm",
