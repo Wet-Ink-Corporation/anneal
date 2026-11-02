@@ -37,6 +37,7 @@ Turns a spec with no open questions into tasks a fresh session can build test-fi
 | "The tasks are obvious from the spec" | Then writing them down is quick, and the review sees them. |
 | "One big task is simpler" | One big task has no tracer bullet and no early green. |
 | "I'll pick the test command later" | A task without a command cannot prove it is done. |
+| "The lead said skip the tests" | Keep every `Test:`; don't offer to drop it. |
 | "Everything depends on everything" | Then the slices are horizontal layers. Cut through them. |
 | "A small edit doesn't need re-approval" | The hash changed; `plan check` exits 4. Ask again. |
 
@@ -44,7 +45,6 @@ Turns a spec with no open questions into tasks a fresh session can build test-fi
 
 - Approving while the spec still has a `[NEEDS CLARIFICATION]` marker.
 - A task whose files are "various" or whose test is "run the tests".
-- Tasks cut by layer (all models, then all handlers) instead of by path.
 - Editing the plan after approval without running `anneal plan check`.
 
 ## Verification

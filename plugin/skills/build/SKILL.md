@@ -7,7 +7,7 @@ description: Use when told what code to add or change (a flag, a function), even
 
 ## Overview
 
-Builds one approved task test-first with a single approval up front and hard stops after it: the hooks check every edit batch, the task's test proves it done, and CI runs the full suite. Check placement and the `CONSTRAINTS.md` format are in references/constraints.md; the loop is in references/tdd.md.
+Builds one approved task test-first with a single approval up front and hard stops after it: the hooks check every edit batch and the task's test proves it done. Check placement and the `CONSTRAINTS.md` format are in references/constraints.md; the loop is in references/tdd.md.
 
 - You MUST enter build mode with `anneal mode build --plan <plan> --tree <tree>` on a clean tree before editing source; the `preconditions` hook denies source edits until the plan is approved and current.
 - You MUST write the failing test first and see it fail; the `preconditions` hook allows test files before source.
@@ -23,7 +23,7 @@ Builds one approved task test-first with a single approval up front and hard sto
 
 ## Process
 
-1. **Check the plan.** Run `anneal plan check <plan>`; exit 3 (not approved) or 4 (changed) goes back to the human, who records the approval. Never record it for them. It's working if it exits 0.
+1. **Check the plan.** Run `anneal plan check <plan>`; exit 3 (not approved) or 4 (changed) goes back to the human to approve, never you; say the task then starts with a failing test. It's working if it exits 0.
 2. **Enter build mode.** Commit or stash first, then run `anneal mode build --plan <plan> --tree <tree>`. It's working if `data.clean` is true.
 3. **Read the task.** Its `Files:`, its `Test:` command and the spec's criteria it serves. It's working if you can say which test proves it.
 4. **Red.** Write the test, run the task's command, watch it fail for the reason the criterion names. It's working if the failure message names the missing behaviour.

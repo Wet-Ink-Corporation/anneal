@@ -23,7 +23,7 @@ Turns requirements the human confirmed into a spec a script can check, written i
 
 1. **Copy the template.** Copy it to `docs/specs/<topic>.md` and set its `Tree:` line to the confirmed design tree, relative to the spec; `plan approve` refuses until that tree's `grill_confirmed` matches. It's working if all seven `##` sections are there.
 2. **Fill from what was confirmed.** Problem, Users and Requirements in the human's words, from the design tree and the conversation, nothing else. It's working if every requirement traces to a confirmed answer.
-3. **Write the criteria.** Read the code they touch first. One list item per observable behaviour, in the EARS form that fits: `WHEN`, `WHILE`, `IF … THEN`, `WHERE`, or ubiquitous. Give each exemption and stored artifact `IF … THEN` criteria for misuse and where it may be written. It's working if each criterion could become one test.
+3. **Write the criteria.** Read the code they touch first. One list item per observable behaviour, in the EARS form that fits: `WHEN`, `WHILE`, `IF … THEN`, `WHERE`, or ubiquitous. Give each exemption and stored artifact `IF … THEN` criteria for misuse, and each artifact a criterion that one store alone holds it. It's working if each criterion could become one test.
 4. **Scope it out.** List what it will not do, and why; record each out-of-scope ruling in `.out-of-scope/`. It's working if Out of Scope is not empty.
 5. **Mark the gaps.** Give each unconfirmed point a marker and an Open questions entry. It's working if nothing unconfirmed reads as fact.
 6. **Check the constitution.** Read `constitution.md`, write its version, mark each gate `pass`, `violated: <why>` or `n/a`, and add a Complexity row per violation. It's working if every gate has a status.
@@ -43,7 +43,7 @@ Turns requirements the human confirmed into a spec a script can check, written i
 ## Red flags
 
 - A requirement nobody confirmed, written as fact.
-- A criterion without `SHALL`, or with two behaviours in one item.
+- Two behaviours in one criterion.
 - Starting `plan` while `data.needs_clarification` is above 0.
 - Editing `constitution.md` to make a gate pass.
 
