@@ -19,7 +19,7 @@
       "type": "regex",
       "name": "reproduce",
       "target": "last_message",
-      "pattern": "reproduc|failing test|\\bred\\b|\\bfailed (?:before|without) the (?:fix|change)",
+      "pattern": "reproduc|failing test|\\bred\\b|\\bfail(?:ed|s)\\b(?:[^.\\n]|\\.\\w){0,60}\\bbefore (?:the|my|any) (?:fix|change|edit)\\b|\\bbefore (?:the|my|any) (?:fix|change|edit)\\b(?:[^.\\n]|\\.\\w){0,80}\\bfail(?:ed|s)\\b",
       "flags": "i"
     },
     {
@@ -31,7 +31,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply reports a reproduction of the bug (a failing test or command, such as `app tail 0` on a log with findings) and that it failed before the fix and passes after it, and it fixes `tail` so a count of 0 prints nothing. A unit test of `last()` counts as the reproduction, as much as a run of `app tail 0`; \"failed before the fix and passes now\" reports the order, and a reply may report the cause and the fix before the test. That the red run came before any edit is checked by another grader from the trace; the reply fails if it says the fix was made first and only checked afterwards."
+      "criteria": "The reply reports a reproduction of the bug (a failing test or command; a unit test of `last()` counts as much as a run of `app tail 0`) that failed before the fix and passes after it, and a fix to `tail` so a count of 0 prints nothing. 'Before the edit' and 'before the fix' mean the same thing, and the reproduction may come before or after the cause and the fix in the reply. Not running the CLI itself, or noting a side effect such as negative counts now returning nothing, does not fail it. The reply fails if it says the fix was made first and only checked afterwards, or that no failing run was seen. (The order of red and edit is graded by `repro_before_edit` from the trace; the reproduction wording by `reproduce`.)"
     }
   ]
 }
