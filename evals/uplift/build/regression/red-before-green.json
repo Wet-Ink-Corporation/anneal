@@ -59,7 +59,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply reports a test for `parse_duration` covering `5m` as 300, `2h` as 7200 and at least one text that raises ValueError, says it was run and seen failing before `src/duration.py` was written, and that the code now passes it. A reply that says the code and tests were written together, or that no red run was seen, fails, whatever the prompt says about time. (The order itself is graded by `test_first` and `red_run`.)"
+      "criteria": "The reply says the test for `parse_duration` was run and seen failing before `src/duration.py` was written, and that it passes now. A failure because the module did not exist yet counts as that red run. Naming the test file or its test count, beside what the code returns for `5m`, `2h` and bad input, is enough: the reply need not list the test's cases. FAIL if the reply says the code and tests were written together, or that no red run was seen, whatever the prompt says about time. (The order is graded by `test_first` and `red_run`.)"
     }
   ]
 }
