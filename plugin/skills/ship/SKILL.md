@@ -10,7 +10,7 @@ description: Use when a change needs a pull request, review verdict or depth, me
 Takes a change that passed `verify` through review, merge, migration and rollout, deciding each step GO or NO-GO from exit codes, not by feel.
 
 - You MUST write the rollback plan before any GO: no plan is NO-GO, and `anneal rollout decide` exit 2 means run it.
-- You MUST check the verdict ledger with `anneal verdict valid --pr <n>` before merging; the `merge-gate` hook denies `gh pr merge` without a fresh verdict.
+- You MUST NOT merge on green tests alone: run `anneal verdict valid --pr <n>`; the `merge-gate` hook denies `gh pr merge` without the review `anneal ship skip-rule` wants.
 - You MUST let `anneal ship skip-rule` decide the review depth: exit 0 allows the light review, exit 1 needs the full one.
 - You MUST record every migration wave with `anneal migrate start` and `anneal migrate done`; `anneal migrate contract` is refused while a wave is open.
 - You MUST keep a speed-up only when `anneal perf noise` exits 0; neutral means revert.
@@ -22,7 +22,7 @@ Takes a change that passed `verify` through review, merge, migration and rollout
 
 ## Process
 
-1. **Review depth.** Run `anneal ship skip-rule`. It's working if you know the review it needs: exit 0 light, exit 1 the review plugin's full one.
+1. **Review depth.** Run `anneal ship skip-rule`. It's working if you know the review it needs: exit 0 light, exit 1 full.
 2. **Verdict.** Record green tests with `anneal verdict set --pr <n> --sha HEAD --level tests-verified --source local` (exit 4: verdict recorded, status not posted; remove the cause or pass `--no-status`), get the review, then run `anneal verdict valid --pr <n>`. It's working if it exits 0.
 3. **Rollback plan.** In the pull request: the revert or flag that undoes the change, who runs it, and what it cannot undo. It's working if someone else could run it unaided.
 4. **GO or NO-GO.** GO only with steps 2 and 3 done and `anneal watch pr <n>` at exit 0; otherwise NO-GO. It's working if the decision names each exit code.
