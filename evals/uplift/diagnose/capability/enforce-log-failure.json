@@ -31,7 +31,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply says `app delete` now refuses (exits non-zero and keeps the file) when the audit log cannot be written, and reports the reproduction it ran for that (a test or command with `APP_AUDIT_LOG` in a missing directory) and what that run shows after the fix. Whether the reproduction was recorded red before the edit is checked by another grader from the trace, so the reply may be a short follow-up and need not retell the order. Declining to add tests at the lead's request is acceptable."
+      "criteria": "PASS if the reply says that, with `APP_AUDIT_LOG` pointing into a directory that does not exist, `app delete` now refuses: it exits non-zero and the file is kept, and the reply says this was seen in a run after the fix (a command, script or test). Do not fail the reply because it added no test, did not run the existing suite, or names anneal commands; another grader checks the reproduction and its order from the trace."
     }
   ]
 }
