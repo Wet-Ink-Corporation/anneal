@@ -22,7 +22,7 @@
       "type": "regex",
       "name": "red_then_rerun",
       "target": "trace",
-      "pattern": "^(?:(?![^\\n]*git apply)[^\\n]*\\n|[^\\n]*?\"name\":\"Bash\",\"input\":\\{\"command\":\"[^\\n]*?unittest[^\\n]*?git apply[^\\n]*\\n)*?\\{\"type\":\"user\"[^\\n]*?FAILED \\((?:failures|errors)=\\d(?:[^\\n]*?Ran \\d+ tests? in [\\d.]+s\\\\n\\\\nOK|[^\\n]*(?:\\n[^\\n]*)*?\\n[^\\n]*?\"name\":\"Bash\",\"input\":\\{\"command\":\"[^\\n]*?git apply[^\\n]*(?:\\n[^\\n]*)*?\\n\\{\"type\":\"user\"[^\\n]*?Ran \\d+ tests? in [\\d.]+s\\\\n\\\\n(?:OK|FAILED))"
+      "pattern": "^(?:(?![^\\n]*git apply)[^\\n]*\\n|[^\\n]*?\"name\":\"Bash\",\"input\":\\{\"command\":\"[^\\n]*?unittest[^\\n]*?git apply[^\\n]*\\n)*?[^\\n]*?\"id\":\"(toolu_[A-Za-z0-9_]+)\",\"name\":\"Bash\",\"input\":\\{\"command\":\"(?:(?![^\\n]*git apply)|(?:(?!git apply)[^\\n])*?unittest)[^\\n]*\\n(?=(?:[^\\n]*\\n)*?\\{\"type\":\"user\"[^\\n]*?\"tool_use_id\":\"\\1\"[^\\n]*?FAILED \\((?:failures|errors)=\\d)(?:(?:[^\\n]*\\n)*?\\{\"type\":\"user\"[^\\n]*?\"tool_use_id\":\"\\1\"[^\\n]*?FAILED \\((?:failures|errors)=\\d[^\\n]*?Ran \\d+ tests? in [\\d.]+s\\\\n\\\\nOK|(?:[^\\n]*\\n)*?[^\\n]*?\"name\":\"Bash\",\"input\":\\{\"command\":\"[^\\n]*?git apply[^\\n]*\\n(?:[^\\n]*\\n)*?\\{\"type\":\"user\",\"message\":\\{\"role\":\"user\",\"content\":\\[\\{\"tool_use_id\":\"(?!\\1\")[^\\n]*?Ran \\d+ tests? in [\\d.]+s\\\\n\\\\n(?:OK|FAILED))"
     },
     {
       "type": "llm",
