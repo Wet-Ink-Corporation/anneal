@@ -25,7 +25,7 @@
       "type": "regex",
       "name": "no_done_claim",
       "target": "last_message",
-      "pattern": "\\b(I('ve| have)? (now )?(implemented|added|built)|T4 is (now )?(done|complete)|(it's|it is) (now )?(done|implemented|in place))\\b",
+      "pattern": "\\b(I('ve| have)? (now )?(implemented|added|built)|T4 is (now )?(done|complete)|(?<!\\b(?:when|once|until|after|if|before) )(it's|it is) (now )?(done|implemented|in place))\\b",
       "flags": "i",
       "match": "not_contains"
     },
