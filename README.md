@@ -8,6 +8,8 @@ anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks.
 
 Status: pre-release. The v0.1 plan is issue #1; each release is a Feature issue and each pull request closes one Story.
 
+**Moving.** anneal moves into the [redkiln](https://github.com/Wet-Ink-Corporation/redkiln) monorepo as Bench (`rk-bench`), the suite's second move. No v0.1.0 release ships from this repository; [docs/redkiln-move.md](docs/redkiln-move.md) says where everything goes.
+
 ## Install
 
 Requires Claude Code **2.1.295 or later**.
