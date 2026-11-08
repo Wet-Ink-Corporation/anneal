@@ -71,6 +71,14 @@ A green result proves the task's tests ran green. It does **not** prove that the
 
 A green result proves the plan is approved and the plan's bytes are unchanged since its latest approval (its spec and other files are not compared). It does **not** prove that the plan is correct or complete, or that its spec is unchanged since the approval.
 
+## `anneal playbook show|list`
+
+| Code | Meaning |
+|---|---|
+| 0 | ok |
+
+A green result proves the playbook's text is the one built into this binary. It does **not** prove that the playbook fits the task, or that a file written from it passes its lint.
+
 ## `anneal mode`
 
 | Code | Meaning |

@@ -1,6 +1,6 @@
 # Specs: the template and `anneal lint spec`
 
-A spec is written from `plugin/playbooks/spec.template.md`, in the same session as the
+A spec is written from the template `anneal playbook show spec-template` gives in `data.content`, in the same session as the
 interview that confirmed its requirements, and only from what was confirmed. `anneal lint spec`
 checks what a script can check: the design tree it came from, the sections, the shape of
 every acceptance criterion, the open questions and the constitution check.

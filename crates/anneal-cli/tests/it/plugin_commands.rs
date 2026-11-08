@@ -19,7 +19,7 @@ use serde_json::Value;
 type TestResult = Result<(), Box<dyn Error>>;
 
 /// Plugin files that tell the model or Claude Code which command to run: skills and their
-/// references, playbooks, hook manifests. The cockpit's TypeScript is left out: its backticks
+/// references, hook manifests. The cockpit's TypeScript is left out: its backticks
 /// are template literals (`anneal cockpit: …` messages), not commands for the model.
 const TEXT_EXTENSIONS: [&str; 2] = ["md", "json"];
 

@@ -68,9 +68,6 @@ use state::{CompactState, StateError};
 use thresholds::{Thresholds, ThresholdsError};
 use transport::Transport;
 
-/// The thresholds file inside the plugin root.
-const PLUGIN_THRESHOLDS: [&str; 2] = ["playbooks", "clef-thresholds.json"];
-
 /// `anneal decide`.
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
@@ -89,8 +86,7 @@ pub struct DecideArgs {
     /// An option of a choice question; repeat for each (2 to 32)
     #[arg(long = "option", value_name = "OPTION")]
     options: Vec<String>,
-    /// The thresholds file [default: $CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json, else
-    /// the copy built in]
+    /// The thresholds file [default: the copy built in, `anneal playbook show clef-thresholds`]
     #[arg(long, value_name = "FILE")]
     thresholds: Option<PathBuf>,
 }
@@ -226,7 +222,7 @@ where
         });
     };
     let state = CompactState::parse(state).map_err(DecideError::from)?;
-    let thresholds = load_thresholds(args.thresholds.as_deref(), env.cwd, &env.lookup)?;
+    let thresholds = load_thresholds(args.thresholds.as_deref(), env.cwd)?;
     // A malformed configuration is not an internal error: the point falls back (exit 5).
     let config = ClefConfig::from_env(&env.lookup);
     let ask = Ask {
@@ -244,32 +240,16 @@ where
     output::write_outcome(&ask, &outcome, &log.path(), out)
 }
 
-/// The thresholds: `--thresholds` (relative to `cwd`), else the plugin root's file, else the
-/// copy built in. A file named either way must exist and be a regular file.
-fn load_thresholds(
-    flag: Option<&Path>,
-    cwd: &Path,
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Result<Thresholds, DecideError> {
-    read_thresholds(thresholds_path(flag, cwd, lookup).as_deref())
+/// The thresholds: `--thresholds` (relative to `cwd`), which must exist and be a regular
+/// file, else the copy built in.
+fn load_thresholds(flag: Option<&Path>, cwd: &Path) -> Result<Thresholds, DecideError> {
+    read_thresholds(thresholds_path(flag, cwd).as_deref())
 }
 
-/// The thresholds file to read: `--thresholds` (relative to `cwd`), else the plugin root's
-/// file; `None` means the copy built in.
-pub(crate) fn thresholds_path(
-    flag: Option<&Path>,
-    cwd: &Path,
-    lookup: impl Fn(&str) -> Option<OsString>,
-) -> Option<PathBuf> {
-    flag.map(|path| cwd.join(path)).or_else(|| {
-        lookup("CLAUDE_PLUGIN_ROOT")
-            .filter(|root| !root.is_empty())
-            .map(|root| {
-                PLUGIN_THRESHOLDS
-                    .iter()
-                    .fold(PathBuf::from(root), |p, c| p.join(c))
-            })
-    })
+/// The thresholds file to read: `--thresholds`, relative to `cwd`; `None` means the copy built
+/// in (`anneal playbook show clef-thresholds`).
+pub(crate) fn thresholds_path(flag: Option<&Path>, cwd: &Path) -> Option<PathBuf> {
+    flag.map(|path| cwd.join(path))
 }
 
 /// Reads the thresholds file at `path`, which must exist and be a regular file, or the copy

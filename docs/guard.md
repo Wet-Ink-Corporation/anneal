@@ -446,12 +446,12 @@ Clef is never asked about a command the denylist blocks, and other tools are nev
 
 D1 runs in process through `decide`'s library API (`decide::in_process` reads the thresholds,
 configuration and anneal home as `anneal decide` does, then `decide::client::ask_recording`),
-so it shares the command's thresholds (`$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`,
-else the copy built in), modes, 50-decision shadow period and decision log (`docs/decide.md`).
+so it shares the command's thresholds (the copy built in, `anneal playbook show
+clef-thresholds`), modes, 50-decision shadow period and decision log (`docs/decide.md`).
 **Time budget.** The guard plans to use 4.5 s of the hook's 5 s `timeout`, measured from when
 it starts reading its input (the other 500 ms cover process start-up and writing the decision).
 Reading the input, lexing and the denylist take milliseconds; the Clef call takes at most 2 s
-(`decide`'s timeout), plus local reads and writes of the thresholds file, `counts.json` and the
+(`decide`'s timeout), plus local reads and writes of `counts.json` and the
 log. A deny then records `gate_blocked` with only what is left. SQLite's lock wait applies per
 statement, not per record, and opening the ledger and appending runs up to 16 statements that
 can each meet another process's lock, so the record waits at most 100 ms per statement and
@@ -473,7 +473,7 @@ share is cut to what the clock says is left rather than assumed.
 | enforce, below 0.40 (`defer`) | no output: Claude Code's normal permission flow decides |
 | enforce, no answer (unreachable, timed out, bad response) | the point's fallback when it is `ask` (D1 ships with `ask`): an ask decision naming the failure; any other fallback allows, so a Clef failure never denies |
 | enforce, an answer whose row or count cannot be written | the band's action still stands (a deny or ask notes `the decision was not logged`), and a `defer` asks instead: a failure never lets the call through unchecked |
-| D1 cannot run (the anneal home, the plugin's thresholds file, `counts.json`, the log or the clock fails), configured `enforce` | an ask decision naming the failure (`Clef D1 could not run`) |
+| D1 cannot run (the anneal home, `counts.json`, the log or the clock fails), configured `enforce` | an ask decision naming the failure (`Clef D1 could not run`) |
 | D1 cannot run, any other mode | as without D1 (nothing to report it in: an allow has no output; `anneal decide` with the same environment shows the error) |
 
 **Shadow first.** D1 reaches Workers AI over HTTPS (`docs/decide.md`), and every answer is

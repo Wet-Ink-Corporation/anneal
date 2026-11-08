@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Wet-Ink-Corporation/anneal/blob/main/plugin/playbooks/schemas/design-tree.schema.json",
+  "$id": "https://github.com/Wet-Ink-Corporation/anneal/blob/main/crates/anneal-cli/playbooks/schemas/design-tree.schema.json",
   "title": "anneal design tree",
   "description": "The questions a grilling asks, kept by the grill skill. `anneal grill frontier --tree <file>` lists the open questions whose dependencies are all answered; `anneal grill confirm` records the human's confirmation of the tree's hash. Checked by crates/anneal-cli/tests/it/design_tree_schema.rs, which keeps this schema and the serde DTO in agreement. Beyond the schema, anneal rejects a depends_on cycle, a dependency naming no node and two nodes with one id.",
   "type": "object",

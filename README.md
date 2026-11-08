@@ -75,7 +75,7 @@ The window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` when set, else the model's conte
 
 ### Clef (optional)
 
-Clef answers anneal's judgement calls: seven decision points (D1 to D7), such as "is this Bash command destructive?" (the guard) or "is this question a decision for the human?" (`grill`). Each call goes to a model on Cloudflare Workers AI, its probability is checked against the point's thresholds (`plugin/playbooks/clef-thresholds.json`), and the decision is logged under `~/.anneal/decisions/`. Set it in the plugin's options (`userConfig`):
+Clef answers anneal's judgement calls: seven decision points (D1 to D7), such as "is this Bash command destructive?" (the guard) or "is this question a decision for the human?" (`grill`). Each call goes to a model on Cloudflare Workers AI, its probability is checked against the point's thresholds (built in: `anneal playbook show clef-thresholds`), and the decision is logged under `~/.anneal/decisions/`. Set it in the plugin's options (`userConfig`):
 
 | Option | Meaning |
 |---|---|
@@ -117,7 +117,7 @@ tsc -p plugin-cockpit && claude plugin test plugin-cockpit   # the mod: type che
 Layout:
 
 - `crates/anneal-cli/`: the `anneal` binary.
-- `plugin/`: the `anneal` plugin as installed (`skills/`, `hooks/` with the settings hooks, `playbooks/`, `libexec/`). It ships no mod (see `AGENTS.md`, Plugin rules).
+- `plugin/`: the `anneal` plugin as installed (`skills/`, `hooks/` with the settings hooks, `libexec/`); the templates, schemas and tables the skills use are built into the binary (`anneal playbook show <name>`, `docs/playbook.md`). It ships no mod (see `AGENTS.md`, Plugin rules).
 - `plugin-cockpit/`: the `anneal-cockpit` plugin, the cockpit mod (`hooks/` with the module, `types/` and `tests/` for it, and its own copy of the `libexec/` launchers). See `docs/mods.md`.
 - `mod-types/`: a minimal hand-written declaration of the mods API the cockpit uses, for `tsc -p plugin-cockpit` (not packaged).
 - `evals/`: skill evaluation suites (not packaged).

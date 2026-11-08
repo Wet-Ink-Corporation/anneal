@@ -1,7 +1,9 @@
-//! The thresholds table, `plugin/playbooks/clef-thresholds.json`: each point's model and, per
-//! question type, the bands that turn a probability into an action.
+//! The thresholds table: each point's model and, per question type, the bands that turn a
+//! probability into an action.
 //!
-//! The file is read strictly (unknown fields refused) and validated into [`Thresholds`]:
+//! The table built in is the playbook `clef-thresholds` (`anneal playbook show
+//! clef-thresholds`; the file is `crates/anneal-cli/playbooks/clef-thresholds.json`). The file
+//! is read strictly (unknown fields refused) and validated into [`Thresholds`]:
 //! version 1, all seven points, every model alias in the `models` table, at most
 //! [`MAX_BANDS`] bands per rule with `at_least` in 0..=1 and strictly descending, and names of
 //! 1 to 64 characters from `[a-z0-9_-]`. A rule applies to a probability, never to Clef's
@@ -13,9 +15,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::decide::point::{Point, Question};
+use crate::playbook;
 
-/// The thresholds file shipped with the plugin, built into the binary for runs outside it.
-pub(crate) const BUILT_IN: &str = include_str!("../../../../plugin/playbooks/clef-thresholds.json");
+/// The thresholds table built into the binary, used unless `--thresholds` names a file.
+pub(crate) const BUILT_IN: &str = playbook::Name::ClefThresholds.content();
 
 /// The only format version this build reads.
 const FORMAT_VERSION: u32 = 1;

@@ -302,7 +302,11 @@ pub(crate) fn write_summary<E: Write>(
         calibration.proposals.display()
     )?;
     let thresholds = calibration.thresholds.map_or_else(
-        || "a copy of plugin/playbooks/clef-thresholds.json passed with --thresholds".to_owned(),
+        || {
+            "a copy of the built-in table (data.content of `anneal playbook show \
+             clef-thresholds`) passed with --thresholds"
+                .to_owned()
+        },
         |path| path.display().to_string(),
     );
     let mut any_threshold_step = false;

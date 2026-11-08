@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn the_shipped_template_has_a_tree_line_still_to_be_filled_in() {
-        let template = include_str!("../../../../../plugin/playbooks/spec.template.md");
+        let template = crate::playbook::Name::SpecTemplate.content();
 
         assert!(
             matches!(tree_link(template), Some(TreeLink::Unnamed { .. })),

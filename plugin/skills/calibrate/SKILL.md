@@ -30,7 +30,7 @@ Thresholds move on evidence and a human's yes. `anneal calibrate` scores each po
 
 ## Process
 
-1. **Score.** Run `anneal calibrate --thresholds plugin/playbooks/clef-thresholds.json` (or the plugin's copy), with `--point Dn` when asked about one. It's working if it exits 0 and `data.points` holds each point asked for.
+1. **Score.** Run `anneal calibrate` (the built-in thresholds, `anneal playbook show clef-thresholds`; `--thresholds <file>` for an edited copy), with `--point Dn` when asked about one. It's working if it exits 0 and `data.points` holds each point asked for.
 2. **Explain.** For each point give the verdict and its reasons from the table, the Brier score, the ask rate and labelled n, and say what a reliability bin far from its diagonal means. It's working if every verdict has its reason in plain words.
 3. **Show the diff.** Print each `data.diff` entry as `-` its `before` and `+` its `after`, with the expected cost now and as proposed. With no entry, say the current thresholds cost least. It's working if the human sees the exact lines that would change.
 4. **Ask.** Ask whether to apply, recommending yes only when the proposal is strictly cheaper and the point has 50 or more labelled decisions. It's working if the answer is an explicit yes or no.

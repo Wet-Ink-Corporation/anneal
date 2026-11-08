@@ -95,7 +95,8 @@ fn missing_and_repeated_sections_are_findings() -> TestResult {
         json!({
             "key": "lint/spec/sections:fail-sections.md:0:Open questions",
             "message": "fail-sections.md:0: error [sections] no `## Open questions` section \
-                        fix: add a `## Open questions` section (see `playbooks/spec.template.md`).",
+                        fix: add a `## Open questions` section (see `anneal playbook show \
+                        spec-template`).",
         }),
         "one envelope line with key, location, rule and fix"
     );
@@ -264,8 +265,7 @@ fn a_spec_over_the_read_cap_is_a_usage_error() -> TestResult {
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn the_shipped_spec_template_lints_clean() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let template =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/playbooks/spec.template.md");
+    let template = Path::new(env!("CARGO_MANIFEST_DIR")).join("playbooks/spec.template.md");
     fs::copy(template, dir.path().join("spec.template.md"))?;
 
     let (output, envelope) = lint_spec(dir.path(), &["spec.template.md"])?;

@@ -27,7 +27,8 @@ pub(crate) const REQUIRED: [&str; 7] = [
 /// A clarification marker: `[NEEDS CLARIFICATION]` or `[NEEDS CLARIFICATION: question]`.
 const MARKER: &str = "[NEEDS CLARIFICATION";
 
-const TEMPLATE: &str = "playbooks/spec.template.md";
+/// Where a fix sends the reader for the template.
+const TEMPLATE: &str = "anneal playbook show spec-template";
 
 /// The first section titled `title`, in any letter case.
 pub(crate) fn find<'s, 'd>(sections: &'s [Section<'d>], title: &str) -> Option<&'s Section<'d>> {

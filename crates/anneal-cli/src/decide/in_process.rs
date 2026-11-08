@@ -3,8 +3,8 @@
 //! [`client::ask`] or [`client::ask_recording`] with the same modes, shadow count and rows as
 //! the command, without spawning it.
 //!
-//! The thresholds come from `$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`, else the copy
-//! built in (a hook has no `--thresholds`); the log is in the anneal home.
+//! The thresholds are the copy built in (a hook has no `--thresholds`); the log is in the
+//! anneal home.
 //!
 //! A hook that must touch nothing while Clef is off asks [`status`] first, which reads only the
 //! environment; [`Prepared::label`] appends the outcome row `decide label` would.
@@ -24,7 +24,7 @@ use crate::decide::label::{LabelRow, Source};
 use crate::decide::log::{DecisionLog, LogError};
 use crate::decide::point::Point;
 use crate::decide::thresholds::Thresholds;
-use crate::decide::{DecideError, read_thresholds, thresholds_path};
+use crate::decide::{DecideError, read_thresholds};
 use crate::paths::{self, PathError};
 
 /// Whether Clef is on for a point, read from the environment alone.
@@ -72,24 +72,34 @@ pub(crate) enum PrepareError {
     /// The anneal home (for the log) could not be resolved.
     #[error("finding the anneal home")]
     Home(#[source] PathError),
-    /// The thresholds file could not be read.
+    /// The built-in thresholds did not validate.
     #[error(transparent)]
     Thresholds(DecideError),
 }
 
 impl Prepared {
-    /// Reads the thresholds, the configuration and the log's place through `lookup`. A
+    /// The built-in thresholds, with the configuration and the log's place read through
+    /// `lookup`, as [`Prepared::with_thresholds`].
+    ///
+    /// # Errors
+    /// [`PrepareError`] when the built-in thresholds are invalid or the anneal home cannot be
+    /// resolved.
+    pub(crate) fn load(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, PrepareError> {
+        let thresholds = read_thresholds(None).map_err(PrepareError::Thresholds)?;
+        Self::with_thresholds(thresholds, lookup)
+    }
+
+    /// `thresholds`, with the configuration and the log's place read through `lookup`. A
     /// malformed configuration is kept, not an error: `client::ask` reports it as
     /// `Outcome::Misconfigured`.
     ///
     /// # Errors
-    /// [`PrepareError`] when the anneal home cannot be resolved or the plugin's thresholds file
-    /// cannot be read or is invalid.
-    pub(crate) fn load(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, PrepareError> {
+    /// [`PrepareError::Home`] when the anneal home cannot be resolved.
+    pub(crate) fn with_thresholds(
+        thresholds: Thresholds,
+        lookup: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, PrepareError> {
         let home = paths::anneal_home_from(&lookup).map_err(PrepareError::Home)?;
-        // No `--thresholds` here, so the working directory is never read.
-        let path = thresholds_path(None, Path::new(""), &lookup);
-        let thresholds = read_thresholds(path.as_deref()).map_err(PrepareError::Thresholds)?;
         Ok(Self {
             thresholds,
             config: ClefConfig::from_env(&lookup),

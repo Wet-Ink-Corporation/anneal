@@ -50,6 +50,7 @@ Process: explore, frame, plan (`.temper/plans/`), red, green, refactor, self-rev
 | 2026-10-11 | Toolchain and MSRV pinned to 1.98.1, matching weigh-in | MOD-01 | Ryan (#9) |
 | 2026-10-11 | Split the ledger into `crates/anneal-ledger` (dependency profile, reuse by hooks and commands); happenstance 0.3.2, tokio, time added as weigh-in has them; dependabot ignores `happenstance-*` | ARC-07, H-16 | story #11 |
 | 2026-10-31 | Move the cockpit mod out of `plugin/` into its own plugin, `anneal-cockpit` (`plugin-cockpit/`), with its own launcher copy; add a human surface check to the release checklist | ARC, H-16 | Ryan (project thread, after Weigh-In's mod-in-chat finding) |
+| 2026-11-08 | Move `plugin/playbooks/` into the CLI (`crates/anneal-cli/playbooks/`, served by `anneal playbook show <name>`), so the plugin holds no data; `decide` stops reading the plugin root's thresholds copy and uses the built-in table unless given `--thresholds` | ARC, H-16 | Ryan (redkiln move plan, D2) |
 | 2026-11-08 | Move 2 prep: #44 becomes the calibration report only, cut from the labels that exist, with no v0.1.0 tag or release (Bench call E); #27 closes as superseded (temper is frozen); the status hook accepts temper's `Status: WIP` (a test rewrite); anneal freezes once the prep lands | H-12, H-16 | Ryan (project thread "Prepare anneal for the redkiln move") |
 
 ## Plugin rules

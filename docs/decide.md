@@ -95,10 +95,12 @@ Nothing is asked and nothing is logged.
 
 ## Thresholds
 
-`plugin/playbooks/clef-thresholds.json` holds each point's model alias, its fallback and, per
-question type, a subject and bands. The file is found from `--thresholds`, else
-`$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`, else the copy built into the binary; a
-file named either way must exist and be a regular file. It is read strictly (version 1, every
+The thresholds table holds each point's model alias, its fallback and, per question type, a
+subject and bands. It is built into the binary (`anneal playbook show clef-thresholds` gives
+it in `data.content`; the file is `crates/anneal-cli/playbooks/clef-thresholds.json`);
+`--thresholds <file>` reads a copy instead, which must exist and be a regular file. Nothing
+else is read: hooks and `grill classify`, which have no `--thresholds`, always use the
+built-in table. Either table is read strictly (version 1, every
 point present, unknown fields refused); a model id is 1 to 128 of `A-Z a-z 0-9 @ / . _ : -`
 with no empty, `.` or `..` path segment, so it cannot change the URL path it is joined to.
 

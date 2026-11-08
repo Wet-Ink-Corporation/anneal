@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Wet-Ink-Corporation/anneal/plugin/playbooks/schemas/plan.schema.json",
+  "$id": "https://github.com/Wet-Ink-Corporation/anneal/blob/main/crates/anneal-cli/playbooks/schemas/plan.schema.json",
   "title": "anneal plan",
-  "description": "A plan as `anneal lint plan` reads it from a markdown plan written from playbooks/plan.template.md: the `data.plan` of its envelope. The markdown is the source; this is its structure.",
+  "description": "A plan as `anneal lint plan` reads it from a markdown plan written from the plan template (`anneal playbook show plan-template`): the `data.plan` of its envelope. The markdown is the source; this is its structure.",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec", "tasks"],

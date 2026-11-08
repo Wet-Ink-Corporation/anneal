@@ -399,12 +399,9 @@ fn a_malformed_configuration_falls_back_and_asks_logs_and_writes_nothing() -> Te
 }
 
 #[test]
-fn thresholds_that_cannot_be_read_fall_back_instead_of_failing() -> TestResult {
-    let plugin = tempfile::tempdir()?;
-    let root = plugin.path().to_str().ok_or("a UTF-8 temporary path")?;
-    let mut vars = CONFIGURED.to_vec();
-    vars.push(("CLAUDE_PLUGIN_ROOT", root));
-    let world = World::new(&vars)?;
+fn a_clef_setup_that_cannot_be_read_falls_back_instead_of_failing() -> TestResult {
+    // The thresholds are built in, so the setup fails on the anneal home: a relative one.
+    let world = World::configured()?.with_var("ANNEAL_HOME", "relative/home");
     let (dir, before) = usual()?;
     let endpoint = Endpoint::yes(0.9);
 
@@ -417,7 +414,7 @@ fn thresholds_that_cannot_be_read_fall_back_instead_of_failing() -> TestResult {
         [&json!("misconfigured"), &json!("fail_open"), &json!(false)]
     );
     let why = data["reason"].as_str().ok_or("a reason")?;
-    assert!(why.contains("thresholds"), "{why}");
+    assert!(why.contains("anneal home"), "{why}");
     assert!(endpoint.bodies().is_empty(), "Clef is not asked");
     assert_eq!(tree_bytes(dir.path())?, before);
     Ok(())

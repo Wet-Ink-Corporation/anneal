@@ -1,4 +1,5 @@
-//! `anneal lint spec`: checks a spec written from `plugin/playbooks/spec.template.md`.
+//! `anneal lint spec`: checks a spec written from the template `anneal playbook show
+//! spec-template` gives.
 //!
 //! Seven rules, each finding with a fix (see `docs/spec.md`): the required sections are present
 //! (`sections`), every acceptance criterion is EARS (`ears`), Out of Scope is not empty

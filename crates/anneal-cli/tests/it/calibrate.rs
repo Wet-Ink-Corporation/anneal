@@ -132,11 +132,33 @@ fn a_short_summary_goes_to_stderr_and_the_proposals_to_the_anneal_home() -> Test
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_thresholds_file_in_the_plugin_root_is_not_read() -> TestResult {
+    let home = tempfile::tempdir()?;
+    copy_dir(&fixture(), &home.path().join("decisions"))?;
+    let plugin = home.path().join("plugin");
+    fs::create_dir_all(plugin.join("playbooks"))?;
+    fs::write(plugin.join("playbooks").join("clef-thresholds.json"), "{")?;
+
+    let output = anneal(home.path())
+        .args(["calibrate", "--point", "D1"])
+        .env("CLAUDE_PLUGIN_ROOT", &plugin)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        envelope(&output)?["data"]["thresholds"],
+        Value::Null,
+        "the built-in table, no file"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn only_apply_writes_the_proposed_threshold_into_the_file_it_names() -> TestResult {
     let home = tempfile::tempdir()?;
     copy_dir(&fixture(), &home.path().join("decisions"))?;
-    let shipped =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/playbooks/clef-thresholds.json");
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("playbooks/clef-thresholds.json");
     let thresholds = home.path().join("clef-thresholds.json");
     fs::copy(&shipped, &thresholds)?;
     let before = fs::read_to_string(&thresholds)?;

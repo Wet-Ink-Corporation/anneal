@@ -293,8 +293,9 @@ cockpit's calibration pane) changes nothing on disk. The file holds
 
 - `{"kind": "threshold", "point", "question", "file", "pointer", "from", "to"}`: set the JSON
   pointer's value in the thresholds file. When `file` is `null`, the copy built into the
-  binary was read. Copy `plugin/playbooks/clef-thresholds.json`, edit the copy, and pass it
-  with `--thresholds` or install it as `$CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json`.
+  binary was read. Save `data.content` of `anneal playbook show clef-thresholds` to a file,
+  edit it, and pass it with `--thresholds` (to `decide` and `calibrate`; hooks always use the
+  built-in table).
   A step appears whenever the proposal differs from the current value, verdict or not.
 - `{"kind": "mode", "point", "user_config": "clef_mode", "env":
   "CLAUDE_PLUGIN_OPTION_CLEF_MODE", "value": "Dn=enforce"}`: add the override to the plugin's

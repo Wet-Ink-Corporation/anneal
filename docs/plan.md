@@ -1,7 +1,8 @@
 # Plans: the template, `anneal lint plan` and `anneal plan approve|check`
 
 A plan splits a spec with no open questions into tasks a fresh session can build test-first.
-It is written from `plugin/playbooks/plan.template.md` (the `plan` skill says how), checked
+It is written from the template `anneal playbook show plan-template` gives in `data.content` (the `plan` skill
+says how), checked
 by `anneal lint plan`, and approved by the human with `anneal plan approve`, which records the
 plan's hash in the ledger. `anneal plan check` then tells whether the plan's bytes are still
 the ones that were approved: any edit, even one byte, voids the approval. Only the plan's
@@ -39,7 +40,7 @@ A plan is markdown. Fenced code blocks and HTML comments are not read, as for sp
     optionally in backticks.
 
 The plan as read is `data.plan` in `lint plan`'s envelope, described by
-`plugin/playbooks/schemas/plan.schema.json` (a test keeps the two in agreement):
+the schema `anneal playbook show plan-schema` gives in `data.content` (a test keeps the two in agreement):
 
 ```json
 {"spec": "../specs/export.md",

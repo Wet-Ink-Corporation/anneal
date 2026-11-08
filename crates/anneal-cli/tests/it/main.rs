@@ -45,6 +45,7 @@ mod orchestrate;
 mod paths;
 mod perf;
 mod plan;
+mod playbook;
 mod plugin_commands;
 #[cfg(test)]
 mod pr_repo;

@@ -298,6 +298,8 @@ impl CommandCodes {
             CommandName::Grill => ("", &[OK, GRILL_INVALID, GRILL_OPEN]),
             CommandName::Task => ("done", &[TASK_GREEN, TASK_TEST_RED, TASK_NOT_STARTED]),
             CommandName::Plan => ("approve|check", &PLAN_CODES),
+            // An unknown name is a usage error (2), like any bad argument.
+            CommandName::Playbook => ("show|list", &[OK]),
             CommandName::Mode => ("", &[MODE_RECORDED]),
             // No scope: it would widen the help's title column; each meaning names its
             // subcommand instead.

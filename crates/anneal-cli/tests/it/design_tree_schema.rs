@@ -1,5 +1,5 @@
 //! The committed JSON Schema for design trees
-//! (`plugin/playbooks/schemas/design-tree.schema.json`) agrees with the serde DTO that
+//! (`crates/anneal-cli/playbooks/schemas/design-tree.schema.json`) agrees with the serde DTO that
 //! `anneal grill` reads: the same fields, required fields, types, statuses and bounds.
 
 use std::collections::BTreeSet;
@@ -19,8 +19,8 @@ const ID_PATTERN: &str = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
 const NOT_BLANK: &str = "\\S";
 
 fn schema() -> Result<Value, Box<dyn Error>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../plugin/playbooks/schemas/design-tree.schema.json");
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("playbooks/schemas/design-tree.schema.json");
     Ok(serde_json::from_str(&std::fs::read_to_string(path)?)?)
 }
 
