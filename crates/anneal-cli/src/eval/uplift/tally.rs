@@ -71,7 +71,8 @@ pub(crate) struct SuiteResult {
     pub(crate) base: Count,
     /// The suite's own uplift interval, reported but not held to the bar.
     pub(crate) uplift: Option<Difference>,
-    /// A capability suite whose every run with the skill passed.
+    /// A capability suite whose every run with the skill passed, in a round (a confirmation
+    /// graduates nothing).
     pub(crate) graduates: bool,
     /// A regression suite whose pass rate with the skill is confidently below 0.90.
     pub(crate) regressed: bool,
@@ -207,9 +208,7 @@ fn skill_result<'a>(skill: &'a str, cases: &[&CaseResult<'a>], rule: Rule) -> Sk
                     with,
                     base,
                     uplift: newcombe(with, base),
-                    graduates: suite == SuiteKind::Capability
-                        && with.trials > 0
-                        && with.passed == with.trials,
+                    graduates: graduates(suite, with, rule),
                     regressed: suite == SuiteKind::Regression
                         && wilson(with.passed, with.trials)
                             .is_some_and(|interval| interval.upper() < REGRESSION_MIN_UPPER),
@@ -247,9 +246,17 @@ fn skill_result<'a>(skill: &'a str, cases: &[&CaseResult<'a>], rule: Rule) -> Sk
     }
 }
 
-/// Whether a skill's `suites` fail it on the regression bar: one of them regressed. Kept,
-/// beside the guard bands, as its own bar (Ryan's decision on the guard bands, 2026-11-07,
-/// left it open; dropping it is this one line).
+/// Whether a `suite` whose runs with the skill are `with` graduates under `rule`: a capability
+/// suite whose every run passed, in a round.
+fn graduates(suite: SuiteKind, with: Count, rule: Rule) -> bool {
+    rule.scoring == Scoring::Round
+        && suite == SuiteKind::Capability
+        && with.trials > 0
+        && with.passed == with.trials
+}
+
+/// Whether a skill's `suites` fail it on the regression bar, beside its uplift and guard bars:
+/// one of them regressed.
 fn regression_fails(suites: &[SuiteResult]) -> bool {
     suites.iter().any(|suite| suite.regressed)
 }

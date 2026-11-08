@@ -63,6 +63,8 @@ pub(crate) struct UpliftOutcome {
     /// The suites: the cases selected (by `--skill`, `--case` and `--changed-since`), every
     /// problem, and the coverage of the skills selected.
     pub(crate) suites: Suites,
+    /// Whether whole suites were selected or, with `--case`, one case.
+    pub(crate) scope: Scope,
     /// The runs asked for per case in each arm (`--runs`; a round's for `--check`).
     pub(crate) runs: Runs,
     /// The words a watched guard's confirmation command carries over from this run
@@ -101,6 +103,32 @@ impl UpliftOutcome {
             } else {
                 Scoring::Round
             },
+        }
+    }
+
+    /// Whether a suite may graduate in this run: only in a round of whole suites, not in a
+    /// confirmation or under `--case`.
+    pub(crate) fn may_graduate(&self) -> bool {
+        self.scope == Scope::Suites && self.rule().scoring == Scoring::Round
+    }
+}
+
+/// What a run selected of its skills' suites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scope {
+    /// Whole suites (narrowed only by skill or change).
+    Suites,
+    /// One case (`--case`): no suite ran whole, so none can graduate.
+    OneCase,
+}
+
+impl Scope {
+    /// The scope `args` select.
+    const fn of(args: &UpliftArgs) -> Self {
+        if args.case.is_some() {
+            Self::OneCase
+        } else {
+            Self::Suites
         }
     }
 }
@@ -216,32 +244,18 @@ fn for_skills(skills: &[String]) -> &'static str {
 ///
 /// # Errors
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
-/// `--case` names no case, `--changed-since` cannot compare, a run's selected cases name gated tools without
-/// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the default work directory
-/// needs an anneal home that is relative, the work directory cannot be made absolute (or,
-/// for a case naming Bash, made), the running binary cannot be found, `err` cannot be
-/// written, or the evaluator cannot run its first batch.
+/// `--case` names no case, `--changed-since` cannot compare, a run's selected cases name gated
+/// tools without `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the default
+/// work directory needs an anneal home that is relative, the work directory cannot be made
+/// absolute (or, for a case naming Bash, made), the running binary cannot be found, `err`
+/// cannot be written, or the evaluator cannot run its first batch.
 pub(crate) fn evaluate<E: Write>(
     args: &UpliftArgs,
     mode: &Mode<'_>,
     lookup: impl Fn(&str) -> Option<OsString>,
     err: &mut E,
 ) -> Result<UpliftOutcome, UpliftError> {
-    let mut outcome = UpliftOutcome {
-        check: matches!(mode, Mode::Check),
-        suites: select(args)?,
-        runs: Runs::ROUND,
-        confirm_prefix: args.confirm_words(),
-        drove: None,
-        skipped: false,
-        baseline: None,
-        cleanup: None,
-        max_cost_usd: None,
-        anneal: None,
-        read_only_sandbox: None,
-        socket_path: None,
-        unkept: Vec::new(),
-    };
+    let mut outcome = selected(args, mode)?;
     let Mode::Run(settings) = mode else {
         return Ok(outcome);
     };
@@ -293,6 +307,29 @@ pub(crate) fn evaluate<E: Write>(
     // Judged once the run made the directory, so a link in it resolves.
     outcome.read_only_sandbox = read_only_sandbox(&outcome.suites.cases, work_dir);
     Ok(outcome)
+}
+
+/// The outcome of reading the suites `args` select, before anything runs.
+///
+/// # Errors
+/// As [`select`].
+fn selected(args: &UpliftArgs, mode: &Mode<'_>) -> Result<UpliftOutcome, UpliftError> {
+    Ok(UpliftOutcome {
+        check: matches!(mode, Mode::Check),
+        suites: select(args)?,
+        scope: Scope::of(args),
+        runs: Runs::ROUND,
+        confirm_prefix: args.confirm_words(),
+        drove: None,
+        skipped: false,
+        baseline: None,
+        cleanup: None,
+        max_cost_usd: None,
+        anneal: None,
+        read_only_sandbox: None,
+        socket_path: None,
+        unkept: Vec::new(),
+    })
 }
 
 /// The baseline a run with `settings` compares with.

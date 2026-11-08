@@ -4,8 +4,9 @@
 //! batch per skill against the plugin with that skill removed, or, given a baseline plugin
 //! (`--baseline`), one batch of every case against it; with `--no-baseline`, none. The with arm
 //! gets at most half the cost cap when a baseline follows, so the baseline always has the rest;
-//! each later batch gets the cap minus what the earlier ones reported. None starts with less than a cent left, and a batch that stops
-//! short or fails after the first ends the run with the runs so far.
+//! each later batch gets the cap minus what the earlier ones reported. None starts with less
+//! than a cent left, and a batch that stops short or fails after the first ends the run with
+//! the runs so far.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -261,7 +261,7 @@ fn a_capability_suite_at_100_percent_graduates_and_a_regression_suite_below_90_r
 }
 
 #[test]
-fn a_skill_passes_only_with_its_uplift_met_every_guard_held_and_no_regression() {
+fn a_skill_passes_only_with_its_uplift_met_no_guard_broken_and_no_regression() {
     let cases = [
         case("plan", SuiteKind::Regression, "g", Behaviour::Guard),
         case("plan", SuiteKind::Capability, "c", Behaviour::Outcome),

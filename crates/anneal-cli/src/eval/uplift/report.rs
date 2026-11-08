@@ -73,9 +73,19 @@ struct Spend {
 /// [`CliError::Output`] when `out` cannot be written.
 pub(crate) fn report<O: Write>(outcome: &UpliftOutcome, out: &mut O) -> Result<Code, CliError> {
     let rule = outcome.rule();
-    let results = outcome.drove.as_ref().map_or_else(Tally::default, |drove| {
+    let mut results = outcome.drove.as_ref().map_or_else(Tally::default, |drove| {
         tally(&outcome.suites.cases, &drove.runs, rule)
     });
+    if !outcome.may_graduate() {
+        // One case of a suite (`--case`) says nothing about the whole suite.
+        for suite in results
+            .skills
+            .iter_mut()
+            .flat_map(|skill| &mut skill.suites)
+        {
+            suite.graduates = false;
+        }
+    }
     let watch = watched(
         &results.cases,
         &outcome.suites.cases,

@@ -5,7 +5,7 @@ use crate::eval::uplift::report::report;
 use crate::eval::uplift::runs::Runs;
 use crate::eval::uplift::suites::SuiteKind;
 use crate::eval::uplift::tally::Arms;
-use crate::eval::uplift::{BaselineKind, UpliftOutcome};
+use crate::eval::uplift::{BaselineKind, Scope, UpliftOutcome};
 
 /// `outcome`'s envelope.
 fn envelope(outcome: &UpliftOutcome) -> Value {
@@ -209,4 +209,38 @@ fn a_round_s_uplift_met_is_still_true_or_false() {
         .map(|outcome| envelope(&outcome)["data"]["per_skill"][0]["uplift_met"].take());
 
     assert_eq!(uplift_met, [json!(true), json!(false)]);
+}
+
+/// `data.graduates` and whether `plan`'s capability suite graduates, in `outcome`'s envelope.
+fn graduation(outcome: &UpliftOutcome) -> (Value, Value) {
+    let mut envelope = envelope(outcome);
+    let mut suites = envelope["data"]["per_skill"][0]["suites"].take();
+    let capability = suites
+        .as_array_mut()
+        .expect("suites")
+        .iter_mut()
+        .find(|suite| suite["suite"] == "capability")
+        .map(|suite| suite["graduates"].take())
+        .expect("a capability suite");
+    (envelope["data"]["graduates"].take(), capability)
+}
+
+#[test]
+fn a_confirmation_of_a_capability_guard_at_10_of_10_graduates_nothing() {
+    assert_eq!(
+        graduation(&confirmation(&[true; 10])),
+        (json!([]), json!(false))
+    );
+}
+
+#[test]
+fn only_a_round_of_whole_suites_graduates_a_capability_suite_not_one_case_of_it() {
+    let whole = guarded(&[true, true, true]);
+    let mut one_case = guarded(&[true, true, true]);
+    one_case.scope = Scope::OneCase;
+
+    assert_eq!(
+        [graduation(&whole), graduation(&one_case)],
+        [(json!(["plan"]), json!(true)), (json!([]), json!(false))]
+    );
 }

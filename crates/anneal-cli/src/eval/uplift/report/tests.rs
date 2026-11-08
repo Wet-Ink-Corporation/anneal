@@ -9,7 +9,7 @@ use crate::eval::uplift::fixture::Fixture;
 use crate::eval::uplift::runs::Runs;
 use crate::eval::uplift::suites::{Case, SuiteKind, Suites};
 use crate::eval::uplift::tally::Arms;
-use crate::eval::uplift::{BaselineKind, PlacedAnneal, Trial, UpliftOutcome};
+use crate::eval::uplift::{BaselineKind, PlacedAnneal, Scope, Trial, UpliftOutcome};
 
 /// Guard bands, confirmations and the runs asked for.
 mod guards;
@@ -49,6 +49,7 @@ fn outcome(cases: Vec<Case>, runs: Vec<(&str, Arms)>) -> UpliftOutcome {
             problems: Vec::new(),
             coverage: Vec::new(),
         },
+        scope: Scope::Suites,
         runs: Runs::ROUND,
         confirm_prefix: Vec::new(),
         drove: Some(Drove {

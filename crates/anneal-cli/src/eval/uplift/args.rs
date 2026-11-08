@@ -62,8 +62,9 @@ pub struct UpliftArgs {
     /// `claude.cmd`, so pass its full path
     #[arg(long, value_name = "PATH")]
     pub claude: Option<PathBuf>,
-    /// The cost cap in US dollars: the with arm gets at most half of it, and no batch starts
-    /// once it is spent, though the runs already in flight can overshoot it [default: 25]
+    /// The cost cap in US dollars: the with arm gets at most half of it (all of it with
+    /// `--no-baseline`), and no batch starts once it is spent, though the runs already in
+    /// flight can overshoot it [default: 25]
     #[arg(long, value_name = "USD", value_parser = cost_cap)]
     pub max_cost_usd: Option<f64>,
     /// The most the whole run may take, in seconds [default: 3600]

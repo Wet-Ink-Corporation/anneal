@@ -296,7 +296,7 @@ A run that ends in error is no trial, except one that ran out of turns, which is
 Listed but never failing the run:
 
 - **Non-discriminating assertions**: a grader that passed in 90% or more of a case's graded baseline runs tells the skill from nothing; each is listed in `data.non_discriminating` and as a finding (`eval/uplift/non-discriminating:<file>:<grader>`). Rewrite or drop it.
-- **Graduates**: a capability suite whose every with-arm run passed is listed in `data.graduates` (by skill); move its cases to `regression/`, since a capability that always holds is now a regression to guard.
+- **Graduates**: a capability suite whose every with-arm run passed in a round of whole suites (not a `--no-baseline` confirmation, and not under `--case`) is listed in `data.graduates` (by skill); move its cases to `regression/`, since a capability that always holds is now a regression to guard.
 
 ### Exit codes and report
 
@@ -312,7 +312,7 @@ Listed but never failing the run:
 
 ### Cost cap
 
-`--max-cost-usd` defaults to 25 US dollars (wi-92bc1b, as Tier 2). The with arm gets at most half the cap, so the baseline always has the rest to compare against; each later batch gets what is left, rounded down to the cent, and none starts below a cent; the overrun is bounded by the runs in flight. A full run is 27 cases x 3 runs x 2 arms = 162 runs.
+`--max-cost-usd` defaults to 25 US dollars (wi-92bc1b, as Tier 2). The with arm gets at most half the cap, so the baseline always has the rest to compare against (with `--no-baseline`, which runs no baseline, the with arm gets the whole cap); each later batch gets what is left, rounded down to the cent, and none starts below a cent; the overrun is bounded by the runs in flight. A full run is 27 cases x 3 runs x 2 arms = 162 runs.
 
 ### `--changed-since <ref>`
 
