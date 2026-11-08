@@ -6,9 +6,13 @@ use super::report;
 use crate::eval::uplift::case::parse;
 use crate::eval::uplift::drive::Drove;
 use crate::eval::uplift::fixture::Fixture;
+use crate::eval::uplift::runs::Runs;
 use crate::eval::uplift::suites::{Case, SuiteKind, Suites};
 use crate::eval::uplift::tally::Arms;
-use crate::eval::uplift::{BaselineKind, PlacedAnneal, Trial, UpliftOutcome};
+use crate::eval::uplift::{BaselineKind, PlacedAnneal, Scope, Trial, UpliftOutcome};
+
+/// Guard bands, confirmations and the runs asked for.
+mod guards;
 
 /// A `plan` case in `suite` named `slug`, of `behaviour`, with one grader `a`.
 fn case(suite: SuiteKind, slug: &str, behaviour: &str) -> Case {
@@ -45,6 +49,9 @@ fn outcome(cases: Vec<Case>, runs: Vec<(&str, Arms)>) -> UpliftOutcome {
             problems: Vec::new(),
             coverage: Vec::new(),
         },
+        scope: Scope::Suites,
+        runs: Runs::ROUND,
+        confirm_prefix: Vec::new(),
         drove: Some(Drove {
             runs: runs
                 .into_iter()
@@ -121,7 +128,7 @@ fn a_case_short_of_its_runs_in_an_arm_is_incomplete() {
 }
 
 #[test]
-fn a_guard_that_fails_one_of_three_runs_is_below_bound_with_its_finding() {
+fn a_guard_that_slips_one_of_three_runs_is_watched_not_failed() {
     let outcome = outcome(
         vec![
             case(SuiteKind::Regression, "a", "outcome"),
@@ -148,10 +155,23 @@ fn a_guard_that_fails_one_of_three_runs_is_below_bound_with_its_finding() {
     assert_eq!(
         judged(&outcome),
         (
-            1,
-            vec!["eval/uplift/guard:plan/capability/g.json".to_owned()],
+            0,
+            vec!["eval/uplift/watch:plan/capability/g.json".to_owned()],
             json!(true)
         )
+    );
+    let mut out = Vec::new();
+    report(&outcome, &mut out).expect("written");
+    let envelope: Value = serde_json::from_slice(&out).expect("json");
+    assert_eq!(
+        envelope["data"]["watch"],
+        json!([{
+            "skill": "plan",
+            "case": "plan/capability/g.json",
+            "passed": 2,
+            "runs": 3,
+            "confirm": "anneal eval uplift --case plan/capability/g.json --no-baseline --runs 10"
+        }])
     );
 }
 

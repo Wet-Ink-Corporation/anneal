@@ -7,7 +7,7 @@
 | 0 | `anneal lint skills plugin/skills --index docs/bootstrap-index.md`, `claude plugin validate --strict plugin` | zero errors | every skill |
 | 1 | `anneal eval routing`, with `evals/routing/<skill>.yaml` | 100% rank-1 | model-invoked skills |
 | 2 | `anneal eval routing --router claude --changed-since <base>` | every prompt's should-fire lower bound 0.70 or more; should-not upper bound 0.20 or less | model-invoked skills |
-| 3 | `anneal eval uplift --skill <name>`, over `evals/uplift/<skill>/` | uplift lower bound 0 or more, every guard pass^3, no regression suite below 0.90 | every skill with a suite; each entry skill must have one |
+| 3 | `anneal eval uplift --skill <name>`, over `evals/uplift/<skill>/` | uplift lower bound 0 or more, no guard broken (one slip in 3 runs is watched, confirm with `--no-baseline --runs 10`), no regression suite below 0.90 | every skill with a suite; each entry skill must have one |
 
 A user-invoked skill (`disable-model-invocation: true`) is never routed by the model, so Tiers 1
 and 2 do not apply to it and it has no routing fixture.

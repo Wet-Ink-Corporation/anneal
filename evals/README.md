@@ -165,16 +165,16 @@ The Tier 2 code is proved without a model: the statistics against reference valu
 
 ## Tier 3: behaviour uplift
 
-Routing says a skill fires; Tier 3 asks whether firing it changes what the agent does. Each entry skill (`grill`, `spec`, `plan`, `build`, `diagnose`, `verify`, `ship`) has a regression suite and a capability suite of cases under `evals/uplift/<skill>/`, and each case runs 3 times with the skill and 3 times without it.
+Routing says a skill fires; Tier 3 asks whether firing it changes what the agent does. Each entry skill (`grill`, `spec`, `plan`, `build`, `diagnose`, `verify`, `ship`) has a regression suite and a capability suite of cases under `evals/uplift/<skill>/`, and each case runs 3 times with the skill and 3 times without it (`--runs` asks for 3 to 20).
 
 ```sh
 anneal eval uplift [--skills plugin/skills] [--suites evals/uplift] [--skill <name>]... \
-  [--check] [--baseline <plugin dir>] [--max-cost-usd 25] [--timeout 3600] \
+  [--case <case>] [--runs 3] [--no-baseline] [--check] [--baseline <plugin dir>] [--max-cost-usd 25] [--timeout 3600] \
   [--concurrency 4] [--model <model>] [--claude <path>] [--trust-plugin] [--changed-since <ref>] \
   [--allow-gated-tools] [--allow-scaffolds] [--work-dir <dir>] [--keep-results <dir>]
 ```
 
-`--check` reads and checks the suites and reports each skill's coverage (`data.coverage`); it runs nothing, and a run flag beside it is a usage error. `cargo test` runs it over this directory (`tests/it/repo_gates.rs`), so CI refuses an invalid case or an entry skill without both suites. `--skill` (repeatable) runs one skill's suites; naming a skill with no suite directory is a usage error.
+`--check` reads and checks the suites and reports each skill's coverage (`data.coverage`); it runs nothing, and a run flag beside it is a usage error. `cargo test` runs it over this directory (`tests/it/repo_gates.rs`), so CI refuses an invalid case or an entry skill without both suites. `--skill` (repeatable) runs one skill's suites; naming a skill with no suite directory is a usage error. `--case` runs one case, named by its file under the suites directory (`build/regression/plan-before-source.json`), that file's path (made absolute against the current directory, with no `..` or link resolved), or its name (`build--regression--plan-before-source`); a `--case` naming no case (of the `--skill`s given) is a usage error, it is allowed with `--check`, and refused with `--changed-since`. `--runs` asks for 3 to 20 runs per case in each arm (default 3). `--no-baseline` runs the with arm alone, with the whole cost cap, to confirm a watched guard (see Guards below); it is refused with `--baseline` and with `--check`, as `--runs` is with `--check`.
 
 ### Layout and case schema
 
@@ -202,7 +202,7 @@ evals/uplift/fixtures/<name>/                 # files a case's runs start with (
 }
 ```
 
-- `behaviour`: `outcome`, scored by its pass rate, or `guard`, a line the skill must hold under pressure, which must pass all 3 runs with the skill (pass^3).
+- `behaviour`: `outcome`, scored by its pass rate, or `guard`, a line the skill must hold under pressure, which may slip at most one run with the skill (see Guards below).
 - `pressure` (optional): a pressure fixture whose sentence is added after a blank line at the end of the prompt. `authority`: "The tech lead says to skip the tests for this one." `time`: "We ship in 5 minutes, so be quick." `sunk-cost`: "We already wrote it, so just merge it."
 - `seed`: the real failure the case was seeded from (an issue and the review finding or hook message), with no secrets, home-directory paths or email addresses.
 - `max_turns` 1 to 50 (default 10), `timeout_seconds` 30 to 1800 (default 300).
@@ -290,29 +290,29 @@ Tier 3 shares Tier 2's adapter, and with it Tier 2's safeguards. The workspace i
 A run that ends in error is no trial, except one that ran out of turns, which is graded as Tier 2 grades it. Per skill, over all its cases' runs pooled:
 
 - **Uplift**: the difference of pass rates, with-arm minus baseline, with its 95% Newcombe hybrid score interval (method 10, built on Wilson). The bar is a lower bound of 0 or higher. 6 of 6 against 0 of 6 has a lower bound of 0.448; 3 of 3 against 3 of 3 is -0.561 to 0.561, so a case that passes either way cannot carry a skill.
-- **Guards**: every `guard` case passes all 3 runs with the skill (pass^3); one failed or missing run fails the skill.
+- **Guards** (Ryan, 2026-11-07): each `guard` case gets a band from its runs with the skill, `data.results[].guard_band`. A run asked for that errored or never came counts as not passing. A guard may slip one run and is then watched; two slips break it: at 3 runs, 3 of 3 is `held`, 2 of 3 `watch` and 1 or 0 of 3 `broken`, and at any `--runs` n, n is held, n-1 watch and fewer broken. Only a broken guard fails the skill (`per_skill[].guards_failed`). A watched guard is listed in `per_skill[].guards_watch` and `data.watch` (`{skill, case, passed, runs, confirm}`) and as an `eval/uplift/watch:<file>` finding, both holding the command that confirms it: `anneal eval uplift --case <file> --no-baseline --runs 10` (plus `--allow-gated-tools` and `--allow-scaffolds` when the case needs them, and the round's `--skills`, `--suites`, `--claude`, `--model`, `--timeout`, `--concurrency`, `--max-cost-usd`, `--work-dir` and `--trust-plugin`). A confirmation runs the with arm alone, computes no uplift (`uplift_met` is `null`, with an `eval/uplift/no-baseline` finding) and holds each guard when it passes 9 in 10 of the runs asked for (`held`, else `failed-confirmation`, which fails the skill). `guard_held` is true when the band is `held`.
 - **Regression**: a regression suite regresses when the 95% Wilson upper bound of its with-arm pass rate is below 0.90 (1 of 3 is 0.79), so the suite must stay near 100%.
 
 Listed but never failing the run:
 
 - **Non-discriminating assertions**: a grader that passed in 90% or more of a case's graded baseline runs tells the skill from nothing; each is listed in `data.non_discriminating` and as a finding (`eval/uplift/non-discriminating:<file>:<grader>`). Rewrite or drop it.
-- **Graduates**: a capability suite whose every with-arm run passed is listed in `data.graduates` (by skill); move its cases to `regression/`, since a capability that always holds is now a regression to guard.
+- **Graduates**: a capability suite whose every with-arm run passed in a round of whole suites (not a `--no-baseline` confirmation, and not under `--case`) is listed in `data.graduates` (by skill); move its cases to `regression/`, since a capability that always holds is now a regression to guard.
 
 ### Exit codes and report
 
 | Code | Meaning |
 |---|---|
 | 0 | every skill meets every bar; `--check` with valid suites; or `--changed-since` found no change (`data.skipped`) |
-| 1 | below bound: an uplift lower bound below 0, a guard not pass^3, or a regressed regression suite |
-| 2 | invalid suites, cases or skills (nothing ran), or a usage error (gated tools without `--allow-gated-tools`, and fixtures without `--allow-scaffolds`, among them) |
-| 3 | incomplete: the cost cap, the time limit or a failed later batch stopped the run, or a case has fewer than 3 runs in an arm |
+| 1 | below bound: an uplift lower bound below 0 (never in a `--no-baseline` confirmation), a broken guard or one that failed its confirmation, or a regressed regression suite; a watched guard alone exits 0 |
+| 2 | invalid suites, cases or skills (nothing ran), or a usage error (gated tools without `--allow-gated-tools`, fixtures without `--allow-scaffolds`, a `--case` naming no case, a `--runs` outside 3 to 20, `--no-baseline` with `--baseline` or `--check`, and `--case` with `--changed-since`, among them) |
+| 3 | incomplete: the cost cap, the time limit or a failed later batch stopped the run, or a case has fewer than the runs asked for in an arm (in the with arm only, with `--no-baseline`) |
 | 4 | `claude plugin eval` could not run its first batch |
 
-`data` holds `mode` (`check` or `run`), `skills`, `cases`, `runs_per_arm`, `runs`, `errored`, `cost_usd`, `cost_is_lower_bound`, `max_cost_usd`, `baseline` (`skill-removed` or `plugin`, with `baseline_plugin`), `complete`, `stop`, `skipped`, `problems`, `coverage`, `per_skill` (each skill's `with`, `base`, `uplift`, `uplift_met`, its suites and `guards_failed`), `results` (each case's counts), `non_discriminating`, `graduates`, `granted_tools`, `scaffolded` and `libexec_target`. Findings: `eval/uplift/suite:<file>`, `uplift:<skill>`, `guard:<file>`, `regressed:<skill>`, `non-discriminating:<file>:<grader>`, `granted-tools`, `scaffolded`, `libexec`, `read-only-sandbox`, `incomplete` and `cleanup`.
+`data` holds `mode` (`check` or `run`), `skills`, `cases`, `runs_per_arm`, `runs`, `errored`, `cost_usd`, `cost_is_lower_bound`, `max_cost_usd`, `baseline` (`skill-removed`, `plugin`, with `baseline_plugin`, or `none` for `--no-baseline`), `complete`, `stop`, `skipped`, `problems`, `coverage`, `per_skill` (each skill's `with`, `base`, `uplift`, `uplift_met` (`null` when not computed), its suites, `guards_failed` and `guards_watch`), `results` (each case's counts, and for a guard `guard_band` and `guard_held`), `non_discriminating`, `watch`, `graduates`, `granted_tools`, `scaffolded` and `libexec_target`. Findings: `eval/uplift/suite:<file>`, `uplift:<skill>`, `guard:<file>` (broken or failed confirmation), `watch:<file>`, `no-baseline`, `regressed:<skill>`, `non-discriminating:<file>:<grader>`, `granted-tools`, `scaffolded`, `libexec`, `read-only-sandbox`, `incomplete` and `cleanup`.
 
 ### Cost cap
 
-`--max-cost-usd` defaults to 25 US dollars (wi-92bc1b, as Tier 2). The with arm gets at most half the cap, so the baseline always has the rest to compare against; each later batch gets what is left, rounded down to the cent, and none starts below a cent; the overrun is bounded by the runs in flight. A full run is 27 cases x 3 runs x 2 arms = 162 runs.
+`--max-cost-usd` defaults to 25 US dollars (wi-92bc1b, as Tier 2). The with arm gets at most half the cap, so the baseline always has the rest to compare against (with `--no-baseline`, which runs no baseline, the with arm gets the whole cap); each later batch gets what is left, rounded down to the cent, and none starts below a cent; the overrun is bounded by the runs in flight. A full run is 27 cases x 3 runs x 2 arms = 162 runs.
 
 ### `--changed-since <ref>`
 

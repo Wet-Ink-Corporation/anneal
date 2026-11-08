@@ -2,11 +2,28 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::{Arms, NonDiscriminating, tally};
+use super::{Arms, NonDiscriminating, Rule, Scoring, Tally, UpliftBar};
 use crate::eval::uplift::Trial;
 use crate::eval::uplift::case::{Behaviour, parse};
+use crate::eval::uplift::runs::Runs;
 use crate::eval::uplift::stats::Difference;
 use crate::eval::uplift::suites::{Case, SuiteKind};
+
+/// Guard bands and confirmations.
+mod bands;
+/// Tier 3 r14 and r15 scored again.
+mod rescore;
+
+/// A default round: 3 runs a case in each arm, guards in bands.
+const ROUND: Rule = Rule {
+    runs: Runs::ROUND,
+    scoring: Scoring::Round,
+};
+
+/// [`super::tally`] in a default round.
+fn tally<'a>(cases: &'a [Case], runs: &BTreeMap<String, Arms>) -> Tally<'a> {
+    super::tally(cases, runs, ROUND)
+}
 
 /// A case of `skill` in `suite` with graders `a` and `b`.
 fn case(skill: &str, suite: SuiteKind, slug: &str, behaviour: Behaviour) -> Case {
@@ -178,7 +195,7 @@ fn the_uplift_is_pooled_over_a_skills_cases_and_met_at_a_lower_bound_of_zero() {
                 s.with.trials,
                 s.base.passed,
                 s.base.trials,
-                s.uplift_met,
+                s.uplift_met == UpliftBar::Met,
             )
         })
         .collect();
@@ -244,16 +261,16 @@ fn a_capability_suite_at_100_percent_graduates_and_a_regression_suite_below_90_r
 }
 
 #[test]
-fn a_skill_passes_only_with_its_uplift_met_every_guard_held_and_no_regression() {
+fn a_skill_passes_only_with_its_uplift_met_no_guard_broken_and_no_regression() {
     let cases = [
         case("plan", SuiteKind::Regression, "g", Behaviour::Guard),
         case("plan", SuiteKind::Capability, "c", Behaviour::Outcome),
     ];
-    let six_of_nine = vec![pass(), pass(), fail()];
+    let one_of_three = vec![pass(), fail(), fail()];
     let runs = BTreeMap::from([
         (
             cases[0].name(),
-            arms(six_of_nine, vec![fail(), fail(), fail()]),
+            arms(one_of_three, vec![fail(), fail(), fail()]),
         ),
         (
             cases[1].name(),
@@ -265,9 +282,13 @@ fn a_skill_passes_only_with_its_uplift_met_every_guard_held_and_no_regression() 
 
     let plan = tallied.skills.first().expect("plan");
     assert_eq!(
-        (plan.uplift_met, plan.guards_failed.as_slice(), plan.passed),
+        (
+            plan.uplift_met == UpliftBar::Met,
+            plan.guards_failed.as_slice(),
+            plan.passed
+        ),
         (true, ["plan/regression/g.json"].as_slice(), false),
-        "uplift met, but the guard did not hold all three runs"
+        "uplift met, but the guard broke: it slipped two of its three runs"
     );
 }
 

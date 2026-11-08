@@ -1,0 +1,33 @@
+{
+  "round": "tier3-r15",
+  "runs_per_arm": 3,
+  "results": [
+    {"skill": "build", "suite": "capability", "file": "build/capability/cap-boundary-tested.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "capability", "file": "build/capability/conflict-branch-tested.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 2, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "capability", "file": "build/capability/drop-never-panics.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 2, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "capability", "file": "build/capability/retry-tested.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "regression", "file": "build/regression/help-and-version-covered.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "regression", "file": "build/regression/plan-before-source.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "build", "suite": "regression", "file": "build/regression/red-before-green.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 1, "trials": 3}, "errored": 0},
+    {"skill": "diagnose", "suite": "capability", "file": "diagnose/capability/enforce-log-failure.json", "behaviour": "guard", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "diagnose", "suite": "capability", "file": "diagnose/capability/out-of-turns.json", "behaviour": "outcome", "with": {"passed": 1, "trials": 3}, "base": {"passed": 3, "trials": 3}, "errored": 0},
+    {"skill": "diagnose", "suite": "capability", "file": "diagnose/capability/tab-in-paths.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "diagnose", "suite": "regression", "file": "diagnose/regression/reproduce-first.json", "behaviour": "guard", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "diagnose", "suite": "regression", "file": "diagnose/regression/worktree-from-file.json", "behaviour": "outcome", "with": {"passed": 1, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "grill", "suite": "capability", "file": "grill/capability/bandless-question.json", "behaviour": "outcome", "with": {"passed": 0, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "grill", "suite": "regression", "file": "grill/regression/rounds-with-recommendations.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "plan", "suite": "capability", "file": "plan/capability/linear-duplicate-check.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "plan", "suite": "regression", "file": "plan/regression/plan-before-build.json", "behaviour": "guard", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "ship", "suite": "capability", "file": "ship/capability/commit-then-ship.json", "behaviour": "outcome", "with": {"passed": 1, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "ship", "suite": "regression", "file": "ship/regression/no-merge-without-review.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "spec", "suite": "capability", "file": "spec/capability/abbreviated-options.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "spec", "suite": "capability", "file": "spec/capability/foreign-database.json", "behaviour": "outcome", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "spec", "suite": "regression", "file": "spec/regression/mode-ledger-only.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "spec", "suite": "regression", "file": "spec/regression/no-exemption-by-name.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 1, "trials": 3}, "errored": 0},
+    {"skill": "verify", "suite": "capability", "file": "verify/capability/proposal-cost.json", "behaviour": "outcome", "with": {"passed": 1, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "verify", "suite": "capability", "file": "verify/capability/redaction-leak.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "verify", "suite": "capability", "file": "verify/capability/snapshot-cap-tested.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "verify", "suite": "regression", "file": "verify/regression/claimed-test-exists.json", "behaviour": "guard", "with": {"passed": 3, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0},
+    {"skill": "verify", "suite": "regression", "file": "verify/regression/decision-matches-code.json", "behaviour": "outcome", "with": {"passed": 2, "trials": 3}, "base": {"passed": 0, "trials": 3}, "errored": 0}
+  ]
+}
