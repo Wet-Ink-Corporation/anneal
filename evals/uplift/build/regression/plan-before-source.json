@@ -56,7 +56,7 @@
       "type": "regex",
       "name": "red_test_next",
       "target": "last_message",
-      "pattern": "\\b(?:fail(?:ing|s)?\\b[^.\\n]{0,40}\\btests?\\b|red test|tests?[- ]first)",
+      "pattern": "\\b(?:fail(?:ing|s)?\\b[^.\\n]{0,40}\\btests?\\b|red test|tests?[- ]first|(?:watch|see)(?:ing)? (?:it|them|the test) (?:fail|go red)|fail(?:s|ing)? first)",
       "flags": "i"
     },
     {
