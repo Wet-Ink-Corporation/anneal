@@ -14,20 +14,43 @@ use crate::eval::real::args::{
 use crate::eval::real::claude::Options;
 use crate::paths::{PathError, anneal_home_from};
 
+use super::runs::Runs;
 use super::sandbox::denies_bash_writes;
+
+/// `--skills` when not given.
+const DEFAULT_SKILLS: &str = "plugin/skills";
+/// `--suites` when not given.
+const DEFAULT_SUITES: &str = "evals/uplift";
 
 /// Arguments of `anneal eval uplift`.
 #[derive(Debug, Clone, Args)]
 pub struct UpliftArgs {
     /// The directory of the plugin's skills; the plugin is its parent
-    #[arg(long, value_name = "DIR", default_value = "plugin/skills")]
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_SKILLS)]
     pub skills: PathBuf,
     /// The directory of Tier 3 suites, `<skill>/{regression,capability}/<case>.json`
-    #[arg(long, value_name = "DIR", default_value = "evals/uplift")]
+    #[arg(long, value_name = "DIR", default_value = DEFAULT_SUITES)]
     pub suites: PathBuf,
     /// Run only this skill's suites (repeatable)
     #[arg(long = "skill", value_name = "NAME")]
     pub skill: Vec<String>,
+    /// Run only this case: its file under the suites directory
+    /// (`build/regression/plan-before-source.json`), that file's path, or its name
+    /// (`build--regression--plan-before-source`); a path is compared as given, made absolute
+    /// but with no `..` or link resolved
+    #[arg(long = "case", value_name = "CASE")]
+    pub case: Option<String>,
+    /// Runs per case in each arm, 3 to 20 [default: 3]; a guard confirmation uses 10
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(3..=20))]
+    pub runs: Option<u32>,
+    /// Run the with arm only, to confirm a guard: no uplift is computed, and each guard holds
+    /// when it passes 9 in 10 of its runs
+    #[arg(
+        long = "no-baseline",
+        action = ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new().map(BaselineArm::from_flag)
+    )]
+    pub baseline_arm: BaselineArm,
     /// Check the suites and report their coverage; run nothing
     #[arg(long)]
     pub check: bool,
@@ -161,6 +184,22 @@ impl GatedTools {
     }
 }
 
+/// Whether a run runs its baseline arm (`--no-baseline`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaselineArm {
+    /// Run it, and compute each skill's uplift.
+    Run,
+    /// Skip it, as `--no-baseline` asks: the with arm alone confirms the guards.
+    Skip,
+}
+
+impl BaselineArm {
+    /// [`Self::Skip`] when the flag was given.
+    const fn from_flag(given: bool) -> Self {
+        if given { Self::Skip } else { Self::Run }
+    }
+}
+
 /// What `eval uplift` does.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Mode<'a> {
@@ -193,6 +232,10 @@ pub(crate) struct Settings<'a> {
     pub(crate) work_dir: Option<&'a Path>,
     /// `--keep-results`, where each batch's result is copied, if given.
     pub(crate) keep_results: Option<&'a Path>,
+    /// `--runs`, the runs per case in each arm.
+    pub(crate) runs: Runs,
+    /// Whether the baseline arm runs (`--no-baseline` skips it).
+    pub(crate) baseline_arm: BaselineArm,
 }
 
 impl UpliftArgs {
@@ -211,17 +254,80 @@ impl UpliftArgs {
             ("--allow-scaffolds", self.scaffolds == Scaffolds::Allow),
             ("--work-dir", self.work_dir.is_some()),
             ("--keep-results", self.keep_results.is_some()),
+            ("--runs", self.runs.is_some()),
+            ("--no-baseline", self.baseline_arm == BaselineArm::Skip),
         ]
         .into_iter()
         .find_map(|(flag, given)| given.then_some(flag))
     }
 
+    /// The flags a guard confirmation carries over from this run, as words: `--skills` and
+    /// `--suites` when not the defaults, then `--claude`, `--model`, `--timeout`,
+    /// `--concurrency`, `--max-cost-usd`, `--work-dir` and `--trust-plugin` when given. It
+    /// never carries the selection (`--skill`, `--changed-since`), the arms (`--baseline`,
+    /// `--runs`) or `--keep-results`, which would overwrite this run's kept results.
+    pub(crate) fn confirm_words(&self) -> Vec<String> {
+        let path = |path: &Path| path.to_string_lossy().into_owned();
+        let mut words = Vec::new();
+        let mut push = |flag: &str, value: Option<String>| {
+            if let Some(value) = value {
+                words.extend([flag.to_owned(), value]);
+            }
+        };
+        push(
+            "--skills",
+            (self.skills != Path::new(DEFAULT_SKILLS)).then(|| path(&self.skills)),
+        );
+        push(
+            "--suites",
+            (self.suites != Path::new(DEFAULT_SUITES)).then(|| path(&self.suites)),
+        );
+        push("--claude", self.claude.as_deref().map(path));
+        push("--model", self.model.clone());
+        push("--timeout", self.timeout.map(|secs| secs.to_string()));
+        push("--concurrency", self.concurrency.map(|n| n.to_string()));
+        push(
+            "--max-cost-usd",
+            self.max_cost_usd.map(|usd| usd.to_string()),
+        );
+        push("--work-dir", self.work_dir.as_deref().map(path));
+        if self.trust_plugin {
+            words.push("--trust-plugin".to_owned());
+        }
+        words
+    }
+
+    /// The runs a run asks for, once `--no-baseline`, `--case` and `--runs` are checked.
+    ///
+    /// # Errors
+    /// [`CliError::Usage`] for `--no-baseline` with `--baseline`, `--case` with
+    /// `--changed-since`, or a `--runs` outside 3 to 20.
+    fn confirmation_flags(&self) -> Result<Runs, CliError> {
+        let usage = |reason: String| Err(CliError::Usage { reason });
+        if self.baseline_arm == BaselineArm::Skip && self.baseline.is_some() {
+            return usage(
+                "--no-baseline runs no baseline, so --baseline does not apply".to_owned(),
+            );
+        }
+        if self.case.is_some() && self.changed_since.is_some() {
+            return usage("--case runs one case, so --changed-since does not apply".to_owned());
+        }
+        match self.runs {
+            None => Ok(Runs::ROUND),
+            Some(n) => Runs::new(n).map_or_else(
+                || usage(format!("--runs {n} is not {} to {}", Runs::MIN, Runs::MAX)),
+                Ok,
+            ),
+        }
+    }
+
     /// The mode the flags ask for.
     ///
     /// # Errors
-    /// [`CliError::Usage`] for a run flag with `--check`, a `--changed-since` that is not a
-    /// revision, a `--baseline` that is not a directory, or, for a run, a `--skills` with no
-    /// last component (ending in `..`).
+    /// [`CliError::Usage`] for a run flag with `--check`, `--no-baseline` with `--baseline`,
+    /// `--case` with `--changed-since`, a `--runs` outside 3 to 20, a `--changed-since` that is
+    /// not a revision, a `--baseline` that is not a directory, or, for a run, a `--skills` with
+    /// no last component (ending in `..`).
     pub(crate) fn mode(&self) -> Result<Mode<'_>, CliError> {
         if self.check {
             return match self.run_flag() {
@@ -231,6 +337,7 @@ impl UpliftArgs {
                 None => Ok(Mode::Check),
             };
         }
+        let runs = self.confirmation_flags()?;
         if let Some(base) = self.changed_since.as_deref()
             && (base.is_empty() || base.starts_with('-'))
         {
@@ -272,6 +379,8 @@ impl UpliftArgs {
             scaffolds: self.scaffolds,
             work_dir: self.work_dir.as_deref(),
             keep_results: self.keep_results.as_deref(),
+            runs,
+            baseline_arm: self.baseline_arm,
         }))
     }
 }
@@ -281,15 +390,21 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::{GatedTools, Mode, Scaffolds, UpliftArgs, default_work_dir};
+    use super::{BaselineArm, GatedTools, Mode, Scaffolds, UpliftArgs, default_work_dir};
     use crate::error::CliError;
     use crate::paths::PathError;
+
+    /// `--case`, `--runs`, `--no-baseline` and the confirmation's flags.
+    mod confirmation;
 
     fn args() -> UpliftArgs {
         UpliftArgs {
             skills: PathBuf::from("plugin/skills"),
             suites: PathBuf::from("evals/uplift"),
             skill: Vec::new(),
+            case: None,
+            runs: None,
+            baseline_arm: BaselineArm::Run,
             check: false,
             baseline: None,
             claude: None,

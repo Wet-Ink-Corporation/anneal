@@ -2,11 +2,30 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::{Arm, Baseline, Batch, Evaluator, Metered, Ran, drive, first_batch_error};
+use super::{Arm, Ask, Baseline, Batch, Drove, Evaluator, Metered, Ran, first_batch_error};
 use crate::eval::real::{ResultError, RouterError, Stop};
 use crate::eval::uplift::Trial;
 use crate::eval::uplift::case::parse;
+use crate::eval::uplift::runs::Runs;
 use crate::eval::uplift::suites::{Case, SuiteKind};
+
+/// Batches of the guard-confirmation runs: `--runs` and `--no-baseline`.
+mod confirmation;
+
+/// [`super::drive`] in a default round of 3 runs a case, against `baseline` within `cap_usd`.
+fn drive<E: Evaluator>(
+    evaluator: &mut E,
+    cases: &[Case],
+    baseline: Baseline,
+    cap_usd: f64,
+) -> Result<Drove, RouterError> {
+    let ask = Ask {
+        baseline,
+        runs: Runs::ROUND,
+        cap_usd,
+    };
+    super::drive(evaluator, cases, ask)
+}
 
 fn case(skill: &str, slug: &str) -> Case {
     let text = json!({

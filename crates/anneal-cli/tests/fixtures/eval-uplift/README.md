@@ -11,3 +11,8 @@ whose `llm` grader comes first.
 
 `gated/` is a valid suite set whose `plan` case (`run-the-tests.json`) names `Bash`, beside a
 `spec` case that names no gated tool, for `--allow-gated-tools`.
+
+`rescore/r14.json` and `rescore/r15.json` are the per-case counts (`skill`, `suite`, `file`,
+`behaviour`, `with`, `base`, `errored`) and `runs_per_arm` of the Tier 3 r14 and r15
+envelopes, trimmed from their `data.results`. A `tally` unit test scores them again under the
+guard bands, with no model.

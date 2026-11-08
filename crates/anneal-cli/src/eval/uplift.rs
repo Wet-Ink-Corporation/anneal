@@ -1,13 +1,15 @@
 //! `anneal eval uplift`: Tier 3, behaviour uplift (`evals/README.md`).
 //!
 //! Each entry skill has suites of cases under `evals/uplift/<skill>/{regression,capability}/`
-//! (`suites`, `case`). Every problem with them stops the run before anything is spent. The
-//! cases then run three times each through `claude plugin eval` (the `drive::Evaluator`
-//! port, adapted by `claude`), once against the whole plugin and once against the baseline:
-//! the plugin with the case's skill removed, or the `--baseline` plugin. Each skill is held to
-//! the bars (`tally`, `stats`): a pooled uplift whose 95% Newcombe lower bound is 0 or more,
-//! every guard case passing all three runs with the skill (pass^3), and no regression suite
-//! regressed.
+//! (`suites`, `case`), narrowed by `--skill` and `--case` (`select`). Every problem with them
+//! stops the run before anything is spent. The cases then run `--runs` times each (3 by
+//! default) through `claude plugin eval` (the `drive::Evaluator` port, adapted by `claude`),
+//! once against the whole plugin and once against the baseline: the plugin with the case's
+//! skill removed, or the `--baseline` plugin. Each skill is held to the bars (`tally`,
+//! `stats`): a pooled uplift whose 95% Newcombe lower bound is 0 or more, no guard case broken
+//! (a guard may slip one run, which puts it on watch, and two slips break it), and no
+//! regression suite regressed. `--no-baseline` runs the with arm alone to confirm a watched
+//! guard: no uplift is computed, and each guard holds at 9 in 10 of its runs.
 
 mod args;
 mod case;
@@ -17,7 +19,9 @@ mod drive;
 mod fixture;
 mod gated;
 mod report;
+mod runs;
 mod sandbox;
+mod select;
 mod stats;
 mod suites;
 mod tally;
@@ -29,7 +33,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use args::default_work_dir;
-pub use args::{GatedTools, Scaffolds, UpliftArgs};
+pub use args::{BaselineArm, GatedTools, Scaffolds, UpliftArgs};
 pub(crate) use args::{Mode, Settings};
 pub use gated::GatedCases;
 pub(crate) use report::report;
@@ -39,24 +43,31 @@ use crate::eval::real::claude::plugin_name;
 use crate::eval::real::{ChangedError, RouterError};
 use crate::exit_codes::Code;
 use crate::lint::skills::LintError;
-use crate::lint::skills::listing::listings;
 use crate::paths::PathError;
 use case::{Grader, Tool};
 use claude::{
     BaselinePlugin, CHILD_TMP_BELOW_WORK_DIR, ClaudeEvaluator, LauncherTarget, Placement, Plugins,
     Unkept,
 };
-use drive::{Baseline, Drove, Metered, drive, first_batch_error};
+use drive::{Ask, Baseline, Drove, Metered, drive, first_batch_error};
+use runs::Runs;
+use select::select;
 use suites::Suites;
+use tally::{Rule, Scoring};
 
 /// What a Tier 3 run found.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UpliftOutcome {
     /// True for `--check`: the suites were read and nothing ran.
     pub(crate) check: bool,
-    /// The suites: the cases selected (by `--skill` and `--changed-since`), every problem,
-    /// and the coverage of the skills selected.
+    /// The suites: the cases selected (by `--skill`, `--case` and `--changed-since`), every
+    /// problem, and the coverage of the skills selected.
     pub(crate) suites: Suites,
+    /// The runs asked for per case in each arm (`--runs`; a round's for `--check`).
+    pub(crate) runs: Runs,
+    /// The words a watched guard's confirmation command carries over from this run
+    /// ([`UpliftArgs::confirm_words`]), owned as the outcome outlives the arguments' borrow.
+    pub(crate) confirm_prefix: Vec<String>,
     /// How the batches went, or `None` when nothing ran.
     pub(crate) drove: Option<Drove>,
     /// True when `--changed-since` found no selected skill changed, so nothing ran.
@@ -79,6 +90,21 @@ pub(crate) struct UpliftOutcome {
     pub(crate) unkept: Vec<Unkept>,
 }
 
+impl UpliftOutcome {
+    /// The rule the run is scored by: a confirmation when it ran no baseline
+    /// (`--no-baseline`), else a round, at the runs asked for.
+    pub(crate) fn rule(&self) -> Rule {
+        Rule {
+            runs: self.runs,
+            scoring: if self.baseline == Some(BaselineKind::Skipped) {
+                Scoring::Confirmation
+            } else {
+                Scoring::Round
+            },
+        }
+    }
+}
+
 /// Where a run's plugin copies got the running `anneal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlacedAnneal {
@@ -95,6 +121,8 @@ pub(crate) enum BaselineKind {
     SkillRemoved,
     /// Every case against the `--baseline` plugin at this path.
     Plugin(String),
+    /// None: the with arm alone ran (`--no-baseline`).
+    Skipped,
 }
 
 /// Why `eval uplift` could not run.
@@ -111,6 +139,14 @@ pub enum UpliftError {
     UnknownSkill {
         /// The name given.
         name: String,
+    },
+    /// `--case` named no case under the suites directory (of the `--skill`s given, if any).
+    #[error("--case {case} names no case under the suites directory{}", for_skills(.skills))]
+    UnknownCase {
+        /// The case given.
+        case: String,
+        /// The `--skill`s given, which narrowed the cases searched; empty for none.
+        skills: Vec<String>,
     },
     /// The `--baseline` plugin's manifest could not be read.
     #[error("reading the --baseline plugin")]
@@ -155,6 +191,7 @@ impl UpliftError {
             Self::Output(_) => crate::exit_codes::OUTPUT,
             Self::Skills(error) | Self::Suites(error) => error.code(),
             Self::UnknownSkill { .. }
+            | Self::UnknownCase { .. }
             | Self::Baseline(_)
             | Self::GatedTools(_)
             | Self::Scaffolds(_) => crate::exit_codes::USAGE,
@@ -164,13 +201,22 @@ impl UpliftError {
     }
 }
 
+/// How [`UpliftError::UnknownCase`] says the `--skill`s given narrowed the search, if any did.
+fn for_skills(skills: &[String]) -> &'static str {
+    if skills.is_empty() {
+        ""
+    } else {
+        " for the --skill given"
+    }
+}
+
 /// Reads the suites under `args.suites` for the skills under `args.skills` and, unless
 /// `mode` is [`Mode::Check`], runs them through `claude plugin eval`, in a workspace made in
 /// `--work-dir`, else in [`default_work_dir`] (`lookup` reads one variable for it).
 ///
 /// # Errors
 /// [`UpliftError`] when a directory cannot be read, `--skill` names a skill with no suites,
-/// `--changed-since` cannot compare, a run's selected cases name gated tools without
+/// `--case` names no case, `--changed-since` cannot compare, a run's selected cases name gated tools without
 /// `--allow-gated-tools` or fixtures without `--allow-scaffolds`, the default work directory
 /// needs an anneal home that is relative, the work directory cannot be made absolute (or,
 /// for a case naming Bash, made), the running binary cannot be found, `err` cannot be
@@ -184,6 +230,8 @@ pub(crate) fn evaluate<E: Write>(
     let mut outcome = UpliftOutcome {
         check: matches!(mode, Mode::Check),
         suites: select(args)?,
+        runs: Runs::ROUND,
+        confirm_prefix: args.confirm_words(),
         drove: None,
         skipped: false,
         baseline: None,
@@ -197,10 +245,9 @@ pub(crate) fn evaluate<E: Write>(
     let Mode::Run(settings) = mode else {
         return Ok(outcome);
     };
+    outcome.runs = settings.runs;
     outcome.max_cost_usd = Some(settings.max_cost_usd);
-    outcome.baseline = Some(settings.baseline.map_or(BaselineKind::SkillRemoved, |dir| {
-        BaselineKind::Plugin(dir.display().to_string())
-    }));
+    outcome.baseline = Some(baseline_kind(settings));
     if !outcome.suites.problems.is_empty() {
         return Ok(outcome);
     }
@@ -248,6 +295,15 @@ pub(crate) fn evaluate<E: Write>(
     Ok(outcome)
 }
 
+/// The baseline a run with `settings` compares with.
+fn baseline_kind(settings: &Settings<'_>) -> BaselineKind {
+    match (settings.baseline_arm, settings.baseline) {
+        (BaselineArm::Skip, _) => BaselineKind::Skipped,
+        (BaselineArm::Run, None) => BaselineKind::SkillRemoved,
+        (BaselineArm::Run, Some(dir)) => BaselineKind::Plugin(dir.display().to_string()),
+    }
+}
+
 /// The directory a run's workspace is made in: `given` (`--work-dir`), else
 /// [`default_work_dir`], made absolute against the current directory once here, because each
 /// batch's `claude` runs in the workspace and is handed paths inside it.
@@ -262,40 +318,10 @@ fn work_dir(
     Ok(absolute.map_err(RouterError::Workspace)?)
 }
 
-/// Reads the suites under `args.suites` for the skills under `args.skills`, keeping only the
-/// `--skill`s' cases and coverage when any is named.
-fn select(args: &UpliftArgs) -> Result<Suites, UpliftError> {
-    let skills: Vec<String> = listings(std::slice::from_ref(&args.skills))
-        .map_err(UpliftError::Skills)?
-        .into_iter()
-        .map(|listed| match listed {
-            Ok(listing) => listing.name,
-            Err(unparsed) => unparsed.name,
-        })
-        .collect();
-    let mut suites = suites::read(&args.suites, &skills).map_err(UpliftError::Suites)?;
-    if let Some(name) = args
-        .skill
-        .iter()
-        .find(|name| !suites.coverage.iter().any(|row| &row.skill == *name))
-    {
-        return Err(UpliftError::UnknownSkill {
-            name: name.to_owned(),
-        });
-    }
-    if !args.skill.is_empty() {
-        suites.cases.retain(|case| args.skill.contains(&case.skill));
-        suites
-            .coverage
-            .retain(|row| args.skill.contains(&row.skill));
-    }
-    Ok(suites)
-}
-
-/// Runs `suites`' cases in both arms in a workspace made in `work_dir`, each plugin copy
-/// holding the running binary under the launcher's target for this host when there is one;
-/// with the run, why the workspace could not be removed afterwards, if it could not, and the
-/// results `--keep-results` could not keep.
+/// Runs `suites`' cases in the with arm and, unless `--no-baseline`, the baseline's, in a
+/// workspace made in `work_dir`, each plugin copy holding the running binary under the
+/// launcher's target for this host when there is one; with the run, why the workspace could
+/// not be removed afterwards, if it could not, and the results `--keep-results` could not keep.
 fn run(
     settings: &Settings<'_>,
     skills: &Path,
@@ -322,10 +348,10 @@ fn run(
         .baseline
         .zip(baseline_name.as_deref())
         .map(|(dir, name)| BaselinePlugin { dir, name });
-    let kind = if baseline.is_some() {
-        Baseline::Plugin
-    } else {
-        Baseline::SkillRemoved
+    let kind = match (settings.baseline_arm, &baseline) {
+        (BaselineArm::Skip, _) => Baseline::Skipped,
+        (BaselineArm::Run, Some(_)) => Baseline::Plugin,
+        (BaselineArm::Run, None) => Baseline::SkillRemoved,
     };
     if let Some(dir) = settings.keep_results {
         // Before anything is copied or spent, so a directory that cannot be made stops the run
@@ -345,7 +371,12 @@ fn run(
     )?
     .keeping_results(settings.keep_results);
     let mut metered = Metered::new(&mut evaluator);
-    let drove = drive(&mut metered, &suites.cases, kind, settings.max_cost_usd);
+    let ask = Ask {
+        baseline: kind,
+        runs: settings.runs,
+        cap_usd: settings.max_cost_usd,
+    };
+    let drove = drive(&mut metered, &suites.cases, ask);
     let reported_usd = metered.reported_usd();
     let unkept = evaluator.take_unkept();
     let (drove, cleanup) = settle(drove, evaluator.finish(), reported_usd)?;

@@ -3,6 +3,7 @@
 //! the evaluator is a missing program, or on unix a fake `claude` script that answers every
 //! batch from its arguments.
 
+mod confirm;
 mod fixtures;
 mod work_dir;
 
@@ -228,7 +229,8 @@ fn suites_with_no_case_run_nothing_and_report_the_run_skipped() -> TestResult {
 }
 
 /// A `claude` that logs `<plugin copy> <eval dir> <budget> <runs> <allowed tools>` per batch to
-/// `$FAKE_CLAUDE_LOG`, and answers that `always` passed in every run of every case and
+/// `$FAKE_CLAUDE_LOG`, and answers with `--runs` runs of each case, that `always` passed in
+/// every run of every case and
 /// `outcome` passed only against the whole plugin (`with/`), or in every run when
 /// `$FAKE_BASE_PASSES` is set, at $0.25 a batch. With `$FAKE_TMPDIR_LOG` set it logs its
 /// `TMPDIR` and whether that is a directory. With `$FAKE_FAILS` set it writes no result
@@ -277,9 +279,11 @@ run="{\"error\":null,\"graders\":[{\"name\":\"outcome\",\"passed\":$passed},{\"n
 cases=''
 for dir in "$target/$evaldir"/*/; do
   case_name=$(basename "$dir")
-  runs="$run,$run,$run"
+  arm=$run
+  i=1
+  while [ "$i" -lt "$runs" ]; do arm="$arm,$run"; i=$((i + 1)); done
   if [ -n "${FAKE_TRACES:-}" ]; then
-    runs=''
+    arm=''
     for i in 1 2 3; do
       trace="$TMPDIR/claude-eval-$evaldir-$case_name-$i/out/trace.jsonl"
       if [ "$i" = 3 ]; then trace=$FAKE_TRACES; elif [ -n "$keep" ]; then
@@ -287,10 +291,10 @@ for dir in "$target/$evaldir"/*/; do
         echo "{\"eval\":\"$evaldir\",\"case\":\"$case_name\",\"run\":$i}" > "$trace"
       fi
       one_run="{\"tracePath\":\"$trace\",${run#'{'}"
-      if [ -z "$runs" ]; then runs=$one_run; else runs="$runs,$one_run"; fi
+      if [ -z "$arm" ]; then arm=$one_run; else arm="$arm,$one_run"; fi
     done
   fi
-  one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$runs]}}"
+  one="{\"name\":\"$case_name\",\"arms\":{\"with\":[$arm]}}"
   if [ -z "$cases" ]; then cases=$one; else cases="$cases,$one"; fi
 done
 if [ -n "${FAKE_DUPLICATES:-}" ]; then cases="$cases,$cases"; fi

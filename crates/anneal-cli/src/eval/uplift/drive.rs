@@ -2,16 +2,17 @@
 //!
 //! The first batch runs every case with the full plugin. The baseline follows: by default one
 //! batch per skill against the plugin with that skill removed, or, given a baseline plugin
-//! (`--baseline`), one batch of every case against it. The with arm gets at most half the cost
-//! cap, so the baseline always has the rest; each later batch gets the cap minus what the
-//! earlier ones reported. None starts with less than a cent left, and a batch that stops
+//! (`--baseline`), one batch of every case against it; with `--no-baseline`, none. The with arm
+//! gets at most half the cost cap when a baseline follows, so the baseline always has the rest;
+//! each later batch gets the cap minus what the earlier ones reported. None starts with less than a cent left, and a batch that stops
 //! short or fails after the first ends the run with the runs so far.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::Trial;
+use super::runs::Runs;
 use super::suites::Case;
-use super::tally::{Arms, RUNS};
+use super::tally::Arms;
 use crate::error_chain;
 use crate::eval::real::result::{ResultError, over_asked};
 use crate::eval::real::{RouterError, Stop, spend_unknown};
@@ -97,6 +98,19 @@ pub(crate) enum Baseline {
     SkillRemoved,
     /// Every case runs against the `--baseline` plugin.
     Plugin,
+    /// No baseline runs (`--no-baseline`): the with arm alone, to confirm a guard.
+    Skipped,
+}
+
+/// What a run asks of [`drive`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Ask {
+    /// The baseline after the with arm.
+    pub(crate) baseline: Baseline,
+    /// The runs of each case in each batch.
+    pub(crate) runs: Runs,
+    /// The cost cap, in US dollars.
+    pub(crate) cap_usd: f64,
 }
 
 /// One batch.
@@ -153,6 +167,7 @@ fn plan<'a>(cases: &'a [Case], baseline: Baseline) -> Vec<(Arm<'a>, Vec<&'a Case
     }
     let mut batches = vec![(Arm::With, cases.iter().collect())];
     match baseline {
+        Baseline::Skipped => {}
         Baseline::Plugin => batches.push((Arm::Baseline, cases.iter().collect())),
         Baseline::SkillRemoved => {
             let mut by_skill: BTreeMap<&'a str, Vec<&'a Case>> = BTreeMap::new();
@@ -192,17 +207,21 @@ fn take(drove: &mut Drove, batch: &Batch<'_>, ran: Ran) -> Option<Stop> {
     ran.stop
 }
 
-/// What a batch against `arm` may spend of `cap_usd` once `spent_usd` is spent: the with arm
-/// at most [`WITH_ARM_SHARE`] of the cap, any other batch what is left.
-fn budget(arm: Arm<'_>, cap_usd: f64, spent_usd: f64) -> f64 {
-    let left_usd = cap_usd - spent_usd;
-    match arm {
-        Arm::With => left_usd.min(cap_usd * WITH_ARM_SHARE),
-        Arm::Without(_) | Arm::Baseline => left_usd,
+/// What a batch against `arm` may spend of `ask.cap_usd` once `spent_usd` is spent: the with
+/// arm at most [`WITH_ARM_SHARE`] of the cap when a baseline follows it, any other batch what
+/// is left.
+fn budget(arm: Arm<'_>, ask: Ask, spent_usd: f64) -> f64 {
+    let left_usd = ask.cap_usd - spent_usd;
+    match (arm, ask.baseline) {
+        (Arm::With, Baseline::SkillRemoved | Baseline::Plugin) => {
+            left_usd.min(ask.cap_usd * WITH_ARM_SHARE)
+        }
+        (Arm::With, Baseline::Skipped) | (Arm::Without(_) | Arm::Baseline, _) => left_usd,
     }
 }
 
-/// Runs `cases` through `evaluator` in both arms, within `cap_usd`.
+/// Runs `cases` `ask.runs` times each through `evaluator`, in the with arm and then
+/// `ask.baseline`'s, within `ask.cap_usd`.
 ///
 /// # Errors
 /// The first batch's [`RouterError`]: nothing has run, so there is nothing to report. A later
@@ -213,8 +232,7 @@ fn budget(arm: Arm<'_>, cap_usd: f64, spent_usd: f64) -> f64 {
 pub(crate) fn drive<E: Evaluator>(
     evaluator: &mut E,
     cases: &[Case],
-    baseline: Baseline,
-    cap_usd: f64,
+    ask: Ask,
 ) -> Result<Drove, RouterError> {
     let mut drove = Drove {
         runs: cases
@@ -226,8 +244,8 @@ pub(crate) fn drive<E: Evaluator>(
         stop: None,
         cost_is_lower_bound: false,
     };
-    for (index, (arm, batch_cases)) in (1_u32..).zip(plan(cases, baseline)) {
-        let budget_usd = budget(arm, cap_usd, drove.spent_usd);
+    for (index, (arm, batch_cases)) in (1_u32..).zip(plan(cases, ask.baseline)) {
+        let budget_usd = budget(arm, ask, drove.spent_usd);
         if budget_usd < MIN_BUDGET_USD {
             drove.stop = Some(Stop::CostCap);
             break;
@@ -236,7 +254,7 @@ pub(crate) fn drive<E: Evaluator>(
             index,
             arm,
             cases: batch_cases,
-            runs: RUNS,
+            runs: ask.runs.get(),
             budget_usd,
         };
         let mut ran = match evaluator.run(&batch) {

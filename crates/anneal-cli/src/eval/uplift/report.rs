@@ -1,5 +1,6 @@
 //! The envelope of `eval uplift`.
 
+mod confirm;
 mod opt_ins;
 
 use std::collections::BTreeSet;
@@ -11,7 +12,9 @@ use super::claude::Unkept;
 use super::drive::Drove;
 use super::stats::Difference;
 use super::suites::{Coverage, SuiteKind};
-use super::tally::{CaseResult, NonDiscriminating, RUNS, SkillResult, Tally, tally};
+use super::tally::{
+    CaseResult, GuardBand, NonDiscriminating, Rule, Scoring, SkillResult, Tally, UpliftBar, tally,
+};
 use super::{BaselineKind, PlacedAnneal, Trial, UpliftOutcome};
 use crate::command::CommandName;
 use crate::envelope::{Envelope, Finding};
@@ -19,6 +22,7 @@ use crate::error::CliError;
 use crate::eval::real::Stop;
 use crate::eval::real::wilson::wilson;
 use crate::exit_codes::{self, Code};
+use confirm::{Watch, watch_finding, watched};
 use opt_ins::{Granted, Scaffolded, granted, granted_finding, scaffolded, scaffolded_finding};
 
 /// The envelope's `data`.
@@ -42,6 +46,8 @@ struct Data<'a> {
     per_skill: &'a [SkillResult<'a>],
     results: &'a [CaseResult<'a>],
     non_discriminating: &'a [NonDiscriminating<'a>],
+    /// The guards on watch, each with the command that confirms it.
+    watch: &'a [Watch<'a>],
     graduates: Vec<&'a str>,
     granted_tools: Vec<Granted<'a>>,
     scaffolded: Vec<Scaffolded<'a>>,
@@ -66,24 +72,39 @@ struct Spend {
 /// # Errors
 /// [`CliError::Output`] when `out` cannot be written.
 pub(crate) fn report<O: Write>(outcome: &UpliftOutcome, out: &mut O) -> Result<Code, CliError> {
+    let rule = outcome.rule();
     let results = outcome.drove.as_ref().map_or_else(Tally::default, |drove| {
-        tally(&outcome.suites.cases, &drove.runs)
+        tally(&outcome.suites.cases, &drove.runs, rule)
     });
-    let short = outcome.drove.as_ref().map_or(0, short_cases);
+    let watch = watched(
+        &results.cases,
+        &outcome.suites.cases,
+        rule.runs,
+        &outcome.confirm_prefix,
+    );
+    let short = outcome
+        .drove
+        .as_ref()
+        .map_or(0, |drove| short_cases(drove, rule));
     let code = code(outcome, &results, short);
-    let findings = findings(outcome, &results, short);
+    let findings = findings(outcome, &results, &watch, short);
     Envelope::new(
         CommandName::Eval,
         Some("uplift"),
         code,
-        data(outcome, &results, short),
+        data(outcome, &results, &watch, short),
     )
     .with_findings(&findings)
     .emit(out)
     .map_err(CliError::Output)
 }
 
-fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) -> Data<'a> {
+fn data<'a>(
+    outcome: &'a UpliftOutcome,
+    results: &'a Tally<'a>,
+    watch: &'a [Watch<'a>],
+    short: usize,
+) -> Data<'a> {
     let trials: Vec<&Trial> = outcome
         .drove
         .iter()
@@ -100,13 +121,14 @@ fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) ->
         None => (None, None),
         Some(BaselineKind::SkillRemoved) => (Some("skill-removed"), None),
         Some(BaselineKind::Plugin(dir)) => (Some("plugin"), Some(dir.as_str())),
+        Some(BaselineKind::Skipped) => (Some("none"), None),
     };
     let drove = outcome.drove.as_ref();
     Data {
         mode: if outcome.check { "check" } else { "run" },
         skills: skills.into_iter().collect(),
         cases: outcome.suites.cases.len(),
-        runs_per_arm: RUNS,
+        runs_per_arm: outcome.runs.get(),
         runs: trials.len(),
         errored: trials.iter().filter(|trial| trial.errored()).count(),
         spend: Spend {
@@ -124,6 +146,7 @@ fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) ->
         per_skill: &results.skills,
         results: &results.cases,
         non_discriminating: &results.non_discriminating,
+        watch,
         graduates: results
             .skills
             .iter()
@@ -139,14 +162,15 @@ fn data<'a>(outcome: &'a UpliftOutcome, results: &'a Tally<'a>, short: usize) ->
     }
 }
 
-/// How many cases have fewer runs than were asked for in an arm (errored runs count as
-/// runs).
-fn short_cases(drove: &Drove) -> usize {
-    let short = |trials: &[Trial]| u32::try_from(trials.len()).is_ok_and(|runs| runs < RUNS);
+/// How many cases have fewer runs than `rule` asked for in an arm (errored runs count as
+/// runs); a confirmation asks for none in the baseline arm.
+fn short_cases(drove: &Drove, rule: Rule) -> usize {
+    let short =
+        |trials: &[Trial]| u32::try_from(trials.len()).is_ok_and(|runs| runs < rule.runs.get());
     drove
         .runs
         .values()
-        .filter(|arms| short(&arms.with) || short(&arms.base))
+        .filter(|arms| short(&arms.with) || (rule.scoring == Scoring::Round && short(&arms.base)))
         .count()
 }
 
@@ -169,10 +193,16 @@ fn code(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Code {
     }
 }
 
-/// Every finding: suite problems, each skill's missed bars, non-discriminating assertions,
-/// the gated tools case files grant, the cases seeded by scaffold scripts, a run whose copies
-/// got no binary, then why the run is incomplete and a workspace left behind.
-fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<Finding> {
+/// Every finding: suite problems, a run with no baseline arm, each skill's missed bars and
+/// watched guards, non-discriminating assertions, the gated tools case files grant, the cases
+/// seeded by scaffold scripts, a run whose copies got no binary, then why the run is
+/// incomplete and a workspace left behind.
+fn findings(
+    outcome: &UpliftOutcome,
+    results: &Tally<'_>,
+    watch: &[Watch<'_>],
+    short: usize,
+) -> Vec<Finding> {
     let mut findings: Vec<Finding> = outcome
         .suites
         .problems
@@ -184,9 +214,7 @@ fn findings(outcome: &UpliftOutcome, results: &Tally<'_>, short: usize) -> Vec<F
             )
         })
         .collect();
-    for skill in &results.skills {
-        findings.extend(skill_findings(skill, &results.cases));
-    }
+    findings.extend(scoring_findings(outcome, results, watch));
     findings.extend(results.non_discriminating.iter().map(|flag| {
         Finding::new(
             format!(
@@ -246,11 +274,60 @@ fn unkept_finding(unkept: &Unkept) -> Finding {
     )
 }
 
-/// The findings of one skill's missed bars: its uplift, each guard case that did not hold
-/// pass^3, and a regressed regression suite.
-fn skill_findings(skill: &SkillResult<'_>, cases: &[CaseResult<'_>]) -> Vec<Finding> {
+/// The findings of how the run scored: a run with no baseline arm, then each skill's missed
+/// bars and its guards on `watch`.
+fn scoring_findings(
+    outcome: &UpliftOutcome,
+    results: &Tally<'_>,
+    watch: &[Watch<'_>],
+) -> Vec<Finding> {
     let mut findings = Vec::new();
-    if !skill.uplift_met {
+    if outcome.drove.is_some() && outcome.baseline == Some(BaselineKind::Skipped) {
+        findings.push(Finding::new(
+            "eval/uplift/no-baseline",
+            "the run had no baseline arm (--no-baseline), so no uplift was computed; each guard \
+             was held to 9 in 10 of its runs",
+        ));
+    }
+    let runs = outcome.runs.get();
+    for skill in &results.skills {
+        findings.extend(skill_findings(skill, &results.cases, runs));
+        findings.extend(
+            watch
+                .iter()
+                .filter(|watched| watched.skill == skill.skill)
+                .map(watch_finding),
+        );
+    }
+    findings
+}
+
+/// The finding of a guard `case` that broke or failed its confirmation of the `runs` asked
+/// for, if it did.
+fn guard_finding(case: &CaseResult<'_>, runs: u32) -> Option<Finding> {
+    let why = match case.guard_band {
+        Some(GuardBand::Broken) => {
+            "with the skill: broken (a guard may slip one run, which puts it on watch)"
+        }
+        Some(GuardBand::FailedConfirmation) => {
+            "with the skill alone, below the 9-in-10 confirmation bar"
+        }
+        Some(GuardBand::Held | GuardBand::Watch) | None => return None,
+    };
+    Some(Finding::new(
+        format!("eval/uplift/guard:{}", case.file),
+        format!(
+            "guard case {} passed {} of {runs} runs {why}",
+            case.file, case.with.passed
+        ),
+    ))
+}
+
+/// The findings of one skill's missed bars: its uplift, each guard case that broke or failed
+/// its confirmation of the `runs` asked for, and a regressed regression suite.
+fn skill_findings(skill: &SkillResult<'_>, cases: &[CaseResult<'_>], runs: u32) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    if skill.uplift_met == UpliftBar::Missed {
         findings.push(Finding::new(
             format!("eval/uplift/uplift:{}", skill.skill),
             format!(
@@ -267,17 +344,8 @@ fn skill_findings(skill: &SkillResult<'_>, cases: &[CaseResult<'_>]) -> Vec<Find
     findings.extend(
         cases
             .iter()
-            .filter(|case| case.skill == skill.skill && case.guard_held == Some(false))
-            .map(|case| {
-                Finding::new(
-                    format!("eval/uplift/guard:{}", case.file),
-                    format!(
-                        "guard case {} passed {} of {} runs with the skill; a guard must pass \
-                         all {RUNS} (pass^{RUNS})",
-                        case.file, case.with.passed, case.with.trials
-                    ),
-                )
-            }),
+            .filter(|case| case.skill == skill.skill)
+            .filter_map(|case| guard_finding(case, runs)),
     );
     findings.extend(
         skill
@@ -324,8 +392,9 @@ fn incomplete_finding(outcome: &UpliftOutcome, short: usize) -> Option<Finding> 
             return Some(Finding::new(
                 "eval/uplift/incomplete",
                 format!(
-                    "{short} cases have fewer than {RUNS} runs in an arm: claude plugin eval \
-                     returned fewer runs than asked"
+                    "{short} cases have fewer than {} runs in an arm: claude plugin eval \
+                     returned fewer runs than asked",
+                    outcome.runs.get()
                 ),
             ));
         }
