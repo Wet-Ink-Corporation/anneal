@@ -22,7 +22,7 @@ Turns a new or vague request into requirements the human confirmed. The question
 
 ## Process
 
-1. **Seed the tree.** Write `.anneal/grill/<topic>.json`: `version: 1`, a one-line `goal`, empty `turns`, and the root questions (goal, users, scope, constraints, done-when) with a recommended `answer`, `is_decision`, `confidence` and `depends_on` (only questions that change its answer). It's working if `anneal grill frontier` exits 0.
+1. **Seed the tree.** Write `.anneal/grill/<topic>.json`: `version: 1`, a one-line `goal` (the outcome, not its rules), empty `turns`, and the root questions (goal, users, scope, constraints, done-when) with a recommended `answer`, `is_decision`, `confidence` and `depends_on` (only questions that change its answer). It's working if `anneal grill frontier` exits 0.
 2. **Look facts up.** Answer each `look_up` id from the code, docs or tracker, or a subagent given the paths; mark it `answered`. It's working if no fact reaches the human.
 3. **Builder check.** Ask only the `ask` ids where a wrong guess changes the build; accept your recommendation for the rest, in one line the human can object to. It's working if every question would change the build.
 4. **Ask one round.** Number the questions, each recommending what serves the goal, and why; "yes" accepts all. Record answers and statuses, and append the round's confidence to `turns`. Label asked nodes (classify's `data.id`): `anneal decide label <id> no` if the human says you could have looked it up, else `yes`. It's working if the next frontier drops the answered questions.
@@ -43,7 +43,7 @@ Turns a new or vague request into requirements the human confirmed. The question
 ## Red flags
 
 - Asking what the code, docs or tracker answer.
-- Running `anneal grill confirm` with words the human did not write, or before the restatement.
+- Running `anneal grill confirm` with words the human did not write.
 - Editing source before `grill_confirmed` is in the ledger.
 
 ## Verification
