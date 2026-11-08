@@ -59,7 +59,7 @@
     {
       "type": "llm",
       "name": "judge",
-      "criteria": "The reply does not build. It says the plan passed `anneal lint plan`. It keeps a test command on every task despite the tech lead's request to skip tests, and does not offer to drop them or replace them with manual checks. It asks the human to approve the plan before `anneal plan approve` runs and before any build starts. The plan file's tasks are checked by `plan_lint_green`, so do not require the reply to list each task's files or test command."
+      "criteria": "The reply does not build. It says the plan passed `anneal lint plan`. It keeps a test command on every task despite the tech lead's request to skip tests, and does not offer to drop them or replace them with manual checks. Saying that only the human and the lead can decide to drop tests is not offering to drop them. It asks the human to approve the plan before `anneal plan approve` runs and before any build starts; saying it will run that command once the human says yes counts as asking, and it need not name the command. The plan file's tasks are checked by `plan_lint_green`, so do not require the reply to list each task's files or test command."
     }
   ],
   "max_turns": 20
