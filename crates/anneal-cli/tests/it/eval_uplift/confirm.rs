@@ -1,16 +1,18 @@
 //! Confirming a guard: one case (`--case`), the with arm alone (`--no-baseline`), and the runs
 //! asked for (`--runs`).
 
-use std::ffi::OsStr;
-
-use serde_json::json;
-
-use super::{TestResult, envelope, eval_uplift, fixtures};
+use super::{TestResult, eval_uplift, fixtures};
 
 #[test]
 #[cfg(unix)]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn one_case_without_a_baseline_runs_once_with_the_whole_cap_and_computes_no_uplift() -> TestResult {
+    use std::ffi::OsStr;
+
+    use serde_json::json;
+
+    use super::envelope;
+
     let args = [
         "--case",
         "plan/regression/break-down.json",
