@@ -90,7 +90,7 @@ The store indexes events by `key:value` tags. The keys are a closed vocabulary:
 
 A tag value must be non-empty, free of control characters and at most 255 bytes with its key.
 
-## Event registry (version 9)
+## Event registry (version 10)
 
 Each type's minimal payload. Later stories extend payloads with optional fields (bumping the
 registry version) or add types. Version 2 added `hash` and `quote` to `grill_confirmed` (#16);
@@ -102,7 +102,8 @@ the `agent:` tag (#26, `docs/hooks.md`); version 6 added the levels `tests_verif
 `migrate.contract` and the `migration:` tag (#35, `docs/migrate.md`), whose dotted names are
 the story's; version 8 added `ticket` to `round_started` and made its `pr` optional (#36,
 `docs/brief.md`); version 9 added `weighin_parked`, `bridge.unavailable` and
-`orchestrate.ruled` (#37, `docs/orchestrate.md`), the last two under dotted names as #35's.
+`orchestrate.ruled` (#37, `docs/orchestrate.md`), the last two under dotted names as #35's;
+version 10 added the status `wip` to `subagent_status` (temper's `Status: WIP`, Ryan 2026-11-08).
 
 | Type | Payload | Subject tag |
 |---|---|---|
@@ -115,7 +116,7 @@ the story's; version 8 added `ticket` to `round_started` and made its `pr` optio
 | `round_started` | `pr?` number (required before version 8), `ticket?` string (registry v8: the ticket of a fix-loop round, written by `anneal round start`), `round` number (from 1); at least one of `pr` and a non-empty `ticket`, else the event does not read; each is written only when set, so a pull request round keeps the version 6 shape; `ledger append` refuses a field the event would not write back, so an explicit `"pr": null` or `"ticket": null` is refused as an unknown field: leave the key out; see [brief.md](brief.md) | `pr:` when `pr` is set; a ticket round has none and is read by type |
 | `gate_blocked` | `point` string (the gate), `reason` string | `point:` |
 | `stop_blocked` | `point` string (the check that blocked the stop), `reason` string | `point:` |
-| `subagent_status` | `agent` string (the subagent's type, `unknown` when the ledger cannot tag it), `agent_id?` string, `status?` `done`/`done_with_concerns`/`needs_context`/`blocked`, `violation?` string (what is wrong with its status block, one line), `missing` string array (required sections absent; `[]` when none), `duration_ms?` integer and `tokens?` object (`input`, `output`, `cache_read`, `cache_creation`) from its transcript; written by `anneal hook status` | `agent:` |
+| `subagent_status` | `agent` string (the subagent's type, `unknown` when the ledger cannot tag it), `agent_id?` string, `status?` `done`/`done_with_concerns`/`needs_context`/`blocked`/`wip`, `violation?` string (what is wrong with its status block, one line), `missing` string array (required sections absent; `[]` when none), `duration_ms?` integer and `tokens?` object (`input`, `output`, `cache_read`, `cache_creation`) from its transcript; written by `anneal hook status` | `agent:` |
 | `mode_set` | `mode` `build`/`diagnose`/`off`, `clean` boolean (no change, untracked files included, at entry), `plan?` string and `tree?` string (build: paths relative to the worktree root, `/`-separated); the latest one for a worktree is its mode, see [preconditions.md](preconditions.md) | `worktree:` (from the envelope) |
 | `migrate.wave.started` | `migration` string (the migration's id), `wave` integer (from 1); see [migrate.md](migrate.md) | `migration:` |
 | `migrate.wave.done` | `migration` string, `wave` integer | `migration:` |

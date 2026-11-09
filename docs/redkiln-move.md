@@ -50,7 +50,7 @@ Run on 2026-11-08 over copies of both plugins placed in a redkiln checkout. 13 f
 
 ## The ledger against the SPEC
 
-anneal's ledger is `crates/anneal-ledger/` (about 3.0k non-test lines), described in `docs/ledger.md`, registry version 9.
+anneal's ledger is `crates/anneal-ledger/` (about 3.0k non-test lines), described in `docs/ledger.md`, registry version 10.
 
 | Topic | anneal today | SPEC |
 | --- | --- | --- |

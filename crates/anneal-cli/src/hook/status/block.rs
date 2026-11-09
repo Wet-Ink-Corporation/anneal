@@ -10,11 +10,12 @@
 use anneal_ledger::event::AgentStatus;
 
 /// The values a `Status:` line may carry, as written, and what each records.
-pub(crate) const STATUSES: [(&str, AgentStatus); 4] = [
+pub(crate) const STATUSES: [(&str, AgentStatus); 5] = [
     ("DONE", AgentStatus::Done),
     ("DONE_WITH_CONCERNS", AgentStatus::DoneWithConcerns),
     ("NEEDS_CONTEXT", AgentStatus::NeedsContext),
     ("BLOCKED", AgentStatus::Blocked),
+    ("WIP", AgentStatus::Wip),
 ];
 
 /// The sections that must each start a line after the `Status:` line, in report order.
@@ -69,7 +70,7 @@ pub(crate) fn parse(message: &str) -> Parsed {
                 .find(|(name, _)| name.eq_ignore_ascii_case(word))
                 .map(|(_, status)| *status);
             if known.is_none() {
-                let expected = "expected DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED";
+                let expected = "expected DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, BLOCKED or WIP";
                 let shown = shortened(word);
                 problems.push(format!("unknown status {shown:?}; {expected}"));
             }
@@ -203,6 +204,7 @@ Not verified: none";
             ("DONE_WITH_CONCERNS", AgentStatus::DoneWithConcerns),
             ("NEEDS_CONTEXT", AgentStatus::NeedsContext),
             ("BLOCKED", AgentStatus::Blocked),
+            ("WIP", AgentStatus::Wip),
         ];
         for (word, status) in statuses {
             let message = format!("Report.\n\n```text\nStatus: {word}\n{FULL}\n```\n");
@@ -269,20 +271,20 @@ Not verified: none";
 
     #[test]
     fn an_unknown_status_is_a_violation_without_a_status() {
-        let parsed = parse(&format!("Status: WIP\n{FULL}"));
+        let parsed = parse(&format!("Status: IN_PROGRESS\n{FULL}"));
 
         assert_eq!(
             parsed,
             Parsed {
                 status: None,
                 violation: Some(
-                    "unknown status \"WIP\"; expected DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT \
-                     or BLOCKED"
+                    "unknown status \"IN_PROGRESS\"; expected DONE, DONE_WITH_CONCERNS, \
+                     NEEDS_CONTEXT, BLOCKED or WIP"
                         .to_owned()
                 ),
                 missing: Vec::new(),
             },
-            "WIP is not one of the four"
+            "IN_PROGRESS is not one of the five"
         );
     }
 
