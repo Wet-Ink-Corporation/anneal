@@ -84,7 +84,7 @@ anneal's ledger is `crates/anneal-ledger/` (about 3.0k non-test lines), describe
 | Envelope keys | `ok`, `command`, `data`, `findings`, `proves`, `does_not_prove` | The same plus `schema`, `<namespace>.<command>/<n>` (CLI-02) |
 | Exit 2 | Clap's usage error, and a command-specific meaning in 11 commands, plus the hook guard's failed-closed exit 2 that CLI-10 allows (`docs/exit-codes.md`) | Never a command's own meaning, except a guard that cannot write its deny (CLI-06, CLI-10) |
 | Broken pipe | Exit 74 | Exit 0, nothing on stderr (CLI-07) |
-| Harness protocol | Resolved (wave 2d): hook payloads are handled in the `hook` module, and every `CLAUDE_*` variable name the CLI reads lives in one module, `crates/anneal-cli/src/harness.rs`; callers read them through their injected `lookup`, and a test refuses a `CLAUDE_` literal anywhere else in `src/` | One adapter module per binary (CLI-13) |
+| Harness protocol | Resolved (wave 2d): hook payloads are handled in the `hook` module, and every `CLAUDE_*` variable name the CLI reads lives in one module, `crates/anneal-cli/src/harness.rs`; callers read them through their injected `lookup`, and a test refuses a `CLAUDE_` literal anywhere else in `src/` outside comments and test modules | One adapter module per binary (CLI-13) |
 | Commands named by skills | All exist; `tests/it/plugin_commands.rs` checks every `anneal …` span and hook entry | `cargo xtask plugins` checks named binaries |
 
 ## Seams: code that leaves Bench

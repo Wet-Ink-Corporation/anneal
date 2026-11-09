@@ -30,22 +30,89 @@ fn test_module_paths(file: &Path, source: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The production lines of `source` that name a harness variable: comment lines skipped,
-/// reading stopped at an inline `#[cfg(test)] mod tests {`.
+/// The leading whitespace of `line`.
+fn indent(line: &str) -> &str {
+    line.get(..line.len() - line.trim_start().len())
+        .unwrap_or_default()
+}
+
+/// The 0-based line range of each inline `#[cfg(test)] mod tests { … }` in `lines`: from the
+/// attribute to the `}` at the `mod` line's indentation (or the end of the file).
+fn test_module_ranges(lines: &[&str]) -> Vec<std::ops::RangeInclusive<usize>> {
+    let mut ranges = Vec::new();
+    for (at, pair) in lines.windows(2).enumerate() {
+        let is_start = pair
+            .iter()
+            .map(|line| line.trim())
+            .eq(["#[cfg(test)]", "mod tests {"]);
+        if !is_start {
+            continue;
+        }
+        let open = pair.get(1).copied().unwrap_or_default();
+        let close = lines
+            .iter()
+            .enumerate()
+            .skip(at + 2)
+            .find(|(_, line)| line.trim() == "}" && indent(line) == indent(open))
+            .map_or_else(|| lines.len().saturating_sub(1), |(end, _)| end);
+        ranges.push(at..=close);
+    }
+    ranges
+}
+
+/// The production lines of `source` that name a harness variable, numbered from 1: comment
+/// lines and inline `#[cfg(test)] mod tests { … }` blocks skipped.
 fn claude_lines(source: &str) -> Vec<(usize, &str)> {
     let lines: Vec<&str> = source.lines().collect();
-    let end = lines
-        .windows(2)
-        .position(|pair| {
-            pair.iter()
-                .map(|line| line.trim())
-                .eq(["#[cfg(test)]", "mod tests {"])
-        })
-        .unwrap_or(lines.len());
+    let tests = test_module_ranges(&lines);
     (1..)
-        .zip(lines.into_iter().take(end))
+        .zip(lines)
+        .enumerate()
+        .filter(|(at, _)| !tests.iter().any(|range| range.contains(at)))
+        .map(|(_, numbered)| numbered)
         .filter(|(_, line)| !line.trim_start().starts_with("//") && line.contains("CLAUDE_"))
         .collect()
+}
+
+#[test]
+fn the_scan_skips_comments_and_inline_test_modules_but_reads_code_after_them() {
+    let source = "const A: &str = \"CLAUDE_A\";\n\
+                  // const B: &str = \"CLAUDE_B\";\n\
+                  #[cfg(test)]\n\
+                  mod tests {\n    \
+                      const C: &str = \"CLAUDE_C\";\n    \
+                      fn f() {\n    \
+                      }\n\
+                  }\n\
+                  const D: &str = \"CLAUDE_D\";\n";
+
+    let found: Vec<usize> = claude_lines(source).into_iter().map(|(n, _)| n).collect();
+
+    assert_eq!(found, [1, 9], "line 1 and the code after the tests module");
+}
+
+#[test]
+fn the_scan_finds_every_name_in_the_harness_module_itself() {
+    let found = claude_lines(include_str!("../harness.rs"));
+
+    assert_eq!(
+        found.len(),
+        7,
+        "the seven CLAUDE_ constants, so the scan is not vacuous: {found:?}"
+    );
+}
+
+#[test]
+fn a_declared_test_module_maps_to_its_file_and_directory() {
+    let paths = test_module_paths(Path::new("src/foo.rs"), "#[cfg(test)]\nmod tests;\n");
+
+    assert_eq!(
+        paths,
+        [
+            PathBuf::from("src/foo/tests.rs"),
+            PathBuf::from("src/foo/tests")
+        ]
+    );
 }
 
 #[test]

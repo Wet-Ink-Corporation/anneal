@@ -1,9 +1,9 @@
 //! The plugin's `userConfig` as hooks see it: the account, the token and the Clef mode.
 //!
 //! The variables' names, and how Claude Code derives them from the `userConfig` keys, live in
-//! the crate-private `harness` module; they are re-exported here. An empty account means Clef is off. The mode
-//! is `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`, spaces around the
-//! parts ignored; empty or unset is `shadow`, the manifest's default.
+//! the crate-private `harness` module; they are re-exported here. An empty account means Clef
+//! is off. The mode is `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`,
+//! spaces around the parts ignored; empty or unset is `shadow`, the manifest's default.
 //!
 //! [`ENDPOINT_VAR`] (`ANNEAL_CLEF_URL`) replaces the Workers AI accounts URL for tests. Only a
 //! debug build reads it (a release build ignores it entirely), and only as `http://` on
