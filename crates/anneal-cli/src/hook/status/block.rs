@@ -340,6 +340,17 @@ Not verified: none";
     }
 
     #[test]
+    fn section_texts_reads_a_wip_block() {
+        let texts = section_texts("Status: WIP: paused for CI\nGate: fmt ok\n").expect("a report");
+
+        assert_eq!(
+            texts.first(),
+            Some(&("Gate", "fmt ok".to_owned())),
+            "temper's WIP is a report, so Clef D4 reads its sections"
+        );
+    }
+
+    #[test]
     fn section_texts_is_none_without_a_status_line() {
         assert_eq!(
             section_texts("Gate: green\nChanged: a"),
