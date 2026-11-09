@@ -4,9 +4,7 @@ This is the gate report for story #44. Ryan decided on 2026-11-08 to cut it from
 
 ## The run
 
-Ryan ran `cargo run --release -p anneal-cli -- calibrate` on 2026-11-09, from a checkout of `main`, against his anneal home on Windows. The decision log it read was `C:\Users\ryanm\.anneal\decisions\decisions.jsonl`.
-
-The log held no rows. The envelope reported `files: []`, `skipped_rows: 0`, `unmatched_labels: 0`. Every point reported mode `off` and the verdict `stay-shadow` (`too_few_labelled`), and nothing was applied.
+Ryan ran `cargo run --release -p anneal-cli -- calibrate` on 2026-11-09, from a checkout of `main`, against his anneal home on Windows. The envelope's `log` named `C:\Users\ryanm\.anneal\decisions\decisions.jsonl`, and no log file existed there (`files` lists only files that exist, so neither the live log nor a rotated one was found), so nothing was read. The envelope reported `files: []`, `skipped_rows: 0`, `unmatched_labels: 0`. Every point reported mode `off` and the verdict `stay-shadow` (`too_few_labelled`), and nothing was applied.
 
 | Point | Mode | n | Labelled | Brier | Ask rate | Verdict |
 |---|---|---|---|---|---|---|
@@ -20,7 +18,7 @@ The log held no rows. The envelope reported `files: []`, `skipped_rows: 0`, `unm
 
 ## What it means
 
-Clef was never switched on in that anneal home, so no decision was recorded and none could be labelled. That says nothing about how well Clef's probabilities are calibrated: it is the absence of evidence, not a failed calibration.
+Clef is off in that anneal home (mode `off`: no account configured) and no decision log exists there, so no decision was recorded and none could be labelled. That says nothing about how well Clef's probabilities are calibrated: it is the absence of evidence, not a failed calibration.
 
 - No point is promoted. All seven ship in shadow, as the built-in thresholds table (`anneal playbook show clef-thresholds`) sets them, and no threshold changes.
 - Calibration moves with the code. In redkiln the scoring goes to `redkiln-calibrate` (`docs/redkiln-move.md`); the first labelled run belongs there, after Bench turns Clef on in shadow and labels decisions with `decide label`.
@@ -28,4 +26,4 @@ Clef was never switched on in that anneal home, so no decision was recorded and 
 
 ## Proves and does not prove
 
-This proves the calibrate command runs on a real Windows anneal home and reports a missing or empty log as zero decisions without failing. It does not prove anything about Brier scores, bins or ask rates for any point, because none were measured.
+This proves the calibrate command runs on a real Windows anneal home and reports a missing log as zero decisions without failing. It does not prove anything about Brier scores, bins or ask rates for any point, because none were measured.

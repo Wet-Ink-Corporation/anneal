@@ -32,8 +32,8 @@ and its row says why, for example "stays in shadow (n = 23)".
 
 The bands are the defaults in the built-in thresholds table (`anneal playbook show clef-thresholds`, `docs/decide.md`). Only
 D1 (`ask`) and D7 (`ask_human`) hand a decision to a human, so the other points' ask rate is 0.
-Fill n, Brier and ask rate from the stderr summary or `data.points` of `anneal calibrate`; for
-D3, report the `choice` question. If calibration proposes a threshold, it is applied only with
+n, Brier and ask rate come from the stderr summary or `data.points` of `anneal calibrate`; for
+D3, the `choice` question is reported. If calibration proposes a threshold, it is applied only with
 `anneal calibrate --apply --thresholds <file>` after Ryan approves the diff, and the new value
 belongs in this table's row.
 
