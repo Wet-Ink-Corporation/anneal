@@ -17,7 +17,6 @@ mod document;
 pub(crate) mod frontmatter;
 pub(crate) mod listing;
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,6 +26,7 @@ use serde::Deserialize;
 
 use crate::baseline::BaselineError;
 use crate::exit_codes::{self, Code};
+use crate::hook::HookName;
 use crate::lint::finding::{LintFinding, Location};
 use cache::{Cache, content_hash};
 use checker::Checker;
@@ -44,8 +44,8 @@ pub struct SkillsArgs {
     /// The session-start bootstrap index to check against its 200-word budget (rule 4)
     #[arg(long, value_name = "FILE")]
     pub index: Option<PathBuf>,
-    /// hooks.metadata.json whose hook ids count as enforcers (rule 10); defaults to
-    /// ../hooks/hooks.metadata.json relative to the first PATH, when that file exists
+    /// A hooks metadata file (`{"hooks": [{"id": ...}]}`) whose hook ids count as enforcers
+    /// (rule 10) instead of anneal's own hook ids
     #[arg(long, value_name = "FILE")]
     pub hooks: Option<PathBuf>,
     /// Content-hash snapshot file: unchanged skills replay their stored findings instead of
@@ -133,7 +133,7 @@ impl LintError {
 /// or written. Rule violations are findings, never errors.
 pub fn lint(args: &SkillsArgs) -> Result<Outcome, LintError> {
     let dirs = discover(&args.paths)?;
-    let (hook_ids, mut findings) = hook_ids(args)?;
+    let (hook_ids, mut findings) = hook_ids(args.hooks.as_deref())?;
     let loaded = dirs
         .iter()
         .map(Loaded::read)
@@ -262,7 +262,7 @@ fn read_text(path: &Path) -> Result<Result<String, u64>, LintError> {
         .ok_or(capped.size))
 }
 
-/// `hooks.metadata.json`: only the hook ids matter here.
+/// A `--hooks` file: only the hook ids matter here.
 #[derive(Debug, Deserialize)]
 struct HooksMetadata {
     hooks: Vec<HookEntry>,
@@ -273,30 +273,30 @@ struct HookEntry {
     id: String,
 }
 
-/// The hook ids that count as enforcers, plus a finding when the metadata does not parse.
-fn hook_ids(args: &SkillsArgs) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
-    let path: Cow<'_, Path> = match (&args.hooks, args.paths.first()) {
-        (Some(path), _) => Cow::Borrowed(path),
-        (None, Some(first)) => {
-            let default = first.join("../hooks/hooks.metadata.json");
-            if !default.is_file() {
-                return Ok((BTreeSet::new(), Vec::new()));
-            }
-            Cow::Owned(default)
-        }
-        (None, None) => return Ok((BTreeSet::new(), Vec::new())),
-    };
-    read_hook_ids(&path)
-}
-
-/// The hook ids in the `hooks.metadata.json` at `path`, or no ids and one `enforcer` error
-/// finding when it does not parse. `lint skills` and `lint rules` share it.
+/// The hook ids that count as enforcers: those of `--hooks` when given (plus a finding when it
+/// does not parse), else anneal's own. `lint skills` and `lint rules` share it.
 ///
 /// # Errors
-/// [`LintError`] when `path` is missing, a directory or cannot be read.
-pub(crate) fn read_hook_ids(
-    path: &Path,
+/// [`LintError`] when `hooks` is missing, a directory or cannot be read.
+pub(crate) fn hook_ids(
+    hooks: Option<&Path>,
 ) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
+    match hooks {
+        Some(path) => read_hook_ids(path),
+        // Owned so the set has one type whether it comes from a file or from the table.
+        None => Ok((
+            HookName::ALL
+                .iter()
+                .map(|hook| hook.as_str().to_owned())
+                .collect(),
+            Vec::new(),
+        )),
+    }
+}
+
+/// The hook ids in the hooks metadata file at `path`, or no ids and one `enforcer` error
+/// finding when it does not parse.
+fn read_hook_ids(path: &Path) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
     let parsed = read_text(path)?
         .map_err(|size| format!("the file is {size} bytes"))
         .and_then(|text| {

@@ -7,7 +7,7 @@
 //! or any hook passed `--fail-closed`),
 //! which fails closed: it denies what it cannot judge, and exits 2 when its decision cannot be
 //! written.
-//! `hooks.metadata.json` describes each hook; its ids are the [`HookName`]s.
+//! [`metadata`] describes each hook, keyed by [`HookName`].
 
 pub(crate) mod bootstrap;
 pub(crate) mod brief;
@@ -20,6 +20,7 @@ pub(crate) mod guard;
 pub(crate) mod handoff;
 pub(crate) mod injection_scan;
 pub(crate) mod merge_gate;
+pub mod metadata;
 pub(crate) mod preconditions;
 mod prompt;
 pub(crate) mod route;
@@ -67,7 +68,7 @@ impl HookArgs {
     }
 }
 
-/// The hooks, by their id in `hooks.metadata.json`.
+/// The hooks, by their id: the subcommand of `anneal hook` each `hooks.json` entry runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Subcommand)]
 pub enum HookName {
     /// `SessionStart`: inject the bootstrap index, and the live state when it changed
@@ -130,7 +131,7 @@ impl HookName {
         Self::StandingOrders,
     ];
 
-    /// The hook's id, as typed after `anneal hook` and as listed in `hooks.metadata.json`.
+    /// The hook's id, as typed after `anneal hook`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

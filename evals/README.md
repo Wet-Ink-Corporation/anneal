@@ -344,9 +344,9 @@ The 27 cases were seeded from 26 real failures found in this repository's local 
 
 ### Re-running after a model change
 
-Scaffolding hooks (tagged in `plugin/hooks/hooks.metadata.json`) exist to make up for what a model does not do unprompted; a stronger model may not need them. When the default model changes:
+Scaffolding hooks (`role: scaffolding` in the CLI's hook table, `crates/anneal-cli/src/hook/metadata.rs`) exist to make up for what a model does not do unprompted; a stronger model may not need them. When the default model changes:
 
-1. Copy the plugin and remove the scaffolding hook from the copy: its entry in `hooks/hooks.json` and its row in `hooks/hooks.metadata.json`.
+1. Copy the plugin and remove the scaffolding hook from the copy: its entry in `hooks/hooks.json`. The hook's metadata row is in the CLI, not the plugin, so the copy has no row to delete.
 2. Run the suites of the skills the hook serves against the copy as the baseline, under the new model:
 
    ```sh
@@ -354,7 +354,7 @@ Scaffolding hooks (tagged in `plugin/hooks/hooks.metadata.json`) exist to make u
    ```
 
    The with arm is the plugin with the hook; the baseline is the plugin without it. Add `--allow-gated-tools` when the skill's cases name `Write`, `Edit` or `Bash` (`build`'s do), after reviewing them; without it the run is refused before anything is spent.
-3. If no skill's uplift lower bound is 0 or higher, the hook adds nothing measurable under the new model: retire it in a pull request that records the run (the envelope, the model and the date) in the hook's metadata row and the decisions log. If any skill's lower bound is 0 or higher, keep it.
+3. If no skill's uplift lower bound is 0 or higher, the hook adds nothing measurable under the new model: retire it in a pull request that records the run (the envelope, the model and the date) in the hook's row in the CLI's hook table and the decisions log. If any skill's lower bound is 0 or higher, keep it.
 
 ### CI (pending)
 

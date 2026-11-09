@@ -1,5 +1,5 @@
 //! `anneal lint skills` on awkward inputs: symlinks, wrong path kinds, oversized and
-//! non-UTF-8 files, broken hooks metadata.
+//! non-UTF-8 files, a broken `--hooks` file.
 
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -220,7 +220,29 @@ fn a_skill_that_is_not_utf8_is_a_frontmatter_error() -> TestResult {
 }
 
 #[test]
-fn hooks_metadata_that_does_not_parse_is_an_enforcer_error() -> TestResult {
+fn a_given_hooks_file_that_does_not_parse_is_an_enforcer_error() -> TestResult {
+    let (work, skills) = clean_skills()?;
+    let hooks = work.path().join("hooks.metadata.json");
+    std::fs::write(&hooks, "{\"hooks\": [{}]}")?;
+
+    let outcome = lint(&SkillsArgs {
+        hooks: Some(hooks),
+        ..args(vec![skills])
+    })?;
+
+    let errors = errors_from(&outcome.findings, Checker::Enforcer);
+    assert_eq!(errors.len(), 1, "the given file was read: {errors:#?}");
+    assert!(
+        errors
+            .iter()
+            .all(|f| f.at.file.ends_with("hooks.metadata.json")),
+        "points at the metadata file"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_hooks_metadata_file_beside_the_skills_is_not_read() -> TestResult {
     let (work, skills) = clean_skills()?;
     let hooks = work.path().join("hooks");
     std::fs::create_dir(&hooks)?;
@@ -229,16 +251,9 @@ fn hooks_metadata_that_does_not_parse_is_an_enforcer_error() -> TestResult {
     let outcome = lint(&args(vec![skills]))?;
 
     let errors = errors_from(&outcome.findings, Checker::Enforcer);
-    assert_eq!(
-        errors.len(),
-        1,
-        "the default metadata path was read: {errors:#?}"
-    );
     assert!(
-        errors
-            .iter()
-            .all(|f| f.at.file.ends_with("hooks.metadata.json")),
-        "points at the metadata file"
+        errors.is_empty(),
+        "the old default path is not read; the built-in hook ids are used: {errors:#?}"
     );
     Ok(())
 }

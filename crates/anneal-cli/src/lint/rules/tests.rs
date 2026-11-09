@@ -200,8 +200,12 @@ fn a_test_file_symlinked_within_the_root_resolves() -> TestResult {
     Ok(())
 }
 
-/// `lint` over one document holding a rule enforced by `hook guard`, with `--root` `root`.
-fn lint_hook_guard_rule(root: &Path) -> Result<Vec<LintFinding>, Box<dyn std::error::Error>> {
+/// `lint` over one document holding a rule enforced by `hook guard`, with `--root` `root` and
+/// `--hooks` `hooks`.
+fn lint_hook_guard_rule(
+    root: &Path,
+    hooks: Option<PathBuf>,
+) -> Result<Vec<LintFinding>, Box<dyn std::error::Error>> {
     let document = root.join("rules.md");
     fs::write(
         &document,
@@ -210,40 +214,31 @@ fn lint_hook_guard_rule(root: &Path) -> Result<Vec<LintFinding>, Box<dyn std::er
     let args = RulesArgs {
         paths: vec![document],
         root: root.to_path_buf(),
-        hooks: None,
+        hooks,
     };
     Ok(lint(&args)?.findings)
 }
 
-/// The repository's own hooks directory, which holds a `guard` hook id.
-fn shipped_hooks_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/hooks")
+/// The subjects of `findings`.
+fn subjects(findings: &[LintFinding]) -> Vec<Option<&str>> {
+    findings
+        .iter()
+        .map(|finding| finding.subject.as_deref())
+        .collect()
+}
+
+#[test]
+fn a_hook_rule_resolves_against_the_built_in_hook_ids() -> TestResult {
+    let root = tempfile::tempdir()?;
+
+    assert_eq!(lint_hook_guard_rule(root.path(), None)?, []);
+    Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn default_hooks_metadata_linked_from_outside_the_root_is_ignored() -> TestResult {
-    let root = tempfile::tempdir()?;
-    fs::create_dir_all(root.path().join("plugin"))?;
-    std::os::unix::fs::symlink(shipped_hooks_dir(), root.path().join("plugin/hooks"))?;
-
-    let findings = lint_hook_guard_rule(root.path())?;
-
-    assert_eq!(
-        findings
-            .iter()
-            .map(|finding| finding.subject.as_deref())
-            .collect::<Vec<_>>(),
-        [Some("hook guard")],
-        "the outside metadata is not read, so `guard` is unknown: {findings:#?}"
-    );
-    Ok(())
-}
-
-/// A root whose default `plugin/hooks/hooks.metadata.json` is a symlink to itself, which
-/// cannot be resolved.
-#[cfg(unix)]
-fn root_with_a_looping_default_hooks_metadata() -> std::io::Result<tempfile::TempDir> {
+fn a_hooks_metadata_file_under_the_root_is_not_read() -> TestResult {
+    // The old default path, as a symlink to itself: reading it would fail the run.
     let root = tempfile::tempdir()?;
     let hooks = root.path().join("plugin/hooks");
     fs::create_dir_all(&hooks)?;
@@ -251,62 +246,24 @@ fn root_with_a_looping_default_hooks_metadata() -> std::io::Result<tempfile::Tem
         hooks.join("hooks.metadata.json"),
         hooks.join("hooks.metadata.json"),
     )?;
-    Ok(root)
+
+    assert_eq!(lint_hook_guard_rule(root.path(), None)?, []);
+    Ok(())
 }
 
-#[cfg(unix)]
 #[test]
-fn an_unresolvable_default_hooks_metadata_is_not_read_when_no_rule_names_a_hook() -> TestResult {
-    let root = root_with_a_looping_default_hooks_metadata()?;
-    let document = root.path().join("rules.md");
-    fs::write(
-        &document,
-        "# R\n\n## Rules\n\n- Lint skills.\n  Enforcer: `anneal lint skills`\n",
-    )?;
-    let args = RulesArgs {
-        paths: vec![document],
-        root: root.path().to_path_buf(),
-        hooks: None,
-    };
+fn a_given_hooks_file_replaces_the_built_in_hook_ids() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let hooks = root.path().join("hooks.json");
+    fs::write(&hooks, r#"{"hooks": [{"id": "other"}]}"#)?;
 
-    let outcome = lint(&args)?;
+    let findings = lint_hook_guard_rule(root.path(), Some(hooks))?;
 
     assert_eq!(
-        (outcome.findings, outcome.documents),
-        (Vec::new(), 1),
-        "no rule names a hook, so the metadata is never read"
+        subjects(&findings),
+        [Some("hook guard")],
+        "only the given file's ids count, so `guard` is unknown: {findings:#?}"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn an_unresolvable_default_hooks_metadata_fails_when_a_rule_names_a_hook() -> TestResult {
-    let root = root_with_a_looping_default_hooks_metadata()?;
-
-    let failed = lint_hook_guard_rule(root.path());
-
-    let error = failed.expect_err("the metadata a hook rule needs cannot be resolved");
-    assert!(
-        matches!(
-            error.downcast_ref::<LintError>(),
-            Some(LintError::Io { .. })
-        ),
-        "{error:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn default_hooks_metadata_inside_the_root_is_read() -> TestResult {
-    let root = tempfile::tempdir()?;
-    fs::create_dir_all(root.path().join("plugin/hooks"))?;
-    fs::copy(
-        shipped_hooks_dir().join("hooks.metadata.json"),
-        root.path().join("plugin/hooks/hooks.metadata.json"),
-    )?;
-
-    assert_eq!(lint_hook_guard_rule(root.path())?, []);
     Ok(())
 }
 

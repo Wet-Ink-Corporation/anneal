@@ -10,7 +10,7 @@ use crate::lint::skills::checker::{
 };
 use crate::lint::skills::document::{Line, Skill, code_spans, has_token, words};
 
-/// Every prose check for `skill`. `hook_ids` are the ids in `hooks.metadata.json`.
+/// Every prose check for `skill`. `hook_ids` are the hook ids that count as enforcers.
 pub(crate) fn check(
     skill: &Skill<'_>,
     hook_ids: &BTreeSet<String>,
@@ -54,8 +54,8 @@ fn enforcer(
             Checker::Enforcer,
             skill.at(line.no),
             "this MUST names no enforcer.",
-            "name the check on the same line: `anneal <command> ...` or a hook id from \
-             hooks/hooks.metadata.json, in backticks; or soften the MUST.",
+            "name the check on the same line: `anneal <command> ...` or a hook id \
+             (`anneal hook --help` lists them), in backticks; or soften the MUST.",
         )
     })
 }

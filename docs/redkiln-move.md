@@ -24,7 +24,7 @@ Rows follow the migration plan's placement rule (crates to `crates/<pkg>/`, the 
 | --- | --- | --- |
 | `crates/anneal-cli/` | `crates/bench/anneal-cli/` | Renamed at the door. Splits later (below), each once, in the monorepo |
 | `crates/anneal-ledger/` | `crates/bench/anneal-ledger/` | Dissolves into `redkiln-core` plus `bench.*` types (below) |
-| `plugin/` | `plugins/bench/` | Install id `rk-bench` at the door. `hooks/hooks.metadata*.json` fail `cargo xtask plugins` today (below); `playbooks/` moved into the CLI |
+| `plugin/` | `plugins/bench/` | Install id `rk-bench` at the door. `playbooks/` and `hooks/hooks.metadata*.json` failed `cargo xtask plugins`; both moved into the CLI (below) |
 | `plugin-cockpit/` | `plugins/bench-cockpit/` | A mod plugin with its own launcher copy. `hooks/cockpit.tsx` moves to `hooks/mod/cockpit.tsx` (the mod path `xtask` allows); `types/index.d.ts` stays (`types/` is allowed in a mod plugin); `tsconfig.json` and `tests/` to `tools/bench/cockpit-check/` |
 | `mod-types/` | `tools/bench/cockpit-check/` | Type stubs for the cockpit's type check |
 | `docs/` | `docs/bench/` | Records keep their numbers |
@@ -39,12 +39,12 @@ Rows follow the migration plan's placement rule (crates to `crates/<pkg>/`, the 
 
 ## Plugin layout against `cargo xtask plugins`
 
-Run on 2026-11-08 over copies of both plugins placed in a redkiln checkout. 13 files fail; everything else passes. The 7 playbook files are resolved (done below), leaving 6.
+Run on 2026-11-08 over copies of both plugins placed in a redkiln checkout. 13 files fail; everything else passes. The 7 playbook files and the 2 hook metadata files are resolved (below), leaving 4.
 
 | File | Resolution |
 | --- | --- |
 | `plugin/playbooks/` (7 files: two templates, `route.json`, `clef-thresholds.json`, two schemas, `README.md`) | **Done.** Moved to `crates/anneal-cli/playbooks/`, built into the binary and served by `anneal playbook show <name>` (`docs/playbook.md`); the skills ask the binary, and `decide` uses the built-in thresholds unless given `--thresholds` |
-| `plugin/hooks/hooks.metadata.json`, `hooks.metadata.schema.json` | Read only by `lint skills` (rule 10). Becomes a code table keyed by hook id. Prep work in anneal |
+| `plugin/hooks/hooks.metadata.json`, `hooks.metadata.schema.json` | **Done (wave 2c, 2026-11-09).** A code table keyed by hook id (`HookName::metadata` in `crates/anneal-cli/src/hook/metadata.rs`), checked against `hooks.json` by `tests/it/hooks_manifest.rs`; `lint skills` and `lint rules` use the built-in hook ids. `plugin/hooks/` holds only `hooks.json` |
 | `plugin/skills/README.md` | Moves to `docs/bench/skills.md` at the import |
 | `plugin-cockpit/hooks/cockpit.tsx`, `tsconfig.json`, `tests/cockpit.test.ts` | Relocated at the import (table above); needs a human surface check of the mod |
 

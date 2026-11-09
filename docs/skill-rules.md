@@ -18,9 +18,11 @@ anneal lint skills plugin/skills --cache .anneal/lint-skills.json   # skip uncha
   skills is clean. The default `PATH` is `plugin/skills`. A path that does not exist, or that is
   a file rather than a directory, is a usage error (exit 2). So is a directory given to
   `--index`, `--hooks` or `--cache`.
-- `--hooks FILE` is the `hooks.metadata.json` whose hook ids count as enforcers (rule 10). It
-  defaults to `<first PATH>/../hooks/hooks.metadata.json` when that file exists. Only
-  `hooks[].id` is read. If the file does not parse, that is an `enforcer` error.
+- Without `--hooks`, anneal's own hook ids (the subcommands of `anneal hook`, from the CLI's
+  hook table) count as enforcers (rule 10). `--hooks FILE` replaces them with the `hooks[].id`
+  of a JSON file (`{"hooks": [{"id": "<hook-id>"}]}`), for skills whose hooks are not
+  anneal's; only `hooks[].id` is read. If the file does not parse, that is an `enforcer` error.
+  No file is looked up by default.
 - `--index FILE` is the session-start bootstrap index (rule 4); the shipped one is generated into
   `docs/bootstrap-index.md` (see `docs/hooks.md`). Without it, the index rule is listed as a
   review item.
@@ -73,7 +75,7 @@ across runs, so a baseline can tell new findings from old ones.
 | 7 | Form matches failure | `form-matches-failure` | review | Listed for every skill |
 | 8 | Completion criteria | `completion-criteria` | warning | Every numbered step (`1.` or `1)` at the start of a line) under `## Process` contains "It's working if"; a Process with no numbered steps warns too |
 | 9 | Thresholds are tables | `adjective-threshold` | warning | A prose line with a threshold adjective (`small`, `large`, `big`, `quick`, `few`, `many`, `tiny`, `huge`, `minor`, `trivial`) and a gate word (`gate`, `threshold`, `skip`, `block`, `require`, `allow`, `only`, `limit`, `cap`, `budget`, `must`, `unless` and their forms). Table rows, code blocks, `## Rationalizations` and `## Red flags` are skipped, since they quote the excuses on purpose |
-| 10 | Name the enforcer | `enforcer` | warning | Every `MUST` line (outside code blocks) has a backticked enforcer on the same line: `` `anneal <command> ...` `` for a real top-level command, or a hook id from `hooks.metadata.json` |
+| 10 | Name the enforcer | `enforcer` | warning | Every `MUST` line (outside code blocks) has a backticked enforcer on the same line: `` `anneal <command> ...` `` for a real top-level command, or a hook id (anneal's own, or of `--hooks`) |
 | 11 | Facts looked up, decisions asked | `facts-and-decisions` | review | Listed for every skill |
 | 12 | Scripts are run, not read | `scripts-contract` | review | Listed for a skill that ships a `scripts/` directory |
 | 13 | Gates fail only on new findings | `gate-baseline` | review | Listed once per run; it governs gates, not skills |
@@ -98,8 +100,8 @@ The model-invoked entry skills are a constant in the linter (`ENTRY_SKILLS` in
 
 Every other skill (the user-invoked `orchestrate`, `handoff`, `correct`, `write-skill` and
 `calibrate`, and any new one) must set `disable-model-invocation: true`. The list lives in the
-linter, not in `hooks.metadata.json`, because that file describes hooks and its schema belongs to
-#13. Changing the list is a reviewed code change, like any other exemption.
+linter, not in the hook metadata table, because that table describes hooks (#13). Changing the
+list is a reviewed code change, like any other exemption.
 
 ## Frontmatter
 
@@ -150,7 +152,7 @@ and the once-per-run reviews) always run. `data.cached` counts the replayed skil
 
 The snapshot is a JSON object marked `"kind": "anneal-lint-skills"` with a format `version`.
 One of ours from another format version is stale: it is ignored and rebuilt. Any other file at
-that path, such as `hooks.metadata.json`, a baseline snapshot, or one of ours that is corrupt,
+that path, such as a `--hooks` file, a baseline snapshot, or one of ours that is corrupt,
 is refused with exit 70 rather than overwritten.
 
 ## Rule documents: `anneal lint rules`
@@ -180,15 +182,14 @@ found.
 | Form | Found when |
 |---|---|
 | `` `anneal <command> [<subcommand>...] [args]` `` | the words walk this binary's command tree to a command that runs: one with no subcommands, or one that runs without one (`anneal decide --point D1`); `anneal lint` alone names no check |
-| `` `hook <id>` `` | `<id>` is a `hooks[].id` of `--hooks` (read as given), by default `plugin/hooks/hooks.metadata.json` under `--root` when it resolves (symlinks followed) to a regular file inside the resolved root; one that leads out of the root counts as absent |
+| `` `hook <id>` `` | `<id>` is one of anneal's hook ids (the subcommands of `anneal hook`), or, when `--hooks` is given, a `hooks[].id` of that file (read as given) |
 | `` `test <file>::<fn>` `` | `<file>` is a relative path under `--root` (default `.`), with no `..`, that resolves (symlinks followed) inside the resolved root, to a regular file of at most 1 MiB that contains `fn <fn>(` |
 
 A lint the repository runs is named through the command or hook that runs it: `anneal lint ...`,
 or `hook fast-check` for `check_fast` in `.anneal/config.json`.
 
-The default `plugin/hooks/hooks.metadata.json` is read only when a rule names a `hook <id>`
-enforcer, so a run with none never touches it: one that cannot be resolved (a symlink loop, say)
-fails the run (70) only when a hook rule needs it. `--hooks`, when given, is always read.
+No hooks file is looked up under `--root`: anneal's hook ids are built into the CLI. `--hooks`,
+when given, is always read, and a file that is missing or a directory is a usage error (2).
 
 Findings use this page's finding model, all with checker `enforcer` (rule 10) and severity
 `error`: a rule with no enforcer (at its first line), an enforcer that cannot be found (with the
