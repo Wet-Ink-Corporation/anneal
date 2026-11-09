@@ -1,5 +1,5 @@
 //! `anneal lint rules` through the binary, over the fixtures in `tests/fixtures/lint-rules/`,
-//! resolved against this repository (its hooks metadata and its test files).
+//! resolved against this repository (anneal's hook ids and its test files).
 
 use std::error::Error;
 use std::path::{Path, PathBuf};

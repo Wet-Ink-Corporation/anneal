@@ -1,7 +1,7 @@
-//! `plugin/hooks/hooks.json` and its sidecar `hooks.metadata.json`: every hook entry is exec
-//! form with a failure policy and a timeout, every entry has exactly one metadata row and every
-//! row an entry, the metadata validates against a strict DTO, and the committed JSON Schema
-//! (`hooks.metadata.schema.json`) agrees with that DTO. CI runs this through `cargo test`.
+//! `plugin/hooks/hooks.json` and the CLI's hook metadata table (`anneal_cli::hook::metadata`):
+//! every hook entry is exec form with a failure policy and a timeout, every entry has exactly
+//! one metadata row and every row an entry (same id, event, matcher, fingerprint and failure
+//! policy), and every row is well formed. CI runs this through `cargo test`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -9,7 +9,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use anneal_cli::cli::Cli;
 use anneal_cli::hook::HookName;
+use anneal_cli::hook::metadata::{HookMetadata, Role};
+use clap::CommandFactory;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,10 +24,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 /// What every hook command runs: the launcher, by path, with no shell.
 const LAUNCHER: &str = "${CLAUDE_PLUGIN_ROOT}/libexec/anneal";
 
-/// The `$schema` the metadata names, relative to itself.
-const SCHEMA_REF: &str = "./hooks.metadata.schema.json";
-
-/// The patterns the schema declares; the metadata is checked against them here.
+/// The patterns a metadata row's fields match.
 const ID_PATTERN: &str = "^[a-z][a-z0-9-]*$";
 const FINGERPRINT_PATTERN: &str = "^sha256:[0-9a-f]{16}$";
 const MODEL_GENERATION_PATTERN: &str = "^claude-[0-9]+(\\.[0-9]+)?$";
@@ -39,31 +39,7 @@ fn read_json(name: &str) -> Result<Value, Box<dyn Error>> {
     )?)?)
 }
 
-/// `hooks.metadata.json`, strictly: every field required, no unknown field.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Metadata {
-    #[serde(rename = "$schema")]
-    schema: String,
-    version: u32,
-    hooks: Vec<HookRow>,
-}
-
-/// One hook's row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HookRow {
-    id: String,
-    event: HookEvent,
-    matcher: String,
-    fingerprint: String,
-    on_failure: OnFailure,
-    role: Role,
-    model_generation: String,
-    source: String,
-}
-
-/// The Claude Code events a hook row may name.
+/// The Claude Code events a hooks.json entry may be declared under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 enum HookEvent {
     SessionStart,
@@ -82,40 +58,12 @@ enum HookEvent {
     TaskCompleted,
 }
 
-impl HookEvent {
-    const ALL: [Self; 14] = [
-        Self::SessionStart,
-        Self::SessionEnd,
-        Self::UserPromptSubmit,
-        Self::PreToolUse,
-        Self::PostToolUse,
-        Self::PostToolBatch,
-        Self::PermissionRequest,
-        Self::Stop,
-        Self::SubagentStop,
-        Self::SubagentStart,
-        Self::PreCompact,
-        Self::PostCompact,
-        Self::Notification,
-        Self::TaskCompleted,
-    ];
-}
-
 /// Claude Code's `onFailure`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum OnFailure {
     Continue,
     Block,
-}
-
-/// Why a hook exists: scaffolding helps a model generation and is re-tested and removed as
-/// models improve; a guard enforces a gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Role {
-    Scaffolding,
-    Guard,
 }
 
 /// `hooks.json`, strictly.
@@ -230,8 +178,23 @@ fn declared() -> Result<Vec<Declared>, Box<dyn Error>> {
     Ok(entries)
 }
 
-fn metadata() -> Result<Metadata, Box<dyn Error>> {
-    Ok(serde_json::from_value(read_json("hooks.metadata.json")?)?)
+/// Every hook with its row in the CLI's metadata table.
+fn rows() -> impl Iterator<Item = (HookName, HookMetadata)> {
+    HookName::ALL
+        .into_iter()
+        .map(|hook| (hook, hook.metadata()))
+}
+
+/// The hooks.json entry a row describes, its event and policy read back through the spellings
+/// hooks.json uses.
+fn described(hook: HookName, row: HookMetadata) -> Result<Entry, Box<dyn Error>> {
+    Ok(Entry {
+        id: hook.as_str().to_owned(),
+        event: serde_json::from_value(Value::from(row.event.as_str()))?,
+        matcher: row.matcher.to_owned(),
+        fingerprint: row.fingerprint.to_owned(),
+        on_failure: serde_json::from_value(Value::from(row.on_failure.as_str()))?,
+    })
 }
 
 /// Runs `anneal <args>` as Claude Code would run a hook entry: `{}` on stdin, in a scratch
@@ -253,54 +216,6 @@ fn run_hook_args(args: &[String]) -> Result<Option<i32>, Box<dyn Error>> {
     }
     drop(stdin);
     Ok(child.wait_with_output()?.status.code())
-}
-
-/// The keys of `value`, an object.
-fn keys(value: &Value) -> BTreeSet<String> {
-    value
-        .as_object()
-        .map(|map| map.keys().cloned().collect())
-        .unwrap_or_default()
-}
-
-/// The strings in the array at `pointer` in `schema`.
-fn strings(schema: &Value, pointer: &str) -> BTreeSet<String> {
-    schema
-        .pointer(pointer)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The serialized names of `values`.
-fn names<T: Serialize>(values: &[T]) -> Result<BTreeSet<String>, Box<dyn Error>> {
-    values
-        .iter()
-        .map(|value| match serde_json::to_value(value)? {
-            Value::String(name) => Ok(name),
-            other => Err(format!("{other} is not a string").into()),
-        })
-        .collect()
-}
-
-/// A row with every field set, to read the DTO's field names from.
-fn sample_row() -> HookRow {
-    HookRow {
-        id: "bootstrap".to_owned(),
-        event: HookEvent::SessionStart,
-        matcher: String::new(),
-        fingerprint: String::new(),
-        on_failure: OnFailure::Continue,
-        role: Role::Scaffolding,
-        model_generation: String::new(),
-        source: String::new(),
-    }
 }
 
 #[test]
@@ -367,12 +282,11 @@ fn the_guard_hook_runs_before_every_bash_call_and_fails_closed() -> TestResult {
         "a crash, a timeout or bad output blocks"
     );
     assert_eq!(hook.timeout, 5, "the guard budget is 5 s");
-    let role = metadata()?
-        .hooks
-        .into_iter()
-        .find(|row| row.id == HookName::Guard.as_str())
-        .map(|row| row.role);
-    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    assert_eq!(
+        HookName::Guard.metadata().role,
+        Role::Guard,
+        "its metadata row says guard"
+    );
     Ok(())
 }
 
@@ -410,12 +324,11 @@ fn the_preconditions_hook_runs_before_every_edit_and_write_and_fails_closed() ->
         "a crash, a timeout or bad output blocks"
     );
     assert_eq!(hook.timeout, 5, "the preconditions budget is 5 s");
-    let role = metadata()?
-        .hooks
-        .into_iter()
-        .find(|row| row.id == HookName::Preconditions.as_str())
-        .map(|row| row.role);
-    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    assert_eq!(
+        HookName::Preconditions.metadata().role,
+        Role::Guard,
+        "its metadata row says guard"
+    );
     Ok(())
 }
 
@@ -574,55 +487,49 @@ fn the_bootstrap_hook_runs_on_every_session_start_and_fails_open() -> TestResult
 }
 
 #[test]
-fn hooks_metadata_validates_against_the_strict_dto() -> TestResult {
-    let metadata = metadata()?;
-    assert_eq!(metadata.schema, SCHEMA_REF, "names the committed schema");
-    assert_eq!(metadata.version, 1, "format version 1");
-    for row in &metadata.hooks {
-        let id_ok = row.id.starts_with(|c: char| c.is_ascii_lowercase())
-            && row
-                .id
+fn every_metadata_row_is_well_formed() {
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let hex = |s: &str| {
+        s.len() == 16
+            && s.chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    };
+    for (hook, row) in rows() {
+        let id = hook.as_str();
+        let id_ok = id.starts_with(|c: char| c.is_ascii_lowercase())
+            && id
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-        assert!(id_ok, "{}: id matches {ID_PATTERN}", row.id);
+        assert!(id_ok, "{id}: id matches {ID_PATTERN}");
+        assert!(
+            row.fingerprint.strip_prefix("sha256:").is_some_and(hex),
+            "{id}: fingerprint {} matches {FINGERPRINT_PATTERN}",
+            row.fingerprint
+        );
         let generation = row.model_generation.strip_prefix("claude-").unwrap_or("");
         let (major, minor) = generation.split_once('.').unwrap_or((generation, "0"));
-        let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
         assert!(
             digits(major) && digits(minor),
-            "{}: model_generation {} matches {MODEL_GENERATION_PATTERN}",
-            row.id,
+            "{id}: model_generation {} matches {MODEL_GENERATION_PATTERN}",
             row.model_generation
         );
-        assert!(
-            !row.source.trim().is_empty(),
-            "{}: names its source",
-            row.id
-        );
+        assert!(!row.source.trim().is_empty(), "{id}: names its source");
     }
-    Ok(())
 }
 
 #[test]
 fn every_hooks_json_entry_has_one_metadata_row_and_every_row_an_entry() -> TestResult {
     let mut from_hooks = entries()?;
     from_hooks.sort_by(|a, b| a.id.cmp(&b.id));
-    let mut from_rows: Vec<Entry> = metadata()?
-        .hooks
-        .into_iter()
-        .map(|row| Entry {
-            id: row.id,
-            event: row.event,
-            matcher: row.matcher,
-            fingerprint: row.fingerprint,
-            on_failure: row.on_failure,
-        })
-        .collect();
+    let mut from_rows: Vec<Entry> = rows()
+        .map(|(hook, row)| described(hook, row))
+        .collect::<Result<_, _>>()?;
     from_rows.sort_by(|a, b| a.id.cmp(&b.id));
     assert_eq!(
         from_rows, from_hooks,
-        "hooks.metadata.json rows match hooks.json entries one to one (id, event, matcher, \
-         fingerprint, on_failure); after changing an entry, copy its new fingerprint"
+        "the metadata table (crates/anneal-cli/src/hook/metadata.rs) matches hooks.json entries \
+         one to one (id, event, matcher, fingerprint, on_failure); after changing an entry, copy \
+         its new fingerprint into its row"
     );
     Ok(())
 }
@@ -630,10 +537,14 @@ fn every_hooks_json_entry_has_one_metadata_row_and_every_row_an_entry() -> TestR
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
 fn every_metadata_id_is_an_anneal_hook_the_binary_runs() -> TestResult {
-    let ids: BTreeSet<String> = metadata()?.hooks.into_iter().map(|row| row.id).collect();
-    let known: BTreeSet<String> = HookName::ALL
-        .iter()
-        .map(|hook| hook.as_str().to_owned())
+    let ids: BTreeSet<&str> = rows().map(|(hook, _)| hook.as_str()).collect();
+    let cli = Cli::command();
+    let known: BTreeSet<&str> = cli
+        .find_subcommand("hook")
+        .ok_or("anneal has a hook command")?
+        .get_subcommands()
+        .map(clap::Command::get_name)
+        .filter(|name| *name != "help")
         .collect();
     assert_eq!(ids, known, "one metadata row per `anneal hook` subcommand");
     let home = tempfile::tempdir()?;
@@ -674,133 +585,6 @@ fn an_entry_with_an_argument_the_binary_rejects_would_not_exit_0() -> TestResult
     let code = run_hook_args(&args)?;
 
     assert_eq!(code, Some(2), "{}: a usage error exits 2", entry.id);
-    Ok(())
-}
-
-#[test]
-fn the_schema_fields_agree_with_the_metadata_dto() -> TestResult {
-    let schema = read_json("hooks.metadata.schema.json")?;
-    let top = keys(&serde_json::to_value(Metadata {
-        schema: SCHEMA_REF.to_owned(),
-        version: 1,
-        hooks: Vec::new(),
-    })?);
-    assert_eq!(strings(&schema, "/required"), top, "top-level required");
-    assert_eq!(
-        keys(schema.pointer("/properties").ok_or("properties")?),
-        top,
-        "top-level properties"
-    );
-    let row = keys(&serde_json::to_value(sample_row())?);
-    assert_eq!(
-        strings(&schema, "/$defs/hook/required"),
-        row,
-        "row required"
-    );
-    assert_eq!(
-        keys(
-            schema
-                .pointer("/$defs/hook/properties")
-                .ok_or("row properties")?
-        ),
-        row,
-        "row properties"
-    );
-    for pointer in ["/additionalProperties", "/$defs/hook/additionalProperties"] {
-        assert_eq!(
-            schema.pointer(pointer),
-            Some(&Value::Bool(false)),
-            "{pointer}"
-        );
-    }
-    Ok(())
-}
-
-/// The JSON Schema `type` of a serialized value.
-fn json_type(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(n) if n.is_u64() || n.is_i64() => "integer",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
-#[test]
-fn the_schema_property_types_agree_with_the_metadata_dto() -> TestResult {
-    let schema = read_json("hooks.metadata.schema.json")?;
-    let sample = serde_json::to_value(Metadata {
-        schema: SCHEMA_REF.to_owned(),
-        version: 1,
-        hooks: vec![sample_row()],
-    })?;
-    let row = sample.pointer("/hooks/0").ok_or("a sample row")?;
-    let levels = [(&sample, "/properties"), (row, "/$defs/hook/properties")];
-    for (value, properties) in levels {
-        for (field, field_value) in value.as_object().ok_or("an object")? {
-            let pointer = format!("{properties}/{field}/type");
-            assert_eq!(
-                schema.pointer(&pointer),
-                Some(&Value::from(json_type(field_value))),
-                "{pointer} matches the DTO's {field}"
-            );
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn the_schema_constants_agree_with_the_metadata_dto() -> TestResult {
-    let schema = read_json("hooks.metadata.schema.json")?;
-    assert_eq!(
-        schema.pointer("/properties/version/const"),
-        Some(&Value::from(metadata()?.version)),
-        "the schema pins the format version the metadata carries"
-    );
-    assert_eq!(
-        schema.pointer("/$defs/hook/properties/source/minLength"),
-        Some(&Value::from(1)),
-        "source must be non-empty, as the DTO check requires"
-    );
-    Ok(())
-}
-
-#[test]
-fn the_schema_values_agree_with_the_metadata_dto() -> TestResult {
-    let schema = read_json("hooks.metadata.schema.json")?;
-    let enums = [
-        ("event", names(&HookEvent::ALL)?),
-        (
-            "on_failure",
-            names(&[OnFailure::Continue, OnFailure::Block])?,
-        ),
-        ("role", names(&[Role::Scaffolding, Role::Guard])?),
-    ];
-    for (field, expected) in enums {
-        let pointer = format!("/$defs/hook/properties/{field}/enum");
-        assert_eq!(strings(&schema, &pointer), expected, "{field} values");
-    }
-    let patterns = [
-        ("id", ID_PATTERN),
-        ("fingerprint", FINGERPRINT_PATTERN),
-        ("model_generation", MODEL_GENERATION_PATTERN),
-    ];
-    for (field, expected) in patterns {
-        let pointer = format!("/$defs/hook/properties/{field}/pattern");
-        assert_eq!(
-            schema.pointer(&pointer),
-            Some(&Value::from(expected)),
-            "{field} pattern"
-        );
-    }
-    assert_eq!(
-        schema.pointer("/properties/$schema/const"),
-        Some(&Value::from(SCHEMA_REF)),
-        "$schema"
-    );
     Ok(())
 }
 
@@ -865,12 +649,11 @@ fn the_brief_hook_runs_before_every_agent_spawn_and_fails_closed() -> TestResult
         "a crash or timeout blocks"
     );
     assert_eq!(hook.timeout, 5, "the brief budget is 5 s");
-    let role = metadata()?
-        .hooks
-        .into_iter()
-        .find(|row| row.id == HookName::Brief.as_str())
-        .map(|row| row.role);
-    assert_eq!(role, Some(Role::Guard), "its metadata row says guard");
+    assert_eq!(
+        HookName::Brief.metadata().role,
+        Role::Guard,
+        "its metadata row says guard"
+    );
     Ok(())
 }
 

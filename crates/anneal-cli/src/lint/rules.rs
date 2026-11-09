@@ -9,7 +9,6 @@
 
 pub(crate) mod enforcer;
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, CommandFactory};
@@ -18,19 +17,15 @@ use crate::cli::Cli;
 use crate::lint::finding::{LintFinding, Location};
 use crate::lint::read_whole;
 use crate::lint::skills::checker::Checker;
-use crate::lint::skills::{LintError, read_hook_ids};
+use crate::lint::skills::{LintError, hook_ids};
 use crate::lint::spec::markdown::{Document, Item, items};
-use enforcer::{Enforcer, Repository, Root, Unresolved, Within};
+use enforcer::{Repository, Root, Unresolved};
 
 /// The section that holds the rules (level 2, any letter case).
 const RULES_SECTION: &str = "Rules";
 
 /// The label an enforcer follows, in backticks.
 const LABEL: &str = "Enforcer:";
-
-/// The hooks metadata under the root, used when `--hooks` is not given, a rule names a hook
-/// enforcer and it exists.
-const DEFAULT_HOOKS: [&str; 3] = ["plugin", "hooks", "hooks.metadata.json"];
 
 /// What a rule with no enforcer, or an unknown one, should do.
 const FIX: &str = "after `Enforcer:`, name in backticks the hook (`hook <id>`), the lint or \
@@ -47,9 +42,8 @@ pub struct RulesArgs {
     /// The repository root that `test <file>::<fn>` enforcers are relative to
     #[arg(long, value_name = "DIR", default_value = ".")]
     pub root: PathBuf,
-    /// hooks.metadata.json whose ids `hook <id>` enforcers name; defaults to
-    /// plugin/hooks/hooks.metadata.json under --root, read only when a rule names a hook and
-    /// that file exists
+    /// A hooks metadata file (`{"hooks": [{"id": ...}]}`) whose ids `hook <id>` enforcers name,
+    /// instead of anneal's own hook ids
     #[arg(long, value_name = "FILE")]
     pub hooks: Option<PathBuf>,
 }
@@ -72,17 +66,12 @@ pub struct Outcome {
 pub fn lint(args: &RulesArgs) -> Result<Outcome, LintError> {
     require_dir(&args.root)?;
     let root = Root::resolve(&args.root)?;
-    let given_hooks = args.hooks.as_deref().map(read_hook_ids).transpose()?;
+    let (hook_ids, mut findings) = hook_ids(args.hooks.as_deref())?;
     let documents = args
         .paths
         .iter()
         .map(|path| Ok((path, read_whole(path)?)))
         .collect::<Result<Vec<_>, LintError>>()?;
-    let (hook_ids, mut findings) = match given_hooks {
-        Some(read) => read,
-        None if documents.iter().any(|(_, text)| names_a_hook(text)) => default_hook_ids(&root)?,
-        None => (BTreeSet::new(), Vec::new()),
-    };
     let commands = Cli::command();
     let repository = Repository {
         root: &root,
@@ -205,32 +194,6 @@ fn run_of_spans(after: &str) -> Vec<&str> {
         rest = next.trim_start();
     }
     spans
-}
-
-/// Whether a rule of the rule document `text` names a `hook <id>` enforcer, so the hook ids
-/// are needed.
-fn names_a_hook(text: &str) -> bool {
-    Document::parse(text)
-        .sections()
-        .into_iter()
-        .filter(|section| section.title.eq_ignore_ascii_case(RULES_SECTION))
-        .flat_map(|section| items(section.body))
-        .any(|rule| {
-            named_enforcers(&rule.text)
-                .any(|span| matches!(enforcer::parse(span), Ok(Enforcer::Hook(_))))
-        })
-}
-
-/// The hook ids of the default metadata under the root that `hook <id>` may name, plus a
-/// finding when it does not parse; read only when it resolves to a regular file inside the
-/// resolved root (a symlink out of the root counts as no file). `--hooks` is read as given
-/// instead.
-fn default_hook_ids(root: &Root) -> Result<(BTreeSet<String>, Vec<LintFinding>), LintError> {
-    let default = DEFAULT_HOOKS.iter().collect::<PathBuf>();
-    match root.within(&default)? {
-        Within::Inside(resolved) if resolved.is_file() => read_hook_ids(&resolved),
-        Within::Inside(_) | Within::Outside | Within::Absent => Ok((BTreeSet::new(), Vec::new())),
-    }
 }
 
 /// `--root` must be an existing directory; either mistake is a usage error.

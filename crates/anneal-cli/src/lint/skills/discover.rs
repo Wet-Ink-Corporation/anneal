@@ -10,7 +10,7 @@ use crate::lint::skills::LintError;
 /// The file every skill directory holds.
 pub(crate) const SKILL_FILE: &str = "SKILL.md";
 
-/// Files read whole (`SKILL.md`, hooks metadata, the index, the `lint terms` glossary and
+/// Files read whole (`SKILL.md`, a `--hooks` file, the index, the `lint terms` glossary and
 /// scanned files, rulings) larger than this are not read past it (H-13). For a skill, anything
 /// near it already breaks the 8 KB budget.
 pub(crate) const MAX_READ_BYTES: u64 = 1024 * 1024;

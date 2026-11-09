@@ -3,7 +3,7 @@
 //! Three kinds, each written in backticks after `Enforcer:`:
 //! - `anneal <command> [<subcommand>...] [args]`: a command of this binary, down to a command
 //!   with no subcommands (a lint such as `anneal lint skills`, a gate such as `anneal plan check`);
-//! - `hook <id>`: a hook id in `hooks.metadata.json`;
+//! - `hook <id>`: one of anneal's hook ids, or of the `--hooks` file when given;
 //! - `test <file>::<fn>`: a file under the repository root that defines `fn <fn>(`.
 
 use std::collections::BTreeSet;
@@ -50,7 +50,7 @@ pub(crate) enum Unresolved {
     },
     /// `hook` is not followed by exactly one id.
     NotAHookId,
-    /// The id is not in `hooks.metadata.json`.
+    /// The id is not one of the hook ids.
     UnknownHook,
     /// `test` is not followed by exactly one `<file>::<fn>`.
     NotATestName,
@@ -74,7 +74,7 @@ impl Display for Unresolved {
                 write!(f, "`{path}` needs a subcommand to name one check")
             }
             Self::NotAHookId => f.write_str("write one hook id after `hook`"),
-            Self::UnknownHook => f.write_str("no hook has that id in hooks.metadata.json"),
+            Self::UnknownHook => f.write_str("no hook has that id"),
             Self::NotATestName => f.write_str("write `test <file>::<fn>`"),
             Self::OutsideRoot => {
                 f.write_str("the test file is not a relative path that resolves under the root")
@@ -134,7 +134,7 @@ pub(crate) enum Within {
 pub(crate) struct Repository<'a> {
     /// The root test files are relative to.
     pub(crate) root: &'a Root,
-    /// The ids of `hooks.metadata.json`.
+    /// The hook ids `hook <id>` may name.
     pub(crate) hook_ids: &'a BTreeSet<String>,
     /// This binary's command tree.
     pub(crate) commands: &'a clap::Command,

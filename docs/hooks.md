@@ -1,7 +1,8 @@
 # Hooks
 
-anneal's hooks are declared in `plugin/hooks/hooks.json` and described, one row per hook, in
-`plugin/hooks/hooks.metadata.json`. Each hook runs `anneal hook <id>` through the launcher.
+anneal's hooks are declared in `plugin/hooks/hooks.json` and described, one row per hook, in the
+CLI's hook metadata table (`crates/anneal-cli/src/hook/metadata.rs`). Each hook runs
+`anneal hook <id>` through the launcher.
 
 ## `hooks.json`
 
@@ -15,10 +16,11 @@ older versions ignore it.
   "args": ["hook", "bootstrap"], "timeout": 15, "onFailure": "continue" }
 ```
 
-## `hooks.metadata.json`
+## Hook metadata
 
-The sidecar records, for each hook, why it exists, so scaffolding can be re-tested and removed
-as models improve. Its JSON Schema is `plugin/hooks/hooks.metadata.schema.json`.
+The metadata table records, for each hook, why it exists, so scaffolding can be re-tested and
+removed as models improve. It is Rust code (`HookName::metadata`, one `match` arm per hook), not
+a file in the plugin, so a new hook does not compile without its row and the plugin holds no data.
 
 | Field | Meaning |
 |---|---|
@@ -31,13 +33,13 @@ as models improve. Its JSON Schema is `plugin/hooks/hooks.metadata.schema.json`.
 | `model_generation` | The model generation the hook was added for, such as `claude-5`. |
 | `source` | Where the hook is specified: blueprint section and story. |
 
-`cargo test -p anneal-cli hooks_manifest` checks both files: every entry is exec form with
-`onFailure` and a timeout, every entry has exactly one row (same id, event, matcher, fingerprint
-and failure policy) and every row an entry, every id is an `anneal hook` subcommand the binary
-accepts, the metadata parses into a strict DTO (no unknown or missing field), and the schema's
-required fields, properties, enums and patterns agree with that DTO. It also checks that an entry
-has `onFailure: "block"` exactly when its arguments include `--fail-closed`. When a test reports
-a new fingerprint after you change an entry, copy it into the row.
+`cargo test -p anneal-cli hooks_manifest` checks `hooks.json` against the table: every entry is
+exec form with `onFailure` and a timeout, every entry has exactly one row (same id, event,
+matcher, fingerprint and failure policy) and every row an entry, every id is an `anneal hook`
+subcommand the binary accepts, and every row's id, fingerprint and model generation are well
+formed and its source is named. It also checks that an entry has `onFailure: "block"` exactly
+when its arguments include `--fail-closed`. When a test reports a new fingerprint after you
+change an entry, copy it into the row.
 
 ## Failing open, and guards failing closed
 

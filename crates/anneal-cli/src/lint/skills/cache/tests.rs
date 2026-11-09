@@ -277,7 +277,7 @@ fn a_file_that_is_not_our_snapshot_is_a_format_error() {
         r#"{"skills": {}}"#,
         r#"{"version": "1"}"#,
         r#"{"version": 1, "skills": 5}"#,
-        // plugin/hooks/hooks.metadata.json
+        // a hooks metadata file, as `--hooks` reads
         r#"{"version": 1, "hooks": [{"id": "guard"}]}"#,
         // an `anneal` baseline snapshot
         r#"{"version": 1, "keys": ["lint/name:a:1"]}"#,
