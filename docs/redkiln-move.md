@@ -44,7 +44,7 @@ Run on 2026-11-08 over copies of both plugins placed in a redkiln checkout. 13 f
 | File | Resolution |
 | --- | --- |
 | `plugin/playbooks/` (7 files: two templates, `route.json`, `clef-thresholds.json`, two schemas, `README.md`) | **Done.** Moved to `crates/anneal-cli/playbooks/`, built into the binary and served by `anneal playbook show <name>` (`docs/playbook.md`); the skills ask the binary, and `decide` uses the built-in thresholds unless given `--thresholds` |
-| `plugin/hooks/hooks.metadata.json`, `hooks.metadata.schema.json` | **Done (wave 2c, 2026-11-09).** a code table keyed by hook id (`HookName::metadata` in `crates/anneal-cli/src/hook/metadata.rs`), checked against `hooks.json` by `tests/it/hooks_manifest.rs`; `lint skills` and `lint rules` use the built-in hook ids. `plugin/hooks/` holds only `hooks.json` |
+| `plugin/hooks/hooks.metadata.json`, `hooks.metadata.schema.json` | **Done (wave 2c, 2026-11-09).** A code table keyed by hook id (`HookName::metadata` in `crates/anneal-cli/src/hook/metadata.rs`), checked against `hooks.json` by `tests/it/hooks_manifest.rs`; `lint skills` and `lint rules` use the built-in hook ids. `plugin/hooks/` holds only `hooks.json` |
 | `plugin/skills/README.md` | Moves to `docs/bench/skills.md` at the import |
 | `plugin-cockpit/hooks/cockpit.tsx`, `tsconfig.json`, `tests/cockpit.test.ts` | Relocated at the import (table above); needs a human surface check of the mod |
 
