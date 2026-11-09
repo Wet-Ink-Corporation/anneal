@@ -6,7 +6,7 @@
 //! field is `#[serde(default)]`, so an event written before the field existed still reads.
 //!
 //! One exception: the optional [`By`] on `plan_approved` and `verdict_set` (#62) was added at
-//! version 9 without a bump, pending Ryan's decision on a version 10.
+//! version 9 without a bump.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -23,8 +23,9 @@ pub use by::{Actor, By, EmptyBy, Via};
 /// The version of the event registry this build reads and writes.
 ///
 /// Bumped when an event type or a payload field is added, except `by` on `plan_approved` and
-/// `verdict_set` (#62), added at 9 pending Ryan's decision on a version 10.
-pub const REGISTRY_VERSION: u32 = 9;
+/// `verdict_set` (#62), added at 9 without a bump. Version 10 added the `wip` status of
+/// `subagent_status`.
+pub const REGISTRY_VERSION: u32 = 10;
 
 /// The name of an event type, as stored in the event's `type` key. The set is closed: an event
 /// whose `type` is not listed here is a schema error.
@@ -548,6 +549,8 @@ pub enum AgentStatus {
     NeedsContext,
     /// `BLOCKED`: it needs a decision it cannot take.
     Blocked,
+    /// `WIP`: temper's pause, the work unfinished and the reason given (registry version 10).
+    Wip,
 }
 
 /// Tokens a subagent used, summed over its transcript's assistant messages.
@@ -893,6 +896,7 @@ mod tests {
             AgentStatus::DoneWithConcerns,
             AgentStatus::NeedsContext,
             AgentStatus::Blocked,
+            AgentStatus::Wip,
         ]
         .iter()
         .map(|status| {
@@ -908,7 +912,8 @@ mod tests {
                 "\"done\"",
                 "\"done_with_concerns\"",
                 "\"needs_context\"",
-                "\"blocked\""
+                "\"blocked\"",
+                "\"wip\""
             ],
             "snake case, as the ledger's other enums"
         );
@@ -982,12 +987,13 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_is_version_9() {
+    fn the_registry_is_version_10() {
         assert_eq!(
-            REGISTRY_VERSION, 9,
+            REGISTRY_VERSION, 10,
             "the migrate.wave.started, migrate.wave.done and migrate.contract types were added \
              in version 7, round_started's ticket (with pr optional) in version 8, \
-             weighin_parked, bridge.unavailable and orchestrate.ruled in version 9"
+             weighin_parked, bridge.unavailable and orchestrate.ruled in version 9, \
+             subagent_status's wip in version 10"
         );
     }
 

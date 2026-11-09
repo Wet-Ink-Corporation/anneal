@@ -117,7 +117,7 @@ impl Repo {
 fn a_malformed_status_is_recorded_as_a_violation_not_a_crash() -> TestResult {
     let repo = Repo::new(true)?;
 
-    repo.stop(Some("Status: WIP\nGate: red"))?;
+    repo.stop(Some("Status: IN_PROGRESS\nGate: red"))?;
 
     let statuses = repo.statuses()?;
     let [event] = statuses.as_slice() else {
@@ -125,11 +125,33 @@ fn a_malformed_status_is_recorded_as_a_violation_not_a_crash() -> TestResult {
     };
     assert_eq!(event["status"], Value::Null, "no known status");
     let violation = event["violation"].as_str().ok_or("a violation")?;
-    assert!(violation.contains("unknown status \"WIP\""), "{violation}");
+    assert!(
+        violation.contains("unknown status \"IN_PROGRESS\""),
+        "{violation}"
+    );
     assert_eq!(
         event["missing"],
         json!(["Review", "Changed", "Decisions needed", "Not verified"]),
         "the absent sections"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
+fn temper_wip_is_recorded_as_wip_without_a_violation() -> TestResult {
+    let repo = Repo::new(true)?;
+
+    repo.stop(Some(&GOOD.replace("Status: DONE", "Status: WIP")))?;
+
+    let statuses = repo.statuses()?;
+    let [event] = statuses.as_slice() else {
+        return Err(format!("one subagent_status, got {statuses:?}").into());
+    };
+    assert_eq!(
+        (&event["status"], &event["violation"], &event["missing"]),
+        (&json!("wip"), &Value::Null, &json!([])),
+        "WIP is a status block like the other four"
     );
     Ok(())
 }
