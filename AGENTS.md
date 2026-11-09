@@ -2,7 +2,7 @@
 
 anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks. This repository holds the `anneal` CLI (the deterministic layer the plugin's hooks call) and the plugin itself under `plugin/`. The v0.1 plan is GitHub issue #1; each pull request closes one Story issue.
 
-anneal moves into `Wet-Ink-Corporation/redkiln` as Bench (`rk-bench`) at Move 2. Until then only gate work (#44), security fixes and move prep land here; `docs/redkiln-move.md` is the import manifest, and redkiln's briefing limits apply (no v0.1.0 tag, no feature work the monorepo will redo).
+anneal moves into `Wet-Ink-Corporation/redkiln` as Bench (`rk-bench`) at Move 2. The move prep and the #44 calibration report (`docs/calibration-2026-11.md`) landed on 2026-11-09, so anneal is frozen: until the move only security fixes land here; `docs/redkiln-move.md` is the import manifest, and redkiln's briefing limits apply (no v0.1.0 tag, no feature work the monorepo will redo).
 
 ## Crate map
 
