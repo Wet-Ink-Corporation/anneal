@@ -38,7 +38,7 @@ Take the first rung that would have stopped the mistake.
 2. **Climb the ladder.** Fix at the first rung that would have caught it. It's working if the fix makes the original mistake fail a check, not a reader.
 3. **Emit the enforcer.** Write the test, lint or hook. A new hook gets its `hooks/hooks.json` entry and metadata row together; `.anneal/config.json` (`check_fast`) is the human's file, so hand them the exact JSON. It's working if the enforcer fails on the mistake and passes on the fix.
 4. **Record the rule.** Add one item under `## Rules` in the rule document (`docs/rules.md` unless the repository keeps another): the rule, then `Enforcer:` and, in backticks, `hook <id>`, `anneal <command> ...` or `test <file>::<fn>`. It's working if a stranger can find the check from the line.
-5. **Lint the rules.** Run `anneal lint rules docs/rules.md` (add `--hooks <file>` for hooks not anneal's). It's working if it exits 0.
+5. **Lint the rules.** Run `anneal lint rules docs/rules.md` (for hooks not anneal's, `--hooks <file>` listing every id). It's working if it exits 0.
 6. **Report.** Name the rung, the enforcer and the rule's line. It's working if the human can run the enforcer unaided.
 
 ## Rationalizations

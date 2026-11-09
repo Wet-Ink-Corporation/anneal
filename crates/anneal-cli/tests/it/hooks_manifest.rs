@@ -33,6 +33,20 @@ fn hooks_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugin/hooks")
 }
 
+#[test]
+fn the_plugin_hooks_directory_holds_only_the_manifest() -> TestResult {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(hooks_dir())? {
+        names.push(entry?.file_name().to_string_lossy().into_owned());
+    }
+    assert_eq!(
+        names,
+        vec!["hooks.json".to_owned()],
+        "hook metadata lives in the binary (hook::metadata); a plugin holds no data files"
+    );
+    Ok(())
+}
+
 fn read_json(name: &str) -> Result<Value, Box<dyn Error>> {
     Ok(serde_json::from_str(&std::fs::read_to_string(
         hooks_dir().join(name),

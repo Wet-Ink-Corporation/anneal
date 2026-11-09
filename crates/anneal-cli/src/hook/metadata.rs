@@ -74,17 +74,6 @@ pub enum Role {
     Guard,
 }
 
-impl Role {
-    /// The role's name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Scaffolding => "scaffolding",
-            Self::Guard => "guard",
-        }
-    }
-}
-
 /// One hook's row. Its id is the [`HookName`] it belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HookMetadata {
@@ -184,6 +173,7 @@ const FAST_CHECK: HookMetadata = HookMetadata {
     source: "Blueprint: Hooks (fast-check), check placement by cost; story #24",
 };
 
+/// A guard although its entry fails open: its own failures must never block a stop.
 const COMPLETENESS: HookMetadata = HookMetadata {
     event: HookEvent::Stop,
     matcher: "",
@@ -277,10 +267,10 @@ const STANDING_ORDERS: HookMetadata = HookMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::{HookName, OnFailure, Role};
+    use super::{HookName, OnFailure};
 
     #[test]
-    fn a_row_blocks_on_failure_exactly_when_the_hook_is_a_guard() {
+    fn a_row_blocks_on_failure_exactly_when_the_hook_fails_closed() {
         for hook in HookName::ALL {
             assert_eq!(
                 hook.metadata().on_failure == OnFailure::Block,
@@ -289,6 +279,5 @@ mod tests {
                 hook.as_str()
             );
         }
-        assert_eq!(HookName::FastCheck.metadata().role, Role::Guard);
     }
 }

@@ -100,7 +100,8 @@ The model-invoked entry skills are a constant in the linter (`ENTRY_SKILLS` in
 
 Every other skill (the user-invoked `orchestrate`, `handoff`, `correct`, `write-skill` and
 `calibrate`, and any new one) must set `disable-model-invocation: true`. The list lives in the
-linter, not in the hook metadata table, because that table describes hooks (#13). Changing the list is a reviewed code change, like any other exemption.
+linter, not in the hook metadata table, because that table describes hooks (#13). Changing the
+list is a reviewed code change, like any other exemption.
 
 ## Frontmatter
 
