@@ -20,18 +20,13 @@ use crate::decide::point::{Point, Question};
 use crate::envelope::Envelope;
 use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
+use crate::harness::{MODE_KEY, MODE_VAR};
 
 /// The proposals file's `kind`.
 pub(crate) const PROPOSALS_KIND: &str = "anneal-threshold-proposals";
 
 /// The proposals file's format version.
 pub(crate) const PROPOSALS_VERSION: u32 = 1;
-
-/// The `userConfig` key holding the Clef mode.
-const MODE_KEY: &str = "clef_mode";
-
-/// The variable Claude Code passes the mode in.
-const MODE_VAR: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
 
 /// One manual step that would apply a proposal. `calibrate` never takes it.
 #[derive(Debug, Serialize)]

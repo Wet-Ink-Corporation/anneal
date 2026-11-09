@@ -23,6 +23,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::decide::clock::SystemClock;
+use crate::harness::PLUGIN_ROOT_VAR;
 use crate::hook::{HookEnv, reason};
 use crate::paths;
 use state::Sessions;
@@ -174,7 +175,7 @@ fn context(
 /// open to the full index: when the variable is unset or empty, when no skill is found, and,
 /// with the note, when looking one up fails other than as not found.
 fn plugin_index(lookup: impl Fn(&str) -> Option<OsString>) -> (String, Option<String>) {
-    let Some(root) = lookup(env_file::PLUGIN_ROOT_VAR).filter(|root| !root.is_empty()) else {
+    let Some(root) = lookup(PLUGIN_ROOT_VAR).filter(|root| !root.is_empty()) else {
         return (index::index(), None);
     };
     let skills = PathBuf::from(root).join("skills");

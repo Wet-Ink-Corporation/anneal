@@ -29,12 +29,13 @@ use serde::Deserialize;
 
 use crate::command::CommandName;
 use crate::context::sessions::SessionsError;
-use crate::context::usage::{self, WINDOW_VAR, WindowSource};
+use crate::context::usage::{self, WindowSource};
 use crate::context::{self, Saved, Snapshot, Source, WriterEnv};
 use crate::decide::clock::Clock;
 use crate::envelope::Envelope;
 use crate::error::CliError;
 use crate::exit_codes::{self, Code};
+use crate::harness::AUTO_COMPACT_WINDOW_VAR;
 use crate::hook::{StdinError, read_stdin};
 use crate::paths::{self, PathError};
 
@@ -164,7 +165,7 @@ where
     } = env;
     let bytes = read_stdin(stdin, MAX_INPUT_BYTES).map_err(SnapshotError::from)?;
     let input: Input = serde_json::from_slice(&bytes).map_err(SnapshotError::Json)?;
-    let snapshot = reading(&input, lookup(WINDOW_VAR).as_deref())?;
+    let snapshot = reading(&input, lookup(AUTO_COMPACT_WINDOW_VAR).as_deref())?;
     let now_ms = clock.unix_millis().map_err(SnapshotError::Clock)?;
     let home = paths::anneal_home_from(lookup).map_err(SnapshotError::Home)?;
     let saved = Saved::stamped(snapshot, Source::Mod, now_ms);

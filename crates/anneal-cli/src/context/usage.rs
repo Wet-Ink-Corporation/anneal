@@ -12,9 +12,6 @@ use std::ffi::OsStr;
 
 use serde::{Deserialize, Serialize};
 
-/// The variable that sets the auto-compact window, in tokens.
-pub(crate) const WINDOW_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
-
 /// The window when neither the variable nor the model says otherwise, in tokens.
 pub(crate) const DEFAULT_WINDOW: u32 = 200_000;
 
