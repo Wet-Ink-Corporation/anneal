@@ -8,7 +8,7 @@ Facts checked on 2026-11-08 against anneal `main` at `f80ec44` and redkiln `main
 
 | Item | State |
 | --- | --- |
-| Gate: the calibration report (#44) | Open. Ryan runs `anneal calibrate --json` on his anneal home; the report is cut from the labels that exist (Ryan, 2026-11-08) into `docs/calibration-2026-11.md`. No v0.1.0 tag or release (Bench call E) |
+| Gate: the calibration report (#44) | Done: `docs/calibration-2026-11.md`. Ryan's anneal home had no decisions (Clef was off), so all seven points stay in shadow and the first labelled calibration happens in redkiln. No v0.1.0 tag or release (Bench call E) |
 | Tier 3 uplift evals | Closed clean at r21 (2026-11-08): all 7 skills beat baseline, every guard held. redkiln's gate row still lists the "seed a workspace" fix as outstanding; it is done |
 | Open PRs | None after the Move 2 triage (dependabot #222 and #199 merged 2026-11-08) |
 | Open issues | Each one that transfers carries the `move:transfer` label and a comment naming its destination; release containers and finished releases are closed |

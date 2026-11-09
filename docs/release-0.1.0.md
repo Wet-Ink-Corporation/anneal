@@ -6,6 +6,8 @@ with them: the per-point Clef verdicts, the release checklist and the acceptance
 
 ## Clef verdicts
 
+Cut on 2026-11-09 from the labels that exist, which were none: see `docs/calibration-2026-11.md`. There is no 0.1.0 release (Bench call E); this page stays as the record of the bar and the checklist.
+
 Every Clef decision point ships in shadow unless its calibration earns enforcement. Ryan runs
 `anneal calibrate` against his dogfood ledger (the decision log in his anneal home) and promotes
 a point only when it meets the bar from `docs/calibrate.md`:
@@ -20,18 +22,18 @@ and its row says why, for example "stays in shadow (n = 23)".
 
 | Point | What it decides | n | Brier | Ask rate | Verdict |
 |---|---|---|---|---|---|
-| D1 guard | Is a Bash command the denylist did not decide destructive or irreversible? (`noul destructive_or_irreversible`: deny at 0.90, ask at 0.40) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D2 orchestrate | Is a judgment call during `/anneal:orchestrate` a one-way door, to park in weigh-in rather than rule on? (`noul one_way_door`: park at 0.50) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D3 route | Which phase does a prompt belong to, for the router hint? (`choice phase`: hint at 0.60; `score size` is recorded only and does not count) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D4 completeness | Is each required section of the final report present and grounded in the ledger? (`noul present_and_grounded` on `clef`: pass at 0.50, else block) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D5 verify | How risky is the change, and may the doubt review be skipped? (`score defect_risk`: doubt review at 0.6666, else skip) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D6 ruled-before | Has this prompt's question been ruled on already, and which ruling? (`choice ruled_before`: surface at 0.70) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
-| D7 grill | Is a grilling question a decision for the human rather than a fact to look up? (`noul is_decision`: ask the human at 0.50, else find the fact) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
+| D1 guard | Is a Bash command the denylist did not decide destructive or irreversible? (`noul destructive_or_irreversible`: deny at 0.90, ask at 0.40) | 0 | none | none | stays in shadow (n = 0) |
+| D2 orchestrate | Is a judgment call during `/anneal:orchestrate` a one-way door, to park in weigh-in rather than rule on? (`noul one_way_door`: park at 0.50) | 0 | none | none | stays in shadow (n = 0) |
+| D3 route | Which phase does a prompt belong to, for the router hint? (`choice phase`: hint at 0.60; `score size` is recorded only and does not count) | 0 | none | none | stays in shadow (n = 0) |
+| D4 completeness | Is each required section of the final report present and grounded in the ledger? (`noul present_and_grounded` on `clef`: pass at 0.50, else block) | 0 | none | none | stays in shadow (n = 0) |
+| D5 verify | How risky is the change, and may the doubt review be skipped? (`score defect_risk`: doubt review at 0.6666, else skip) | 0 | none | none | stays in shadow (n = 0) |
+| D6 ruled-before | Has this prompt's question been ruled on already, and which ruling? (`choice ruled_before`: surface at 0.70) | 0 | none | none | stays in shadow (n = 0) |
+| D7 grill | Is a grilling question a decision for the human rather than a fact to look up? (`noul is_decision`: ask the human at 0.50, else find the fact) | 0 | none | none | stays in shadow (n = 0) |
 
 The bands are the defaults in the built-in thresholds table (`anneal playbook show clef-thresholds`, `docs/decide.md`). Only
 D1 (`ask`) and D7 (`ask_human`) hand a decision to a human, so the other points' ask rate is 0.
-Fill n, Brier and ask rate from the stderr summary or `data.points` of `anneal calibrate`; for
-D3, report the `choice` question. If calibration proposes a threshold, it is applied only with
+n, Brier and ask rate come from the stderr summary or `data.points` of `anneal calibrate`; for
+D3, the `choice` question is reported. If calibration proposes a threshold, it is applied only with
 `anneal calibrate --apply --thresholds <file>` after Ryan approves the diff, and the new value
 belongs in this table's row.
 
