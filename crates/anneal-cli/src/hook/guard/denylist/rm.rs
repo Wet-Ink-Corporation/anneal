@@ -6,16 +6,28 @@
 //! written `-` (`-$x`), followed only by letters, digits and `-`. When another operand follows
 //! it, it is taken as `-rf`. An operand after `--` is never an option, so it never holds them.
 
+use std::fmt;
 use std::path::Path;
 
 use super::wrappers::{is_long, may_be_option};
 use super::{Context, normalize, readings};
+use crate::harness::PROJECT_DIR_VAR;
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
-/// What a denial tells the agent may be force-deleted instead.
-const ALLOWED: &str = "only literal absolute paths under $TMPDIR, /tmp, /var/folders or \
-                       $CLAUDE_PROJECT_DIR/.scratch may be force-deleted recursively";
+/// What a denial tells the agent may be force-deleted instead; a `Display` rather than a
+/// `&str` because it names the harness's project variable.
+struct Allowed;
+
+impl fmt::Display for Allowed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "only literal absolute paths under $TMPDIR, /tmp, /var/folders or \
+             ${PROJECT_DIR_VAR}/.scratch may be force-deleted recursively"
+        )
+    }
+}
 
 /// Checks `rm <args>`; `appended` when `xargs` or `find -exec` adds operands.
 pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<Denial> {
@@ -57,17 +69,17 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     let deny = |reason: String| Some(Denial::new(Rule::RecursiveForceDelete, reason));
     if appended {
         return deny(format!(
-            "rm -rf with operands from xargs or find -exec cannot be checked; {ALLOWED}"
+            "rm -rf with operands from xargs or find -exec cannot be checked; {Allowed}"
         ));
     }
     targets.into_iter().find_map(|target| {
         let why = unsafe_target(target, context)?;
         match flags {
             Some(flags) => deny(format!(
-                "rm {} {}: {} may be -rf, and {why}; {ALLOWED}",
+                "rm {} {}: {} may be -rf, and {why}; {Allowed}",
                 flags.text, target.text, flags.text
             )),
-            None => deny(format!("rm -rf {}: {why}; {ALLOWED}", target.text)),
+            None => deny(format!("rm -rf {}: {why}; {Allowed}", target.text)),
         }
     })
 }

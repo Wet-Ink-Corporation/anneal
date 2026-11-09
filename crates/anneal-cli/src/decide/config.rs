@@ -1,10 +1,9 @@
 //! The plugin's `userConfig` as hooks see it: the account, the token and the Clef mode.
 //!
-//! Claude Code (checked in 2.1.296) gives a hook each `userConfig` value, sensitive ones
-//! included, as `CLAUDE_PLUGIN_OPTION_<KEY>`, the key upper-cased with every character outside
-//! `[A-Za-z0-9_]` turned into `_`. An empty account means Clef is off. The mode is
-//! `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`, spaces around the
-//! parts ignored; empty or unset is `shadow`, the manifest's default.
+//! The variables' names, and how Claude Code derives them from the `userConfig` keys, live in
+//! the crate-private `harness` module; they are re-exported here. An empty account means Clef
+//! is off. The mode is `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`,
+//! spaces around the parts ignored; empty or unset is `shadow`, the manifest's default.
 //!
 //! [`ENDPOINT_VAR`] (`ANNEAL_CLEF_URL`) replaces the Workers AI accounts URL for tests. Only a
 //! debug build reads it (a release build ignores it entirely), and only as `http://` on
@@ -20,13 +19,7 @@ use serde::Serialize;
 use crate::decide::point::Point;
 use crate::decide::state::cut_chars;
 use crate::decide::transport::ApiToken;
-
-/// `userConfig.cf_account_id`: the Cloudflare account that runs Clef.
-pub const ACCOUNT_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID";
-/// `userConfig.cf_api_token` (sensitive): the Workers AI token.
-pub const TOKEN_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN";
-/// `userConfig.clef_mode`: `off`, `shadow` or `enforce`, with per-point overrides.
-pub const MODE_VAR: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
+pub use crate::harness::{ACCOUNT_VAR, MODE_VAR, TOKEN_VAR};
 
 /// Test-only override of the Workers AI accounts URL; loopback `http://` only, debug builds
 /// only.

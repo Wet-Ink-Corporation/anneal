@@ -21,12 +21,13 @@ use clap::Args;
 use serde::Deserialize;
 
 use crate::context::sessions::SessionsError;
-use crate::context::usage::{self, Level, Reading, WINDOW_VAR};
+use crate::context::usage::{self, Level, Reading};
 use crate::context::{self, Saved, Snapshot, Source, WriterEnv};
 use crate::decide::clock::{Clock, SystemClock};
 use crate::error::CliError;
 use crate::error_chain::reason;
 use crate::exit_codes::{self, Code};
+use crate::harness::AUTO_COMPACT_WINDOW_VAR;
 use crate::hook::{StdinError, read_stdin};
 use crate::paths::{self, PathError};
 
@@ -146,7 +147,7 @@ fn show(
     let reading = usage::reading(
         window.and_then(|window| window.used_percentage),
         window.and_then(|window| window.context_window_size),
-        lookup(WINDOW_VAR).as_deref(),
+        lookup(AUTO_COMPACT_WINDOW_VAR).as_deref(),
     );
     let mut line = line(&reading);
     let Some(session) = input.session_id.as_deref() else {

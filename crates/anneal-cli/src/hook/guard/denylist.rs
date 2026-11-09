@@ -31,6 +31,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use super::Denial;
+use crate::harness::PROJECT_DIR_VAR;
 use checker::{Checker, Entries, Scope};
 use feed::Feed;
 pub(crate) use gh::{PrMerge, Target, read_target};
@@ -70,7 +71,7 @@ impl Context {
     pub(crate) fn new(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         let from_env = [
             lookup("TMPDIR").map(PathBuf::from),
-            lookup("CLAUDE_PROJECT_DIR").map(|project| PathBuf::from(project).join(SCRATCH_DIR)),
+            lookup(PROJECT_DIR_VAR).map(|project| PathBuf::from(project).join(SCRATCH_DIR)),
         ];
         let safe_roots = TEMP_ROOTS
             .iter()

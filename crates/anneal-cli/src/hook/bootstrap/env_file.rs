@@ -12,12 +12,7 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use crate::error_chain::reason;
-
-/// The variable naming the script Claude Code sources before each Bash command.
-const ENV_FILE_VAR: &str = "CLAUDE_ENV_FILE";
-
-/// The variable naming the plugin's root directory.
-pub(super) const PLUGIN_ROOT_VAR: &str = "CLAUDE_PLUGIN_ROOT";
+use crate::harness::{ENV_FILE_VAR, PLUGIN_ROOT_VAR};
 
 /// How much of the env file is read to find an earlier copy of the line; past it the line is
 /// appended without the check (H-13).

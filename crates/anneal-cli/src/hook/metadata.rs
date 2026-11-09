@@ -118,7 +118,7 @@ impl HookName {
 }
 
 /// The generation every hook so far was added for.
-const CLAUDE_5: &str = "claude-5";
+const GENERATION_5: &str = "claude-5";
 
 const BOOTSTRAP: HookMetadata = HookMetadata {
     event: HookEvent::SessionStart,
@@ -126,7 +126,7 @@ const BOOTSTRAP: HookMetadata = HookMetadata {
     fingerprint: "sha256:856794ce16dcf8fd",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (bootstrap), Feature catalog #1, skill rules 4, 15, 19 and 21; \
              story #13",
 };
@@ -137,7 +137,7 @@ const GUARD: HookMetadata = HookMetadata {
     fingerprint: "sha256:df2690e5abee2911",
     on_failure: OnFailure::Block,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (guard), Gate escalation, skill rule 15; story #14",
 };
 
@@ -147,7 +147,7 @@ const MERGE_GATE: HookMetadata = HookMetadata {
     fingerprint: "sha256:2ec04a288f2021d2",
     on_failure: OnFailure::Block,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (merge-gate), Feature catalog #24, #25 and #26, Boundaries \
              (review plugin); story #33",
 };
@@ -158,7 +158,7 @@ const PRECONDITIONS: HookMetadata = HookMetadata {
     fingerprint: "sha256:9df1ee0ab7205171",
     on_failure: OnFailure::Block,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (preconditions), Feature catalog #4 and #20; story #23",
 };
 
@@ -169,7 +169,7 @@ const FAST_CHECK: HookMetadata = HookMetadata {
     fingerprint: "sha256:066536530af1eeaa",
     on_failure: OnFailure::Continue,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (fast-check), check placement by cost; story #24",
 };
 
@@ -180,7 +180,7 @@ const COMPLETENESS: HookMetadata = HookMetadata {
     fingerprint: "sha256:a79f91b8222e3cd6",
     on_failure: OnFailure::Continue,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (completeness), Feature catalog #21 and #22, skill rule 16; \
              story #26",
 };
@@ -191,7 +191,7 @@ const STATUS: HookMetadata = HookMetadata {
     fingerprint: "sha256:d90a2774a4960bac",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (status), Feature catalog #23, platform conformance #7; story #26",
 };
 
@@ -201,7 +201,7 @@ const ROUTE: HookMetadata = HookMetadata {
     fingerprint: "sha256:2b9db1a36d2934d8",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Clef decision points (D3 route); story #31",
 };
 
@@ -211,7 +211,7 @@ const RULED_BEFORE: HookMetadata = HookMetadata {
     fingerprint: "sha256:eef2a74167c28b96",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Clef decision points (D6 ruled-before); story #31",
 };
 
@@ -221,7 +221,7 @@ const INJECTION_SCAN: HookMetadata = HookMetadata {
     fingerprint: "sha256:7b9a78954ee46111",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Story #39 (GSD pattern: flag instruction-shaped text in fetched content)",
 };
 
@@ -231,7 +231,7 @@ const CONTEXT_MONITOR: HookMetadata = HookMetadata {
     fingerprint: "sha256:c3acbc901216234f",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (context-monitor), context survival; story #38",
 };
 
@@ -241,7 +241,7 @@ const HANDOFF: HookMetadata = HookMetadata {
     fingerprint: "sha256:8a112bc19b313e45",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Hooks (handoff), context survival; story #38",
 };
 
@@ -251,7 +251,7 @@ const BRIEF: HookMetadata = HookMetadata {
     fingerprint: "sha256:7138cdbabc332ae7",
     on_failure: OnFailure::Block,
     role: Role::Guard,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Orchestration (no brief, no spawn; no nested spawns); story #36",
 };
 
@@ -261,7 +261,7 @@ const STANDING_ORDERS: HookMetadata = HookMetadata {
     fingerprint: "sha256:caa18fb3d04187c1",
     on_failure: OnFailure::Continue,
     role: Role::Scaffolding,
-    model_generation: CLAUDE_5,
+    model_generation: GENERATION_5,
     source: "Blueprint: Orchestration (standing orders in every subagent); story #36",
 };
 
