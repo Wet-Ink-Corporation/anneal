@@ -1,5 +1,5 @@
 //! `anneal lint plan` through the binary, in a scratch directory with a spec and a plan, and
-//! the agreement of `plugin/playbooks/schemas/plan.schema.json` with its `data.plan`.
+//! the agreement of `crates/anneal-cli/playbooks/schemas/plan.schema.json` with its `data.plan`.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -213,8 +213,7 @@ fn a_missing_plan_is_a_usage_error() -> TestResult {
 }
 
 fn schema() -> Result<Value, Box<dyn Error>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../plugin/playbooks/schemas/plan.schema.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("playbooks/schemas/plan.schema.json");
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 

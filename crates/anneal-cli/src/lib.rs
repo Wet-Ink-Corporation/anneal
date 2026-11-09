@@ -15,6 +15,8 @@
 //!   hooks share.
 //! - [`lint`]: `anneal lint skills|terms|spec|plan` and the lint finding model.
 //! - [`plan`]: `anneal plan approve|check`, a plan approval recorded in the ledger by hash.
+//! - [`playbook`]: `anneal playbook show|list`, the playbooks built into the binary (templates,
+//!   schemas, the route playbook and Clef's thresholds table).
 //! - [`mode`]: `anneal mode build|diagnose|off`, the worktree's anneal mode that the
 //!   `PreToolUse` preconditions hook (`hook preconditions`, on file edits) enforces.
 //! - [`eval`]: `anneal eval routing`, Tier 1 lexical routing over `evals/routing/`, and with
@@ -101,6 +103,7 @@ mod path_text;
 pub mod paths;
 pub mod perf;
 pub mod plan;
+pub mod playbook;
 pub mod pr_diff;
 mod process;
 #[cfg(test)]

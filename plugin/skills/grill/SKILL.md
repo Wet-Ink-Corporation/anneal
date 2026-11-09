@@ -7,7 +7,7 @@ description: Use when asked for new behaviour without saying how it works ("let 
 
 ## Overview
 
-Turns a new or vague request into requirements the human confirmed. The questions live in a design tree file (`${CLAUDE_PLUGIN_ROOT}/playbooks/schemas/design-tree.schema.json`).
+Turns a new or vague request into requirements the human confirmed, asking from a design tree (`anneal playbook show design-tree-schema`).
 
 - You MUST keep every question in the design tree and run `anneal grill frontier --tree <file>` before each round; ask from its `ask` list, nothing else.
 - You MUST give every question a recommended answer that a plain "yes" accepts, serving the outcome asked for over any rule that blocks it; `anneal grill frontier` rejects a blank `answer`.

@@ -7,7 +7,7 @@ description: Use when requirements are agreed, even if the spec seems obvious; w
 
 ## Overview
 
-Turns requirements the human confirmed into a spec a script can check, written in the interview's session. The template is `${CLAUDE_PLUGIN_ROOT}/playbooks/spec.template.md`, in the plugin, not this repository.
+Turns requirements the human confirmed into a spec a script can check, written in the interview's session. Its template is `data.content` of `anneal playbook show spec-template`.
 
 - You MUST write the spec from the template and run `anneal lint spec <file>` until it exits 0, applying each finding's `fix`.
 - You MUST write every acceptance criterion in EARS (`WHEN <trigger>, THE <system> SHALL <response>.` and its variants); `anneal lint spec` rejects any other form.

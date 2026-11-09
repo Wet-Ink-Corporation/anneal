@@ -29,11 +29,11 @@ repository's ledger:
 
 | File | What it is |
 |---|---|
-| `design-tree.json` | The grill's design tree (`plugin/playbooks/schemas/design-tree.schema.json`): 7 nodes answered, 1 deferred (`pretty`), two turns ending at confidence 0.85. |
+| `design-tree.json` | The grill's design tree (`anneal playbook show design-tree-schema`): 7 nodes answered, 1 deferred (`pretty`), two turns ending at confidence 0.85. |
 | `CONTEXT.md` | The toy project's glossary; `lint spec` reads it by default. |
 | `constitution.md` | The toy project's constitution, version 1, gates G1 to G3; `lint spec` reads it by default. |
-| `spec.md` | The spec, from `plugin/playbooks/spec.template.md`: five EARS criteria, no open marker. |
-| `plan.md` | The plan, from `plugin/playbooks/plan.template.md`, linking `spec.md`: tasks T1 to T4. |
+| `spec.md` | The spec, from `anneal playbook show spec-template`: five EARS criteria, no open marker. |
+| `plan.md` | The plan, from `anneal playbook show plan-template`, linking `spec.md`: tasks T1 to T4. |
 | `tickets/T1.md` .. `T4.md` | The plan's tasks as markdown tickets (`docs/dag.md`), ids and blockers as in the plan. |
 | `events.jsonl` | The ledger after the chain, one `ledger query` event per line, with `ts`, `worktree`, `branch` and `head` removed. |
 

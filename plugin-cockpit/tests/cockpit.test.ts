@@ -450,7 +450,8 @@ test('a CLI that fails shows status unavailable once, and the next refresh retri
 // ---- Calibration (#63) --------------------------------------------------------------------------
 //
 // Fixtures are `anneal calibrate` envelopes in the shape docs/calibrate.md documents (Output,
-// "The `data` schema"), with each point's real thresholds from plugin/playbooks/clef-thresholds.json.
+// "The `data` schema"), with each point's real thresholds from the built-in table
+// (crates/anneal-cli/playbooks/clef-thresholds.json).
 // D1's partial numbers are docs/calibrate.md's worked example as the CLI prints it.
 
 /** `/anneal calibration` typed at the prompt of a wide fullscreen terminal. */
@@ -549,7 +550,7 @@ function calibrateEnvelope(data: readonly unknown[]): { exitCode: number; stdout
     log: '/home/u/.anneal/decisions/decisions.jsonl',
     files: ['/home/u/.anneal/decisions/decisions.jsonl'],
     proposals: '/home/u/.anneal/decisions/proposals.json',
-    thresholds: '/plugin/playbooks/clef-thresholds.json',
+    thresholds: '/home/u/clef-thresholds.json',
     costs: { false_accept: 5, needless: 1 },
     skipped_rows: 0,
     unmatched_labels: 0,

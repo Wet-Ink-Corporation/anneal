@@ -15,7 +15,7 @@ anneal grill confirm  --tree <file> --quote <the human's words> [--session <id>]
 ## The design tree
 
 A JSON file, by convention `.anneal/grill/<topic>.json`, valid against
-`plugin/playbooks/schemas/design-tree.schema.json` (a test keeps the schema and the Rust DTO in
+the schema `anneal playbook show design-tree-schema` gives in `data.content` (a test keeps the schema and the Rust DTO in
 `crates/anneal-cli/src/grill/tree.rs` in agreement).
 
 ```json
@@ -104,8 +104,8 @@ node. In this order:
    is left byte for byte as the model wrote it, and the skill's prose (the model's own
    `is_decision`) decides.
 
-Clef unreachable, timed out, a bad response, a malformed configuration, or a thresholds file
-or anneal home that cannot be read takes D7's fallback, `fail_open` (`data.clef` is
+Clef unreachable, timed out, a bad response, a malformed configuration, or an
+anneal home that cannot be read takes D7's fallback, `fail_open` (`data.clef` is
 `no_answer` for the first three, `misconfigured` for the rest, with `data.reason`): the tree is left alone, `data.fallback` says so and the run exits 0, since the
 model's own estimate stands. An answer whose row could not be logged is never written: the
 run fails with one `ERROR` line (exit 70). Until an HTTP client is approved every call is

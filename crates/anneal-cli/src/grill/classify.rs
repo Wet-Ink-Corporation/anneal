@@ -10,9 +10,10 @@
 //! into the node's `is_decision`, so `grill frontier`'s `ask` and `look_up` follow it; the file
 //! is rewritten at its resolved path, so a symlinked tree stays a link. In shadow the tree is
 //! left exactly as the model wrote it and the skill's prose decides. Clef off, unreachable or
-//! misconfigured (a malformed configuration, or thresholds or an anneal home that cannot be
-//! read) falls back to the model's own estimate (`fail_open`) and exits 0; an answer whose row
-//! could not be logged is an error and is never written. See `docs/grill.md`.
+//! misconfigured (a malformed configuration, or an anneal home that cannot be resolved; the
+//! thresholds are built in) falls back to the model's own estimate (`fail_open`) and exits 0;
+//! an answer whose row could not be logged is an error and is never written. See
+//! `docs/grill.md`.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -44,8 +45,8 @@ use crate::exit_codes::{self, Code};
 /// The subcommand's name in its envelope.
 const SUBCOMMAND: &str = "classify";
 
-/// D7's fallback when its thresholds cannot be read to name it: `fail_open`, which is what this
-/// path does (it writes nothing).
+/// D7's fallback when the Clef setup cannot be prepared to name it: `fail_open`, which is what
+/// this path does (it writes nothing).
 // A constant, not read from the shipped `clef-thresholds.json`; a test keeps the two equal.
 const FALLBACK: &str = "fail_open";
 

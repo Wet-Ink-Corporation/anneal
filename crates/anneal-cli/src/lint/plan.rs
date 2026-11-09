@@ -1,4 +1,5 @@
-//! `anneal lint plan`: checks a plan written from `plugin/playbooks/plan.template.md`.
+//! `anneal lint plan`: checks a plan written from the template `anneal playbook show
+//! plan-template` gives.
 //!
 //! Five rules, each finding with a fix (see `docs/plan.md`): a `Spec:` line in the header
 //! names a spec that exists (`spec`), the sections Goal, Tasks and Review focus are present
@@ -8,7 +9,7 @@
 //! [`lint`] the edge that reads the file and looks for the spec.
 //!
 //! The plan as read ([`Plan`]) is `data.plan` in the envelope, its tasks listed up to
-//! [`MAX_LISTED_TASKS`], and `plugin/playbooks/schemas/plan.schema.json` describes it.
+//! [`MAX_LISTED_TASKS`], and `anneal playbook show plan-schema` describes it.
 
 mod parse;
 mod rules;
@@ -156,7 +157,7 @@ impl PlanFinding {
     }
 }
 
-/// A plan as read: `data.plan`, described by `plugin/playbooks/schemas/plan.schema.json`.
+/// A plan as read: `data.plan`, described by `anneal playbook show plan-schema`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Plan {
     /// The spec the `Spec:` line names, as written (relative to the plan's directory).

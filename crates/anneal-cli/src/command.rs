@@ -13,6 +13,8 @@ pub enum CommandName {
     Task,
     /// `anneal plan`
     Plan,
+    /// `anneal playbook`: the templates, schemas and tables built into the binary
+    Playbook,
     /// `anneal mode`: the anneal mode the preconditions hook enforces
     Mode,
     /// `anneal repro`: the red reproduction diagnose mode waits for, and debug leftovers
@@ -87,13 +89,25 @@ const STATUS_DOES_NOT_PROVE: &str = "that the recorded work was done or done wel
 const SNAPSHOT_PROVES: &str =
     "the snapshot had the documented shape and ranges and was saved for its session as the mod's";
 
+/// `mode`'s claim, out of `CommandName::proves` to keep that function short.
+const MODE_PROVES: &str =
+    "the mode was recorded for this worktree, with whether its tree was clean";
+
+/// `playbook`'s claim, out of `CommandName::proves` to keep that function short.
+const PLAYBOOK_PROVES: &str = "the playbook's text is the one built into this binary";
+
+/// What `playbook` does not prove, out of `CommandName::does_not_prove` to keep it short.
+const PLAYBOOK_DOES_NOT_PROVE: &str =
+    "that the playbook fits the task, or that a file written from it passes its lint";
+
 impl CommandName {
     /// Every command, in the order `--help` and `docs/exit-codes.md` list them.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::Ledger,
         Self::Grill,
         Self::Task,
         Self::Plan,
+        Self::Playbook,
         Self::Mode,
         Self::Repro,
         Self::Lint,
@@ -126,6 +140,7 @@ impl CommandName {
             Self::Grill => "grill",
             Self::Task => "task",
             Self::Plan => "plan",
+            Self::Playbook => "playbook",
             Self::Mode => "mode",
             Self::Repro => "repro",
             Self::Lint => "lint",
@@ -172,9 +187,8 @@ impl CommandName {
                 "the plan is approved and the plan's bytes are unchanged since its latest \
                  approval (its spec and other files are not compared)"
             }
-            Self::Mode => {
-                "the mode was recorded for this worktree, with whether its tree was clean"
-            }
+            Self::Playbook => PLAYBOOK_PROVES,
+            Self::Mode => MODE_PROVES,
             Self::Repro => {
                 "the reproduction exited non-zero and repro_red was recorded for this worktree \
                  (record), or no file git knows of holds a [DEBUG-<id>] tag (leftovers)"
@@ -235,6 +249,7 @@ impl CommandName {
                 "that the plan is correct or complete, or that its spec is unchanged since the \
                  approval"
             }
+            Self::Playbook => PLAYBOOK_DOES_NOT_PROVE,
             Self::Mode => {
                 "that the mode's preconditions hold: the preconditions hook checks them at each \
                  edit"

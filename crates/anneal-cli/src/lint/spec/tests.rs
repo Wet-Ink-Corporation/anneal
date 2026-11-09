@@ -116,7 +116,7 @@ fn each_missing_section_is_one_finding_on_the_whole_file() {
     );
     assert_eq!(
         report.findings.last().map(|finding| finding.fix.as_str()),
-        Some("add a `## Users` section (see `playbooks/spec.template.md`)."),
+        Some("add a `## Users` section (see `anneal playbook show spec-template`)."),
         "the fix names the heading"
     );
 }

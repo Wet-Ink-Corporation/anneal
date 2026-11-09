@@ -12,12 +12,14 @@ use anneal_ledger::{EventKind, Filter, LedgerEvent, Store};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::Ports;
+use super::{Ports, judge_with};
 use crate::decide::clock::Clock;
 use crate::decide::config::{ACCOUNT_VAR, MODE_VAR, TOKEN_VAR};
+use crate::decide::in_process::Prepared;
+use crate::decide::thresholds::Thresholds;
 use crate::decide::transport::{ClefRequest, Transport, TransportError};
 use crate::hook::HookEnv;
-use crate::hook::guard::run_with;
+use crate::hook::guard::{Decision, run_with};
 
 const SECRET: &str = "s3cr3t-T0KEN-value";
 
@@ -201,6 +203,20 @@ impl World {
         self.run_tool("Bash", command, endpoint)
     }
 
+    /// D1's decision for a Bash `command` the denylist left undecided, asked with `thresholds`
+    /// in place of the built-in table (no command or hook reads another table).
+    fn judge(&self, command: &str, thresholds: &Value, endpoint: &FakeEndpoint) -> Decision {
+        let lookup = |var: &str| self.vars.get(var).cloned();
+        let thresholds =
+            Thresholds::parse(thresholds.to_string().as_bytes()).expect("valid thresholds");
+        let prepared = Prepared::with_thresholds(thresholds, lookup);
+        let ports = Ports {
+            transport: endpoint,
+            clock: &FixedClock,
+        };
+        judge_with(prepared, command, &lookup, &ports)
+    }
+
     /// The decision rows in the log.
     fn rows(&self) -> Vec<Value> {
         fs::read_to_string(self.home().join("decisions").join("decisions.jsonl"))
@@ -364,25 +380,14 @@ fn enforced_d1_asks_when_clef_gives_no_answer() {
 
 #[test]
 fn a_fallback_other_than_ask_never_denies() {
-    let mut world = World::enforcing();
+    let world = World::enforcing();
     let mut thresholds: Value =
         serde_json::from_str(crate::decide::thresholds::BUILT_IN).expect("shipped JSON");
     thresholds["points"]["D1"]["fallback"] = json!("deny");
-    let playbooks = world.dir.path().join("plugin").join("playbooks");
-    fs::create_dir_all(&playbooks).expect("the plugin's playbooks");
-    fs::write(
-        playbooks.join("clef-thresholds.json"),
-        thresholds.to_string(),
-    )
-    .expect("thresholds written");
-    let root = world.dir.path().join("plugin");
-    world
-        .vars
-        .insert("CLAUDE_PLUGIN_ROOT", root.into_os_string());
 
-    let stdout = world.guard("rm -r build", &FakeEndpoint::unreachable());
+    let decision = world.judge("rm -r build", &thresholds, &FakeEndpoint::unreachable());
 
-    assert_eq!(stdout, "", "a Clef failure is never a deny");
+    assert_eq!(decision, Decision::Allow, "a Clef failure is never a deny");
     assert_eq!(world.rows().len(), 1, "the call is logged");
 }
 
@@ -527,26 +532,16 @@ fn in_enforce_mode_a_deferred_answer_that_cannot_be_logged_asks() {
 
 #[test]
 fn a_band_without_a_threshold_names_none() {
-    let mut world = World::enforcing();
+    let world = World::enforcing();
     let mut thresholds: Value =
         serde_json::from_str(crate::decide::thresholds::BUILT_IN).expect("shipped JSON");
     thresholds["points"]["D1"]["rules"]["noul"]["otherwise"] = json!("ask");
-    let playbooks = world.dir.path().join("plugin").join("playbooks");
-    fs::create_dir_all(&playbooks).expect("the plugin's playbooks");
-    fs::write(
-        playbooks.join("clef-thresholds.json"),
-        thresholds.to_string(),
-    )
-    .expect("thresholds written");
-    let root = world.dir.path().join("plugin");
-    world
-        .vars
-        .insert("CLAUDE_PLUGIN_ROOT", root.into_os_string());
 
-    let stdout = world.guard("rm -r build", &FakeEndpoint::yes(0.1));
+    let decision = world.judge("rm -r build", &thresholds, &FakeEndpoint::yes(0.1));
 
-    let (decision, reason) = permission(&stdout);
-    assert_eq!(decision, "ask");
+    let Decision::Ask(reason) = decision else {
+        panic!("asks: {decision:?}");
+    };
     assert!(reason.contains("(p 0.10)"), "{reason}");
     assert!(!reason.contains(" from "), "{reason}");
 }

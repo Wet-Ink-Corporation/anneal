@@ -18,7 +18,7 @@
 //!
 //! In enforce mode a failure never allows: an answer whose row or count could not be written
 //! keeps a `deny` or `ask` (the reason notes it) and asks instead of deferring, and D1 failing
-//! to run at all (the counts, log, thresholds file or anneal home) asks when D1 is configured
+//! to run at all (the counts, log, thresholds or anneal home) asks when D1 is configured
 //! `enforce`. Outside enforce mode a failure leaves the verdict alone.
 //!
 //! The call takes at most `client::TIMEOUT` (2 s) of the hook's 5 s.
@@ -70,10 +70,24 @@ pub(crate) fn judge<T: Transport, C: Clock>(
     lookup: &impl Fn(&str) -> Option<OsString>,
     ports: &Ports<'_, T, C>,
 ) -> Decision {
-    match ask(&redact(command), lookup, ports) {
+    judge_with(Prepared::load(lookup), command, lookup, ports)
+}
+
+/// [`judge`], asking with `prepared`: the thresholds, configuration and log `Prepared::load`
+/// read, or why it could not read them.
+fn judge_with<T: Transport, C: Clock>(
+    prepared: Result<Prepared, PrepareError>,
+    command: &str,
+    lookup: &impl Fn(&str) -> Option<OsString>,
+    ports: &Ports<'_, T, C>,
+) -> Decision {
+    let asked = prepared
+        .map_err(D1Error::from)
+        .and_then(|prepared| ask(&redact(command), &prepared, ports));
+    match asked {
         Ok(decision) => decision,
-        // D1 could not run (the anneal home, the plugin's thresholds file, the counts, the log
-        // or the clock failed). Configured to enforce, it never allows on a failure: the human
+        // D1 could not run (the anneal home, the built-in thresholds, the counts, the log or
+        // the clock failed). Configured to enforce, it never allows on a failure: the human
         // confirms, as for an unreachable Clef. Otherwise the denylist's verdict stands, as
         // shadow mode requires; an allow has no output to carry the failure, and `anneal
         // decide` with the same environment reports it.
@@ -91,13 +105,12 @@ fn configured_to_enforce(lookup: &impl Fn(&str) -> Option<OsString>) -> bool {
         .is_ok_and(|config| config.account().is_some() && config.mode(Point::D1) == Mode::Enforce)
 }
 
-/// Asks D1 about the redacted `command`, logging the row, and maps the outcome.
+/// Asks D1 about the redacted `command` with `prepared`, logging the row, and maps the outcome.
 fn ask<T: Transport, C: Clock>(
     command: &str,
-    lookup: &impl Fn(&str) -> Option<OsString>,
+    prepared: &Prepared,
     ports: &Ports<'_, T, C>,
 ) -> Result<Decision, D1Error> {
-    let prepared = Prepared::load(lookup)?;
     let state = json!({"tool": "Bash", "input": {"command": command}}).to_string();
     let state = CompactState::parse(&state)?;
     let question = Recorded {

@@ -28,7 +28,7 @@ and its row says why, for example "stays in shadow (n = 23)".
 | D6 ruled-before | Has this prompt's question been ruled on already, and which ruling? (`choice ruled_before`: surface at 0.70) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
 | D7 grill | Is a grilling question a decision for the human rather than a fact to look up? (`noul is_decision`: ask the human at 0.50, else find the fact) | to fill from `anneal calibrate` | to fill from `anneal calibrate` | to fill from `anneal calibrate` | stays in shadow |
 
-The bands are the defaults in `plugin/playbooks/clef-thresholds.json` (`docs/decide.md`). Only
+The bands are the defaults in the built-in thresholds table (`anneal playbook show clef-thresholds`, `docs/decide.md`). Only
 D1 (`ask`) and D7 (`ask_human`) hand a decision to a human, so the other points' ask rate is 0.
 Fill n, Brier and ask rate from the stderr summary or `data.points` of `anneal calibrate`; for
 D3, report the `choice` question. If calibration proposes a threshold, it is applied only with

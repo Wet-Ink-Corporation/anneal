@@ -7,7 +7,7 @@ description: Use when a spec is ready, even if the work seems obvious; split it 
 
 ## Overview
 
-Turns a spec with no open questions into tasks a fresh session can build test-first, and gets the human's approval recorded by hash. The template is `${CLAUDE_PLUGIN_ROOT}/playbooks/plan.template.md`; its structure is `${CLAUDE_PLUGIN_ROOT}/playbooks/schemas/plan.schema.json`.
+Turns a spec with no open questions into tasks a fresh session can build test-first, and gets the human's approval recorded by hash. Template: `data.content` of `anneal playbook show plan-template`; structure: `anneal playbook show plan-schema`.
 
 - You MUST write the plan from the template and run `anneal lint plan <file>` until it exits 0, applying each finding's `fix`.
 - You MUST give every task its `Files:`, one `Test:` command and its `Blocked by:` line; `anneal lint plan` rejects a task without them, a blocker that is not a task, and a cycle.

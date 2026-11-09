@@ -1,4 +1,5 @@
-//! The route playbook, `plugin/playbooks/route.json`: the phases D3 chooses from, each with
+//! The route playbook, the built-in `route` (`anneal playbook show route`; the file is
+//! `crates/anneal-cli/playbooks/route.json`): the phases D3 chooses from, each with
 //! its entry skill (if one has landed), the phase that stands for "no workflow skill", and the
 //! size levels D3 scores, each with its depth.
 //!
@@ -13,9 +14,10 @@ use serde::Deserialize;
 
 use crate::decide::client::MAX_OPTIONS;
 use crate::decide::id::is_word;
+use crate::playbook::Name;
 
-/// `plugin/playbooks/route.json`, as built in.
-const BUILT_IN: &str = include_str!("../../../../../plugin/playbooks/route.json");
+/// `route.json`, as built in.
+const BUILT_IN: &str = Name::Route.content();
 
 /// The format version read.
 const VERSION: u32 = 1;

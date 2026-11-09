@@ -102,7 +102,7 @@ fn a_clean_plan_has_no_findings_and_reads_its_spec_and_tasks() {
 
 #[test]
 fn the_shipped_template_checks_clean() {
-    let template = include_str!("../../../../../plugin/playbooks/plan.template.md");
+    let template = crate::playbook::Name::PlanTemplate.content();
 
     let report = check(plan(template));
 
@@ -132,6 +132,26 @@ fn a_missing_repeated_or_empty_section_is_a_sections_finding() {
             (Rule::Sections, 35, Some("Tasks")),
         ],
         "missing Review focus, empty Goal, repeated Tasks"
+    );
+}
+
+#[test]
+fn a_missing_section_s_fix_points_at_the_built_in_template() {
+    let text = CLEAN.replace(
+        "## Review focus\n\n- The quoting of fields with commas.\n",
+        "",
+    );
+
+    let report = check(plan(&text));
+
+    assert_eq!(
+        report
+            .findings
+            .iter()
+            .map(|finding| finding.fix.as_str())
+            .collect::<Vec<_>>(),
+        ["add a `## Review focus` section (see `anneal playbook show plan-template`)."],
+        "the fix names the command that shows the template"
     );
 }
 

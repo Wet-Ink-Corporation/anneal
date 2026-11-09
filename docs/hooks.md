@@ -424,7 +424,7 @@ arguments `hook route` and `hook ruled-before`. Both read Claude Code's `UserPro
 input (at most 4 MiB; they use `session_id`, `transcript_path`, `cwd` and `prompt`) and ask
 Clef one decision point each, in process, through `decide`'s own code (`decide::in_process`
 and `client::ask_recording`, as the guard's D1 does): the same configuration
-(`docs/decide.md`), thresholds file, decision log, modes and 50-decision shadow period as
+(`docs/decide.md`), built-in thresholds, decision log, modes and 50-decision shadow period as
 `anneal decide`, without starting a second process.
 
 Shared behaviour:
@@ -477,7 +477,7 @@ Shared behaviour:
   guard's comment and heredoc rules do not apply. This is a filter, not a secret scanner. The
   rows keep no `input`, only the state's hash.
 - **Failures** that are not Clef's (a malformed `clef_mode`, account or token, an unreadable
-  thresholds file or log, an answer that could not be logged, an invalid ruling, unreadable
+  log, an answer that could not be logged, an invalid ruling, unreadable
   input, a spent budget) are one `ERROR <hook>: ...` line as `systemMessage`, and the prompt
   goes on.
 
@@ -486,8 +486,8 @@ Shared behaviour:
 It asks two questions at once, the size on a second, scoped thread, so together they take at
 most one 2 s timeout:
 
-- the **phase**, a `choice` over the phases of `plugin/playbooks/route.json` (built into the
-  binary), each with its entry skill:
+- the **phase**, a `choice` over the phases of the route playbook (built into the
+  binary, `anneal playbook show route`), each with its entry skill:
 
   | Phase | Entry skill |
   |---|---|

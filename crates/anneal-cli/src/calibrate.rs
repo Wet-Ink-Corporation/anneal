@@ -56,8 +56,7 @@ pub struct CalibrateArgs {
     /// Report only this decision point (proposals.json still holds every point)
     #[arg(long, value_enum)]
     point: Option<Point>,
-    /// The thresholds file [default: $CLAUDE_PLUGIN_ROOT/playbooks/clef-thresholds.json, else
-    /// the copy built in]
+    /// The thresholds file [default: the copy built in, `anneal playbook show clef-thresholds`]
     #[arg(long, value_name = "FILE")]
     thresholds: Option<PathBuf>,
     /// Write the last run's proposed thresholds (proposals.json, its `data.diff`) into
@@ -163,7 +162,7 @@ where
     if args.apply {
         return apply::run(args, &log, env.cwd, out);
     }
-    let thresholds_file = decide::thresholds_path(args.thresholds.as_deref(), env.cwd, &env.lookup);
+    let thresholds_file = decide::thresholds_path(args.thresholds.as_deref(), env.cwd);
     let (thresholds, text) = decide::read_thresholds_text(thresholds_file.as_deref())
         .map_err(CalibrateError::Thresholds)?;
     let rows = read::read_log(&log)?;

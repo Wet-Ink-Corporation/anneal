@@ -33,6 +33,7 @@ use crate::orchestrate::{self, OrchestrateArgs};
 use crate::perf::runner::ProcessRunner;
 use crate::perf::{self, PerfArgs};
 use crate::plan::{self, PlanArgs};
+use crate::playbook::{self, PlaybookArgs};
 use crate::repro::{self, ReproArgs};
 use crate::rollout::{self, RolloutArgs};
 use crate::round::{self, RoundArgs};
@@ -80,6 +81,9 @@ pub enum Command {
     /// Approve a plan, or check that the plan's bytes are unchanged since approval
     #[command(after_help = command_help(CommandName::Plan))]
     Plan(PlanArgs),
+    /// Show a template, schema or table built into the binary, or list them
+    #[command(after_help = command_help(CommandName::Playbook))]
+    Playbook(PlaybookArgs),
     /// Enter build or diagnose mode, whose preconditions gate source edits, or leave it
     #[command(after_help = command_help(CommandName::Mode))]
     Mode(ModeArgs),
@@ -171,6 +175,7 @@ impl Command {
             Self::Grill(_) => CommandName::Grill,
             Self::Task(_) => CommandName::Task,
             Self::Plan(_) => CommandName::Plan,
+            Self::Playbook(_) => CommandName::Playbook,
             Self::Mode(_) => CommandName::Mode,
             Self::Repro(_) => CommandName::Repro,
             Self::Lint(_) => CommandName::Lint,
@@ -206,6 +211,7 @@ impl Command {
             | Self::Grill(_)
             | Self::Task(_)
             | Self::Plan(_)
+            | Self::Playbook(_)
             | Self::Mode(_)
             | Self::Repro(_)
             | Self::Lint(_)
@@ -320,6 +326,7 @@ fn dispatch<O: Write, E: Write>(
             task::run(args, &cwd, |var| std::env::var_os(var), out)
         }
         Command::Lint(args) => lint::run(args, out),
+        Command::Playbook(args) => playbook::run(args, out),
         Command::Dag(args) => {
             let cwd = std::env::current_dir().map_err(CliError::CurrentDir)?;
             dag::run(args, &cwd, out)

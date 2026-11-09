@@ -86,6 +86,38 @@ fn unreachable_clef_exits_5_and_logs_the_row_as_unreachable() -> TestResult {
 
 #[test]
 #[cfg_attr(miri, ignore = "runs the binary")]
+fn a_thresholds_file_in_the_plugin_root_is_ignored_for_the_built_in_table() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let plugin = tempfile::tempdir()?;
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("playbooks/clef-thresholds.json");
+    let mut thresholds: Value = serde_json::from_str(&std::fs::read_to_string(shipped)?)?;
+    thresholds["points"]["D1"]["fallback"] = json!("deny");
+    let playbooks = plugin.path().join("playbooks");
+    std::fs::create_dir_all(&playbooks)?;
+    std::fs::write(
+        playbooks.join("clef-thresholds.json"),
+        thresholds.to_string(),
+    )?;
+
+    let output = anneal(home.path())
+        .args(D1)
+        .env("ANNEAL_HOME", home.path())
+        .env("CLAUDE_PLUGIN_ROOT", plugin.path())
+        .env(ACCOUNT_VAR, "acct0123")
+        .env(TOKEN_VAR, SECRET)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+    assert_eq!(
+        envelope(&output)?["data"]["fallback"],
+        json!("ask"),
+        "the built-in D1 fallback, not the plugin root's"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "runs the binary")]
 fn the_token_is_never_on_stdout_stderr_or_in_the_log() -> TestResult {
     let home = tempfile::tempdir()?;
 

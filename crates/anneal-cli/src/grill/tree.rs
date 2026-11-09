@@ -1,6 +1,6 @@
 //! The design tree: the questions a grilling asks, as a JSON file the model keeps.
 //!
-//! [`TreeFile`] is the file as written (`plugin/playbooks/schemas/design-tree.schema.json`);
+//! [`TreeFile`] is the file as written (its schema: `anneal playbook show design-tree-schema`);
 //! [`DesignTree::parse`] turns its bytes into a tree that is known to be valid, so the
 //! frontier and the confidence summary never meet a cycle or a dangling dependency.
 

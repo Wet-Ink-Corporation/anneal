@@ -17,7 +17,8 @@ const REQUIRED: [&str; 3] = ["Goal", TASKS, "Review focus"];
 /// The required sections that must hold visible text (Tasks is checked by its tasks).
 const NOT_EMPTY: [&str; 2] = ["Goal", "Review focus"];
 
-const TEMPLATE: &str = "playbooks/plan.template.md";
+/// Where a fix sends the reader for the template.
+const TEMPLATE: &str = "anneal playbook show plan-template";
 
 /// The first section titled `title`, in any letter case.
 pub(super) fn find<'s, 'd>(sections: &'s [Section<'d>], title: &str) -> Option<&'s Section<'d>> {

@@ -126,6 +126,12 @@ impl World {
         Ok(world)
     }
 
+    /// The same world with `name` set to `value`, replacing any value it had.
+    pub(crate) fn with_var(mut self, name: &str, value: &str) -> Self {
+        self.vars.insert(name.to_owned(), OsString::from(value));
+        self
+    }
+
     /// The anneal home.
     pub(crate) fn home(&self) -> &Path {
         self.home.path()
