@@ -15,10 +15,8 @@ use crate::harness::PROJECT_DIR_VAR;
 use crate::hook::guard::shell::{Shape, Word};
 use crate::hook::guard::{Denial, Rule};
 
-/// What a denial tells the agent may be force-deleted instead.
-const ALLOWED: Allowed = Allowed;
-
-/// The text of [`ALLOWED`], written out because it names the harness's project variable.
+/// What a denial tells the agent may be force-deleted instead; a `Display` rather than a
+/// `&str` because it names the harness's project variable.
 struct Allowed;
 
 impl fmt::Display for Allowed {
@@ -71,17 +69,17 @@ pub(super) fn check(args: &[Word], context: &Context, appended: bool) -> Option<
     let deny = |reason: String| Some(Denial::new(Rule::RecursiveForceDelete, reason));
     if appended {
         return deny(format!(
-            "rm -rf with operands from xargs or find -exec cannot be checked; {ALLOWED}"
+            "rm -rf with operands from xargs or find -exec cannot be checked; {Allowed}"
         ));
     }
     targets.into_iter().find_map(|target| {
         let why = unsafe_target(target, context)?;
         match flags {
             Some(flags) => deny(format!(
-                "rm {} {}: {} may be -rf, and {why}; {ALLOWED}",
+                "rm {} {}: {} may be -rf, and {why}; {Allowed}",
                 flags.text, target.text, flags.text
             )),
-            None => deny(format!("rm -rf {}: {why}; {ALLOWED}", target.text)),
+            None => deny(format!("rm -rf {}: {why}; {Allowed}", target.text)),
         }
     })
 }

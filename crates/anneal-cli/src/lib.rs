@@ -9,8 +9,8 @@
 //! - [`exit_codes`]: the exit-code table, rendered into `--help` and `docs/exit-codes.md`.
 //! - [`error`]: errors that stop a command, each with a global exit code.
 //! - [`envelope`]: the JSON envelope on stdout and its findings.
-//! - [`harness`]: the Claude Code harness adapter, the names of the `CLAUDE_*` variables the
-//!   CLI reads and what each one means.
+//! - `harness` (crate-private): the Claude Code harness adapter, the names of the `CLAUDE_*`
+//!   variables the CLI reads and what each one means.
 //! - [`hook`]: `anneal hook <name>`, the commands `hooks.json` runs (the fail-open
 //!   `SessionStart` bootstrap, the fail-closed `PreToolUse` Bash guard and the fail-closed
 //!   `PreToolUse` preconditions hook on file edits), and the one-`ERROR`-line output
@@ -94,7 +94,7 @@ pub mod exit_codes;
 pub mod floor_guard;
 pub mod glob;
 pub mod grill;
-pub mod harness;
+mod harness;
 pub mod hook;
 pub mod json_file;
 pub mod ledger;

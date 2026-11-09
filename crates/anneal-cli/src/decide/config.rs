@@ -1,7 +1,7 @@
 //! The plugin's `userConfig` as hooks see it: the account, the token and the Clef mode.
 //!
 //! The variables' names, and how Claude Code derives them from the `userConfig` keys, live in
-//! [`crate::harness`]; they are re-exported here. An empty account means Clef is off. The mode
+//! the crate-private `harness` module; they are re-exported here. An empty account means Clef is off. The mode
 //! is `<global>[,<point>=<mode>]...`, each mode `off`, `shadow` or `enforce`, spaces around the
 //! parts ignored; empty or unset is `shadow`, the manifest's default.
 //!

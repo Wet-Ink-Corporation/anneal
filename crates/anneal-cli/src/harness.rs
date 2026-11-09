@@ -18,23 +18,23 @@ pub const ACCOUNT_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_ACCOUNT_ID";
 pub const TOKEN_VAR: &str = "CLAUDE_PLUGIN_OPTION_CF_API_TOKEN";
 
 /// The `userConfig` key holding the Clef mode, which [`MODE_VAR`] carries.
-pub const MODE_KEY: &str = "clef_mode";
+pub(crate) const MODE_KEY: &str = "clef_mode";
 
 /// `userConfig.clef_mode`: `off`, `shadow` or `enforce`, with per-point overrides.
 pub const MODE_VAR: &str = "CLAUDE_PLUGIN_OPTION_CLEF_MODE";
 
 /// The auto-compact window in tokens, which Claude Code clamps to 100,000..=1,000,000.
-pub const AUTO_COMPACT_WINDOW_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+pub(crate) const AUTO_COMPACT_WINDOW_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 
 /// Given to a `SessionStart` hook: a shell script Claude Code sources before each later Bash
 /// command.
-pub const ENV_FILE_VAR: &str = "CLAUDE_ENV_FILE";
+pub(crate) const ENV_FILE_VAR: &str = "CLAUDE_ENV_FILE";
 
 /// The plugin's root directory, the one holding `libexec/` and `skills/`.
-pub const PLUGIN_ROOT_VAR: &str = "CLAUDE_PLUGIN_ROOT";
+pub(crate) const PLUGIN_ROOT_VAR: &str = "CLAUDE_PLUGIN_ROOT";
 
 /// The project's root directory, the one Claude Code was started in.
-pub const PROJECT_DIR_VAR: &str = "CLAUDE_PROJECT_DIR";
+pub(crate) const PROJECT_DIR_VAR: &str = "CLAUDE_PROJECT_DIR";
 
 #[cfg(test)]
 mod tests;
