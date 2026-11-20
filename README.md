@@ -1,5 +1,7 @@
 # anneal
 
+> **Moved.** anneal now lives in the [redkiln](https://github.com/Wet-Ink-Corporation/redkiln) monorepo as Bench (`rk-bench`): the CLI in [`crates/bench/`](https://github.com/Wet-Ink-Corporation/redkiln/tree/main/crates/bench), the plugin in [`plugins/bench/`](https://github.com/Wet-Ink-Corporation/redkiln/tree/main/plugins/bench) and the cockpit in [`plugins/bench-cockpit/`](https://github.com/Wet-Ink-Corporation/redkiln/tree/main/plugins/bench-cockpit), and its records in [`docs/bench/`](https://github.com/Wet-Ink-Corporation/redkiln/tree/main/docs/bench). Its history came across whole, so every commit here is reachable there. This repository is archived: open issues were transferred to redkiln, and nothing new lands here. The `marketplace` branch stays readable, so the 0.0.5 install below keeps working until `rk-bench` 0.1.0 ships.
+
 anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks. It has three layers:
 
 1. **Skills** for each phase of the work (`grill`, `spec`, `plan`, `build`, `diagnose`, `verify`, `ship`) and a few user-invoked ones (`/anneal:orchestrate`, `/anneal:handoff`, `/anneal:correct`, `/anneal:write-skill`, `/anneal:calibrate`).
@@ -7,8 +9,6 @@ anneal is a Claude Code plugin that turns prose SDLC gates into enforced checks.
 3. **Calibrated judgement calls** (Clef decision points) that run in shadow mode until their calibration says they may enforce.
 
 Status: pre-release. The v0.1 plan is issue #1; each release is a Feature issue and each pull request closes one Story.
-
-**Moving.** anneal moves into the [redkiln](https://github.com/Wet-Ink-Corporation/redkiln) monorepo as Bench (`rk-bench`), the suite's second move. No v0.1.0 release ships from this repository; [docs/redkiln-move.md](docs/redkiln-move.md) says where everything goes.
 
 ## Install
 
